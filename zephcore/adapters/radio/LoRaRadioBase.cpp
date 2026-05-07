@@ -229,10 +229,12 @@ void LoRaRadioBase::buildModemConfig(struct lora_modem_config &cfg, bool tx)
 	cfg.public_network = false;
 	cfg.packet_crc_disable = false;
 
-	/* LBT: driver performs hardware CAD before TX, returns -EBUSY if busy */
-	if (tx) {
-		cfg.cad.mode = LORA_CAD_MODE_LBT;
-	}
+	/* LBT: driver gates send_async on cad.mode == LBT.
+	 * Set unconditionally so the value reaches the driver via the
+	 * initial RX lora_config() call and survives configureTx()'s
+	 * direction-only fast path (which skips hwConfigure). RX paths
+	 * never read cad.mode, so this is harmless during receive. */
+	cfg.cad.mode = LORA_CAD_MODE_LBT;
 }
 
 /**
