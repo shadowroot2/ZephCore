@@ -599,15 +599,9 @@ bool CompanionMesh::onChannelLoaded(uint8_t idx, const ChannelDetails &ch)
 
 bool CompanionMesh::getChannelForSave(uint8_t idx, ChannelDetails &ch)
 {
-	// Only save channels that have content (non-empty name or non-zero secret)
-	if (getChannel(idx, ch)) {
-		// Check if channel has any content
-		if (ch.name[0] != '\0') return true;
-		// Check if secret is non-zero
-		static const uint8_t zeroes[32] = {0};
-		if (memcmp(ch.channel.secret, zeroes, 32) != 0) return true;
-	}
-	return false;
+	/* Keep fixed-slot channel serialization compatible with Arduino.
+	 * DataStore::saveChannels() expects contiguous indexes until false. */
+	return getChannel(idx, ch);
 }
 
 /* Storage interface */
