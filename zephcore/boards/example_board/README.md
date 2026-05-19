@@ -22,6 +22,9 @@ Supported Boards
 | RAK WisMesh Tag      | `west build -b rak_wismesh_tag zephcore`  | UF2 drag-drop or `west flash` |
 | Ikoka Nano 30dBm     | `west build -b ikoka_nano_30dbm zephcore` | UF2 drag-drop                 |
 | LilyGo T-Echo        | `west build -b lilygo_techo zephcore`     | UF2 drag-drop or `west flash` |
+| Heltec T114          | `west build -b heltec_t114 zephcore`      | UF2 drag-drop or `west flash` |
+
+**Heltec T114 screenless:** append `boards/nrf52840/heltec_t114/no_display.conf` to `EXTRA_CONF_FILE` for units without the TFT module.
 
 UF2 flash: Double-tap reset button, drag `build/zephyr/zephyr.uf2` to the USB drive.
 SWD flash: `west flash` (requires J-Link, pyocd, or nrfjprog connected).

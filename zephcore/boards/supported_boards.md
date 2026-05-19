@@ -18,9 +18,12 @@ sensecap_solar
 xiao_nrf52840
 lilygo_techo
 promicro_sx1262
+heltec_t114
 ```
 
 > **RAK WisMesh Pocket** (WisBlock pocket): use `-b rak4631` — same board string and firmware as **RAK4631**.
+>
+> **Heltec T114** screenless build: append `boards/nrf52840/heltec_t114/no_display.conf` to `EXTRA_CONF_FILE` for units without the TFT module.
 
 ## ESP32
 

@@ -19,6 +19,7 @@ nRF_boards=(
     xiao_nrf52840
     lilygo_techo
     promicro_sx1262
+    heltec_t114
 )
 
 ESP32_boards=(

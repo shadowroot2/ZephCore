@@ -8,17 +8,10 @@
 
 /dts-v1/;
 #include <nordic/nrf52840_qiaa.dtsi>
-#include <nordic/nrf52840_partition.dtsi>
 #include <zephyr/dt-bindings/lora/sx126x.h>
 #include <zephyr/dt-bindings/adc/nrf-saadc.h>
 #include <zephyr/dt-bindings/input/input-event-codes.h>
 #include "heltec_t114_nrf52840-pinctrl.dtsi"
-
-/* Delete default partitions from nrf52840_partition.dtsi */
-/delete-node/ &boot_partition;
-/delete-node/ &slot0_partition;
-/delete-node/ &slot1_partition;
-/delete-node/ &storage_partition;
 
 / {
 	model = "Heltec T114";
@@ -217,7 +210,8 @@
 	#address-cells = <1>;
 	#size-cells = <0>;
 
-	/* Battery voltage on P0.04 (AIN2) — 4.9:1 divider, 3.0V ref in Arduino */
+	/* Battery voltage on P0.04 (AIN2) — 4.9:1 divider.
+	 * ADC_GAIN_1_6 + ADC_REF_INTERNAL (0.6V) => 3600 mV full-scale. */
 	channel@2 {
 		reg = <2>;
 		zephyr,gain = "ADC_GAIN_1_6";
