@@ -52,6 +52,21 @@ if [[ $1 == "nrf" ]]; then
         west build -b "$board" zephcore --pristine -- -DEXTRA_CONF_FILE="boards/common/repeater.conf;boards/common/prod.conf"
         mv build/zephyr/zephyr.uf2 firmware/"$board"-repeater-"$COMMIT_HASH".uf2
         mv build/zephyr/zephyr.zip firmware/"$board"-repeater-"$COMMIT_HASH".zip
+
+        # Heltec T114 is sold both with and without the TFT module.
+        # Build dedicated screenless variants matching upstream's
+        # Heltec_t114_without_display_* PIO envs.
+        if [[ $board == "heltec_t114" ]]; then
+            echo "Now building $board companion (noscreen)"
+            west build -b "$board" zephcore --pristine -- -DEXTRA_CONF_FILE="boards/common/prod.conf;boards/nrf52840/heltec_t114/no_display.conf"
+            mv build/zephyr/zephyr.uf2 firmware/"$board"-companion-noscreen-"$COMMIT_HASH".uf2
+            mv build/zephyr/zephyr.zip firmware/"$board"-companion-noscreen-"$COMMIT_HASH".zip
+
+            echo "Now building $board repeater (noscreen)"
+            west build -b "$board" zephcore --pristine -- -DEXTRA_CONF_FILE="boards/common/repeater.conf;boards/common/prod.conf;boards/nrf52840/heltec_t114/no_display.conf"
+            mv build/zephyr/zephyr.uf2 firmware/"$board"-repeater-noscreen-"$COMMIT_HASH".uf2
+            mv build/zephyr/zephyr.zip firmware/"$board"-repeater-noscreen-"$COMMIT_HASH".zip
+        fi
     done
 fi
 
