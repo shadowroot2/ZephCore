@@ -50,7 +50,7 @@
 		input = <&buttons>;
 		input-codes = <INPUT_KEY_0>;
 		short-codes = <INPUT_KEY_A>;
-		long-codes = <INPUT_KEY_POWER>;
+		long-codes = <INPUT_KEY_ENTER>;
 		long-delay-ms = <1000>;
 	};
 

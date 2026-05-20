@@ -333,6 +333,21 @@ if(ZEPHCORE_BOARD_OVERLAY AND EXISTS ${ZEPHCORE_BOARD_OVERLAY})
     endif()
 endif()
 
+# Auto-pair: for each .conf in EXTRA_CONF_FILE, if a same-named .overlay exists
+# next to it, include it automatically (e.g. no_display.conf → no_display.overlay).
+if(EXTRA_CONF_FILE)
+    foreach(_conf IN LISTS EXTRA_CONF_FILE)
+        string(REPLACE ".conf" ".overlay" _paired_overlay "${_conf}")
+        if(EXISTS "${_paired_overlay}")
+            if(EXTRA_DTC_OVERLAY_FILE)
+                set(EXTRA_DTC_OVERLAY_FILE "${EXTRA_DTC_OVERLAY_FILE};${_paired_overlay}" CACHE STRING "" FORCE)
+            else()
+                set(EXTRA_DTC_OVERLAY_FILE "${_paired_overlay}" CACHE STRING "" FORCE)
+            endif()
+        endif()
+    endforeach()
+endif()
+
 # Debug: Show what configs are being used
 message(STATUS "ZephCore config hierarchy:")
 message(STATUS "  Common: ${ZEPHCORE_COMMON_CONF}")
