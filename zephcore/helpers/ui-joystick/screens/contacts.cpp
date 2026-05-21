@@ -1201,8 +1201,8 @@ int RepeaterAdminScreen::render(JoystickDisplay &display)
 		display.setColor(_permissions != 0 ? JoystickDisplay::YELLOW : JoystickDisplay::LIGHT);
 		display.drawTextCentered(display.width() / 2, kHeaderSepY + 2,
 								 _permissions != 0 ? "Admin" : "Guest");
-		static const char * const kItems[] = { "Neighbours", "Stats", "Telemetry", "Info", "Commands" };
-		int count = (_permissions != 0) ? 5 : 4;
+		static const char * const kItems[] = { "Neighbours", "Stats", "Telemetry", "Info", "Commands", "Time Sync" };
+		int count = (_permissions != 0) ? 6 : 4;
 		int max_vis = (display.height() - kAdminContentY) / kMenuLineH;
 		if (max_vis < 1) max_vis = 1;
 		int start = computeListStart(_submenu_sel, count, max_vis);
@@ -1401,7 +1401,7 @@ bool RepeaterAdminScreen::handleInput(char c)
 
 	case STATE_SUBMENU: {
 		bool is_admin = (_permissions != 0);
-		int count = is_admin ? 5 : 4;
+		int count = is_admin ? 6 : 4;
 		if (handleCommonListNavigation(c, _submenu_sel, count)) return true;
 		if (c == KEY_ENTER) {
 			if (_submenu_sel == 4 && is_admin) {
@@ -1413,6 +1413,30 @@ bool RepeaterAdminScreen::handleInput(char c)
 				_cmd_kb_letters = true;
 				_hist_scroll = 0; _resp_line_scroll = 0;
 				_state = STATE_CMD_INPUT;
+				return true;
+			}
+
+			if (_submenu_sel == 5 && is_admin) {
+				/* Time Sync: send "clock sync" CLI. The repeater reads the
+				 * packet's sender_timestamp (set by sendCommandData() to our
+				 * current epoch) and updates its own RTC if our time is ahead. */
+				int idx;
+				if (_hist_count < ADMIN_HIST_MAX) {
+					idx = (_hist_head + _hist_count) % ADMIN_HIST_MAX;
+					_hist_count++;
+				} else {
+					idx = _hist_head;
+					_hist_head = (_hist_head + 1) % ADMIN_HIST_MAX;
+				}
+				strncpy(_hist[idx].cmd, "Time Sync", ADMIN_CMD_MAX - 1);
+				_hist[idx].cmd[ADMIN_CMD_MAX - 1] = '\0';
+				_hist[idx].resp[0] = '\0';
+				_hist[idx].has_resp = false;
+				if (sendCLI("clock sync")) {
+					_pending = PENDING_CMD;
+					_state = STATE_MAIN;
+					_hist_scroll = 0;
+				}
 				return true;
 			}
 
