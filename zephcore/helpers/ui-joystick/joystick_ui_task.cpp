@@ -50,15 +50,26 @@ struct k_msgq JoystickUITask::_key_queue;
 
 void (*JoystickUITask::s_signal_fn)(void) = nullptr;
 void (*JoystickUITask::s_schedule_render_fn)(uint32_t) = nullptr;
-void (*JoystickUITask::s_start_heartbeat_fn)(void) = nullptr;
-void (*JoystickUITask::s_stop_heartbeat_fn)(void) = nullptr;
 
 void JoystickUITask::setSignalFn(void (*fn)(void)) { s_signal_fn = fn; }
 void JoystickUITask::setScheduleRenderFn(void (*fn)(uint32_t)) { s_schedule_render_fn = fn; }
-void JoystickUITask::setHeartbeatFns(void (*start_fn)(void), void (*stop_fn)(void))
+
+void JoystickUITask::lockTimerCb(struct k_timer *t)
 {
-	s_start_heartbeat_fn = start_fn;
-	s_stop_heartbeat_fn = stop_fn;
+	/* ISR — atomic writes to mark locked; signal refresh so the loop wakes
+	 * and the lock overlay renders. */
+	auto *self = static_cast<JoystickUITask *>(k_timer_user_data_get(t));
+	if (!self) return;
+	self->_locked = true;
+	self->_lock_step = 0;
+	self->_next_refresh = 0;
+	if (s_signal_fn) s_signal_fn();
+}
+
+void JoystickUITask::scheduleLockTimer()
+{
+	k_timer_stop(&_lock_timer);
+	k_timer_start(&_lock_timer, K_MSEC(LOCK_AFTER_MS), K_NO_WAIT);
 }
 
 static bool joystick_queue_initialized;
@@ -174,12 +185,12 @@ JoystickUITask::JoystickUITask()
 	  _doom(nullptr),
 #endif
 	  _repeater_admin(nullptr), _curr(nullptr),
-	  _next_refresh(0), _auto_off(0), _screen_off_ms(AUTO_OFF_MILLIS),
+	  _next_refresh(0), _screen_off_ms(AUTO_OFF_MILLIS),
 	  _cached_batt_mv(0), _battery_display_mode(0),
 	  _brightness(100), _wake_on_msg(true), _ble_connected(false),
 	  _ble_enabled(true), _msgcount(0), _noise_floor(-120),
 	  _pkt_recv(0), _pkt_sent(0), _pkt_errors(0), _alert_expiry(0),
-	  _locked(false), _lock_at(0), _lock_step(0),
+	  _locked(false), _lock_step(0),
 	  _compose_is_contact(false), _compose_channel_idx(-1),
 	  _ch_preview_count(0), _ch_preview_head(JOYSTICK_OFFLINE_QUEUE_SIZE - 1),
 	  _started_at(0), _initialized(false)
@@ -214,8 +225,11 @@ void JoystickUITask::begin(BaseChatMesh *mesh, mesh::ZephyrRTCClock *rtc, NodePr
 		}
 	}
 	applyBrightness();
-	_auto_off = _started_at + _screen_off_ms;
-	_lock_at = _started_at + LOCK_AFTER_MS;
+
+	/* Lock timer: fires once when LOCK_AFTER_MS passes without activity. */
+	k_timer_init(&_lock_timer, lockTimerCb, NULL);
+	k_timer_user_data_set(&_lock_timer, this);
+	scheduleLockTimer();
 
 	/* Init key queue */
 	k_msgq_init(&_key_queue, _key_buf, sizeof(char), JOYSTICK_KEY_QUEUE_DEPTH);
@@ -289,14 +303,14 @@ void JoystickUITask::gotoDoomScreen()         { setCurrScreen(_doom); }
 void JoystickUITask::gotoUnreadScreen()
 {
 	if (!_unread) return;
-	static_cast<UnreadScreen *>(_unread)->activatePreview(false, 0);
+	_unread->activatePreview(false, 0);
 	setCurrScreen(_unread);
 }
 
 void JoystickUITask::gotoContactForAdvert(const uint8_t *prefix, int prefix_len)
 {
 	if (!_contacts) return;
-	static_cast<ContactsScreen *>(_contacts)->openForPubKey(prefix, prefix_len);
+	_contacts->openForPubKey(prefix, prefix_len);
 	setCurrScreen(_contacts);
 }
 
@@ -304,7 +318,7 @@ void JoystickUITask::gotoRepeaterAdminScreen(const uint8_t *pub_key, const char 
 		bool from_contacts)
 {
 	if (!_repeater_admin) return;
-	static_cast<RepeaterAdminScreen *>(_repeater_admin)->openForContact(pub_key, name,
+	_repeater_admin->openForContact(pub_key, name,
 			from_contacts);
 	setCurrScreen(_repeater_admin);
 }
@@ -359,8 +373,7 @@ void JoystickUITask::handleLockInput(char key, uint32_t now)
 		if (key == KEY_CANCEL) {
 			_locked = false;
 			_lock_step = 0;
-			_lock_at = now + LOCK_AFTER_MS;
-			if (s_start_heartbeat_fn) s_start_heartbeat_fn();
+			scheduleLockTimer();
 		} else {
 			_lock_step = 0;
 		}
@@ -407,7 +420,7 @@ void JoystickUITask::renderLockOverlay()
 	mc_display_text((w - batt_w) / 2, 6 + fh + 6, batt_buf, false);
 
 	char unread_buf[16];
-	int unread = (_unread) ? static_cast<UnreadScreen *>(_unread)->getUnreadCount() : 0;
+	int unread = (_unread) ? _unread->getUnreadCount() : 0;
 	snprintf(unread_buf, sizeof(unread_buf), "Unread: %d", unread);
 	int unread_w = (int)strlen(unread_buf) * fw;
 	mc_display_text((w - unread_w) / 2, 6 + fh + 6 + fh + 2, unread_buf, false);
@@ -442,18 +455,11 @@ void JoystickUITask::loop()
 
 	uint32_t now = k_uptime_get_32();
 
-	/* Auto off */
-	if (_display.isOn() && now >= _auto_off) {
-		_display.turnOff();
-	}
-
-	/* Auto lock */
-	if (!_locked && now >= _lock_at) {
-		_locked = true;
-		_lock_step = 0;
-		_next_refresh = 0;
-		if (s_stop_heartbeat_fn) s_stop_heartbeat_fn();
-	}
+	/* Auto-off is owned by display.c (k_work_delayable in display.c rescheduled
+	 * via mc_display_reset_auto_off() — fires mc_display_off() when due).
+	 * Auto-lock is owned by _lock_timer (fires lockTimerCb in ISR which sets
+	 * _locked = true and signals refresh). Both are fully event-driven; no
+	 * deadline checks needed here. */
 
 	/* Dequeue key events */
 	char key = 0;
@@ -464,19 +470,17 @@ void JoystickUITask::loop()
 			 * for the lock screen, which the user is about to see. */
 			ui_invalidate_battery_cache();
 			_display.turnOn();  /* mc_display_on() already calls mc_display_reset_auto_off() */
-			_auto_off = now + _screen_off_ms;
 			_next_refresh = 0;
 			goto do_render;
 		}
 
-		/* Reset auto off on any keypress */
+		/* Reset auto-off (display.c) on any keypress */
 		mc_display_reset_auto_off();
-		_auto_off = now + _screen_off_ms;
 
 		if (_locked) {
 			handleLockInput(key, now);
 		} else {
-			_lock_at = now + LOCK_AFTER_MS;
+			scheduleLockTimer();  /* push lock deadline forward */
 			bool consumed = false;
 			if (key == KEY_BUZZ_TOGGLE) {
 				toggleBuzzer();
@@ -633,7 +637,6 @@ void JoystickUITask::adjustScreenOff(int32_t delta_ms)
 	if (v < 5000)  v = 5000;
 	if (v > 300000) v = 300000;
 	_screen_off_ms = (uint32_t)v;
-	_auto_off = k_uptime_get_32() + _screen_off_ms;
 	mc_display_set_auto_off_ms(_screen_off_ms);
 	mc_display_reset_auto_off();
 	mesh_save_screen_off_secs((uint16_t)(_screen_off_ms / 1000));
@@ -652,13 +655,13 @@ void JoystickUITask::newMsg(uint8_t path_len, const char *from_name, const char 
 	if (_unread) {
 		/* When BLE phone is connected it pulls offline queue and marks read;
 		 * keep the message in our local history but don't count as unread. */
-		static_cast<UnreadScreen *>(_unread)->addPreview(path_len, from_name, text,
+		_unread->addPreview(path_len, from_name, text,
 				/*initially_read=*/_ble_connected);
 	}
-	/* Wake display if wake on msg is enabled and no BLE peer is connected */
+	/* Wake display if wake on msg is enabled and no BLE peer is connected.
+	 * mc_display_on() already reschedules display.c's auto-off timer. */
 	if (_wake_on_msg && !_ble_connected && !_display.isOn()) {
-		_display.turnOn();  /* mc_display_on() already calls mc_display_reset_auto_off() */
-		_auto_off = k_uptime_get_32() + _screen_off_ms;
+		_display.turnOn();
 	}
 	_next_refresh = 0;
 #ifdef CONFIG_ZEPHCORE_UI_BUZZER
@@ -687,12 +690,11 @@ void JoystickUITask::newChannelMsg(const char *channel_name, const char *text,
 		char ch_from[48];
 		snprintf(ch_from, sizeof(ch_from), "#%s", channel_name ? channel_name : "?");
 		/* BLE-connected → phone reads via offline queue, don't count as unread. */
-		static_cast<UnreadScreen *>(_unread)->addPreview(path_len, ch_from, text,
+		_unread->addPreview(path_len, ch_from, text,
 				/*initially_read=*/_ble_connected);
 	}
 	if (_wake_on_msg && !_ble_connected && !_display.isOn()) {
-		_display.turnOn();
-		_auto_off = k_uptime_get_32() + _screen_off_ms;
+		_display.turnOn();  /* display.c reschedules auto-off internally */
 	}
 	_next_refresh = 0;
 #ifdef CONFIG_ZEPHCORE_UI_BUZZER
@@ -720,7 +722,7 @@ void JoystickUITask::notify()
 int JoystickUITask::getUnreadCount()
 {
 	if (!_unread) return 0;
-	return static_cast<UnreadScreen *>(_unread)->getUnreadCount();
+	return _unread->getUnreadCount();
 }
 
 int JoystickUITask::getStoredMsgCount() const
@@ -812,7 +814,7 @@ bool JoystickUITask::sendComposedMessage(const char *text)
 		ui_signal_tx();
 		if (_unread) {
 			/* Sent message: in history but not "unread" (user sent it). */
-			static_cast<UnreadScreen *>(_unread)->addPreview(OUT_PATH_SENT, _compose_contact_name, text,
+			_unread->addPreview(OUT_PATH_SENT, _compose_contact_name, text,
 					/*initially_read=*/true);
 		}
 		/* Notify BLE app so it can mirror the sent message in its UI. */
@@ -897,9 +899,8 @@ void JoystickUITask::onRepeaterAdminLoginResult(const uint8_t *pub_key_prefix,
 		bool success, uint8_t permissions, uint32_t server_time)
 {
 	if (!_repeater_admin || _curr != _repeater_admin) return;
-	auto *s = static_cast<RepeaterAdminScreen *>(_repeater_admin);
 	(void)pub_key_prefix;
-	s->onLoginResult(success, permissions, server_time);
+	_repeater_admin->onLoginResult(success, permissions, server_time);
 	_next_refresh = 0;
 	ui_signal_refresh();
 }
@@ -909,7 +910,7 @@ void JoystickUITask::onRepeaterAdminCliResponse(const uint8_t *pub_key_prefix,
 {
 	if (!_repeater_admin || _curr != _repeater_admin) return;
 	(void)pub_key_prefix;
-	static_cast<RepeaterAdminScreen *>(_repeater_admin)->onCliResponse(text);
+	_repeater_admin->onCliResponse(text);
 	_next_refresh = 0;
 	ui_signal_refresh();
 }
@@ -922,7 +923,7 @@ void JoystickUITask::onRepeaterReqResponse(const uint8_t *pub_key_prefix,
 {
 	/* Route binary response to repeater admin screen if it's active and waiting */
 	if (_repeater_admin && _curr == _repeater_admin && data && data_len > 0) {
-		static_cast<RepeaterAdminScreen *>(_repeater_admin)->onReqResponse(pub_key_prefix,
+		_repeater_admin->onReqResponse(pub_key_prefix,
 				data, data_len);
 		_next_refresh = 0;
 		ui_signal_refresh();
@@ -934,7 +935,7 @@ void JoystickUITask::onRepeaterReqResponse(const uint8_t *pub_key_prefix,
 	memset(_pending_ping_pubkey, 0, sizeof(_pending_ping_pubkey));
 	_pending_ping_sent_ms = 0;
 	if (!_contacts || _curr != _contacts) return;
-	static_cast<ContactsScreen *>(_contacts)->onPingResponse(snr_local, snr_remote, rtt_ms);
+	_contacts->onPingResponse(snr_local, snr_remote, rtt_ms);
 	_next_refresh = 0;
 	ui_signal_refresh();
 }
@@ -971,10 +972,10 @@ void JoystickUITask::notifyPacketSent()
 		_pending_ping_sent_ms = k_uptime_get_32();
 	}
 	if (_contacts && _curr == _contacts) {
-		static_cast<ContactsScreen *>(_contacts)->onPacketSent();
+		_contacts->onPacketSent();
 	}
 	if (_repeater_admin && _curr == _repeater_admin) {
-		static_cast<RepeaterAdminScreen *>(_repeater_admin)->onPacketSent();
+		_repeater_admin->onPacketSent();
 	}
 }
 

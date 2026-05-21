@@ -45,28 +45,11 @@ static void joystick_render_timer_fn(struct k_timer *timer)
 	if (s_signal_refresh) s_signal_refresh();
 }
 
-static void joystick_heartbeat_timer_fn(struct k_timer *timer)
-{
-	ARG_UNUSED(timer);
-	if (s_signal_refresh) s_signal_refresh();
-}
-
 K_TIMER_DEFINE(s_joystick_render_timer, joystick_render_timer_fn, NULL);
-K_TIMER_DEFINE(s_joystick_heartbeat_timer, joystick_heartbeat_timer_fn, NULL);
 
 static void joystick_schedule_render(uint32_t delay_ms)
 {
 	k_timer_start(&s_joystick_render_timer, K_MSEC(delay_ms), K_NO_WAIT);
-}
-
-static void joystick_start_heartbeat(void)
-{
-	k_timer_start(&s_joystick_heartbeat_timer, K_MSEC(2000), K_MSEC(2000));
-}
-
-static void joystick_stop_heartbeat(void)
-{
-	k_timer_stop(&s_joystick_heartbeat_timer);
 }
 
 extern "C" void joystick_ui_hooks_register(
@@ -79,8 +62,6 @@ extern "C" void joystick_ui_hooks_register(
 	s_signal_tx = signal_tx;
 	JoystickUITask::setSignalFn(signal_refresh);
 	JoystickUITask::setScheduleRenderFn(joystick_schedule_render);
-	JoystickUITask::setHeartbeatFns(joystick_start_heartbeat, joystick_stop_heartbeat);
-	joystick_start_heartbeat();
 }
 
 extern "C" void ui_signal_refresh(void)

@@ -184,52 +184,51 @@ public:
 	/* Set by joystick_ui_hooks after registration */
 	static void setSignalFn(void (*fn)(void));
 	static void setScheduleRenderFn(void (*fn)(uint32_t delay_ms));
-	static void setHeartbeatFns(void (*start_fn)(void), void (*stop_fn)(void));
 
 private:
 	static void (*s_signal_fn)(void);
 	static void (*s_schedule_render_fn)(uint32_t);
-	static void (*s_start_heartbeat_fn)(void);
-	static void (*s_stop_heartbeat_fn)(void);
 	JoystickDisplay _display;
 	BaseChatMesh *_mesh;
 	mesh::ZephyrRTCClock *_rtc;
 	NodePrefs *_prefs;
 
 	/* Screen instances */
-	UIScreen *_splash;
-	UIScreen *_home;
-	UIScreen *_contacts;
-	UIScreen *_unread;
-	UIScreen *_advert;
-	UIScreen *_gps;
-	UIScreen *_system;
-	UIScreen *_system_time;
-	UIScreen *_telemetry;
-	UIScreen *_tools;
-	UIScreen *_radio_stats;
-	UIScreen *_repeaters;
-	UIScreen *_channels;
-	UIScreen *_t9_input;
-	UIScreen *_rename_node;
-	UIScreen *_ble_code;
-	UIScreen *_stats;
-	UIScreen *_stopwatch;
-	UIScreen *_countdown;
-	UIScreen *_snake;
+	SplashScreen *_splash;
+	HomeScreen *_home;
+	ContactsScreen *_contacts;
+	UnreadScreen *_unread;
+	AdvertScreen *_advert;
+	GPSSettingsScreen *_gps;
+	SystemScreen *_system;
+	SystemTimeScreen *_system_time;
+	TelemetryScreen *_telemetry;
+	ToolsScreen *_tools;
+	RadioStatsScreen *_radio_stats;
+	RepeatersScreen *_repeaters;
+	ChannelsScreen *_channels;
+	T9InputScreen *_t9_input;
+	RenameNodeScreen *_rename_node;
+	BLECodeScreen *_ble_code;
+	StatsScreen *_stats;
+	StopwatchScreen *_stopwatch;
+	CountdownScreen *_countdown;
+	SnakeScreen *_snake;
 #ifdef CONFIG_ZEPHCORE_EASTER_EGG_DOOM
-	UIScreen *_doom;
+	DoomScreen *_doom;
 #endif
-	UIScreen *_repeater_admin;
-	UIScreen *_curr;
+	RepeaterAdminScreen *_repeater_admin;
+	UIScreen *_curr;  /* polymorphic — points at whichever subclass is active */
 
 	void setCurrScreen(UIScreen *s);
 	void applyBrightness();
 
 	/* Timing */
 	uint32_t _next_refresh;
-	uint32_t _auto_off;
-	uint32_t _screen_off_ms;
+	uint32_t _screen_off_ms;       /* user setting; display.c owns the auto-off timer */
+	struct k_timer _lock_timer;    /* one-shot, fires LOCK_AFTER_MS after last activity */
+	static void lockTimerCb(struct k_timer *t);
+	void scheduleLockTimer();
 
 	/* State */
 	uint16_t _cached_batt_mv;
@@ -265,7 +264,6 @@ private:
 	/* Screen lock */
 	static constexpr uint32_t LOCK_AFTER_MS = 60000UL;
 	bool _locked;
-	uint32_t _lock_at;
 	uint8_t _lock_step;
 	void renderLockOverlay();
 	void handleLockInput(char key, uint32_t now);
