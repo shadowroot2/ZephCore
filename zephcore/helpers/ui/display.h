@@ -135,6 +135,14 @@ void mc_display_invert_rect(int x, int y, int w, int h);
 void mc_display_xbm(int x, int y, const uint8_t *data, int w, int h);
 
 /**
+ * ZephCore logo bitmap (128 × 13 px, MSB-first, row-major).
+ * Shared by both UI variants' splash screens. Defined in ui_common.c.
+ */
+#define ZEPHCORE_LOGO_W  128
+#define ZEPHCORE_LOGO_H  13
+extern const uint8_t zephcore_logo[];
+
+/**
  * Flush the framebuffer to the display hardware.
  * Call after all drawing operations for a frame are complete.
  */

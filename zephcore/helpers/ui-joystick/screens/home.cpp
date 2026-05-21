@@ -243,11 +243,23 @@ int SplashScreen::render(JoystickDisplay &display)
 		_task->gotoHomeScreen();
 		return 0;
 	}
-	int cx = display.width() / 2;
+
+	/* Match the button-UI splash: ZephCore wordmark bitmap centered at top,
+	 * "MeshCore on Zephyr" beneath it, build date at the bottom. Logo and
+	 * its dimensions live in helpers/ui/ui_common.c — declared in display.h. */
+	int w = display.width();
+	int fh = display.fontH();
+	int line_h = fh + 2;
+	int logo_x = (w >= ZEPHCORE_LOGO_W) ? (w - ZEPHCORE_LOGO_W) / 2 : 0;
+	int y = 3;
+	mc_display_xbm(logo_x, y, zephcore_logo, ZEPHCORE_LOGO_W, ZEPHCORE_LOGO_H);
+	y += ZEPHCORE_LOGO_H + line_h;
+
+	int cx = w / 2;
 	display.setColor(JoystickDisplay::GREEN);
-	display.drawTextCentered(cx, display.height() / 4, "MeshCore");
+	display.drawTextCentered(cx, y + fh / 2, "MeshCore on Zephyr");
+	y += line_h * 2;
 	display.setColor(JoystickDisplay::LIGHT);
-	display.drawTextCentered(cx, display.height() / 2 + 4, FIRMWARE_VERSION);
-	display.drawTextCentered(cx, display.height() / 2 + 4 + display.fontH() + 2, FIRMWARE_BUILD_DATE);
+	display.drawTextCentered(cx, y + fh / 2, FIRMWARE_BUILD_DATE);
 	return 250;
 }
