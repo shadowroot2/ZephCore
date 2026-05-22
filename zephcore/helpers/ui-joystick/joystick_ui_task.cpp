@@ -453,7 +453,8 @@ JoystickUITask::JoystickUITask()
 	  _doom(nullptr),
 #endif
 	  _repeater_admin(nullptr), _curr(nullptr),
-	  _next_refresh(0), _screen_off_ms(AUTO_OFF_MILLIS), _was_display_on(false),
+	  _next_refresh(0), _last_blt_ms(0), _pending_render(false), _render_immediate(false),
+	  _screen_off_ms(AUTO_OFF_MILLIS), _was_display_on(false),
 	  _cached_batt_mv(0), _battery_display_mode(0),
 	  _brightness(100), _wake_on_msg(true), _ble_connected(false),
 	  _ble_enabled(true), _noise_floor(-120),
@@ -766,76 +767,105 @@ void JoystickUITask::loop()
 	processPendingRetries();
 	processPendingChannelFeedback();
 
-	/* Dequeue key events */
-	char key = 0;
-	if (k_msgq_get(&_key_queue, &key, K_NO_WAIT) == 0) {
+	/* Drain all pending keys — apply navigation in one pass, render once. */
+	char keys[JOYSTICK_KEY_QUEUE_DEPTH];
+	int nkeys = 0;
+
+	while (nkeys < JOYSTICK_KEY_QUEUE_DEPTH &&
+	       k_msgq_get(&_key_queue, &keys[nkeys], K_NO_WAIT) == 0) {
+		nkeys++;
+	}
+
+	for (int i = 0; i < nkeys; i++) {
+		char key = keys[i];
+
 		if (!_display.isOn()) {
-			/* Wake display, consume the key press. Invalidate the battery
-			 * cache so the upcoming render samples a fresh value — matters
-			 * for the lock screen, which the user is about to see. */
+			/* Wake display; discard this press (same as single-key path). */
 			ui_invalidate_battery_cache();
-			_display.turnOn();  /* mc_display_on() already calls mc_display_reset_auto_off() */
-			onDisplayStateChanged();  /* dispatch onDisplayOn now, no one-frame delay */
-			/* Push the lock deadline forward so a wake-press at the tail end
-			 * of the lock window doesn't get re-locked immediately. */
-			if (!_locked) scheduleLockTimer();
-			_next_refresh = 0;
-			goto do_render;
+			_display.turnOn();
+			onDisplayStateChanged();
+			if (!_locked) {
+				scheduleLockTimer();
+			}
+			_render_immediate = true;
+			_pending_render = true;
+			continue;
 		}
 
-		/* Reset auto-off (display.c) on any keypress */
 		mc_display_reset_auto_off();
 
 		if (_locked) {
 			handleLockInput(key, now);
-		} else {
-			scheduleLockTimer();  /* push lock deadline forward */
-			bool consumed = false;
-			if (key == KEY_BUZZ_TOGGLE) {
-				toggleBuzzer();
-				consumed = true;
-			} else if (key == KEY_GPS_TOGGLE) {
-				toggleGPS();
-				consumed = true;
-			} else if (key == KEY_LED_TOGGLE) {
-				toggleLeds();
-				consumed = true;
-			}
-			if (!consumed && _curr) {
-				_curr->handleInput(key);
-			}
-			_next_refresh = now;
+			_render_immediate = true;
+			_pending_render = true;
+			continue;
 		}
+
+		scheduleLockTimer();
+		bool consumed = false;
+		if (key == KEY_BUZZ_TOGGLE) {
+			toggleBuzzer();
+			consumed = true;
+		} else if (key == KEY_GPS_TOGGLE) {
+			toggleGPS();
+			consumed = true;
+		} else if (key == KEY_LED_TOGGLE) {
+			toggleLeds();
+			consumed = true;
+		}
+		if (!consumed && _curr) {
+			_curr->handleInput(key);
+		}
+		_pending_render = true;
 	}
 
 do_render:
-	/* Render if due */
-	if (_display.isOn() && now >= _next_refresh && _curr) {
-#ifdef CONFIG_ZEPHCORE_EASTER_EGG_DOOM
-		if (doom_game_is_running()) {
-			_next_refresh = now + 500;
-			if (s_schedule_render_fn) s_schedule_render_fn(500);
-		} else
-#endif
-		{
-			ui_refresh_battery();
-			_display.startFrame();
-			int delay_ms;
-			if (_locked) {
-				renderLockOverlay();
-				delay_ms = 200;
-			} else {
-				delay_ms = _curr->render(_display);
-				if (now < _alert_expiry) {
-					renderAlertOverlay();
-				}
-				if (delay_ms <= 0) delay_ms = 100;
-			}
-			_next_refresh = now + (uint32_t)delay_ms;
-			if (s_schedule_render_fn) s_schedule_render_fn((uint32_t)delay_ms);
-			_display.endFrame();
-		}
+	if (!_display.isOn() || !_curr) {
+		return;
 	}
+
+	const bool due_timer = (now >= _next_refresh);
+	if (!_pending_render && !due_timer) {
+		return;
+	}
+
+	/* Throttle input-driven blits; timer/notify wakes (due_timer) stay immediate. */
+	if (_pending_render && !due_timer && !_render_immediate &&
+	    (now - _last_blt_ms < JOYSTICK_RENDER_MIN_MS)) {
+		uint32_t wait = JOYSTICK_RENDER_MIN_MS - (now - _last_blt_ms);
+		if (s_schedule_render_fn) {
+			s_schedule_render_fn(wait);
+		}
+		_next_refresh = now + wait;
+		return;
+	}
+
+#ifdef CONFIG_ZEPHCORE_EASTER_EGG_DOOM
+	if (doom_game_is_running()) {
+		_next_refresh = now + 500;
+		if (s_schedule_render_fn) s_schedule_render_fn(500);
+		return;
+	}
+#endif
+	ui_refresh_battery();
+	_display.startFrame();
+	int delay_ms;
+	if (_locked) {
+		renderLockOverlay();
+		delay_ms = 200;
+	} else {
+		delay_ms = _curr->render(_display);
+		if (now < _alert_expiry) {
+			renderAlertOverlay();
+		}
+		if (delay_ms <= 0) delay_ms = 100;
+	}
+	_next_refresh = now + (uint32_t)delay_ms;
+	if (s_schedule_render_fn) s_schedule_render_fn((uint32_t)delay_ms);
+	_display.endFrame();
+	_last_blt_ms = now;
+	_pending_render = false;
+	_render_immediate = false;
 }
 
 /* ===== Buzzer / GPS helpers ===== */

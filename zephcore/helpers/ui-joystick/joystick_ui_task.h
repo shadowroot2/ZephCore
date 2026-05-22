@@ -35,7 +35,7 @@
 #endif
 
 /* Key event queue depth */
-#define JOYSTICK_KEY_QUEUE_DEPTH  8
+#define JOYSTICK_KEY_QUEUE_DEPTH  24
 
 class JoystickUITask {
 public:
@@ -229,6 +229,10 @@ private:
 
 	/* Timing */
 	uint32_t _next_refresh;
+	static constexpr uint32_t JOYSTICK_RENDER_MIN_MS = 40; /* min gap between input blits */
+	uint32_t _last_blt_ms;
+	bool _pending_render;
+	bool _render_immediate;
 	uint32_t _screen_off_ms;       /* user setting; display.c owns the auto-off timer */
 	struct k_timer _lock_timer;    /* one-shot, fires LOCK_AFTER_MS after last activity */
 	static void lockTimerCb(struct k_timer *t);
