@@ -152,7 +152,7 @@ struct FreqRange {
 
 static const FreqRange repeat_freq_ranges[] = {
 	{ 433000, 433000 },   /* 433 MHz (ISM band) */
-	{ 869000, 869000 },   /* 869 MHz (EU ISM band) */
+	{ 869495, 869495 },   /* 869.495 MHz (EU 869.4-869.65 band, 10% DC, 500mW ERP) */
 	{ 918000, 918000 },   /* 918 MHz (US ISM band) */
 };
 

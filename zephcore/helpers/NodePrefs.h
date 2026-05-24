@@ -110,7 +110,7 @@ static inline void initNodePrefs(NodePrefs* prefs) {
 #endif
 	prefs->disable_fwd = 0;
 	prefs->advert_interval = 0;       // 0 = periodic local advert off; else minutes = value * 2
-	prefs->flood_advert_interval = 25;  // hours
+	prefs->flood_advert_interval = 47;  // hours
 	prefs->rx_delay_base = 0.0f;
 	prefs->tx_delay_factor = 0.5f;
 	prefs->direct_tx_delay_factor = 0.3f;

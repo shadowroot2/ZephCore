@@ -72,6 +72,7 @@ Regions control which flood packets the repeater forwards. The region tree is hi
 | `region` | Export the current region map (indented text tree) |
 | `region load` | Enter interactive region load mode. Paste indented region lines; send a blank line to commit |
 | `region save` | Save the current region map to persistent storage |
+| `region def <token> [...]` | Cursor-walk bulk region builder — define a hierarchy in one line (see below) |
 | `region put <name> [<parent>]` | Create a region; default parent is the wildcard root. Flood is **allowed** by default (use `region denyf` to deny) |
 | `region remove <name>` | Remove a region (must have no children) |
 | `region get <name>` | Show a region's parent and flood-allow flag |
@@ -83,6 +84,8 @@ Regions control which flood packets the repeater forwards. The region tree is hi
 | `region list denied` | List all regions that deny floods |
 
 **Region load format:** one region per line, indented with spaces to indicate depth. Append `F` after the name to mark flood-allowed (otherwise flood is denied by default).
+
+**`region def` format:** space-separated tokens; a cursor starts at `*`. Each token is `name` (create child of cursor, advance cursor to it) or `name|jump` / `name,jump` (create child of cursor, then move cursor to the existing region `jump`). Does **not** auto-save — follow with `region save`. Reply is the updated region tree. Example — branched tree: `region def west pnw or pdx|pnw wa sw-wa`. Example — flat list: `region def west|* pnw|* or|* pdx|*`.
 
 ---
 
