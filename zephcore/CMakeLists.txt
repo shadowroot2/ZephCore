@@ -260,6 +260,8 @@ elseif(BOARD MATCHES ".*mg24.*" OR BOARD MATCHES ".*efr32.*")
     set(ZEPHCORE_PLATFORM_CONF "${CMAKE_CURRENT_SOURCE_DIR}/boards/common/mg24_common.conf")
 elseif(DEFINED BOARD_QUALIFIERS AND BOARD_QUALIFIERS MATCHES ".*mg24.*")
     set(ZEPHCORE_PLATFORM_CONF "${CMAKE_CURRENT_SOURCE_DIR}/boards/common/mg24_common.conf")
+elseif(BOARD MATCHES "native_sim" OR BOARD MATCHES "native_posix")
+    set(ZEPHCORE_PLATFORM_CONF "${CMAKE_CURRENT_SOURCE_DIR}/boards/common/linux_common.conf")
 else()
     set(ZEPHCORE_PLATFORM_CONF "")
 endif()
@@ -537,12 +539,29 @@ else()
   message(STATUS "ZephCore Role: COMPANION")
   target_sources(app PRIVATE
     src/main_companion.cpp
-    adapters/ble/ZephyrBLE.cpp
     adapters/datastore/ZephyrDataStore.cpp
     helpers/BaseChatMesh.cpp
     helpers/TransportKeyStore.cpp
     helpers/ui/ui_mesh_actions.cpp
     app/CompanionMesh.cpp
+  )
+  # Companion transport: TCP socket on native Linux, BLE NUS on MCU builds.
+  if(CONFIG_ZEPHCORE_TRANSPORT_TCP)
+    message(STATUS "ZephCore Companion Transport: TCP (Linux)")
+    target_sources(app PRIVATE adapters/transport/LinuxTCPTransport.c)
+    # Headless Linux build: no display/buttons/buzzer source files are
+    # compiled, but companion code calls ui_* unconditionally. Weak no-op
+    # stubs satisfy the link.
+    target_sources(app PRIVATE helpers/ui/ui_headless_stubs.c)
+    target_include_directories(app PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/helpers/ui
+    )
+  else()
+    message(STATUS "ZephCore Companion Transport: BLE NUS")
+    target_sources(app PRIVATE adapters/ble/ZephyrBLE.cpp)
+  endif()
+  target_include_directories(app PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/adapters/transport
   )
   # USB CDC companion transport (only in debug builds with logging)
   if(CONFIG_LOG)

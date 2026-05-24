@@ -1,0 +1,9 @@
+/*
+ * Femtofox (Luckfox Pico Mini + E22-900M30S TCXO).
+ *
+ * Femtofox pinout already matches the linux_common.overlay defaults
+ * (gpiochip1 with offsets CS=16, BUSY=22, DIO1=23, RXEN=24, RESET=25).
+ * This overlay is intentionally empty — adding boards/common/femtofox.conf
+ * to EXTRA_CONF_FILE is enough to label the build "Femtofox" without
+ * changing any pins.
+ */

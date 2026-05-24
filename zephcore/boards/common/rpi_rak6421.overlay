@@ -1,0 +1,28 @@
+/*
+ * Raspberry Pi 4 + RAK6421 + RAK13300/RAK13302 SX1262 (IO Slot 1).
+ * Override Femtofox defaults from linux_common.overlay.
+ */
+
+#include <zephyr/dt-bindings/gpio/gpio.h>
+
+&zephcore_gpio0 {
+	/* RPi 4: header GPIOs live on gpiochip0. */
+	gpio-chip = "/dev/gpiochip0";
+};
+
+&zephcore_spi0 {
+	/* SPI CE0 is GPIO 8 (driven as a regular GPIO from the kernel). */
+	cs-gpios = <&zephcore_gpio0 8 GPIO_ACTIVE_LOW>;
+};
+
+&lora_sx1262 {
+	reset-gpios = <&zephcore_gpio0 13 GPIO_ACTIVE_LOW>;
+	busy-gpios  = <&zephcore_gpio0 12 GPIO_ACTIVE_HIGH>;
+	dio1-gpios  = <&zephcore_gpio0 17 GPIO_ACTIVE_HIGH>;
+	/* RAK13300 uses discrete RF switch, not DIO2. Discard the Femtofox
+	 * dio2-tx-enable and dio3-tcxo-voltage from the base overlay. */
+	/delete-property/ dio2-tx-enable;
+	/delete-property/ dio3-tcxo-voltage;
+	/delete-property/ tcxo-power-startup-delay-ms;
+	/delete-property/ rx-enable-gpios;
+};

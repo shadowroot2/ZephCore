@@ -232,6 +232,32 @@ config ZEPHCORE_BLE_ADV_SLOW_INTERVAL
 
 endmenu # BLE Configuration
 
+menu "Linux Companion Transport (native_sim)"
+
+config ZEPHCORE_TRANSPORT_TCP
+	bool "Use TCP socket transport instead of BLE NUS"
+	default n
+	help
+	  Replaces the ZephyrBLE adapter with LinuxTCPTransport, exposing
+	  the companion NUS protocol over a TCP socket on Linux SBC builds
+	  (BOARD=native_sim). Auto-enabled by boards/common/linux_common.conf.
+
+	  The wire format is a 2-byte big-endian length prefix followed by
+	  the raw NUS payload, matching upstream MeshCore Linux companion
+	  service convention.
+
+config ZEPHCORE_LINUX_TCP_PORT
+	int "TCP listen port"
+	depends on ZEPHCORE_TRANSPORT_TCP
+	default 5000
+	range 1 65535
+	help
+	  Port the companion TCP transport binds to. Default 5000 matches
+	  the upstream MeshCore Linux companion service so a single mobile
+	  app TCP configuration works against both backends.
+
+endmenu # Linux Companion Transport
+
 endif # ZEPHCORE_ROLE_COMPANION
 
 config ZEPHCORE_HOUSEKEEPING_INTERVAL_MS

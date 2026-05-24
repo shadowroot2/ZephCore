@@ -1181,7 +1181,9 @@ uint8_t CompanionMesh::onContactRequest(const ContactInfo &contact, uint32_t sen
 
 void CompanionMesh::logTx(mesh::Packet *, int)
 {
+#if ZEPHCORE_HAS_UI_TASK
 	ui_notify_packet_sent();
+#endif
 }
 
 void CompanionMesh::onContactResponse(const ContactInfo &contact, const uint8_t *data, uint8_t len)

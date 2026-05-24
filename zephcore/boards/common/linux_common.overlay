@@ -1,0 +1,97 @@
+/*
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * ZephCore native Linux DT overlay (auto-paired with linux_common.conf).
+ *
+ * Disables the native_sim emulated GPIO/SPI controllers and adds our
+ * libgpiod/spidev-backed native_linux versions, with an SX1262 child
+ * node on the SPI bus.
+ *
+ * Generic defaults below match the Femtofox SX1262 wiring. Override per
+ * device by adding boards/common/<device>.conf + .overlay via
+ * EXTRA_CONF_FILE, or use --lora-* command-line args at runtime.
+ */
+
+#include <zephyr/dt-bindings/gpio/gpio.h>
+#include <zephyr/dt-bindings/lora/sx126x.h>
+
+/* Disable native_sim emulated controllers (replaced below). */
+&spi0 {
+	status = "disabled";
+};
+
+&gpio0 {
+	status = "disabled";
+};
+
+/* Disable the SDL emulated display + touch (we don't use them and the
+ * SDL2 dev library isn't a useful dep on a headless SBC). */
+&sdl_dc {
+	status = "disabled";
+};
+
+&input_sdl_touch {
+	status = "disabled";
+};
+
+/* Drop the chosen zephyr,display node so HAS_SDL doesn't get selected.
+ * Also drop the led0 alias — native_sim's base DTS attaches it to the
+ * emulated gpio0 that we just disabled, which would otherwise cause a
+ * dangling DEVICE_DT_GET in helpers/ui/ui_common.c. */
+/ {
+	chosen {
+		/delete-property/ zephyr,display;
+		/delete-property/ zephyr,touch;
+	};
+	aliases {
+		/delete-property/ led0;
+	};
+};
+
+/ {
+	/delete-node/ leds;
+};
+
+/ {
+	aliases {
+		/* The mesh adapter reads lora0 alias to bind the SX126x driver. */
+		lora0 = &lora_sx1262;
+	};
+
+	/* libgpiod v2 GPIO controller bound to a host /dev/gpiochipX. */
+	zephcore_gpio0: zephcore_gpio0 {
+		status = "okay";
+		compatible = "zephcore,gpio-native-linux";
+		gpio-controller;
+		gpio-chip = "/dev/gpiochip1";
+		ngpios = <64>;
+		#gpio-cells = <2>;
+	};
+
+	/* spidev-backed SPI bus on /dev/spidev0.0 with one SX1262 child. */
+	zephcore_spi0: zephcore_spi0 {
+		status = "okay";
+		compatible = "zephcore,spi-native-linux";
+		spi-dev = "/dev/spidev0.0";
+		clock-frequency = <2000000>;
+		spi-mode = <0>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+		/* CS line: GPIO 16 on chip 1 = GPIO48 = 1C0 (Femtofox default). */
+		cs-gpios = <&zephcore_gpio0 16 GPIO_ACTIVE_LOW>;
+
+		lora_sx1262: lora@0 {
+			compatible = "semtech,sx1262";
+			reg = <0>;
+			spi-max-frequency = <2000000>;
+			/* Femtofox defaults; overridden by per-device overlays. */
+			reset-gpios = <&zephcore_gpio0 25 GPIO_ACTIVE_LOW>;
+			busy-gpios  = <&zephcore_gpio0 22 GPIO_ACTIVE_HIGH>;
+			dio1-gpios  = <&zephcore_gpio0 23 GPIO_ACTIVE_HIGH>;
+			rx-enable-gpios = <&zephcore_gpio0 24 GPIO_ACTIVE_HIGH>;
+			dio2-tx-enable;
+			dio3-tcxo-voltage = <SX126X_DIO3_TCXO_1V8>;
+			tcxo-power-startup-delay-ms = <5>;
+		};
+	};
+};

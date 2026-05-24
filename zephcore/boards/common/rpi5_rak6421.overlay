@@ -1,0 +1,25 @@
+/*
+ * Raspberry Pi 5 + RAK6421 + RAK13300/RAK13302 SX1262 (IO Slot 1).
+ * Same as rpi_rak6421.overlay but with gpiochip4 (RPi 5 moved the
+ * 40-pin header GPIOs).
+ */
+
+#include <zephyr/dt-bindings/gpio/gpio.h>
+
+&zephcore_gpio0 {
+	gpio-chip = "/dev/gpiochip4";
+};
+
+&zephcore_spi0 {
+	cs-gpios = <&zephcore_gpio0 8 GPIO_ACTIVE_LOW>;
+};
+
+&lora_sx1262 {
+	reset-gpios = <&zephcore_gpio0 13 GPIO_ACTIVE_LOW>;
+	busy-gpios  = <&zephcore_gpio0 12 GPIO_ACTIVE_HIGH>;
+	dio1-gpios  = <&zephcore_gpio0 17 GPIO_ACTIVE_HIGH>;
+	/delete-property/ dio2-tx-enable;
+	/delete-property/ dio3-tcxo-voltage;
+	/delete-property/ tcxo-power-startup-delay-ms;
+	/delete-property/ rx-enable-gpios;
+};

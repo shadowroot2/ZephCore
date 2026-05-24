@@ -500,6 +500,7 @@ static void gps_fix_callback(double lat, double lon, int64_t utc_time)
 #endif
 }
 
+#if IS_ENABLED(CONFIG_BT)
 /* bt_ready callback — BLE stack is up, start advertising */
 static void bt_ready(int err)
 {
@@ -517,6 +518,7 @@ static void bt_ready(int err)
 		zephcore_ble_set_enabled(false);
 	}
 }
+#endif /* CONFIG_BT */
 
 int main(void)
 {
@@ -749,9 +751,16 @@ int main(void)
 				   &zephyr_board);
 #endif
 
+#if IS_ENABLED(CONFIG_BT)
 	if (bt_enable(bt_ready) != 0) {
 		LOG_ERR("bt_enable failed");
 	}
+#else
+	/* No BLE controller — TCP companion transport starts itself.
+	 * zephcore_ble_start() is provided by LinuxTCPTransport.c when
+	 * CONFIG_ZEPHCORE_TRANSPORT_TCP=y. */
+	zephcore_ble_start(companion_mesh.getDeviceName());
+#endif
 
 	/*
 	 * FULLY EVENT-DRIVEN architecture: main thread runs mesh event loop.
