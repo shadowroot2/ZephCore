@@ -118,6 +118,24 @@ void RepeaterMesh::putNeighbour(const mesh::Identity& id, uint32_t timestamp, fl
 #endif
 }
 
+/* Constant-time byte-equality over a fixed length. Returns true iff every
+ * byte of `a` matches `b`. No early exit — timing is independent of input,
+ * defeating timing-leak attacks against password comparison.
+ *
+ * Mitigation for the password-handling weakness tracked upstream as
+ * meshcore-dev/MeshCore#2556. The protocol still sends plaintext passwords
+ * (encrypted only at the mesh layer to whatever pubkey the user selected),
+ * but this fix removes the timing oracle that would otherwise let an
+ * already-MITM attacker reveal the stored password byte-by-byte. */
+static bool ct_memeq(const uint8_t *a, const uint8_t *b, size_t n)
+{
+    uint8_t diff = 0;
+    for (size_t i = 0; i < n; i++) {
+        diff |= (uint8_t)(a[i] ^ b[i]);
+    }
+    return diff == 0;
+}
+
 uint8_t RepeaterMesh::handleLoginReq(const mesh::Identity& sender, const uint8_t* secret, uint32_t sender_timestamp, const uint8_t* data, bool is_flood) {
     ClientInfo* client = nullptr;
 
@@ -127,12 +145,37 @@ uint8_t RepeaterMesh::handleLoginReq(const mesh::Identity& sender, const uint8_t
 
     if (client == nullptr) {
         uint8_t perms;
-        if (strcmp((char*)data, _prefs.password) == 0) {
+
+        /* Constant-time comparison: pad the received password to the full
+         * 16-byte storage size with zeros, then compare against both
+         * stored passwords (which are already zero-padded by initNodePrefs).
+         * Compare both unconditionally so timing is identical for any
+         * wrong password regardless of which (admin/guest) it most
+         * resembles. */
+        uint8_t received[sizeof(_prefs.password)] = {0};
+        size_t r_len = strnlen((const char *)data, sizeof(received) - 1);
+        memcpy(received, data, r_len);
+
+        bool admin_match = ct_memeq(received,
+                                    (const uint8_t *)_prefs.password,
+                                    sizeof(received));
+        bool guest_match = ct_memeq(received,
+                                    (const uint8_t *)_prefs.guest_password,
+                                    sizeof(received));
+
+        if (admin_match) {
             perms = PERM_ACL_ADMIN;
-        } else if (strcmp((char*)data, _prefs.guest_password) == 0) {
+        } else if (guest_match) {
             perms = PERM_ACL_GUEST;
         } else {
-            LOG_WRN("Invalid password");
+            /* Apply global failed-login rate limit. The check itself is
+             * unconditional regardless of admin/guest path so its timing
+             * doesn't leak which credential the attempt was closer to. */
+            if (!login_fail_limiter.allow(getRTCClock()->getCurrentTime())) {
+                LOG_WRN("Login rate-limited (failed attempts exceeded)");
+            } else {
+                LOG_WRN("Invalid password");
+            }
             return 0;
         }
 
@@ -857,7 +900,13 @@ RepeaterMesh::RepeaterMesh(mesh::MainBoard& board, mesh::Radio& radio, mesh::Mil
       _cli(board, rtc, acl, &_prefs, this),
       region_map(key_store), temp_map(key_store),
       discover_limiter(4, 120),
-      anon_limiter(4, 180) {
+      anon_limiter(4, 180),
+      /* Failed-login rate limit: 4 wrong-password attempts per 180s. Matches
+       * anon_limiter's shape so legitimate operators don't notice; brute-force
+       * attempts hit the cap quickly and trip the LOG_WRN below. Global rate
+       * (not per-sender) — trade-off documented in CRYPTO_AUDIT_INDEX.md
+       * Phase 4 (mitigation for upstream MeshCore#2556). */
+      login_fail_limiter(4, 180) {
 
     _store = nullptr;
     last_millis = 0;
