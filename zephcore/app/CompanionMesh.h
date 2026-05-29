@@ -384,7 +384,18 @@ private:
 	bool writeFrame(const uint8_t *data, size_t len);
 	void sendPacketOk();
 	void sendPacketError(uint8_t code);
+	/* Emit the PACKET_SENT response: [PACKET_SENT][is_flood][tag:4][est_timeout:4]. */
+	void sendPacketSent(uint8_t result, uint32_t tag, uint32_t est_timeout);
 	void sendPush(uint8_t code, const uint8_t *data = nullptr, size_t len = 0);
+
+	/* Shared body for the recipient/channel sendFloodScoped overloads — both
+	 * resolve to the same default-scope logic (see the TODOs at each site). */
+	void sendFloodScopedDefault(mesh::Packet *pkt, uint32_t delay_millis);
+
+	/* Append self-telemetry as Cayenne LPP into `out`, returning bytes written.
+	 * `permissions` gates the LOCATION and ENVIRONMENT sections (battery is
+	 * always included); pass all TELEM_PERM_* bits for unconditional output. */
+	int appendSelfTelemetry(uint8_t *out, uint8_t permissions);
 
 	/** Serialize a ContactInfo into buf. If header != 0, prepend it.
 	 *  Returns total bytes written. buf must be >= CONTACT_FRAME_SIZE. */

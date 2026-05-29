@@ -56,6 +56,11 @@ protected:
 	virtual bool allowPacketForward(const Packet *packet);
 	virtual uint32_t getRetransmitDelay(const Packet *packet);
 	virtual uint32_t getDirectRetransmitDelay(const Packet *packet) { return 0; }
+	/* Shared adaptive retransmit-delay math. CompanionMesh and RepeaterMesh
+	 * had byte-identical overrides of getRetransmitDelay/getDirectRetransmitDelay;
+	 * both now delegate here. */
+	uint32_t computeAdaptiveFloodDelay(const Packet *packet);
+	uint32_t computeAdaptiveDirectDelay(const Packet *packet);
 	/* Passive contention tracking: if true, track heard floods we don't forward
 	 * (warms the contention EMA on nodes that don't relay, e.g. companions). */
 	virtual bool passivelyTrackFloods() const { return false; }

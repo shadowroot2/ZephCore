@@ -242,9 +242,8 @@ void CompanionMesh::sendFloodScoped(const TransportKey &scope, mesh::Packet *pkt
 	}
 }
 
-void CompanionMesh::sendFloodScoped(const ContactInfo &recipient, mesh::Packet *pkt, uint32_t delay_millis)
+void CompanionMesh::sendFloodScopedDefault(mesh::Packet *pkt, uint32_t delay_millis)
 {
-	/* TODO: dynamic _send_scope, depending on recipient and current 'home' Region */
 	if (_send_scope_force_unscoped) {
 		TransportKey no_scope;
 		memset(no_scope.key, 0, sizeof(no_scope.key));
@@ -259,21 +258,18 @@ void CompanionMesh::sendFloodScoped(const ContactInfo &recipient, mesh::Packet *
 	sendFloodScoped(scope, pkt, delay_millis);
 }
 
+void CompanionMesh::sendFloodScoped(const ContactInfo &recipient, mesh::Packet *pkt, uint32_t delay_millis)
+{
+	/* TODO: dynamic _send_scope, depending on recipient and current 'home' Region */
+	(void)recipient;
+	sendFloodScopedDefault(pkt, delay_millis);
+}
+
 void CompanionMesh::sendFloodScoped(const mesh::GroupChannel &channel, mesh::Packet *pkt, uint32_t delay_millis)
 {
 	/* TODO: have per-channel send_scope */
-	if (_send_scope_force_unscoped) {
-		TransportKey no_scope;
-		memset(no_scope.key, 0, sizeof(no_scope.key));
-		sendFloodScoped(no_scope, pkt, delay_millis);
-		return;
-	}
-
-	TransportKey default_scope;
-	memcpy(default_scope.key, prefs.default_scope_key, sizeof(default_scope.key));
-
-	const TransportKey &scope = _send_scope.isNull() ? default_scope : _send_scope;
-	sendFloodScoped(scope, pkt, delay_millis);
+	(void)channel;
+	sendFloodScopedDefault(pkt, delay_millis);
 }
 
 bool CompanionMesh::onContactPathRecv(ContactInfo &from, uint8_t *in_path, uint8_t in_path_len,
@@ -389,6 +385,16 @@ void CompanionMesh::sendPacketOk()
 void CompanionMesh::sendPacketError(uint8_t code)
 {
 	uint8_t rsp[] = { PACKET_ERROR, code };
+	writeFrame(rsp, sizeof(rsp));
+}
+
+void CompanionMesh::sendPacketSent(uint8_t result, uint32_t tag, uint32_t est_timeout)
+{
+	uint8_t rsp[10];
+	rsp[0] = PACKET_SENT;
+	rsp[1] = (result == MSG_SEND_SENT_FLOOD) ? 1 : 0;
+	put_le32(&rsp[2], tag);
+	put_le32(&rsp[6], est_timeout);
 	writeFrame(rsp, sizeof(rsp));
 }
 
@@ -1009,6 +1015,128 @@ void CompanionMesh::onChannelDataRecv(const mesh::GroupChannel &channel, mesh::P
 	sendPush(PUSH_CODE_MSG_WAITING);
 }
 
+int CompanionMesh::appendSelfTelemetry(uint8_t *reply, uint8_t permissions)
+{
+	int i = 0;
+	const uint8_t CH_SELF = 1;
+
+	// Battery voltage: [channel][LPP_VOLTAGE=116][2-byte 0.01V big-endian]
+	uint16_t batt_mv = _batt_cb ? _batt_cb() : 0;
+	reply[i++] = CH_SELF;
+	reply[i++] = 116;  // LPP_VOLTAGE
+	uint16_t batt_scaled = batt_mv / 10;
+	reply[i++] = (batt_scaled >> 8) & 0xFF;
+	reply[i++] = batt_scaled & 0xFF;
+
+	// GPS position if authorized and available
+	if (permissions & TELEM_PERM_LOCATION) {
+		struct gps_position pos;
+		if (gps_is_available() && gps_get_last_known_position(&pos)) {
+			reply[i++] = CH_SELF;
+			reply[i++] = 136;  // LPP_GPS
+			int32_t lat = (int32_t)(pos.latitude_ndeg / 100000);
+			int32_t lon = (int32_t)(pos.longitude_ndeg / 100000);
+			int32_t alt = pos.altitude_mm / 10;
+			reply[i++] = (lat >> 16) & 0xFF;
+			reply[i++] = (lat >> 8) & 0xFF;
+			reply[i++] = lat & 0xFF;
+			reply[i++] = (lon >> 16) & 0xFF;
+			reply[i++] = (lon >> 8) & 0xFF;
+			reply[i++] = lon & 0xFF;
+			reply[i++] = (alt >> 16) & 0xFF;
+			reply[i++] = (alt >> 8) & 0xFF;
+			reply[i++] = alt & 0xFF;
+		} else if (prefs.node_lat != 0 || prefs.node_lon != 0) {
+			// Use configured position
+			reply[i++] = CH_SELF;
+			reply[i++] = 136;  // LPP_GPS
+			int32_t lat = (int32_t)(prefs.node_lat * 10000);
+			int32_t lon = (int32_t)(prefs.node_lon * 10000);
+			int32_t alt = 0;
+			reply[i++] = (lat >> 16) & 0xFF;
+			reply[i++] = (lat >> 8) & 0xFF;
+			reply[i++] = lat & 0xFF;
+			reply[i++] = (lon >> 16) & 0xFF;
+			reply[i++] = (lon >> 8) & 0xFF;
+			reply[i++] = lon & 0xFF;
+			reply[i++] = (alt >> 16) & 0xFF;
+			reply[i++] = (alt >> 8) & 0xFF;
+			reply[i++] = alt & 0xFF;
+		}
+	}
+
+	// Environment sensors if authorized and available
+	if (permissions & TELEM_PERM_ENVIRONMENT) {
+		struct env_data env;
+		if (env_sensors_read(&env) == 0) {
+			if (env.has_temperature) {
+				reply[i++] = CH_SELF;
+				reply[i++] = LPP_TEMPERATURE;
+				int16_t temp = (int16_t)(env.temperature_c * 10);
+				reply[i++] = (temp >> 8) & 0xFF;
+				reply[i++] = temp & 0xFF;
+			} else if (env.has_mcu_temperature) {
+				// MCU die temp as fallback when no external sensor
+				reply[i++] = CH_SELF;
+				reply[i++] = LPP_TEMPERATURE;
+				int16_t temp = (int16_t)(env.mcu_temperature_c * 10);
+				reply[i++] = (temp >> 8) & 0xFF;
+				reply[i++] = temp & 0xFF;
+			}
+			if (env.has_humidity) {
+				reply[i++] = CH_SELF;
+				reply[i++] = LPP_RELATIVE_HUMIDITY;
+				reply[i++] = (uint8_t)(env.humidity_pct * 2);
+			}
+			if (env.has_pressure) {
+				reply[i++] = CH_SELF;
+				reply[i++] = LPP_BAROMETRIC_PRESSURE;
+				uint16_t press = (uint16_t)(env.pressure_hpa * 10);
+				reply[i++] = (press >> 8) & 0xFF;
+				reply[i++] = press & 0xFF;
+			}
+		}
+
+		// Power monitor telemetry (INA219/INA3221/ina2xx)
+		if (power_sensors_available()) {
+			struct power_data pwr;
+			if (power_sensors_read(&pwr) == 0) {
+				uint8_t ch = CH_SELF + 1;
+				for (int j = 0; j < pwr.num_channels; j++) {
+					if (pwr.channels[j].valid) {
+						// Voltage: [ch][LPP_VOLTAGE=116][2-byte 0.01V]
+						reply[i++] = ch;
+						reply[i++] = 116;
+						uint16_t v = (uint16_t)(pwr.channels[j].voltage_v * 100);
+						reply[i++] = (v >> 8) & 0xFF;
+						reply[i++] = v & 0xFF;
+						// Current: [ch][LPP_CURRENT=117][2-byte 0.001A]
+						reply[i++] = ch;
+						reply[i++] = 117;
+						uint16_t c = (uint16_t)(pwr.channels[j].current_a * 1000);
+						reply[i++] = (c >> 8) & 0xFF;
+						reply[i++] = c & 0xFF;
+						// Power: [ch][LPP_POWER=128][2-byte 1W]
+						reply[i++] = ch;
+						reply[i++] = 128;
+						uint16_t p = (uint16_t)(pwr.channels[j].power_w);
+						reply[i++] = (p >> 8) & 0xFF;
+						reply[i++] = p & 0xFF;
+						ch++;
+					}
+				}
+			}
+		}
+	}
+
+	// Trigger GPS wake for fresh fix on next request
+	if (gps_is_available() && gps_is_enabled()) {
+		gps_request_fresh_fix();
+	}
+
+	return i;
+}
+
 uint8_t CompanionMesh::onContactRequest(const ContactInfo &contact, uint32_t sender_timestamp,
 	const uint8_t *data, uint8_t len, uint8_t *reply)
 {
@@ -1047,130 +1175,11 @@ uint8_t CompanionMesh::onContactRequest(const ContactInfo &contact, uint32_t sen
 		if (permissions & TELEM_PERM_BASE) {
 			LOG_INF("onContactRequest: telemetry authorized (perms=0x%02x)", permissions);
 
-			// Build Cayenne LPP telemetry response
-			int i = 0;
-
-			// Reflect sender_timestamp back as tag (4 bytes)
+			// Build Cayenne LPP telemetry response: reflect sender_timestamp
+			// back as a 4-byte tag, then append battery/GPS/env/power.
 			memcpy(reply, &sender_timestamp, 4);
-			i += 4;
-
-			const uint8_t CH_SELF = 1;
-
-			// Battery voltage: [channel][LPP_VOLTAGE=116][2-byte 0.01V big-endian]
-			uint16_t batt_mv = _batt_cb ? _batt_cb() : 0;
-			reply[i++] = CH_SELF;
-			reply[i++] = 116;  // LPP_VOLTAGE
-			uint16_t batt_scaled = batt_mv / 10;
-			reply[i++] = (batt_scaled >> 8) & 0xFF;
-			reply[i++] = batt_scaled & 0xFF;
-
-			// GPS position if authorized and available
-			if (permissions & TELEM_PERM_LOCATION) {
-				struct gps_position pos;
-				if (gps_is_available() && gps_get_last_known_position(&pos)) {
-					reply[i++] = CH_SELF;
-					reply[i++] = 136;  // LPP_GPS
-					int32_t lat = (int32_t)(pos.latitude_ndeg / 100000);
-					int32_t lon = (int32_t)(pos.longitude_ndeg / 100000);
-					int32_t alt = pos.altitude_mm / 10;
-					reply[i++] = (lat >> 16) & 0xFF;
-					reply[i++] = (lat >> 8) & 0xFF;
-					reply[i++] = lat & 0xFF;
-					reply[i++] = (lon >> 16) & 0xFF;
-					reply[i++] = (lon >> 8) & 0xFF;
-					reply[i++] = lon & 0xFF;
-					reply[i++] = (alt >> 16) & 0xFF;
-					reply[i++] = (alt >> 8) & 0xFF;
-					reply[i++] = alt & 0xFF;
-				} else if (prefs.node_lat != 0 || prefs.node_lon != 0) {
-					// Use configured position
-					reply[i++] = CH_SELF;
-					reply[i++] = 136;  // LPP_GPS
-					int32_t lat = (int32_t)(prefs.node_lat * 10000);
-					int32_t lon = (int32_t)(prefs.node_lon * 10000);
-					int32_t alt = 0;
-					reply[i++] = (lat >> 16) & 0xFF;
-					reply[i++] = (lat >> 8) & 0xFF;
-					reply[i++] = lat & 0xFF;
-					reply[i++] = (lon >> 16) & 0xFF;
-					reply[i++] = (lon >> 8) & 0xFF;
-					reply[i++] = lon & 0xFF;
-					reply[i++] = (alt >> 16) & 0xFF;
-					reply[i++] = (alt >> 8) & 0xFF;
-					reply[i++] = alt & 0xFF;
-				}
-			}
-
-			// Environment sensors if authorized and available
-			if (permissions & TELEM_PERM_ENVIRONMENT) {
-				struct env_data env;
-				if (env_sensors_read(&env) == 0) {
-					if (env.has_temperature) {
-						reply[i++] = CH_SELF;
-						reply[i++] = LPP_TEMPERATURE;
-						int16_t temp = (int16_t)(env.temperature_c * 10);
-						reply[i++] = (temp >> 8) & 0xFF;
-						reply[i++] = temp & 0xFF;
-					} else if (env.has_mcu_temperature) {
-						// MCU die temp as fallback when no external sensor
-						reply[i++] = CH_SELF;
-						reply[i++] = LPP_TEMPERATURE;
-						int16_t temp = (int16_t)(env.mcu_temperature_c * 10);
-						reply[i++] = (temp >> 8) & 0xFF;
-						reply[i++] = temp & 0xFF;
-					}
-					if (env.has_humidity) {
-						reply[i++] = CH_SELF;
-						reply[i++] = LPP_RELATIVE_HUMIDITY;
-						reply[i++] = (uint8_t)(env.humidity_pct * 2);
-					}
-					if (env.has_pressure) {
-						reply[i++] = CH_SELF;
-						reply[i++] = LPP_BAROMETRIC_PRESSURE;
-						uint16_t press = (uint16_t)(env.pressure_hpa * 10);
-						reply[i++] = (press >> 8) & 0xFF;
-						reply[i++] = press & 0xFF;
-					}
-				}
-
-				// Power monitor telemetry (INA219/INA3221/ina2xx)
-				if (power_sensors_available()) {
-					struct power_data pwr;
-					if (power_sensors_read(&pwr) == 0) {
-						uint8_t ch = CH_SELF + 1;
-						for (int j = 0; j < pwr.num_channels; j++) {
-							if (pwr.channels[j].valid) {
-								// Voltage: [ch][LPP_VOLTAGE=116][2-byte 0.01V]
-								reply[i++] = ch;
-								reply[i++] = 116;
-								uint16_t v = (uint16_t)(pwr.channels[j].voltage_v * 100);
-								reply[i++] = (v >> 8) & 0xFF;
-								reply[i++] = v & 0xFF;
-								// Current: [ch][LPP_CURRENT=117][2-byte 0.001A]
-								reply[i++] = ch;
-								reply[i++] = 117;
-								uint16_t c = (uint16_t)(pwr.channels[j].current_a * 1000);
-								reply[i++] = (c >> 8) & 0xFF;
-								reply[i++] = c & 0xFF;
-								// Power: [ch][LPP_POWER=128][2-byte 1W]
-								reply[i++] = ch;
-								reply[i++] = 128;
-								uint16_t p = (uint16_t)(pwr.channels[j].power_w);
-								reply[i++] = (p >> 8) & 0xFF;
-								reply[i++] = p & 0xFF;
-								ch++;
-							}
-						}
-					}
-				}
-			}
-
-			// Trigger GPS wake for fresh fix on next request
-			if (gps_is_available() && gps_is_enabled()) {
-				gps_request_fresh_fix();
-			}
-
-			return i;
+			int n = appendSelfTelemetry(&reply[4], permissions);
+			return 4 + n;
 		} else {
 			LOG_INF("onContactRequest: telemetry denied for contact");
 		}
@@ -1448,32 +1457,12 @@ void CompanionMesh::onRawDataRecv(mesh::Packet *packet)
 
 uint32_t CompanionMesh::getRetransmitDelay(const mesh::Packet *packet)
 {
-	float factor = getContentionTracker().getFloodDelayFactor();
-	uint32_t airtime = _radio->getEstAirtimeFor(
-		packet->getPathByteLen() + packet->payload_len + 2);
-	uint32_t max_jitter = (uint32_t)(5 * airtime * factor);
-	/* Airtime-scaled ceiling: never exceed ~6 airtimes of spread. */
-	uint32_t airtime_cap = 6 * airtime;
-	if (max_jitter > airtime_cap) max_jitter = airtime_cap;
-	/* Absolute cap: avoid excessive latency in very dense areas.
-	 * Reactive backoff will fine-tune further if needed. */
-	if (max_jitter > 2000) max_jitter = 2000;
-	/* Floor: give downstream nodes time to finish RX processing
-	 * and return to RX mode before we TX (~20ms settle) */
-	return 20 + getRNG()->nextInt(0, max_jitter + 1);
+	return computeAdaptiveFloodDelay(packet);
 }
 
 uint32_t CompanionMesh::getDirectRetransmitDelay(const mesh::Packet *packet)
 {
-	uint32_t airtime = _radio->getEstAirtimeFor(
-		packet->getPathByteLen() + packet->payload_len + 2);
-	/* Jitter around Arduino direct factor 0.3 using a per-packet factor
-	 * in the range [0.25, 0.40]. */
-	uint32_t factor_milli = (uint32_t)getRNG()->nextInt(250, 401);
-	uint32_t max_jitter = (airtime * factor_milli) / 1000;
-	/* Floor: give downstream nodes time to finish RX processing
-	 * and return to RX mode before we TX (~20ms settle + jitter) */
-	return 20 + getRNG()->nextInt(0, max_jitter + 1);
+	return computeAdaptiveDirectDelay(packet);
 }
 
 uint32_t CompanionMesh::getInitialFloodJitter(const mesh::Packet *packet)
@@ -2002,12 +1991,7 @@ bool CompanionMesh::handleProtocolFrame(const uint8_t *data, size_t len)
 					}
 
 					// Response: RESP_CODE_SENT + is_flood(1) + expected_ack(4) + est_timeout(4)
-					uint8_t rsp[10];
-					rsp[0] = PACKET_SENT;
-					rsp[1] = (result == MSG_SEND_SENT_FLOOD) ? 1 : 0;
-					put_le32(&rsp[2], expected_ack);
-					put_le32(&rsp[6], est_timeout);
-					writeFrame(rsp, sizeof(rsp));
+					sendPacketSent(result, expected_ack, est_timeout);
 				} else {
 					sendPacketError(ERR_TABLE_FULL);
 				}
@@ -2528,12 +2512,7 @@ bool CompanionMesh::handleProtocolFrame(const uint8_t *data, size_t len)
 					 * clear the other pending fields manually — clearPendingReqs() would wipe it. */
 					_pending_status = _pending_telemetry = _pending_discovery = _pending_req = 0;
 					LOG_DBG("CMD_SEND_LOGIN: _pending_login set to %08x", _pending_login);
-					uint8_t rsp[10];
-					rsp[0] = PACKET_SENT;
-					rsp[1] = (result == MSG_SEND_SENT_FLOOD) ? 1 : 0;
-					memcpy(&rsp[2], &_pending_login, 4);
-					put_le32(&rsp[6], est_timeout);
-					writeFrame(rsp, sizeof(rsp));
+					sendPacketSent(result, _pending_login, est_timeout);
 				} else {
 					sendPacketError(ERR_TABLE_FULL);
 				}
@@ -2554,12 +2533,7 @@ bool CompanionMesh::handleProtocolFrame(const uint8_t *data, size_t len)
 				if (result != MSG_SEND_FAILED) {
 					clearPendingReqs();
 					memcpy(&_pending_status, contact->id.pub_key, 4);  // legacy matching scheme
-					uint8_t rsp[10];
-					rsp[0] = PACKET_SENT;
-					rsp[1] = (result == MSG_SEND_SENT_FLOOD) ? 1 : 0;
-					put_le32(&rsp[2], tag);
-					put_le32(&rsp[6], est_timeout);
-					writeFrame(rsp, sizeof(rsp));
+					sendPacketSent(result, tag, est_timeout);
 				} else {
 					sendPacketError(ERR_BAD_STATE);
 				}
@@ -2606,127 +2580,9 @@ bool CompanionMesh::handleProtocolFrame(const uint8_t *data, size_t len)
 			memcpy(&rsp[i], self_id.pub_key, 6);
 			i += 6;  // pubkey prefix
 
-			// Channel 1 = TELEM_CHANNEL_SELF
-			const uint8_t CH_SELF = 1;
-
-			// Battery voltage: [channel][LPP_VOLTAGE=116][2-byte 0.01V big-endian]
-			uint16_t batt_mv = _batt_cb ? _batt_cb() : 0;
-			rsp[i++] = CH_SELF;
-			rsp[i++] = 116;  // LPP_VOLTAGE
-			uint16_t batt_scaled = batt_mv / 10;  // 0.01V resolution
-			rsp[i++] = (batt_scaled >> 8) & 0xFF;  // Big-endian
-			rsp[i++] = batt_scaled & 0xFF;
-
-			// GPS position if available: [channel][LPP_GPS=136][3-byte lat][3-byte lon][3-byte alt]
-			// Use last known position even when GPS is sleeping (power-save mode)
-			struct gps_position pos;
-			if (gps_is_available() && gps_get_last_known_position(&pos)) {
-				rsp[i++] = CH_SELF;
-				rsp[i++] = 136;  // LPP_GPS
-				// Lat/lon in 0.0001 degrees (signed 24-bit)
-				int32_t lat = (int32_t)(pos.latitude_ndeg / 100000);  // nano-degrees to 0.0001 degrees
-				int32_t lon = (int32_t)(pos.longitude_ndeg / 100000);
-				int32_t alt = pos.altitude_mm / 10;  // mm to 0.01m
-				rsp[i++] = (lat >> 16) & 0xFF;
-				rsp[i++] = (lat >> 8) & 0xFF;
-				rsp[i++] = lat & 0xFF;
-				rsp[i++] = (lon >> 16) & 0xFF;
-				rsp[i++] = (lon >> 8) & 0xFF;
-				rsp[i++] = lon & 0xFF;
-				rsp[i++] = (alt >> 16) & 0xFF;
-				rsp[i++] = (alt >> 8) & 0xFF;
-				rsp[i++] = alt & 0xFF;
-			} else if (prefs.node_lat != 0 || prefs.node_lon != 0) {
-				// Use configured position
-				rsp[i++] = CH_SELF;
-				rsp[i++] = 136;  // LPP_GPS
-				int32_t lat = (int32_t)(prefs.node_lat * 10000);
-				int32_t lon = (int32_t)(prefs.node_lon * 10000);
-				int32_t alt = 0;
-				rsp[i++] = (lat >> 16) & 0xFF;
-				rsp[i++] = (lat >> 8) & 0xFF;
-				rsp[i++] = lat & 0xFF;
-				rsp[i++] = (lon >> 16) & 0xFF;
-				rsp[i++] = (lon >> 8) & 0xFF;
-				rsp[i++] = lon & 0xFF;
-				rsp[i++] = (alt >> 16) & 0xFF;
-				rsp[i++] = (alt >> 8) & 0xFF;
-				rsp[i++] = alt & 0xFF;
-			}
-
-			// Environment sensors
-			{
-				struct env_data env;
-				if (env_sensors_read(&env) == 0) {
-					// Temperature: [channel][LPP_TEMPERATURE=103][2-byte 0.1C signed big-endian]
-					if (env.has_temperature) {
-						rsp[i++] = CH_SELF;
-						rsp[i++] = LPP_TEMPERATURE;
-						int16_t temp = (int16_t)(env.temperature_c * 10);
-						rsp[i++] = (temp >> 8) & 0xFF;
-						rsp[i++] = temp & 0xFF;
-					} else if (env.has_mcu_temperature) {
-						// MCU die temp as fallback when no external sensor
-						rsp[i++] = CH_SELF;
-						rsp[i++] = LPP_TEMPERATURE;
-						int16_t temp = (int16_t)(env.mcu_temperature_c * 10);
-						rsp[i++] = (temp >> 8) & 0xFF;
-						rsp[i++] = temp & 0xFF;
-					}
-					// Humidity: [channel][LPP_RELATIVE_HUMIDITY=104][1-byte 0.5%]
-					if (env.has_humidity) {
-						rsp[i++] = CH_SELF;
-						rsp[i++] = LPP_RELATIVE_HUMIDITY;
-						rsp[i++] = (uint8_t)(env.humidity_pct * 2);
-					}
-					// Pressure: [channel][LPP_BAROMETRIC_PRESSURE=115][2-byte 0.1hPa big-endian]
-					if (env.has_pressure) {
-						rsp[i++] = CH_SELF;
-						rsp[i++] = LPP_BAROMETRIC_PRESSURE;
-						uint16_t press = (uint16_t)(env.pressure_hpa * 10);
-						rsp[i++] = (press >> 8) & 0xFF;
-						rsp[i++] = press & 0xFF;
-					}
-				}
-			}
-
-			// Power monitor telemetry (INA219/INA3221/ina2xx)
-			if (power_sensors_available()) {
-				struct power_data pwr;
-				if (power_sensors_read(&pwr) == 0) {
-					uint8_t ch = CH_SELF + 1;
-					for (int j = 0; j < pwr.num_channels; j++) {
-						if (pwr.channels[j].valid) {
-							// Voltage: [ch][LPP_VOLTAGE=116][2-byte 0.01V]
-							rsp[i++] = ch;
-							rsp[i++] = 116;
-							uint16_t v = (uint16_t)(pwr.channels[j].voltage_v * 100);
-							rsp[i++] = (v >> 8) & 0xFF;
-							rsp[i++] = v & 0xFF;
-							// Current: [ch][LPP_CURRENT=117][2-byte 0.001A]
-							rsp[i++] = ch;
-							rsp[i++] = 117;
-							uint16_t c = (uint16_t)(pwr.channels[j].current_a * 1000);
-							rsp[i++] = (c >> 8) & 0xFF;
-							rsp[i++] = c & 0xFF;
-							// Power: [ch][LPP_POWER=128][2-byte 1W]
-							rsp[i++] = ch;
-							rsp[i++] = 128;
-							uint16_t p = (uint16_t)(pwr.channels[j].power_w);
-							rsp[i++] = (p >> 8) & 0xFF;
-							rsp[i++] = p & 0xFF;
-							ch++;
-						}
-					}
-				}
-			}
-
+			// Self-telemetry is unconditional (all permission bits set).
+			i += appendSelfTelemetry(&rsp[i], TELEM_PERM_BASE | TELEM_PERM_LOCATION | TELEM_PERM_ENVIRONMENT);
 			writeFrame(rsp, i);
-
-			// Trigger GPS wake so next telemetry request has fresh location
-			if (gps_is_available() && gps_is_enabled()) {
-				gps_request_fresh_fix();
-			}
 		} else if (len >= 4 + PUB_KEY_SIZE) {
 			// Contact telemetry request: [cmd][3 reserved bytes][32-byte pubkey]
 			ContactInfo *contact = lookupContactByPubKey(&data[4], PUB_KEY_SIZE);
@@ -2736,12 +2592,7 @@ bool CompanionMesh::handleProtocolFrame(const uint8_t *data, size_t len)
 				if (result != MSG_SEND_FAILED) {
 					clearPendingReqs();
 					_pending_telemetry = tag;
-					uint8_t rsp[10];
-					rsp[0] = PACKET_SENT;
-					rsp[1] = (result == MSG_SEND_SENT_FLOOD) ? 1 : 0;
-					put_le32(&rsp[2], tag);
-					put_le32(&rsp[6], est_timeout);
-					writeFrame(rsp, sizeof(rsp));
+					sendPacketSent(result, tag, est_timeout);
 				} else {
 					sendPacketError(ERR_BAD_STATE);
 				}
@@ -2766,12 +2617,7 @@ bool CompanionMesh::handleProtocolFrame(const uint8_t *data, size_t len)
 				if (result != MSG_SEND_FAILED) {
 					clearPendingReqs();
 					_pending_req = tag;
-					uint8_t rsp[10];
-					rsp[0] = PACKET_SENT;
-					rsp[1] = (result == MSG_SEND_SENT_FLOOD) ? 1 : 0;
-					put_le32(&rsp[2], tag);
-					put_le32(&rsp[6], est_timeout);
-					writeFrame(rsp, sizeof(rsp));
+					sendPacketSent(result, tag, est_timeout);
 				} else {
 					sendPacketError(ERR_BAD_STATE);
 				}
@@ -2805,12 +2651,7 @@ bool CompanionMesh::handleProtocolFrame(const uint8_t *data, size_t len)
 				if (result != MSG_SEND_FAILED) {
 					clearPendingReqs();
 					_pending_discovery = tag;
-					uint8_t rsp[10];
-					rsp[0] = PACKET_SENT;
-					rsp[1] = (result == MSG_SEND_SENT_FLOOD) ? 1 : 0;
-					put_le32(&rsp[2], tag);
-					put_le32(&rsp[6], est_timeout);
-					writeFrame(rsp, sizeof(rsp));
+					sendPacketSent(result, tag, est_timeout);
 				} else {
 					sendPacketError(ERR_BAD_STATE);
 				}
@@ -3118,12 +2959,7 @@ bool CompanionMesh::handleProtocolFrame(const uint8_t *data, size_t len)
 				if (result != MSG_SEND_FAILED) {
 					clearPendingReqs();
 					_pending_req = tag;
-					uint8_t rsp[10];
-					rsp[0] = PACKET_SENT;
-					rsp[1] = (result == MSG_SEND_SENT_FLOOD) ? 1 : 0;  // is_flood
-					put_le32(&rsp[2], tag);
-					put_le32(&rsp[6], est_timeout);
-					writeFrame(rsp, sizeof(rsp));
+					sendPacketSent(result, tag, est_timeout);
 				} else {
 					sendPacketError(ERR_BAD_STATE);
 				}

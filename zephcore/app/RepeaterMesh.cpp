@@ -7,6 +7,7 @@
 #include <mesh/Utils.h>
 #include <helpers/AdvertDataHelpers.h>
 #include <helpers/TxtDataHelpers.h>
+#include <helpers/MeshcoreJson.h>
 #include <adapters/radio/LoRaRadioBase.h>
 #include <adapters/sensors/SimpleLPP.h>
 #include <adapters/sensors/ZephyrEnvSensors.h>
@@ -585,32 +586,11 @@ void RepeaterMesh::logTxFail(mesh::Packet* pkt, int len) {
 }
 
 uint32_t RepeaterMesh::getRetransmitDelay(const mesh::Packet* packet) {
-    float factor = getContentionTracker().getFloodDelayFactor();
-    uint32_t airtime = _radio->getEstAirtimeFor(
-        packet->getPathByteLen() + packet->payload_len + 2);
-    uint32_t max_jitter = (uint32_t)(5 * airtime * factor);
-    /* Airtime-scaled ceiling: never exceed ~6 airtimes of spread
-     * (keeps SF7/narrow-BW configs from wasting time in oversized jitter windows). */
-    uint32_t airtime_cap = 6 * airtime;
-    if (max_jitter > airtime_cap) max_jitter = airtime_cap;
-    /* Absolute cap: avoid excessive latency in very dense areas.
-     * Reactive backoff will fine-tune further if needed. */
-    if (max_jitter > 2000) max_jitter = 2000;
-    /* Floor: give downstream nodes time to finish RX processing
-     * and return to RX mode before we TX (~20ms settle) */
-    return 20 + getRNG()->nextInt(0, max_jitter + 1);
+    return computeAdaptiveFloodDelay(packet);
 }
 
 uint32_t RepeaterMesh::getDirectRetransmitDelay(const mesh::Packet* packet) {
-    uint32_t airtime = _radio->getEstAirtimeFor(
-        packet->getPathByteLen() + packet->payload_len + 2);
-    /* Jitter around Arduino direct factor 0.3 using a per-packet factor
-     * in the range [0.25, 0.40]. */
-    uint32_t factor_milli = (uint32_t)getRNG()->nextInt(250, 401);
-    uint32_t max_jitter = (airtime * factor_milli) / 1000;
-    /* Floor: give downstream nodes time to finish RX processing
-     * and return to RX mode before we TX (~20ms settle + jitter). */
-    return 20 + getRNG()->nextInt(0, max_jitter + 1);
+    return computeAdaptiveDirectDelay(packet);
 }
 
 bool RepeaterMesh::filterRecvFloodPacket(mesh::Packet* pkt) {
@@ -1616,45 +1596,12 @@ void RepeaterMesh::publishUplinkPacket(mesh::Packet *pkt)
     hash_hex[MAX_HASH_SIZE * 2] = '\0';
 
     uint32_t now_epoch = getRTCClock()->getCurrentTime();
-    struct tm tm_now;
-    time_t t = (time_t)now_epoch;
-    gmtime_r(&t, &tm_now);
-
-    char ts_buf[48];
-    char time_buf[12], date_buf[32];
-    snprintf(ts_buf, sizeof(ts_buf), "%04d-%02d-%02dT%02d:%02d:%02d.000000",
-             tm_now.tm_year + 1900, tm_now.tm_mon + 1, tm_now.tm_mday,
-             tm_now.tm_hour, tm_now.tm_min, tm_now.tm_sec);
-    snprintf(time_buf, sizeof(time_buf), "%02d:%02d:%02d",
-             tm_now.tm_hour, tm_now.tm_min, tm_now.tm_sec);
-    snprintf(date_buf, sizeof(date_buf), "%d/%d/%04d",
-             tm_now.tm_mday, tm_now.tm_mon + 1, tm_now.tm_year + 1900);
 
     static char json_buf[1024];
-    int json_len = snprintf(json_buf, sizeof(json_buf),
-        "{"
-        "\"type\":\"PACKET\","
-        "\"origin\":\"%s\","
-        "\"origin_id\":\"%s\","
-        "\"timestamp\":\"%s\","
-        "\"direction\":\"rx\","
-        "\"time\":\"%s\","
-        "\"date\":\"%s\","
-        "\"len\":\"%d\","
-        "\"packet_type\":\"%u\","
-        "\"route\":\"%s\","
-        "\"payload_len\":\"%u\","
-        "\"raw\":\"%s\","
-        "\"SNR\":\"%d\","
-        "\"RSSI\":\"%d\","
-        "\"score\":\"%d\","
-        "\"hash\":\"%s\""
-        "}",
+    struct MeshcorePacketJson pj = {
         _prefs.node_name,
         _uplink_pubkey_hex,
-        ts_buf,
-        time_buf,
-        date_buf,
+        now_epoch,
         _uplink_last_raw_len,
         (unsigned)pkt->getPayloadType(),
         pkt->isRouteDirect() ? "D" : "F",
@@ -1663,7 +1610,9 @@ void RepeaterMesh::publishUplinkPacket(mesh::Packet *pkt)
         (int)pkt->getSNR(),
         (int)_uplink_last_rssi,
         (int)(_uplink_last_score * 1000.0f),
-        hash_hex);
+        hash_hex,
+    };
+    int json_len = meshcore_build_packet_json(json_buf, sizeof(json_buf), &pj);
 
     if (json_len <= 0 || json_len >= (int)sizeof(json_buf)) {
         return;
@@ -1678,14 +1627,6 @@ void RepeaterMesh::publishUplinkStatus(const char *status)
 
     auto& radio_driver = getRadioDriver(_radio);
     uint32_t now_epoch = getRTCClock()->getCurrentTime();
-    struct tm tm_now;
-    time_t t = (time_t)now_epoch;
-    gmtime_r(&t, &tm_now);
-
-    char ts_buf[48];
-    snprintf(ts_buf, sizeof(ts_buf), "%04d-%02d-%02dT%02d:%02d:%02d.000000",
-             tm_now.tm_year + 1900, tm_now.tm_mon + 1, tm_now.tm_mday,
-             tm_now.tm_hour, tm_now.tm_min, tm_now.tm_sec);
 
     char radio_buf[48];
     snprintf(radio_buf, sizeof(radio_buf), "%.3f,%.1f,%u,%u",
@@ -1693,29 +1634,9 @@ void RepeaterMesh::publishUplinkStatus(const char *status)
              (unsigned)_prefs.sf, (unsigned)_prefs.cr);
 
     static char json_buf[768];
-    int json_len = snprintf(json_buf, sizeof(json_buf),
-        "{"
-        "\"status\":\"%s\","
-        "\"timestamp\":\"%s\","
-        "\"origin\":\"%s\","
-        "\"origin_id\":\"%s\","
-        "\"radio\":\"%s\","
-        "\"model\":\"%s\","
-        "\"firmware_version\":\"%s\","
-        "\"client_version\":\"zephcoretomqtt/1.1\","
-        "\"stats\":{"
-            "\"battery_mv\":%u,"
-            "\"uptime_secs\":%u,"
-            "\"debug_flags\":%u,"
-            "\"queue_len\":%u,"
-            "\"noise_floor\":%d,"
-            "\"tx_air_secs\":%u,"
-            "\"rx_air_secs\":%u,"
-            "\"recv_errors\":%u"
-        "}"
-        "}",
+    struct MeshcoreStatusJson sj = {
         status,
-        ts_buf,
+        now_epoch,
         _prefs.node_name,
         _uplink_pubkey_hex,
         radio_buf,
@@ -1732,7 +1653,9 @@ void RepeaterMesh::publishUplinkStatus(const char *status)
         _radio->getNoiseFloor(),
         (unsigned)(getTotalAirTime() / 1000),
         (unsigned)(getReceiveAirTime() / 1000),
-        (unsigned)radio_driver.getPacketsRecvErrors());
+        (unsigned)radio_driver.getPacketsRecvErrors(),
+    };
+    int json_len = meshcore_build_status_json(json_buf, sizeof(json_buf), &sj);
 
     if (json_len <= 0 || json_len >= (int)sizeof(json_buf)) {
         return;

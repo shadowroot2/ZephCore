@@ -71,6 +71,36 @@ uint32_t Mesh::getRetransmitDelay(const Packet *packet)
 	return _rng->nextInt(0, 5) * t;
 }
 
+uint32_t Mesh::computeAdaptiveFloodDelay(const Packet *packet)
+{
+	float factor = getContentionTracker().getFloodDelayFactor();
+	uint32_t airtime = _radio->getEstAirtimeFor(
+		packet->getPathByteLen() + packet->payload_len + 2);
+	uint32_t max_jitter = (uint32_t)(5 * airtime * factor);
+	/* Airtime-scaled ceiling: never exceed ~6 airtimes of spread. */
+	uint32_t airtime_cap = 6 * airtime;
+	if (max_jitter > airtime_cap) max_jitter = airtime_cap;
+	/* Absolute cap: avoid excessive latency in very dense areas.
+	 * Reactive backoff will fine-tune further if needed. */
+	if (max_jitter > 2000) max_jitter = 2000;
+	/* Floor: give downstream nodes time to finish RX processing
+	 * and return to RX mode before we TX (~20ms settle) */
+	return 20 + _rng->nextInt(0, max_jitter + 1);
+}
+
+uint32_t Mesh::computeAdaptiveDirectDelay(const Packet *packet)
+{
+	uint32_t airtime = _radio->getEstAirtimeFor(
+		packet->getPathByteLen() + packet->payload_len + 2);
+	/* Jitter around Arduino direct factor 0.3 using a per-packet factor
+	 * in the range [0.25, 0.40]. */
+	uint32_t factor_milli = (uint32_t)_rng->nextInt(250, 401);
+	uint32_t max_jitter = (airtime * factor_milli) / 1000;
+	/* Floor: give downstream nodes time to finish RX processing
+	 * and return to RX mode before we TX (~20ms settle + jitter) */
+	return 20 + _rng->nextInt(0, max_jitter + 1);
+}
+
 uint32_t Mesh::getCADFailRetryDelay() const
 {
 	return _rng->nextInt(1, 4) * 120;

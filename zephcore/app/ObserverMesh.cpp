@@ -9,6 +9,7 @@
 #include <mesh/Utils.h>
 #include <mesh/LoRaConfig.h>
 #include <adapters/radio/LoRaRadioBase.h>
+#include <helpers/MeshcoreJson.h>
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(zephcore_observer, CONFIG_ZEPHCORE_OBSERVER_LOG_LEVEL);
@@ -96,14 +97,6 @@ void ObserverMesh::begin(RepeaterDataStore *store, struct ObserverCreds *creds)
 void ObserverMesh::buildStatusJson(const char *status, char *out, size_t out_size)
 {
 	uint32_t now_epoch = _rtc ? _rtc->getCurrentTime() : 0;
-	struct tm tm_now;
-	time_t t = (time_t)now_epoch;
-	gmtime_r(&t, &tm_now);
-
-	char ts_buf[48];
-	snprintf(ts_buf, sizeof(ts_buf), "%04d-%02d-%02dT%02d:%02d:%02d.000000",
-		 tm_now.tm_year + 1900, tm_now.tm_mon + 1, tm_now.tm_mday,
-		 tm_now.tm_hour, tm_now.tm_min, tm_now.tm_sec);
 
 	char radio_buf[48];
 	snprintf(radio_buf, sizeof(radio_buf), "%.3f,%.1f,%u,%u",
@@ -117,32 +110,9 @@ void ObserverMesh::buildStatusJson(const char *status, char *out, size_t out_siz
 		uptime_secs = 0;
 	}
 
-	int noise_floor = ((LoRaRadioBase *)_radio)->getNoiseFloor();
-	uint32_t recv_errors = ((LoRaRadioBase *)_radio)->getPacketsRecvErrors();
-
-	snprintf(out, out_size,
-		"{"
-		"\"status\":\"%s\","
-		"\"timestamp\":\"%s\","
-		"\"origin\":\"%s\","
-		"\"origin_id\":\"%s\","
-		"\"radio\":\"%s\","
-		"\"model\":\"%s\","
-		"\"firmware_version\":\"%s\","
-		"\"client_version\":\"zephcoretomqtt/1.1\","
-		"\"stats\":{"
-			"\"battery_mv\":%u,"
-			"\"uptime_secs\":%u,"
-			"\"debug_flags\":%u,"
-			"\"queue_len\":%u,"
-			"\"noise_floor\":%d,"
-			"\"tx_air_secs\":%u,"
-			"\"rx_air_secs\":%u,"
-			"\"recv_errors\":%u"
-		"}"
-		"}",
+	struct MeshcoreStatusJson sj = {
 		status,
-		ts_buf,
+		now_epoch,
 		_prefs.node_name,
 		_pubkey_hex,
 		radio_buf,
@@ -152,14 +122,16 @@ void ObserverMesh::buildStatusJson(const char *status, char *out, size_t out_siz
 		"unknown",
 #endif
 		FIRMWARE_VERSION,
-		0u,
+		0u,                                              /* battery_mv (observer has none) */
 		uptime_secs,
-		0u,
-		0u,
-		noise_floor,
-		0u,
-		0u,
-		recv_errors);
+		0u,                                              /* debug_flags */
+		0u,                                              /* queue_len */
+		((LoRaRadioBase *)_radio)->getNoiseFloor(),
+		0u,                                              /* tx_air_secs */
+		0u,                                              /* rx_air_secs */
+		((LoRaRadioBase *)_radio)->getPacketsRecvErrors(),
+	};
+	meshcore_build_status_json(out, out_size, &sj);
 }
 
 void ObserverMesh::publishStatus(const char *status)
@@ -212,65 +184,24 @@ void ObserverMesh::enqueuePacket(Packet *pkt)
 
 	/* Get current timestamp from RTC */
 	uint32_t now_epoch = _rtc ? _rtc->getCurrentTime() : 0;
-	struct tm tm_now;
-	time_t t = (time_t)now_epoch;
-	gmtime_r(&t, &tm_now);
-
-	/* Format ISO 8601 timestamp (microseconds always 0 — RTC has 1s resolution) */
-	char ts_buf[48];
-	snprintf(ts_buf, sizeof(ts_buf),
-		 "%04d-%02d-%02dT%02d:%02d:%02d.000000",
-		 tm_now.tm_year + 1900, tm_now.tm_mon + 1, tm_now.tm_mday,
-		 tm_now.tm_hour, tm_now.tm_min, tm_now.tm_sec);
-
-	/* Format time and date fields matching meshcoretomqtt */
-	char time_buf[12], date_buf[32];
-	snprintf(time_buf, sizeof(time_buf), "%02d:%02d:%02d",
-		 tm_now.tm_hour, tm_now.tm_min, tm_now.tm_sec);
-	snprintf(date_buf, sizeof(date_buf), "%d/%d/%04d",
-		 tm_now.tm_mday, tm_now.tm_mon + 1, tm_now.tm_year + 1900);
-
-	/* Route letter: "F" = flood/transport-flood, "D" = direct/transport-direct */
-	const char *route_str = pkt->isRouteDirect() ? "D" : "F";
-
-	/* score in meshcoretomqtt format: integer score * 1000 */
-	int score_int = (int)(_last_score * 1000.0f);
 
 	/* Build JSON payload matching meshcoretomqtt packet format */
 	static char json_buf[1024];
-	int json_len = snprintf(json_buf, sizeof(json_buf),
-		"{"
-		"\"type\":\"PACKET\","
-		"\"origin\":\"%s\","
-		"\"origin_id\":\"%s\","
-		"\"timestamp\":\"%s\","
-		"\"direction\":\"rx\","
-		"\"time\":\"%s\","
-		"\"date\":\"%s\","
-		"\"len\":\"%d\","
-		"\"packet_type\":\"%u\","
-		"\"route\":\"%s\","
-		"\"payload_len\":\"%u\","
-		"\"raw\":\"%s\","
-		"\"SNR\":\"%d\","
-		"\"RSSI\":\"%d\","
-		"\"score\":\"%d\","
-		"\"hash\":\"%s\""
-		"}",
+	struct MeshcorePacketJson pj = {
 		_prefs.node_name,
 		_pubkey_hex,
-		ts_buf,
-		time_buf,
-		date_buf,
+		now_epoch,
 		_last_raw_len,
 		(unsigned)pkt->getPayloadType(),
-		route_str,
+		pkt->isRouteDirect() ? "D" : "F",
 		(unsigned)pkt->payload_len,
 		raw_hex,
 		(int)pkt->getSNR(),
 		(int)_last_rssi,
-		score_int,
-		hash_hex);
+		(int)(_last_score * 1000.0f),
+		hash_hex,
+	};
+	int json_len = meshcore_build_packet_json(json_buf, sizeof(json_buf), &pj);
 
 	if (json_len < 0 || json_len >= (int)sizeof(json_buf)) {
 		LOG_WRN("Packet JSON truncated (len=%d)", json_len);
@@ -634,8 +565,6 @@ void ObserverMesh::publishSelfAdvert()
 	int raw_len = pos;
 
 	/* Sign: pubkey + timestamp + appdata */
-	int sign_input_len = PUB_KEY_SIZE + 4 + (appdata_off - ts_off - 4) + (raw_len - appdata_off);
-	sign_input_len = PUB_KEY_SIZE + 4 + (raw_len - appdata_off);
 	uint8_t sign_input[PUB_KEY_SIZE + 4 + 128];  /* generous upper bound */
 	memcpy(sign_input,                  &raw[pubkey_off], PUB_KEY_SIZE);
 	memcpy(sign_input + PUB_KEY_SIZE,   &raw[ts_off],     4);
@@ -643,54 +572,26 @@ void ObserverMesh::publishSelfAdvert()
 	_self_id.sign(&raw[sig_off], sign_input, (size_t)(PUB_KEY_SIZE + 4 + raw_len - appdata_off));
 
 	/* ---- Build JSON ---- */
-	uint32_t now_epoch = now_ts;
-	struct tm tm_now;
-	time_t t = (time_t)now_epoch;
-	gmtime_r(&t, &tm_now);
-
-	char ts_buf[48];
-	snprintf(ts_buf, sizeof(ts_buf), "%04d-%02d-%02dT%02d:%02d:%02d.000000",
-		 tm_now.tm_year + 1900, tm_now.tm_mon + 1, tm_now.tm_mday,
-		 tm_now.tm_hour, tm_now.tm_min, tm_now.tm_sec);
-	char time_buf[12], date_buf[32];
-	snprintf(time_buf, sizeof(time_buf), "%02d:%02d:%02d",
-		 tm_now.tm_hour, tm_now.tm_min, tm_now.tm_sec);
-	snprintf(date_buf, sizeof(date_buf), "%d/%d/%04d",
-		 tm_now.tm_mday, tm_now.tm_mon + 1, tm_now.tm_year + 1900);
-
 	char raw_hex[sizeof(raw) * 2 + 1];
 	Utils::toHex(raw_hex, raw, raw_len);
 	raw_hex[raw_len * 2] = '\0';
 
 	static char json_buf[1024];
-	int json_len = snprintf(json_buf, sizeof(json_buf),
-		"{"
-		"\"type\":\"PACKET\","
-		"\"origin\":\"%s\","
-		"\"origin_id\":\"%s\","
-		"\"timestamp\":\"%s\","
-		"\"direction\":\"rx\","
-		"\"time\":\"%s\","
-		"\"date\":\"%s\","
-		"\"len\":\"%d\","
-		"\"packet_type\":\"%u\","
-		"\"route\":\"D\","
-		"\"payload_len\":\"%d\","
-		"\"raw\":\"%s\","
-		"\"SNR\":\"0\","
-		"\"RSSI\":\"0\","
-		"\"score\":\"0\","
-		"\"hash\":\"0000000000000000\""
-		"}",
+	struct MeshcorePacketJson pj = {
 		name,
 		_pubkey_hex,
-		ts_buf,
-		time_buf,
-		date_buf,
+		now_ts,
 		raw_len,
 		(unsigned)PAYLOAD_TYPE_ADVERT,
-		raw_len - 2,  /* payload_len = raw_len minus header and path_len_byte */
-		raw_hex);
+		"D",
+		(unsigned)(raw_len - 2),  /* payload_len = raw_len minus header + path_len_byte */
+		raw_hex,
+		0,                        /* SNR (locally originated) */
+		0,                        /* RSSI */
+		0,                        /* score */
+		"0000000000000000",       /* hash (not computed for self-advert) */
+	};
+	int json_len = meshcore_build_packet_json(json_buf, sizeof(json_buf), &pj);
 
 	if (json_len < 0 || json_len >= (int)sizeof(json_buf)) {
 		LOG_WRN("publishSelfAdvert: JSON truncated");
