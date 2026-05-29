@@ -176,6 +176,7 @@ static void request_dle(struct bt_conn *conn);
 static ssize_t secure_nus_rx_write(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 				   const void *buf, uint16_t len, uint16_t offset, uint8_t flags);
 static void start_adv(void);
+static void start_fast_adv(void);
 static void kick_tx_drain(void);
 
 /* ========== GATT Service ========== */
@@ -375,9 +376,7 @@ static void recycled(void)
 		return;
 	}
 	LOG_DBG("restart advertising");
-	fast_adv_active = true;
-	k_work_reschedule(&adv_slow_work, K_MSEC(BT_ADV_FAST_DURATION_MS));
-	start_adv();
+	start_fast_adv();
 }
 
 static void security_changed(struct bt_conn *conn, bt_security_t level, enum bt_security_err err)
@@ -808,6 +807,16 @@ static void start_adv(void)
 	}
 }
 
+/* Enter the post-boot/disconnect fast-advertising window, then start adv.
+ * The adv_slow_work timer flips back to the slow interval after
+ * BT_ADV_FAST_DURATION_MS. */
+static void start_fast_adv(void)
+{
+	fast_adv_active = true;
+	k_work_reschedule(&adv_slow_work, K_MSEC(BT_ADV_FAST_DURATION_MS));
+	start_adv();
+}
+
 /* ========== Public API ========== */
 
 void zephcore_ble_init(const struct ble_callbacks *cbs)
@@ -832,9 +841,7 @@ void zephcore_ble_start(const char *name)
 
 	build_device_name_and_adv(name);
 	LOG_DBG("init complete, starting adv");
-	fast_adv_active = true;
-	k_work_reschedule(&adv_slow_work, K_MSEC(BT_ADV_FAST_DURATION_MS));
-	start_adv();
+	start_fast_adv();
 }
 
 size_t zephcore_ble_send(const uint8_t *data, uint16_t len)
@@ -932,9 +939,7 @@ void zephcore_ble_set_enabled(bool enable)
 		LOG_INF("BLE disabled");
 	} else {
 		/* Re-enable advertising — start fast window */
-		fast_adv_active = true;
-		k_work_reschedule(&adv_slow_work, K_MSEC(BT_ADV_FAST_DURATION_MS));
-		start_adv();
+		start_fast_adv();
 		LOG_INF("BLE enabled");
 	}
 }
@@ -1022,9 +1027,7 @@ void zephcore_ble_update_name(const char *new_name)
 		adv_stop_for_interval_change = true;  /* suppress recycled() restart */
 		bt_le_adv_stop();
 		adv_running = false;
-		fast_adv_active = true;
-		k_work_reschedule(&adv_slow_work, K_MSEC(BT_ADV_FAST_DURATION_MS));
-		start_adv();
+		start_fast_adv();
 	}
 	/* If connected: GATT device name (via bt_set_name in build_device_name_and_adv)
 	 * is live now; advertising payload updates on next adv cycle after disconnect. */
