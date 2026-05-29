@@ -39,10 +39,8 @@ static uint16_t usb_rx_idx;
 static uint16_t usb_frame_len;  /* Expected frame length (0 = waiting for header) */
 static uint32_t usb_frame_start_time;  /* Timestamp of first byte in current frame */
 
-/* Pointers to mesh event infrastructure (set by init) */
-static struct k_event *s_mesh_events;
+/* Work item for deferred V3 frame processing (set by init) */
 static struct k_work *s_rx_work;
-static uint32_t s_mesh_event_ble_rx;
 
 /* Work items */
 static void usb_rx_work_fn(struct k_work *work);
@@ -202,10 +200,10 @@ void zephcore_usb_companion_init(struct k_event *mesh_events,
 				 void *board)
 {
 	ARG_UNUSED(board);
+	ARG_UNUSED(mesh_events);
+	ARG_UNUSED(mesh_event_ble_rx);
 
-	s_mesh_events = mesh_events;
 	s_rx_work = rx_work;
-	s_mesh_event_ble_rx = mesh_event_ble_rx;
 
 #if DT_HAS_COMPAT_STATUS_OKAY(zephyr_cdc_acm_uart)
 	usb_dev = DEVICE_DT_GET_ONE(zephyr_cdc_acm_uart);
