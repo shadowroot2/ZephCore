@@ -132,14 +132,24 @@ static int extract_via_aes_ctr(const uint8_t *pool, size_t pool_len,
 {
 	psa_status_t status;
 	uint8_t key[32];
+	size_t key_len = 0;
 
 	/* PSA is idempotent — already initialized via mbedTLS but a defensive
 	 * call here costs nothing if it returns PSA_ERROR_ALREADY_EXISTS. */
 	(void)psa_crypto_init();
 
-	/* Extract: SHA-256(pool) → AES key. Reuses the codebase's PSA-backed
-	 * SHA-256 wrapper instead of open-coding psa_hash_compute here. */
-	Utils::sha256(key, sizeof(key), pool, (int)pool_len);
+	/* Extract: SHA-256(pool) → AES key.  Open-coded here (NOT Utils::sha256)
+	 * on purpose: that wrapper returns void and silently zeroes its output on
+	 * PSA failure.  A zeroed key imports fine and AES-ECB(key=0) derives a
+	 * fixed, device-independent seed that the all-zero/all-FF degenerate check
+	 * cannot catch — every affected unit would share one Ed25519 identity.  We
+	 * must hard-fail so the caller (mixIdentitySeed) cryptoPanicReboots. */
+	status = psa_hash_compute(PSA_ALG_SHA_256, pool, pool_len,
+				  key, sizeof(key), &key_len);
+	if (status != PSA_SUCCESS || key_len != sizeof(key)) {
+		Utils::secureZeroize(key, sizeof(key));
+		return -1;
+	}
 
 	/* Import key for AES-256-ECB */
 	psa_key_attributes_t attr = PSA_KEY_ATTRIBUTES_INIT;
