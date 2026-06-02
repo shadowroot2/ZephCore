@@ -13,7 +13,8 @@
  *   - DIO3 TCXO at 1.8 V   (matches the official MeshCore GAT562 variant)
  *   - Battery multiplier 6232 (vs 6161): 3 * 1.75 * 1.187 * 1000
  *   - Buzzer on P1.01 (PWM0)
- *   - GPS: UART NMEA on UART0 @ 9600 (MCU RX P0.15 / TX P0.16), always-on
+ *   - GPS: AT6558R on UART0 @ 9600 (MCU RX P0.15 / TX P0.16), luatos,air530z
+ *     driver, power via on-off-gpios on WB_IO2/P1.02
  *   - 6 buttons on GPIO SENSE (sense-edge-mask) so DIO1 keeps a GPIOTE chan
  *   - LEDs active-high: green P1.03 (LoRa TX), blue P1.04
  *   - User button P0.09 (NFC1)
@@ -196,16 +197,10 @@
 		line-name = "sx1262-power-en";
 	};
 
-	/* GPS power-enable on WB_IO2 / P1.02: held HIGH so the AT6558R GNSS is
-	 * powered and transmitting NMEA at boot. Without this the receiver is
-	 * silent (no UART data at all). Hogged (not driven by the GPS manager)
-	 * because the module is simply always-on while the board is powered. */
-	gps_power_en {
-		gpio-hog;
-		gpios = <2 GPIO_ACTIVE_HIGH>;
-		output-high;
-		line-name = "gps-power-en";
-	};
+	/* GPS power-enable on WB_IO2 / P1.02 is NOT hogged here: the AT6558R is
+	 * driven by the luatos,air530z driver, which owns this line via
+	 * on-off-gpios (see &uart0) so ZephyrGPSManager can power the receiver
+	 * down for low-power operation. */
 };
 
 &adc {
@@ -224,27 +219,35 @@
 };
 
 /*
- * GPS: UART NMEA receiver on UART0 @ 9600 baud (MCU RX P0.15 <- GPS TX,
- * MCU TX P0.16 -> GPS RX). Multi-constellation (GPS + GLONASS), always
- * powered — no enable pin. Matches the official MeshCore gat562_30s_mesh_kit
- * variant (MicroNMEALocationProvider on Serial1, 9600 baud). Runs on UARTE0
- * (like the other nRF52 GPS boards here): UARTE1's interrupt-driven RX did
- * not deliver to the modem backend on this SoC. Zephyr's gnss-nmea-generic
- * driver parses the stream and publishes via the GNSS subsystem.
+ * GPS: AT6558R UART NMEA receiver on UART0 @ 9600 baud (MCU RX P0.15 <- GPS
+ * TX, MCU TX P0.16 -> GPS RX). Multi-constellation (GPS + GLONASS). Matches
+ * the official MeshCore gat562_30s_mesh_kit variant (MicroNMEALocationProvider
+ * on Serial1, 9600 baud).
+ *
+ * Driven by the luatos,air530z driver — the AT6558R is a CASIC-protocol part,
+ * so the driver's $PCAS03 init trims the NMEA stream to GGA+RMC (+GSV when
+ * CONFIG_GNSS_SATELLITES) and $PMTK869 enables EASY fast-TTFF. Same driver and
+ * chip as the rak_wismesh_tag board. GPS power is managed by the driver via
+ * on-off-gpios (WB_IO2 / P1.02, active-high), so ZephyrGPSManager can power
+ * the receiver down — no always-on gpio-hog. Because the driver brings the
+ * module up only after the UART backend is ready, the plain interrupt-driven
+ * RX feeds the modem backend correctly and no CONFIG_UART_ASYNC_API is needed.
  */
 &uart0 {
+	compatible = "nordic,nrf-uarte";
 	status = "okay";
 	current-speed = <9600>;
 	pinctrl-0 = <&uart0_default>;
 	pinctrl-1 = <&uart0_sleep>;
 	pinctrl-names = "default", "sleep";
 
-	gnss: gnss-nmea-generic {
-		compatible = "gnss-nmea-generic";
+	gnss: gnss {
+		compatible = "luatos,air530z";
+		on-off-gpios = <&gpio1 2 GPIO_ACTIVE_HIGH>;	/* WB_IO2 / P1.02 GPS power */
 	};
 };
 
-/* UART1 unused — the GPS moved to UART0 (see above). */
+/* UART1 unused — the GPS is on UART0 (see above). */
 &uart1 {
 	status = "disabled";
 };
