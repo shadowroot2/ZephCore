@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  *
  * GAT562 30S Mesh Kit — nRF52840 + SX1262 on a RAK4631 core module, with a
  * 30 dBm (1 W) external PA, SSD1306 OLED, GPS, buzzer, 2x18650 + solar input.

@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  * Adaptive Contention Window — EMA-based flood retransmit delay
  *
  * Counts neighbor retransmit dupes within a 10s window per packet.

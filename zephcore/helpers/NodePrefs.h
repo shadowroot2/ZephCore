@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  * NodePrefs - persisted node configuration (unified for all roles)
  *
  * Serialized field-by-field, not raw memcpy; struct layout does

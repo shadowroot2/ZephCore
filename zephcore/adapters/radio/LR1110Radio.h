@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  * ZephCore Radio adapter for LR1110/LR1120/LR1121 using Zephyr LoRa driver
  *
  * Thin wrapper around LoRaRadioBase — only hardware-specific hooks.

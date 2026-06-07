@@ -4,7 +4,7 @@
  * Each glyph is 6 bytes wide x 8 bits tall.
  * Covers code points 32-255 (ASCII + Latin-1 Supplement).
  *
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  */
 
 #include <zephyr/display/cfb.h>

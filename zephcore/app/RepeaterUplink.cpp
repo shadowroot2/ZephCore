@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  * RepeaterMesh MQTT uplink — WiFi/MQTT telemetry publishing for repeaters.
  *
  * Split out of RepeaterMesh.cpp for readability. Defines the RepeaterMesh

@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2026 ZephCore
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  *
  * Zephyr GPIO controller that bridges to a Linux /dev/gpiochipX device
  * via the kernel's GPIO V2 character-device uAPI (direct ioctls, no

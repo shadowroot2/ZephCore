@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  * ZephCore Radio adapter for SX127x (SX1272/SX1276/SX1278) using Zephyr loramac-node driver.
  *
  * The SX127x loramac-node driver supports the standard Zephyr LoRa API

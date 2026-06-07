@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  * XIAO nRF54L15 + Wio-SX1262 LoRa
  *
  * Pin mapping (XIAO nRF54L15 connector → Wio-SX1262):

@@ -2,7 +2,7 @@
  * Seeed Wio Tracker L1 - nRF52840 + SX1262
  * Copyright (c) 2025 ZephCore
  *
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  *
  * Hardware:
  * - nRF52840 SoC with BLE

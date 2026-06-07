@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 # GAT562 30S Mesh Kit — nRF52840 (same SWD/UF2 runners as RAK4631)
 
 board_runner_args(jlink "--device=nRF52840_xxAA" "--speed=4000")

@@ -2,7 +2,7 @@
  * ZephCore - Monochrome wrapper for RGB TFT displays
  * Copyright (c) 2026 ZephCore
  *
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  *
  * Reports PIXEL_FORMAT_MONO01 to CFB so the framebuffer is ~4 KB
  * (240×135/8 = 4050 bytes) instead of the ~64 KB RGB565 buffer that

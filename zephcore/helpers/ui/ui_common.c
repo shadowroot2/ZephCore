@@ -1,7 +1,7 @@
 /*
  * ZephCore - UI Common
  * Copyright (c) 2025 ZephCore
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  *
  * Shared ui_task.h implementations that are identical across all UI variants.
  * Compiled for every build that includes any UI (button, joystick, or future).

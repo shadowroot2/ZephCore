@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  * ZephCore USB CDC Companion Transport
  *
  * V3-framed USB CDC for companion mode: ISR, ring buffer, frame parsing,

@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  *
  * Wio Tracker L1 battery curve — single-cell LiPo, 21 points at 5% steps.
  *

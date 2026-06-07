@@ -22,7 +22,7 @@
  *
  * Flash: drag-drop build/zephyr/zephyr.uf2 onto UF2 drive
  *
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  */
 
 #include <zephyr/kernel.h>

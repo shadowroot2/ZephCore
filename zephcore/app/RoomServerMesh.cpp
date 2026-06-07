@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  * RoomServerMesh - LoRa mesh shared-room (BBS) server
  *
  * A store-and-forward shared message room. Clients log in with an admin or

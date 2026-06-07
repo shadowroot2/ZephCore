@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  * ZephCore UI ↔ Mesh Action Helpers
  *
  * Deferred UI button actions and periodic housekeeping display refresh.

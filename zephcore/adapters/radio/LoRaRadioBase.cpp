@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  * LoRa radio base class — shared algorithms for all radio adapters.
  */
 

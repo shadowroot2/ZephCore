@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  * LR11xx Zephyr LoRa driver — extension API
  *
  * Functions extending the standard Zephyr lora_driver_api with

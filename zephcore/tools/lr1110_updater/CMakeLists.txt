@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 # ZephCore LR1110 Firmware Updater — updates LR1110 radio firmware to 0x0401.
 #
 # Board-specific: only builds for boards with an LR1110 radio (e.g., t1000_e).

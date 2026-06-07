@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  * Minimal LR11xx HAL for firmware updater.
  *
  * Implements the Semtech lr11xx_hal_* interface used by lr1110_bootloader.c.

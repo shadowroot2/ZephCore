@@ -1,7 +1,7 @@
 /*
  * ZephCore - UI Task
  * Copyright (c) 2025 ZephCore
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  *
  * Wires together buttons, buzzer, and display.
  * Handles input events, page navigation, and notifications from mesh.

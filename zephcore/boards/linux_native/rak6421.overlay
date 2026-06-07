@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  *
  * RAK6421 WisBlock Pi HAT + RAK13300/RAK13302 (SX1262), IO Slot 1.
  * Auto-paired with rak6421.conf. Defines the native_linux SPI/GPIO controllers

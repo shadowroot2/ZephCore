@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  * Minimal LR11xx HAL for firmware updater — no IRQ, no DIO1, just SPI+GPIO.
  *
  * Provides the lr11xx_hal_write/read/direct_read/reset interface that the

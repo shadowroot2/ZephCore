@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  * RepeaterMesh region-definition CLI — the `region ...` command family and the
  * `region load` continuation-line parser.
  *

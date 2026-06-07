@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  * Button UI: track which source last set the RTC, for the top-bar clock tag.
  *
  * The tag reflects *freshness*: an external sync (GPS / app / network) is

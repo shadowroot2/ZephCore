@@ -1,7 +1,7 @@
 /*
  * ZephCore - Joystick UI Input Screen
  * Copyright (c) 2026 ZephCore
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  */
 
 #include "../joystick_screens.h"

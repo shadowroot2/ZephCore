@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  * ZephCore BLE Adapter — NUS service, advertising, security, TX/RX
  */
 #pragma once

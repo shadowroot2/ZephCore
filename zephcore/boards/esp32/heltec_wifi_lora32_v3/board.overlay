@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  * Heltec WiFi LoRa 32 V3 — ZephCore overlay
  *
  * The upstream Zephyr DTS already defines SX1262, SSD1306 OLED, button,

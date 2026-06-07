@@ -1,7 +1,7 @@
 /*
  * ZephCore - Joystick UI Task
  * Copyright (c) 2026 ZephCore
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  *
  * Runs in the mesh event loop thread (main_companion.cpp).
  * Input events are queued from the Zephyr input subsystem callback.

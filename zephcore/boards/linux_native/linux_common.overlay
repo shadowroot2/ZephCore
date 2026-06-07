@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  *
  * ZephCore native Linux PLATFORM overlay (auto-paired with linux_common.conf,
  * applied automatically for BOARD=native_sim).

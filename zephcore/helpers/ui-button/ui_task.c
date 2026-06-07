@@ -1,7 +1,7 @@
 /*
  * ZephCore - UI Task
  * Copyright (c) 2025 ZephCore
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  *
  * Integration layer that wires buttons, buzzer, and display together.
  * All event-driven via Zephyr input subsystem + k_work.

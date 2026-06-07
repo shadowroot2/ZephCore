@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  * ZephCore BLE Adapter — NUS service, advertising, security, TX/RX
  *
  * Security: SMP pairing with SC + MITM + Bonding, DisplayOnly IO (app_passkey).

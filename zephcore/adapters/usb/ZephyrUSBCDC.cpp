@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  * ZephCore — Unified USB CDC ACM init (companion + repeater + observer)
  *
  * See ZephyrUSBCDC.h for the contract. This implementation:

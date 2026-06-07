@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 #
 # Data-only descriptor for an I2C RTC chip read by ZephyrRTCDiscover
 # (adapters/clock/ZephyrRTCDiscover.c). This binds NO Zephyr RTC driver —

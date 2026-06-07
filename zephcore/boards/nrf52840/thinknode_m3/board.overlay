@@ -1,6 +1,6 @@
 /*
  * ThinkNode M3 board overlay - additional ZephCore-specific configuration
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  *
  * GPS control pins for the GPS module (generic NMEA at 9600 baud):
  * - GPS_POWER (P0.14) - Main power enable (always HIGH, gpio-hog)

@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  * Zephyr MainBoard base - nRF52840 DK and generic
  */
 

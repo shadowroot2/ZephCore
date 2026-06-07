@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  *
  * Femtofox (Luckfox Pico Mini RV1103 + Ebyte E22-900M30S, SX1262 TCXO) wiring.
  * Auto-paired with femtofox.conf. Defines the native_linux SPI/GPIO controllers

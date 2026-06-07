@@ -1,7 +1,7 @@
 /*
  * ZephCore - Joystick Display Adapter
  * Copyright (c) 2026 ZephCore
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  *
  * JoystickDisplay: DisplayDriver-compatible adapter over mc_display_*.
  *

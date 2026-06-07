@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  * ZephCore - CompanionMesh (Event-Driven)
  *
  * BLE stack is in adapters/ble/ZephyrBLE.cpp.

@@ -1,7 +1,7 @@
 /*
  * ZephCore - Joystick UI Screens
  * Copyright (c) 2026 ZephCore
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  *
  * All screen class declarations for the joystick UI.
  */

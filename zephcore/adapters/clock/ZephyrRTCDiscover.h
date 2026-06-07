@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  *
  * Boot-time hardware-RTC auto-discovery (compact raw-I2C reader).
  *

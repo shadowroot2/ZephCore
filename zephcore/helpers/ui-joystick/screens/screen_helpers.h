@@ -1,7 +1,7 @@
 /*
  * ZephCore - Joystick UI Screen Helpers
  * Copyright (c) 2026 ZephCore
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  *
  * Static helper functions shared by all joystick UI screens.
  * Include this file once per .cpp file that needs it.

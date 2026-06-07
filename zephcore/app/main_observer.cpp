@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  * ZephCore Observer — listen-only LoRa node with WiFi+MQTT forwarding.
  *
  * Every received LoRa packet is published to an MQTT broker in

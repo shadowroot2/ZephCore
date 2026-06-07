@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 # ZephCore Flash Formatter — erases all filesystem partitions, reboots to UF2 DFU.
 #
 # Build:  west build -b rak4631/nrf52840 zephcore/tools/formatter --pristine

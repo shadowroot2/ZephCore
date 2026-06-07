@@ -1,7 +1,7 @@
 /*
  * ZephCore - Joystick UI Messaging Screens
  * Copyright (c) 2026 ZephCore
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  */
 
 #include "../joystick_screens.h"

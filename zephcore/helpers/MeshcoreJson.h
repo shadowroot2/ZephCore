@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  * meshcoretomqtt-compatible JSON builders.
  *
  * Shared by ObserverMesh (mesh:: namespace) and the RepeaterMesh MQTT uplink

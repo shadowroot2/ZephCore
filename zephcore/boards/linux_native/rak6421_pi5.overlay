@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  *
  * RAK6421 WisBlock Pi HAT + RAK13300/RAK13302 (SX1262), IO Slot 1, on Pi 5.
  * Auto-paired with rak6421_pi5.conf. Identical to rak6421.overlay except the

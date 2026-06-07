@@ -1,6 +1,6 @@
 /*
  * Common I2C Sensor Definitions for ZephCore
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  *
  * Include this file inside an &i2cN { ... } block to define all
  * supported sensor nodes on that bus.  Sensors that are not physically

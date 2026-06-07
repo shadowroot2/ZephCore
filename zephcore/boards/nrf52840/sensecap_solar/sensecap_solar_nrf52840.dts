@@ -1,6 +1,6 @@
 /*
  * Seeed SenseCAP Solar Node (P1 / P1-Pro) — nRF52840 + SX1262
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  *
  * Pin map from MeshCore variants/sensecap_solar (variant.cpp, platformio.ini):
  * - SX1262: CS=P0.04, DIO1=P0.03, RST=P0.28, BUSY=P0.29, RXEN=P0.05,

@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  * Joystick UI: track which source last set the RTC (System > Info > Time).
  */
 

@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  * No-op stubs for the UI API on headless builds.
  *
  * Companion code (CompanionMesh, main_companion, ui_mesh_actions) calls

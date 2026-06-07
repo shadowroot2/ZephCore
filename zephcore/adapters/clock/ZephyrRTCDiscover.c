@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  *
  * Compact raw-I2C hardware-RTC auto-discovery. See ZephyrRTCDiscover.h.
  *

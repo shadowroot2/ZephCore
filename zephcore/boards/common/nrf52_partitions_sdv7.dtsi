@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  * nRF52840 partition layout — SoftDevice s140 v7 + UF2 bootloader
  *
  * ┌──────────────────────────────────────────────────────────────────┐

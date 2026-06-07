@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  * ZephCore - Room Server (USB CLI, Event-Driven)
  *
  * This is the main entry point for the room server (shared BBS) role.

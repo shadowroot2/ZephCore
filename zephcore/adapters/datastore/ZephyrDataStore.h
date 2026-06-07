@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  * Zephyr DataStore - LittleFS-backed persistence with optional QSPI flash
  *
  * All platforms use DTS-automounted /lfs for identity, prefs, contacts.

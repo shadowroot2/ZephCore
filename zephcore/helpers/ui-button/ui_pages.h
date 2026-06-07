@@ -1,7 +1,7 @@
 /*
  * ZephCore - UI Page System
  * Copyright (c) 2025 ZephCore
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  *
  * Defines the multi-page UI matching Arduino's ui-new implementation.
  * Each page has a render function that draws to the display.

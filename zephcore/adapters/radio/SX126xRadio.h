@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  * ZephCore Radio adapter for SX126x (SX1261/SX1262/SX1268) using native Zephyr driver
  */
 

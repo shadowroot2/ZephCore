@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2026 ZephCore
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  *
  * Host-side Linux GPIO chardev V2 wrapper for gpio_native_linux.
  *

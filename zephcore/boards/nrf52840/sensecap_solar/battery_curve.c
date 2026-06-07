@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  *
  * SenseCAP Solar single-cell LiPo OCV curve — 21 points at 5% steps.
  * 11-point base linearly interpolated to 5% resolution.

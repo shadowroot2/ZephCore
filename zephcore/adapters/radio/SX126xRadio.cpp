@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  * SX126x hardware hooks for LoRaRadioBase — native Zephyr driver.
  */
 

@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  * LR11xx Zephyr LoRa driver
  *
  * Implements the standard Zephyr lora_driver_api using the Semtech lr11xx_driver

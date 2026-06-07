@@ -1,6 +1,6 @@
 /*
  * SenseCAP Solar — ZephCore overlay
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  *
  * GPS aliases for ZephyrGPSManager. gnss-nmea-generic has no on-off-gpios,
  * so ZephyrGPSManager owns P1.05 (gps-enable alias) exclusively.

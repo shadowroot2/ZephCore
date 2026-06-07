@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  * Shared constants and utilities for all LoRa radio adapters.
  *
  * Anything duplicated between SX126xRadio and LR1110Radio belongs here.

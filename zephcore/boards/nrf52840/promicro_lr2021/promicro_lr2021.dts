@@ -2,7 +2,7 @@
  * ProMicro LR2021 — nRF52840 SuperMini + LR2021
  * Copyright (c) 2025 ZephCore
  *
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  *
  * Hardware:
  * - nRF52840 (SuperMini/ProMicro form factor) with BLE 5

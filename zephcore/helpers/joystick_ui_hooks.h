@@ -1,7 +1,7 @@
 /*
  * ZephCore - Joystick UI Hooks (public API)
  * Copyright (c) 2026 ZephCore
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  *
  * Mesh layer → joystick UI bridge. Real implementations live in
  * helpers/ui-joystick/joystick_ui_hooks.cpp when CONFIG_ZEPHCORE_UI_DESIGN_JOYSTICK=y.

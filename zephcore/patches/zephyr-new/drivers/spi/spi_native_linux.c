@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2026 ZephCore
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  *
  * Zephyr SPI driver that bridges to a Linux /dev/spidev character device.
  * Runs under native_sim on a real Linux host (not in QEMU/simulation).

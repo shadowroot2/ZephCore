@@ -1,7 +1,7 @@
 /*
  * ZephCore - Doom Raycaster Easter Egg
  * Copyright (c) 2025 ZephCore
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  *
  * Wolf3D-style raycasting engine merged into a single file.
  * Runs on k_work_delayable at 20 FPS on the system work queue.

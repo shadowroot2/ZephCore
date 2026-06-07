@@ -1,7 +1,7 @@
 /*
  * ZephCore - Joystick UI Definitions
  * Copyright (c) 2026 ZephCore
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  *
  * Key codes and layout constants for the joystick UI.
  */

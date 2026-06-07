@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  * ZephCore — Unified USB CDC ACM init (companion + repeater + observer)
  *
  * Owns the USBD device + CDC ACM class registration, the usbd_msg_callback

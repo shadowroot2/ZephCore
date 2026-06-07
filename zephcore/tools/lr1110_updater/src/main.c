@@ -1,6 +1,6 @@
 /*
  * ZephCore LR1110 Firmware Updater
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  *
  * Standalone tool that updates the LR1110 radio firmware to v0x0401.
  * Flash this UF2 first, let it update the radio, then flash ZephCore main firmware.

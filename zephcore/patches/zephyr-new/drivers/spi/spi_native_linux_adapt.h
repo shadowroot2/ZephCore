@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2026 ZephCore
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  *
  * Host-side spidev wrapper functions for spi_native_linux.
  * Compiled into the native_simulator INTERFACE so host headers

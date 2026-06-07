@@ -1,7 +1,7 @@
 /*
  * ZephCore - Joystick UI Task
  * Copyright (c) 2026 ZephCore
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  *
  * JoystickUITask: joystick-based UI coordinator for the ZephCore companion.
  *

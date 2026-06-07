@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  * RepeaterMesh - LoRa mesh repeater implementation
  *
  * Extends mesh::Mesh with:

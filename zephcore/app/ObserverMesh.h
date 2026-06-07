@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  * ObserverMesh — listen-only LoRa mesh node.
  *
  * Extends mesh::Dispatcher directly (no routing, no flooding, no ACL).

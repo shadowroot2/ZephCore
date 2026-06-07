@@ -1,7 +1,7 @@
 /*
  * ZephCore - UI Page Renderers
  * Copyright (c) 2025 ZephCore
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  *
  * Multi-page UI system matching Arduino's ui-new HomeScreen implementation.
  * Each page renders via the display abstraction (any resolution/display type).

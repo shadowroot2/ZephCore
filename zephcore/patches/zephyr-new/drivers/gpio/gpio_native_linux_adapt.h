@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2026 ZephCore
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  *
  * Host-side libgpiod v2 wrapper for gpio_native_linux.
  * Compiled into the native_simulator INTERFACE so libgpiod headers

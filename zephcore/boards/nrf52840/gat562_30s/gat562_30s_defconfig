@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 # GAT562 30S Mesh Kit default configuration
 # (most subsystems also come from zephcore_common.conf + nrf52_common.conf;
 #  these are the board essentials, kept self-contained like other custom boards)

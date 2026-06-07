@@ -1,7 +1,7 @@
 /*
  * ZephCore - Display Abstraction (CFB)
  * Copyright (c) 2025 ZephCore
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  *
  * Wraps Zephyr's Character Framebuffer (CFB) subsystem with:
  * - Auto-detection from devicetree (any Zephyr-supported display)

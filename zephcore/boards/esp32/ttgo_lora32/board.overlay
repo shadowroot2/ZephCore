@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  * TTGO LoRa32 — ZephCore overlay
  *
  * The upstream Zephyr DTS (ttgo_lora32_esp32_procpu.dts) already defines:

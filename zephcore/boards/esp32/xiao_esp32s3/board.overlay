@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  * Seeed XIAO ESP32-S3 + WIO-SX1262 LoRa
  *
  * Pin mapping (from Arduino MeshCore variants/xiao_s3_wio):

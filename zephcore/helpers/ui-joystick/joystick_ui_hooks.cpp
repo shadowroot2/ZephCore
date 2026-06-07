@@ -1,7 +1,7 @@
 /*
  * ZephCore - Joystick UI Hooks
  * Copyright (c) 2026 ZephCore
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  *
  * JoystickUIHooks: ui_task.h implementation for the joystick companion UI.
  *

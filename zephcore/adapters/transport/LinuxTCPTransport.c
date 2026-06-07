@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  * ZephCore TCP companion transport — drop-in replacement for ZephyrBLE.
  *
  * Implements the exact zephcore_ble_* C API from adapters/ble/ZephyrBLE.h

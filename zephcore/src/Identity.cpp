@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  * ZephCore Identity - Ed25519 sign/verify (Monocypher backend)
  *
  * Backed by Monocypher (lib/monocypher). The persisted private key keeps the

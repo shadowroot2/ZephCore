@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  * SX127x hardware hooks for LoRaRadioBase — Zephyr loramac-node driver.
  *
  * The SX127x driver (loramac-node/sx127x.c) exposes only the standard
