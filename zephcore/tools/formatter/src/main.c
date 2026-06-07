@@ -33,7 +33,7 @@
 #include <zephyr/sys/reboot.h>
 #include "qspi_probe.h"
 
-#if defined(CONFIG_SOC_SERIES_NRF52X) || defined(CONFIG_SOC_SERIES_NRF52)
+#if defined(CONFIG_SOC_SERIES_NRF52)
 #include <hal/nrf_power.h>
 #define IS_NRF52 1
 #else

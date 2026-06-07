@@ -2962,8 +2962,7 @@ bool CompanionMesh::handleProtocolFrame(const uint8_t *data, size_t len)
 				/* FIRMWARE_VER_CODE 13+: allow requests to a non-contact pubkey by
 				 * creating a transient "anon" contact (ADV_TYPE_NONE). These are never
 				 * persisted or synced to the app; re-lookup to get the stable slot. */
-				ContactInfo anon;
-				memset(&anon, 0, sizeof(anon));
+				ContactInfo anon{};
 				memcpy(anon.id.pub_key, &data[1], PUB_KEY_SIZE);
 				anon.out_path_len = 0;       // zero-hop direct by default
 				anon.type = ADV_TYPE_NONE;   // transient/unknown

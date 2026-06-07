@@ -31,7 +31,7 @@
 #include "lr1110_bootloader.h"
 #include "lr1110_transceiver_0401.h"
 
-#if defined(CONFIG_SOC_SERIES_NRF52X) || defined(CONFIG_SOC_SERIES_NRF52)
+#if defined(CONFIG_SOC_SERIES_NRF52)
 #include <hal/nrf_power.h>
 #endif
 
@@ -70,7 +70,7 @@ static void reboot_to_uf2(void)
 	printk("You can now drag-drop ZephCore firmware UF2.\n");
 	k_msleep(500);
 
-#if defined(CONFIG_SOC_SERIES_NRF52X) || defined(CONFIG_SOC_SERIES_NRF52)
+#if defined(CONFIG_SOC_SERIES_NRF52)
 	nrf_power_gpregret_set(NRF_POWER, 0, BOOTLOADER_DFU_UF2_MAGIC);
 #endif
 	sys_reboot(SYS_REBOOT_COLD);

@@ -11,7 +11,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#if defined(CONFIG_SOC_SERIES_NRF52X) || defined(CONFIG_SOC_SERIES_NRF52)
+#if defined(CONFIG_SOC_SERIES_NRF52)
 #include <hal/nrf_power.h>
 /* Adafruit bootloader GPREGRET magic values */
 #define BOOTLOADER_DFU_SERIAL_MAGIC 0x4e  /* Enter serial DFU mode (CDC only) */
@@ -246,7 +246,7 @@ bool ZephyrBoard::startOTAUpdate(const char *id, char reply[])
 
 bool ZephyrBoard::getBootloaderVersion(char *out, size_t max_len)
 {
-#if defined(CONFIG_SOC_SERIES_NRF52X) || defined(CONFIG_SOC_SERIES_NRF52)
+#if defined(CONFIG_SOC_SERIES_NRF52)
 	/* Scan flash for UF2 bootloader version string.
 	 * info.txt lives somewhere in the 0xFB000-0xFE000 range depending
 	 * on SoftDevice version and bootloader build. */
@@ -291,7 +291,7 @@ uint8_t ZephyrBoard::getStartupReason() const
 
 bool ZephyrBoard::isExternalPowered()
 {
-#if defined(CONFIG_SOC_SERIES_NRF52X) || defined(CONFIG_SOC_SERIES_NRF52)
+#if defined(CONFIG_SOC_SERIES_NRF52)
 	/* VBUS detect from the POWER peripheral — true when USB/charger is
 	 * attached. Read-only status register; safe alongside the BLE controller
 	 * (we already poke NRF_POWER->GPREGRET directly elsewhere). */

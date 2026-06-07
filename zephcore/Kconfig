@@ -282,7 +282,7 @@ config ZEPHCORE_BLE_ADV_SLOW_INTERVAL
 
 config ZEPHCORE_BLE_DFU
 	bool "Buttonless BLE DFU (legacy Nordic/Adafruit OTA jump)"
-	depends on SOC_SERIES_NRF52X || SOC_SERIES_NRF52
+	depends on SOC_SERIES_NRF52
 	default y
 	help
 	  Register the legacy Nordic DFU service (00001530/00001531) in the
