@@ -935,6 +935,7 @@ RepeaterMesh::RepeaterMesh(mesh::MainBoard& board, mesh::Radio& radio, mesh::Mil
     _uplink_last_rssi = 0.0f;
     _uplink_last_raw_len = 0;
     _uplink_next_status_at = 0;
+    atomic_set(&_uplink_connect_pending, 0);
 #endif
 }
 
@@ -992,8 +993,12 @@ void RepeaterMesh::begin(RepeaterDataStore* store) {
         mqtt_publisher_start(&_uplink_creds, _prefs.node_name,
                              _uplink_status_topic, _uplink_packets_topic);
         mqtt_publisher_set_connect_cb([]() {
+            /* Runs on the MQTT publisher thread — DON'T publish here. It would
+             * race the main-thread status path on the shared static JSON buffer
+             * and toggle the battery-ADC regulator off-main. Defer to the main
+             * loop via an atomic flag drained in maintenanceLoop(). */
             if (s_uplink_mesh) {
-                s_uplink_mesh->publishUplinkStatus("online");
+                atomic_set(&s_uplink_mesh->_uplink_connect_pending, 1);
             }
         });
         _uplink_next_status_at = futureMillis(300000);
@@ -1346,6 +1351,11 @@ void RepeaterMesh::loop() {
     }
 
 #if IS_ENABLED(CONFIG_ZEPHCORE_REPEATER_UPLINK) && IS_ENABLED(CONFIG_MQTT_LIB)
+    /* MQTT (re)connected — publish the initial "online" status here on the main
+     * thread (the CONNACK callback only sets this flag, off-main). */
+    if (atomic_cas(&_uplink_connect_pending, 1, 0)) {
+        publishUplinkStatus("online");
+    }
     if (_uplink_next_status_at && millisHasNowPassed(_uplink_next_status_at)) {
         publishUplinkStatus("online");
         _uplink_next_status_at = futureMillis(300000);

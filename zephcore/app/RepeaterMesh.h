@@ -12,6 +12,7 @@
 
 #pragma once
 
+#include <zephyr/sys/atomic.h>
 #include <mesh/Mesh.h>
 #include <mesh/StaticPoolPacketManager.h>
 #include <mesh/SimpleMeshTables.h>
@@ -122,6 +123,11 @@ class RepeaterMesh : public mesh::Mesh, public CommonCLICallbacks {
     uint8_t _uplink_last_raw[MAX_TRANS_UNIT];
     int _uplink_last_raw_len;
     unsigned long _uplink_next_status_at;
+    /* Set by the MQTT CONNACK callback (runs on the MQTT publisher thread);
+     * drained on the main thread in maintenanceLoop() so the "online" status
+     * publish never runs off-main (avoids the shared static-JSON-buffer race
+     * and off-main battery-ADC regulator toggling). */
+    atomic_t _uplink_connect_pending;
 #endif
 
     void putNeighbour(const mesh::Identity& id, uint32_t timestamp, float snr);

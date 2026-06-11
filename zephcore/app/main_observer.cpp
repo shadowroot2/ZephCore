@@ -49,10 +49,11 @@ static const struct gpio_dt_spec led0 = GPIO_DT_SPEC_GET(LED0_NODE, gpios);
 
 /* ========== Event loop bits ========== */
 
-#define MESH_EVENT_LORA_RX   BIT(0)
-#define MESH_EVENT_CLI_RX    BIT(1)
-#define MESH_EVENT_STATUS    BIT(2)
-#define MESH_EVENT_ALL       (MESH_EVENT_LORA_RX | MESH_EVENT_CLI_RX | MESH_EVENT_STATUS)
+#define MESH_EVENT_LORA_RX     BIT(0)
+#define MESH_EVENT_CLI_RX      BIT(1)
+#define MESH_EVENT_STATUS      BIT(2)
+#define MESH_EVENT_MQTT_CONNECT BIT(3)  /* MQTT (re)connected — publish status+self-advert on main */
+#define MESH_EVENT_ALL       (MESH_EVENT_LORA_RX | MESH_EVENT_CLI_RX | MESH_EVENT_STATUS | MESH_EVENT_MQTT_CONNECT)
 
 static struct k_event mesh_events;
 
@@ -343,10 +344,10 @@ int main(void)
 	/* Publish self-advert once on each MQTT connect so CoreScope can pin
 	 * this observer on the map (requires lat/lon to be configured). */
 	mqtt_publisher_set_connect_cb([]() {
-		if (s_mesh_ptr) {
-			s_mesh_ptr->publishStatus("online");
-			s_mesh_ptr->publishSelfAdvert();
-		}
+		/* Runs on the MQTT publisher thread — defer to the main loop. Publishing
+		 * here would race the periodic-status path on publishStatus()'s shared
+		 * static JSON buffer; publishSelfAdvert() also signs + formats. */
+		k_event_post(&mesh_events, MESH_EVENT_MQTT_CONNECT);
 	});
 	k_timer_start(&status_timer, K_SECONDS(300), K_SECONDS(300));
 
@@ -367,6 +368,10 @@ int main(void)
 		}
 		if (ev & MESH_EVENT_STATUS) {
 			observer_mesh.publishStatus("online");
+		}
+		if (ev & MESH_EVENT_MQTT_CONNECT) {
+			observer_mesh.publishStatus("online");
+			observer_mesh.publishSelfAdvert();
 		}
 	}
 
