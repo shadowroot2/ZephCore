@@ -6,8 +6,12 @@
  * Pairing is triggered reactively by ATT_ERR_AUTHENTICATION on secured GATT
  * attributes (Apple §55 compliant — no proactive Security Request on connect).
  *
- * Advertising: ESP32 enables CONFIG_BT_PRIVACY in esp32_common.conf; nRF uses public identity.
- * Android Flutter may fail connect-from-app to RPA unless bonded; Arduino MeshCore uses public.
+ * Advertising: always uses the identity address (BT_LE_ADV_OPT_USE_IDENTITY in
+ * start_adv).  On ESP32, CONFIG_BT_PRIVACY=y is load-bearing (the Espressif
+ * controller's privacy-OFF Secure-Connections path MIC-fails against iOS — see
+ * findings.md Issue #34), but USE_IDENTITY keeps us off the RPA so the Android
+ * companion's "connect from app" still works.  nRF/MG24 keep privacy OFF and
+ * already advertise identity, so USE_IDENTITY is a no-op there.
  */
 
 #include <stdio.h>
@@ -1224,9 +1228,15 @@ static void start_adv(void)
 
 	uint16_t interval = fast_adv_active ? BT_ADV_FAST_INTERVAL : BT_ADV_INTERVAL;
 
+	/* USE_IDENTITY: advertise the stable identity address instead of an RPA,
+	 * even when CONFIG_BT_PRIVACY=y.  Keeps the controller in its (working)
+	 * privacy-enabled SC encryption path for iOS while exposing a fixed address
+	 * so the Android companion app's "connect from app" flow works.  See
+	 * findings.md Issue #34 iOS-privacy capture (controller MIC failure 0x3d on
+	 * the privacy-off SC path). */
 	struct bt_le_adv_param adv_param = {
 		.id = BT_ID_DEFAULT,
-		.options = BT_LE_ADV_OPT_CONN,
+		.options = BT_LE_ADV_OPT_CONN | BT_LE_ADV_OPT_USE_IDENTITY,
 		.interval_min = interval,
 		.interval_max = interval,
 	};
