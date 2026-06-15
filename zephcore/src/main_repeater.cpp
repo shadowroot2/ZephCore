@@ -464,7 +464,8 @@ int main(void)
 	 * message callback.  Unplugged → 2 s timeout, no banner; attached →
 	 * banner reaches the user the moment the port opens. */
 #if ZEPHCORE_USB_STACK && DT_HAS_COMPAT_STATUS_OKAY(zephyr_cdc_acm_uart) && \
-	!IS_ENABLED(CONFIG_CDC_ACM_SERIAL_INITIALIZE_AT_BOOT)
+	!IS_ENABLED(CONFIG_CDC_ACM_SERIAL_INITIALIZE_AT_BOOT) && \
+	(IS_ENABLED(CONFIG_USB_CDC_ACM) || IS_ENABLED(CONFIG_USBD_CDC_ACM_CLASS))
 	zephcore_usbd_init();
 	zephcore_usbd_wait_dtr(2000);
 #endif

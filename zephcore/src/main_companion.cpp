@@ -912,7 +912,8 @@ int main(void)
 	 * message callback.  Unplugged → 1 s timeout, banner is buffered for any
 	 * later attach. */
 #if ZEPHCORE_USB_STACK && DT_HAS_COMPAT_STATUS_OKAY(zephyr_cdc_acm_uart) && \
-	!IS_ENABLED(CONFIG_CDC_ACM_SERIAL_INITIALIZE_AT_BOOT)
+	!IS_ENABLED(CONFIG_CDC_ACM_SERIAL_INITIALIZE_AT_BOOT) && \
+	(IS_ENABLED(CONFIG_USB_CDC_ACM) || IS_ENABLED(CONFIG_USBD_CDC_ACM_CLASS))
 	zephcore_usbd_init();
 	zephcore_usbd_wait_dtr(1000);
 #endif
