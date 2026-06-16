@@ -88,10 +88,35 @@
 /delete-node/ &storage_partition;
 /delete-node/ &scratch_partition;
 /delete-node/ &coredump_partition;
+/delete-node/ &slot0_partition;
+/delete-node/ &slot1_partition;
+
+/ {
+	chosen {
+		zephyr,settings-partition = &storage_partition;
+	};
+};
 
 &flash0 {
 	partitions {
-		/* LittleFS 384 KB for DataStore + file-based BLE settings */
+		/* App slots — both trimmed 8KB so slot0 == slot1 (16KB total freed
+		 * for the NVS partition below), keeping MCUboot swap-mode compatible,
+		 * not just overwrite-only.  slot0 start (0x20000) unchanged. */
+		slot0_partition: partition@20000 {
+			label = "image-0";
+			reg = <0x20000 0x7BE000>;
+		};
+		slot1_partition: partition@7de000 {
+			label = "image-1";
+			reg = <0x7DE000 0x7BE000>;
+		};
+		/* BLE bond store — 16KB NVS, isolated from /lfs (see esp32_common.conf).
+		 * Carved from the end of slot1 so lfs stays byte-identical. */
+		storage_partition: partition@f9c000 {
+			label = "storage";
+			reg = <0xF9C000 0x4000>;
+		};
+		/* LittleFS 384 KB for DataStore (identity, prefs, contacts) */
 		lfs_partition: partition@fa0000 {
 			label = "lfs";
 			reg = <0xFA0000 0x60000>;

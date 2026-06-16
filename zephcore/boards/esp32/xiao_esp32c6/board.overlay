@@ -60,13 +60,26 @@
  * 0x3B0000 - 0x3E0000 (192KB) LittleFS (identity, contacts, channels, BLE bonds)
  */
 /delete-node/ &storage_partition;
+/delete-node/ &scratch_partition;
+
+/ {
+	chosen {
+		zephyr,settings-partition = &storage_partition;
+	};
+};
 
 &flash0 {
 	partitions {
-		/* LittleFS 192KB for DataStore + file-based BLE settings */
+		/* LittleFS 192KB for DataStore (identity, prefs, contacts) */
 		lfs_partition: partition@3b0000 {
 			label = "lfs";
 			reg = <0x3B0000 0x30000>;
+		};
+		/* BLE bond store — 16KB NVS, isolated from /lfs (see esp32_common.conf).
+		 * Placed in the unused scratch region just above lfs (lfs unchanged). */
+		storage_partition: partition@3e0000 {
+			label = "storage";
+			reg = <0x3E0000 0x4000>;
 		};
 	};
 };

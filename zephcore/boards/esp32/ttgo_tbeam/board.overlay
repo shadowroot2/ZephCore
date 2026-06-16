@@ -152,6 +152,13 @@
  * LittleFS, same as ttgo_lora32. The 4MB AMP layout keeps its MCUboot slots.
  */
 /delete-node/ &storage_partition;
+/delete-node/ &scratch_partition;
+
+/ {
+	chosen {
+		zephyr,settings-partition = &storage_partition;
+	};
+};
 
 &flash0 {
 	partitions {
@@ -159,6 +166,12 @@
 		lfs_partition: partition@3b0000 {
 			label = "lfs";
 			reg = <0x3B0000 0x30000>;
+		};
+		/* BLE bond store — 16KB NVS, isolated from /lfs (see esp32_common.conf).
+		 * Placed in the unused scratch region just above lfs (lfs unchanged). */
+		storage_partition: partition@3e0000 {
+			label = "storage";
+			reg = <0x3E0000 0x4000>;
 		};
 	};
 };
