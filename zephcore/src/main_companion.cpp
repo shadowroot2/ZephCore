@@ -1109,6 +1109,10 @@ int main(void)
 	 * First, ensure power state matches prefs (powers off if disabled).
 	 * Then, if prefs say enabled, start the GPS state machine. */
 	if (gps_is_available()) {
+		/* Apply persisted GPS duty interval (0 = always on) before the
+		 * state machine starts. */
+		gps_set_poll_interval_sec(companion_mesh.prefs.gps_interval);
+
 		/* Explicitly set power state at boot (handles disabled case) */
 		gps_ensure_power_state(companion_mesh.prefs.gps_enabled);
 

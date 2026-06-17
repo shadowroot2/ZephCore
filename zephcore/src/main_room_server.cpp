@@ -529,6 +529,8 @@ int main(void)
 	if (gps_is_available()) {
 		gps_set_fix_callback(gps_fix_callback);
 		gps_set_event_callback(gps_event_callback);
+		/* Apply persisted GPS duty interval (repeater default 48h; 0 = always on) */
+		gps_set_poll_interval_sec(room_mesh.getNodePrefs()->gps_interval);
 		gps_set_repeater_mode(true);
 	}
 

@@ -121,6 +121,8 @@ Regions control which flood packets the repeater forwards. The region tree is hi
 | `gps advert none` | Do not include location in advertisements |
 | `gps advert share` | Include live GPS location in advertisements |
 | `gps advert prefs` | Include stored lat/lon from prefs in advertisements |
+| `set gps duty <sec>` | GPS duty interval (standby seconds between fixes). `0` = always-on (continuous; streams fresh fixes, can download a full almanac). Floor 10s, cap 604800 (1 week). Persists to flash, applied live. |
+| `set gps duty default` | Reset GPS duty to the role default (repeater/room 48h, companion 300s) |
 
 ---
 
@@ -203,6 +205,7 @@ All `set uplink.*` changes are saved immediately and only applied after reboot.
 | `get loop.detect` | Loop detection level: `off`, `minimal`, `moderate`, or `strict` |
 | `get radio.rxgain` | RX gain boost: `0` or `1` |
 | `get rxduty` | RX duty cycle mode: `0` or `1` |
+| `get gps duty` | Now-effective GPS duty interval in seconds (`always on (0)` when continuous) |
 | `get dc.restarts` | Duty-cycle preamble false-positive re-arm counter (RxTimeout re-arms + parked-RX watchdog recoveries). High values mean the preamble detector is tripping on noise/interference without real packets arriving — inflates RX-on time and drains battery; packets are never lost to it. Reset by `clear stats`. |
 | `get adc.multiplier` | Battery voltage ADC calibration multiplier |
 | `get bootloader.ver` | Bootloader version string |

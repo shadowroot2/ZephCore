@@ -10,6 +10,7 @@
 #include <helpers/TxtDataHelpers.h>
 #include <helpers/AdvertDataHelpers.h>
 #include <adapters/board/ZephyrBoard.h>
+#include <adapters/gps/ZephyrGPSManager.h>
 #include <zephyr/fs/fs.h>
 #include <zephyr/logging/log.h>
 #include <stdlib.h>
@@ -530,6 +531,10 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
             }
         } else if (memcmp(config, "rxduty", 6) == 0) {
             snprintf(reply, CLI_REPLY_SIZE, "> %d", (int)_prefs->rx_duty_cycle);
+        } else if (memcmp(config, "gps duty", 8) == 0) {
+            uint32_t s = gps_get_poll_interval_sec();  // now-effective value
+            if (s == 0) strcpy(reply, "> always on (0)");
+            else snprintf(reply, CLI_REPLY_SIZE, "> %u", (unsigned)s);
         } else if (memcmp(config, "dc.restarts", 11) == 0) {
             snprintf(reply, CLI_REPLY_SIZE, "> %u",
                      (uint32_t)_callbacks->getDutyCycleTimeoutRestarts());
@@ -908,6 +913,34 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
                 snprintf(reply, CLI_REPLY_SIZE, "OK - rxduty=%d (reboot to apply)", _prefs->rx_duty_cycle);
             } else {
                 strcpy(reply, "Error: must be 0, 1, on, or off");
+            }
+        } else if (memcmp(config, "gps duty", 8) == 0) {
+            // set gps duty <seconds> | default   (0 = always on)
+            const char* arg = config + 8;
+            while (*arg == ' ') arg++;
+            uint32_t val = 0;
+            bool ok = true;
+            if (*arg == '\0') {
+                ok = false;
+            } else if (strcmp(arg, "default") == 0) {
+                val = _callbacks->getDefaultGpsIntervalSec();
+            } else {
+                char* end = NULL;
+                unsigned long parsed = strtoul(arg, &end, 10);
+                // reject non-numeric, fractions, or trailing garbage
+                if (end == arg || *end != '\0') ok = false;
+                else val = (uint32_t)parsed;
+            }
+            if (!ok) {
+                strcpy(reply, "usage: set gps duty <seconds> | default  (0 = always on)");
+            } else {
+                if (val > 604800UL) val = 604800UL;      // cap at 1 week
+                else if (val != 0 && val < 10) val = 10; // floor 10s (0 = always on)
+                _prefs->gps_interval = val;
+                gps_set_poll_interval_sec(val);          // apply live
+                savePrefs();
+                if (val == 0) strcpy(reply, "OK - gps duty=0 (always on)");
+                else snprintf(reply, CLI_REPLY_SIZE, "OK - gps duty=%u s", (unsigned)val);
             }
         } else {
             snprintf(reply, CLI_REPLY_SIZE, "unknown config: %s", config);

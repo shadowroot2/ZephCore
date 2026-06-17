@@ -103,8 +103,21 @@ static uint32_t gps_acquire_timeout_ms   = CONFIG_ZEPHCORE_GPS_FIX_TIMEOUT_SEC *
 static uint32_t gps_first_fix_timeout_ms = CONFIG_ZEPHCORE_GPS_FIRST_FIX_TIMEOUT_SEC * 1000U;
 static uint32_t gps_wake_interval_ms     = CONFIG_ZEPHCORE_GPS_POLL_INTERVAL_SEC * 1000U;
 
-/* Repeater mode intervals - GPS only for time sync */
-#define GPS_REPEATER_SYNC_INTERVAL_MS  (48ULL * 60 * 60 * 1000)  /* 48 hours */
+/* Duty cycle vs always-on: a non-zero standby interval duty-cycles; interval 0
+ * keeps the GPS in continuous acquisition (never sleeps) so it streams fresh
+ * fixes for telemetry and can download a full almanac. */
+static inline bool gps_duty_cycling(void)
+{
+	return gps_wake_interval_ms != 0;
+}
+
+/* k_uptime of the last always-on position/clock refresh — rate-limits the
+ * flash write + RTC sync to gps_acquire_timeout_ms while streaming (see
+ * gnss_data_cb), so continuous operation doesn't hammer flash. */
+static int64_t last_promote_ms = 0;
+
+/* Repeater acquire window — GPS only for time sync. The standby interval is
+ * unified with companions via gps_wake_interval_ms (prefs.gps_interval). */
 #define GPS_REPEATER_SYNC_TIMEOUT_MS   (5 * 60 * 1000)           /* 5 minutes */
 
 static bool gps_repeater_mode = false;  /* True = repeater (time sync only), False = companion */
@@ -275,6 +288,9 @@ static void gnss_data_cb(const struct device *dev, const struct gnss_data *data)
 					current_pos.longitude_ndeg / 1000000);
 
 				if (consecutive_good_fixes >= GPS_GOOD_FIX_COUNT) {
+					bool duty = gps_duty_cycling();
+					bool first_ever = !first_fix_acquired;
+
 					LOG_INF("GPS: Got %d good fixes, updating location/time",
 						GPS_GOOD_FIX_COUNT);
 
@@ -285,29 +301,56 @@ static void gnss_data_cb(const struct device *dev, const struct gnss_data *data)
 					gps_time_synced = true;
 					last_fix_uptime_ms = k_uptime_get();
 
-					/* Persist position to flash for reboot survival */
-					gps_save_position(&current_pos);
+					/* Promote (persist position + sync clock via the fix
+					 * callback) every duty-cycle wake; in always-on, only on
+					 * the first fix and then once per gps_acquire_timeout_ms,
+					 * so streaming doesn't hammer flash. current_pos (the
+					 * telemetry source) is updated on every fix above either way. */
+					bool promote = duty || first_ever ||
+						(k_uptime_get() - last_promote_ms >=
+						 (int64_t)gps_acquire_timeout_ms);
+					if (promote) {
+						last_promote_ms = k_uptime_get();
+						/* Persist position to flash for reboot survival */
+						gps_save_position(&current_pos);
+					}
 
-					/* Cancel timeout */
-					k_work_cancel_delayable(&gps_timeout_work);
+					if (duty) {
+						/* Cancel timeout */
+						k_work_cancel_delayable(&gps_timeout_work);
 
-					/* Notify fix callback with validated position */
-					if (gps_fix_cb) {
+						/* Notify fix callback with validated position */
+						if (gps_fix_cb) {
+							double lat = (double)data->nav_data.latitude / 1000000000.0;
+							double lon = (double)data->nav_data.longitude / 1000000000.0;
+							k_mutex_unlock(&gps_mutex);
+							gps_fix_cb(lat, lon, gps_get_utc_time());
+						} else {
+							k_mutex_unlock(&gps_mutex);
+						}
+
+						/* Defer standby to main thread — we're on the system
+						 * workqueue here (GNSS callback), can't call PM suspend
+						 * (modem_chat_run_script deadlocks on same workqueue). */
+						atomic_or(&pending_gps_actions, GPS_ACTION_FIX_DONE);
+						if (gps_event_cb) {
+							gps_event_cb();
+						}
+						return;
+					}
+
+					/* Always-on: keep streaming (no standby). Reset the gate so
+					 * we don't re-promote every fix; refresh persisted position
+					 * + RTC on the cadence captured by `promote` above. */
+					consecutive_good_fixes = 0;
+					if (promote && gps_fix_cb) {
 						double lat = (double)data->nav_data.latitude / 1000000000.0;
 						double lon = (double)data->nav_data.longitude / 1000000000.0;
 						k_mutex_unlock(&gps_mutex);
 						gps_fix_cb(lat, lon, gps_get_utc_time());
-					} else {
-						k_mutex_unlock(&gps_mutex);
+						return;
 					}
-
-					/* Defer standby to main thread — we're on the system
-					 * workqueue here (GNSS callback), can't call PM suspend
-					 * (modem_chat_run_script deadlocks on same workqueue). */
-					atomic_or(&pending_gps_actions, GPS_ACTION_FIX_DONE);
-					if (gps_event_cb) {
-						gps_event_cb();
-					}
+					k_mutex_unlock(&gps_mutex);
 					return;
 				}
 			} else {
@@ -985,14 +1028,14 @@ static uint32_t gps_acquire_window_ms(void)
  * FORCE_ON pin LOW for L76K hardware standby. */
 static void gps_go_to_standby(void)
 {
-	uint64_t wake_interval = gps_repeater_mode ?
-		GPS_REPEATER_SYNC_INTERVAL_MS : gps_wake_interval_ms;
+	/* Unified standby interval for both roles — set from prefs.gps_interval
+	 * at boot (companion default 300s, repeater default 48h). Always-on
+	 * (interval 0) never reaches here. */
+	uint64_t wake_interval = gps_wake_interval_ms;
 
-	if (gps_repeater_mode) {
-		LOG_INF("GPS: Going to standby for 48 hours (repeater mode)");
-	} else {
-		LOG_INF("GPS: Going to standby for %d minutes", (int)(wake_interval / 60000));
-	}
+	LOG_INF("GPS: Going to standby for %llu s%s",
+		(unsigned long long)(wake_interval / 1000),
+		gps_repeater_mode ? " (repeater time sync)" : "");
 	gps_current_state = GPS_STATE_STANDBY;
 	consecutive_good_fixes = 0;
 	/* The one-time long cold-start window (if any) is now spent — later
@@ -1047,11 +1090,17 @@ static void gps_start_acquiring(void)
 	gps_software_wake();
 #endif
 
-	/* Start timeout timer — every window is now bounded (the first
-	 * cold-start window is just longer; see gps_acquire_window_ms). */
-	uint32_t timeout_ms = gps_acquire_window_ms();
-	LOG_INF("GPS: Acquire window %u s", timeout_ms / 1000U);
-	k_work_schedule(&gps_timeout_work, K_MSEC(timeout_ms));
+	/* Schedule the standby timeout — unless always-on (interval 0), where the
+	 * GPS stays in continuous acquisition and never sleeps. Every duty window
+	 * is bounded (the first cold-start window is just longer; see
+	 * gps_acquire_window_ms). */
+	if (gps_duty_cycling()) {
+		uint32_t timeout_ms = gps_acquire_window_ms();
+		LOG_INF("GPS: Acquire window %u s", timeout_ms / 1000U);
+		k_work_schedule(&gps_timeout_work, K_MSEC(timeout_ms));
+	} else {
+		LOG_INF("GPS: Always-on (continuous, no standby)");
+	}
 }
 
 /* Work handler: wake GPS for fix.
@@ -1415,10 +1464,15 @@ void gps_enable(bool enable)
 		 * ~300ms to boot after GPIO power restore and calling it
 		 * immediately deadlocks the main thread. */
 
-		/* Bounded first-acquisition window, then the normal duty cycle */
-		uint32_t timeout_ms = gps_acquire_window_ms();
-		LOG_INF("GPS: Acquire window %u s", timeout_ms / 1000U);
-		k_work_schedule(&gps_timeout_work, K_MSEC(timeout_ms));
+		/* Bounded first-acquisition window, then the normal duty cycle —
+		 * unless always-on (interval 0), where GPS never sleeps. */
+		if (gps_duty_cycling()) {
+			uint32_t timeout_ms = gps_acquire_window_ms();
+			LOG_INF("GPS: Acquire window %u s", timeout_ms / 1000U);
+			k_work_schedule(&gps_timeout_work, K_MSEC(timeout_ms));
+		} else {
+			LOG_INF("GPS: Always-on (continuous, no standby)");
+		}
 	} else {
 		LOG_INF("GPS disabled - canceling timers and powering off");
 
@@ -1479,10 +1533,39 @@ uint32_t gps_get_poll_interval_sec(void)
 void gps_set_poll_interval_sec(uint32_t interval)
 {
 #if HAS_GNSS
-	if (interval < 10) interval = 10;
-	if (interval > 86400) interval = 86400;
+	/* 0 = always-on (no standby); otherwise floor 10s. Cap at 1 week — sane
+	 * for time-sync and safely below the interval*1000 uint32 overflow (~49d). */
+	if (interval != 0 && interval < 10) interval = 10;
+	if (interval > 604800) interval = 604800;
 	gps_wake_interval_ms = interval * 1000U;
-	LOG_INF("GPS poll interval set to %u seconds", interval);
+	LOG_INF("GPS poll interval set to %u seconds%s", interval,
+		interval == 0 ? " (always on)" : "");
+
+	/* Live re-arm so a runtime change takes effect without a reboot. */
+	if (!gps_enabled) {
+		return;
+	}
+	if (gps_current_state == GPS_STATE_ACQUIRING) {
+		if (interval == 0) {
+			/* Switch to always-on: drop the standby timeout so it won't sleep. */
+			k_work_cancel_delayable(&gps_timeout_work);
+		} else if (!k_work_delayable_is_pending(&gps_timeout_work)) {
+			/* Was always-on: arm a timeout so it starts duty cycling. */
+			k_work_reschedule(&gps_timeout_work, K_MSEC(gps_acquire_window_ms()));
+		}
+	} else if (gps_current_state == GPS_STATE_STANDBY) {
+		k_work_cancel_delayable(&gps_wake_work);
+		if (interval == 0) {
+			/* Wake now and stay on. */
+			atomic_or(&pending_gps_actions, GPS_ACTION_WAKE);
+			if (gps_event_cb) {
+				gps_event_cb();
+			}
+		} else {
+			standby_interval_ms = gps_wake_interval_ms;
+			k_work_reschedule(&gps_wake_work, K_MSEC(gps_wake_interval_ms));
+		}
+	}
 #else
 	ARG_UNUSED(interval);
 #endif
@@ -1591,12 +1674,15 @@ void gps_request_fresh_fix(void)
 		 * telemetry request that arrives 25s into a 30s acquire window
 		 * only has 5s left, which in marginal signal usually means the
 		 * chip goes to standby before producing a fix the requester
-		 * could use. Every phase now has a bounded window
-		 * (gps_acquire_window_ms), so always reschedule from now. */
-		uint32_t timeout_ms = gps_acquire_window_ms();
-		LOG_INF("GPS: Fresh fix requested, extending acquire timeout to %u s",
-			timeout_ms / 1000U);
-		k_work_reschedule(&gps_timeout_work, K_MSEC(timeout_ms));
+		 * could use. Each duty phase has a bounded window
+		 * (gps_acquire_window_ms); in always-on there's no timeout to extend
+		 * (GPS is continuously acquiring and current_pos is always fresh). */
+		if (gps_duty_cycling()) {
+			uint32_t timeout_ms = gps_acquire_window_ms();
+			LOG_INF("GPS: Fresh fix requested, extending acquire timeout to %u s",
+				timeout_ms / 1000U);
+			k_work_reschedule(&gps_timeout_work, K_MSEC(timeout_ms));
+		}
 	}
 #endif
 }

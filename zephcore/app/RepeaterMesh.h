@@ -218,6 +218,7 @@ public:
     bool setGpsEnabled(bool enabled) override;
     bool isGpsEnabled() const override;
     void formatGpsStatsReply(char* reply) override;
+    uint32_t getDefaultGpsIntervalSec() const override { return CONFIG_ZEPHCORE_REPEATER_GPS_INTERVAL_SEC; }
     const char* getNodeName() { return _prefs.node_name; }
     NodePrefs* getNodePrefs() { return &_prefs; }
 

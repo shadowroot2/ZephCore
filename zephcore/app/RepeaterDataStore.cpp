@@ -137,6 +137,7 @@ bool RepeaterDataStore::loadPrefs(NodePrefs& prefs) {
         prefs.advert_loc_policy = ADVERT_LOC_PREFS;
         prefs.loop_detect = LOOP_DETECT_MODERATE;
         prefs.path_hash_mode = 1;
+        prefs.gps_interval = CONFIG_ZEPHCORE_REPEATER_GPS_INTERVAL_SEC;  // repeater default (48h)
         /* Persist defaults so flash always has a prefs file from boot 1.
          * Lets later code (e.g. tempradio revert) trust that flash is
          * authoritative without a "first run" special case. */
@@ -240,6 +241,18 @@ bool RepeaterDataStore::loadPrefs(NodePrefs& prefs) {
         prefs.loop_detect = LOOP_DETECT_MODERATE;
         savePrefs(prefs);
         LOG_INF("loadPrefs: upgraded prefs format (%d -> 296 bytes)", (int)entry.size);
+    }
+
+    /* Repeater GPS-interval unification migration: before this firmware the
+     * repeater ignored gps_interval (hardcoded 48h), so a stored companion
+     * default (300) was never a deliberate choice. Bump it to the repeater
+     * default once, so now-honoring the field doesn't silently switch existing
+     * units to 5-min GPS polling. (Triggers only on exactly 300; after the
+     * one-time rewrite it won't re-fire. A deliberate 300 on a repeater isn't
+     * reachable via the CLI — use 299/301 if you really want ~5 min.) */
+    if (prefs.gps_interval == CONFIG_ZEPHCORE_GPS_POLL_INTERVAL_SEC) {
+        prefs.gps_interval = CONFIG_ZEPHCORE_REPEATER_GPS_INTERVAL_SEC;
+        savePrefs(prefs);
     }
 
     return true;

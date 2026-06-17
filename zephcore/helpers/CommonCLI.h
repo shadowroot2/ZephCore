@@ -77,6 +77,9 @@ public:
     virtual bool setGpsEnabled(bool enabled) { return false; }
     virtual bool isGpsEnabled() const { return false; }
     virtual void formatGpsStatsReply(char* reply) { strcpy(reply, "off"); }
+    /* Role default for "set gps duty default". Companion default (300s); the
+     * repeater/room overrides return ZEPHCORE_REPEATER_GPS_INTERVAL_SEC. */
+    virtual uint32_t getDefaultGpsIntervalSec() const { return CONFIG_ZEPHCORE_GPS_POLL_INTERVAL_SEC; }
     virtual int getNumSensorSettings() const { return 0; }
     virtual const char* getSensorSettingName(int idx) const { return nullptr; }
     virtual const char* getSensorSettingValue(int idx) const { return nullptr; }
