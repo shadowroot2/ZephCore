@@ -26,6 +26,19 @@
 #include <stdio.h>
 #include <limits.h>
 
+/* The SSD16xx EPD driver exposes ssd16xx_clear_red_ram() to reset the
+ * partial-refresh old-frame reference after a periodic full refresh.  It is
+ * only compiled when an SSD16xx-family panel is present in devicetree. */
+#define ZEPHCORE_DISPLAY_HAS_SSD16XX \
+	(DT_HAS_COMPAT_STATUS_OKAY(solomon_ssd1608) || \
+	 DT_HAS_COMPAT_STATUS_OKAY(solomon_ssd1673) || \
+	 DT_HAS_COMPAT_STATUS_OKAY(solomon_ssd1675a) || \
+	 DT_HAS_COMPAT_STATUS_OKAY(solomon_ssd1680) || \
+	 DT_HAS_COMPAT_STATUS_OKAY(solomon_ssd1681))
+#if ZEPHCORE_DISPLAY_HAS_SSD16XX
+#include <zephyr/display/ssd16xx.h>
+#endif
+
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(zephcore_display, CONFIG_ZEPHCORE_BOARD_LOG_LEVEL);
 
@@ -522,26 +535,35 @@ void mc_display_finalize(void)
 
 	if (is_epd && full_interval > 0 && ++epd_partial_count >= (uint32_t)full_interval) {
 		/* Periodic full refresh to clear accumulated ghosting.
-		 * blanking_on selects the FULL profile and loads RAM without
-		 * updating the panel; cfb_framebuffer_finalize writes the
-		 * current framebuffer into both RAM banks; blanking_off then
-		 * triggers the full-refresh update with that content. */
+		 *
+		 * Replicate the clean post-boot sequence: full-refresh the panel
+		 * to WHITE, then redraw the current page as a partial.  blanking_on
+		 * selects the FULL profile; ssd16xx_fill_ram_white clears BOTH RAM
+		 * banks to white; blanking_off runs the full-refresh waveform,
+		 * leaving the panel (and both RAM banks) white.  The trailing
+		 * cfb_framebuffer_finalize then redraws the current frame — still
+		 * held in the CFB buffer — as a partial against the all-white
+		 * reference: every content pixel is actively driven and there is
+		 * nothing stale to erase.
+		 *
+		 * Going through white is required.  A partial after a full refresh
+		 * of *content* leaves unchanged regions (e.g. the top bar) on the
+		 * neutral waveform → they fade; and forcing the old-frame reference
+		 * white while the panel still shows content fails to erase pixels
+		 * that should clear → letters overlap.  The brief white flash is
+		 * the intended clean between frames. */
 		display_blanking_on(disp_dev);
-		cfb_framebuffer_finalize(disp_dev);
+#if ZEPHCORE_DISPLAY_HAS_SSD16XX
+		ssd16xx_fill_ram_white(disp_dev);
+#endif
 		display_blanking_off(disp_dev);
-
-		/* Prime the partial-refresh reference frame.  After a full
-		 * refresh the SSD1681's "old frame" RAM is stale, so the first
-		 * partial diff produces a wrong delta and the partial waveform
-		 * smears static regions (e.g. the top bar).  One extra partial
-		 * finalize with the same content lets the controller record the
-		 * post-full-refresh state as its reference; it's a visual no-op
-		 * (zero-diff → no pixel transitions) but fixes subsequent diffs. */
 		cfb_framebuffer_finalize(disp_dev);
 		epd_partial_count = 0;
-	} else {
-		cfb_framebuffer_finalize(disp_dev);
+		epd_last_frame_hash = epd_frame_hash;
+		return;
 	}
+
+	cfb_framebuffer_finalize(disp_dev);
 
 	if (is_epd) {
 		epd_last_frame_hash = epd_frame_hash;

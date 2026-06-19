@@ -762,7 +762,7 @@ config ZEPHCORE_DISPLAY_INSET
 
 config ZEPHCORE_DISPLAY_EPD_FULL_REFRESH_INTERVAL
 	int "E-paper full-refresh interval (partial refreshes)"
-	default 8
+	default 16
 	depends on ZEPHCORE_UI_DISPLAY
 	help
 	  On e-paper panels, partial refreshes never fully clear the previous
