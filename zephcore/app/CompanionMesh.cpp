@@ -1635,8 +1635,17 @@ bool CompanionMesh::handleProtocolFrame(const uint8_t *data, size_t len)
 			sendPacketError(ERR_ILLEGAL_ARG);
 			return true;
 		}
-		// Reset contact iterator for fresh start
+		// Reset per-session state for a fresh app session. BLE/USB also run
+		// this cleanup on disconnect, but the serial transport has no
+		// disconnect event, so APP_START is its authoritative session-reset
+		// point: drop a stale contact iteration (a leftover PACKET_CONTACT_END
+		// would confuse the new session's sync state machine), a half-finished
+		// message sync, and free an abandoned Ed25519 sign buffer (else an 8KB
+		// leak if the previous session dropped mid-CMD_SIGN). Idempotent — all
+		// no-ops when the state is already clean.
 		_contact_iter_active = false;
+		cancelSyncPending();
+		cleanupSignState();
 
 		// Return SELF_INFO
 		uint8_t rsp[90];  // 58 fixed + up to 32 bytes name

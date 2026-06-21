@@ -134,6 +134,39 @@ pyocd pack install EFR32MG24B220F1536IM48
 
 Flash with: `west flash --runner pyocd`
 
+### STM32WL (Seeed LoRa-E5)
+
+| Board          | Build string                          | Flash        |
+|----------------|---------------------------------------|--------------|
+| LoRa-E5 mini   | `west build -b lora_e5_mini zephcore` | `west flash` |
+
+The STM32WLE5JC integrates an SX1262-class sub-GHz radio (driven by the native
+SX126x driver via its STM32WL HAL over the internal `subghzspi` bus). RF
+front-end, RF switch (PA4/PA5), TCXO and the +22 dBm RFO_HP PA are described in
+upstream `zephyr/dts/arm/seeed_studio/lora-e5.dtsi`.
+
+STM32WL caveats — different from every other ZephCore platform:
+- **No Bluetooth and no USB device.** `boards/common/stm32wl_common.conf` forces
+  `CONFIG_BT=n`. The console/CLI and the companion protocol both run over
+  **USART1**, bridged to USB-C by the onboard USB-UART chip.
+- **Repeater** uses the USART CLI (add `repeater.conf`). The **companion** speaks
+  MeshCore serial framing over the same UART via `SerialCompanionTransport.c`
+  (a drop-in `zephcore_ble_*` provider, auto-selected because `CONFIG_BT=n`) —
+  no BLE pairing, the official serial client connects directly.
+- **RAM-bound, not flash-bound:** 64KB SRAM. The companion's contact/queue
+  arrays are capped hard in `board.conf` (`MAX_CONTACTS=24`, `OFFLINE_QUEUE_SIZE=8`).
+  AES tables live in ROM (`MBEDTLS_AES_ROM_TABLES`) to reclaim ~8KB SRAM.
+- **TRNG only (no HW CSPRNG):** the STM32 TRNG is enabled as the entropy source
+  and `CSPRNG_ENABLED` auto-resolves on top; `ZephyrRNG` further conditions
+  identity seeds with jitter + AES-CTR.
+- **No MCUboot / UF2:** single app partition at flash origin + a LittleFS volume
+  (see `board.overlay`). Flash over SWD/ST-Link with `west flash` (OpenOCD).
+
+Build the repeater:
+```
+west build -b lora_e5_mini zephcore -- -DEXTRA_CONF_FILE="boards/common/repeater.conf"
+```
+
 ### Building for Repeater Role
 
 Append `-- -DEXTRA_CONF_FILE="boards/common/repeater.conf"` to any build command:

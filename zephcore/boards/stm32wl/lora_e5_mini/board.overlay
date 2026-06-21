@@ -1,0 +1,54 @@
+/*
+ * SPDX-License-Identifier: MIT
+ * Seeed Studio LoRa-E5 mini (STM32WLE5JC) -- ZephCore overlay
+ *
+ * The integrated sub-GHz radio (subghzspi "lora" node), RF switch (PA4/PA5),
+ * TCXO and RFO_HP front-end are already fully described in
+ * zephyr/dts/arm/seeed_studio/lora-e5.dtsi, and the lora0 alias + USART1
+ * console come from the upstream lora_e5_mini board DTS. This overlay only:
+ *   1. enables the TRNG entropy source, and
+ *   2. repartitions the 256KB internal flash for a bootloader-less ZephCore
+ *      image plus a LittleFS data volume.
+ */
+
+/*
+ * STM32WL TRNG -- entropy source for the CSPRNG used by Ed25519 key
+ * generation and LoRa contention jitter. STM32WL has only a raw TRNG;
+ * CONFIG_CSPRNG_ENABLED (stm32wl_common.conf) layers the CS generator on top.
+ * Matches the bare enable used by upstream nucleo_wl55jc.
+ */
+&rng {
+	status = "okay";
+};
+
+/*
+ * Flash repartition -- no MCUboot (flashed over SWD/ST-Link; STM32WL has no
+ * USB for native DFU/UF2). Total 256KB, 2KB erase pages.
+ *
+ *   0x00000 - 0x38000 (224KB) Application (slot0, links at flash origin)
+ *   0x38000 - 0x40000 ( 32KB) LittleFS /lfs (identity, prefs, contacts)
+ *
+ * The upstream board reserves mcuboot(48K) + dual 96K slots + 16K storage,
+ * whose 96K app slot cannot hold ZephCore -- so we delete and rebuild.
+ */
+/delete-node/ &boot_partition;
+/delete-node/ &slot0_partition;
+/delete-node/ &slot1_partition;
+/delete-node/ &storage_partition;
+
+&flash0 {
+	partitions {
+		slot0_partition: partition@0 {
+			label = "image-0";
+			reg = <0x00000000 0x00038000>;
+		};
+
+		lfs_partition: partition@38000 {
+			label = "lfs";
+			reg = <0x00038000 0x00008000>;
+		};
+	};
+};
+
+/* LittleFS auto-mount at /lfs (defines the &lfs fstab node) */
+#include "../../common/filesystem.dtsi"

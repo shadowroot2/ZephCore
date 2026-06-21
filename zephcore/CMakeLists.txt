@@ -281,6 +281,8 @@ elseif(BOARD MATCHES ".*mg24.*" OR BOARD MATCHES ".*efr32.*")
     set(ZEPHCORE_PLATFORM_CONF "${CMAKE_CURRENT_SOURCE_DIR}/boards/common/mg24_common.conf")
 elseif(DEFINED BOARD_QUALIFIERS AND BOARD_QUALIFIERS MATCHES ".*mg24.*")
     set(ZEPHCORE_PLATFORM_CONF "${CMAKE_CURRENT_SOURCE_DIR}/boards/common/mg24_common.conf")
+elseif(BOARD MATCHES "lora_e5" OR BOARD MATCHES ".*stm32wl.*")
+    set(ZEPHCORE_PLATFORM_CONF "${CMAKE_CURRENT_SOURCE_DIR}/boards/common/stm32wl_common.conf")
 elseif(BOARD MATCHES "native_sim" OR BOARD MATCHES "native_posix")
     set(ZEPHCORE_PLATFORM_CONF "${CMAKE_CURRENT_SOURCE_DIR}/boards/linux_native/linux_common.conf")
 else()
@@ -658,7 +660,8 @@ else()
     helpers/ui/ui_mesh_actions.cpp
     app/CompanionMesh.cpp
   )
-  # Companion transport: TCP socket on native Linux, BLE NUS on MCU builds.
+  # Companion transport: TCP socket on native Linux, serial (UART) on boards
+  # with no Bluetooth controller (e.g. STM32WL), BLE NUS everywhere else.
   if(CONFIG_ZEPHCORE_TRANSPORT_TCP)
     message(STATUS "ZephCore Companion Transport: TCP (Linux)")
     target_sources(app PRIVATE adapters/transport/LinuxTCPTransport.c)
@@ -669,6 +672,12 @@ else()
     target_include_directories(app PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}/helpers/ui
     )
+  elseif(NOT CONFIG_BT)
+    # No BLE controller (STM32WL) — companion speaks MeshCore serial framing
+    # over the chosen console UART. SerialCompanionTransport.c is a full
+    # drop-in zephcore_ble_* provider, just like LinuxTCPTransport.c.
+    message(STATUS "ZephCore Companion Transport: Serial (UART)")
+    target_sources(app PRIVATE adapters/transport/SerialCompanionTransport.c)
   else()
     message(STATUS "ZephCore Companion Transport: BLE NUS")
     target_sources(app PRIVATE adapters/ble/ZephyrBLE.cpp)

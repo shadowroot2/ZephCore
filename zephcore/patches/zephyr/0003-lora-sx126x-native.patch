@@ -846,10 +846,11 @@ index 30243ba5dc7..69eefee6e0f 100644
  	data->tx_async_signal = async;
  	k_msgq_purge(&data->tx_msgq);
  
-@@ -777,6 +1333,29 @@ static int sx126x_lora_send_async(const struct device *dev,
+@@ -777,6 +1333,31 @@ static int sx126x_lora_send_async(const struct device *dev,
  	/* Enable antenna and set TX path */
  	sx126x_set_rf_path(dev, true, true);
  
++#ifdef CONFIG_LORA_SX126X_NATIVE_STANDALONE /* STM32WL HAL clamps in its own configure_tx_params; its config has no is_sx1261 */
 +	/* Sec 15.2 TX Clamp workaround (datasheet errata) -- SX1262 only.
 +	 * Set bits [4:1] of register 0x08D8 before SetTx to prevent
 +	 * PA overshoot that can damage the device. */
@@ -872,6 +873,7 @@ index 30243ba5dc7..69eefee6e0f 100644
 +			}
 +		}
 +	}
++#endif /* CONFIG_LORA_SX126X_NATIVE_STANDALONE */
 +
  	/* Start transmission with 10 second timeout */
  	ret = sx126x_set_tx(dev, 10000);
