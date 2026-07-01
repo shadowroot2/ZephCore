@@ -75,6 +75,15 @@ west build -b <board>/esp32s3/procpu zephcore --pristine --sysbuild -- \
 west flash --esp-device COMX
 ```
 
+**GitHub Release downloads for S3/C-series boards are always MCUboot-based**, unlike
+the plain-build default above: `build.sh` builds those boards with `--sysbuild`
+unconditionally, so the release always has MCUboot @ `0x0` + signed app @ `0x20000`.
+Only `-merged.bin` is published for them — flash that one, at offset `0x0`, for both
+first flash and updates. It does not touch `storage_partition`/`lfs_partition`
+(identity, prefs, contacts, BLE bonds), so routine updates preserve device state.
+Classic ESP32 boards (T-Beam, PICO-D4) still publish a self-contained plain `.bin`
+for `0x1000`, since they use simple-boot in the release build too.
+
 ### SX127x Boards (loramac-node backend)
 
 ZephCore supports SX1272/SX1276/SX1278 via the loramac-node backend — a separate radio path from the native SX126x driver used by all other boards. The TTGO LoRa32 is the reference implementation:
