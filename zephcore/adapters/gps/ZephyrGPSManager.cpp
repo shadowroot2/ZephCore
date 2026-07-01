@@ -301,12 +301,18 @@ static void gnss_data_cb(const struct device *dev, const struct gnss_data *data)
 					gps_time_synced = true;
 					last_fix_uptime_ms = k_uptime_get();
 
-					/* Promote (persist position + sync clock via the fix
-					 * callback) every duty-cycle wake; in always-on, only on
-					 * the first fix and then once per gps_acquire_timeout_ms,
-					 * so streaming doesn't hammer flash. current_pos (the
-					 * telemetry source) is updated on every fix above either way. */
-					bool promote = duty || first_ever ||
+					/* Persist position to flash at most once per
+					 * gps_acquire_timeout_ms (default 120s), always on the
+					 * first-ever fix so a fresh device saves an initial
+					 * position right away. This throttle applies uniformly
+					 * to duty-cycled AND always-on mode: without it, a short
+					 * `gps duty` interval (e.g. 10s) would write flash on
+					 * every wake indefinitely — worse wear than always-on's
+					 * throttled rate. The RTC sync / fix callback below still
+					 * fires on every successful duty-cycle wake regardless
+					 * (that's cheap, RAM + a hardware RTC write, not flash);
+					 * only the flash persistence is throttled. */
+					bool promote = first_ever ||
 						(k_uptime_get() - last_promote_ms >=
 						 (int64_t)gps_acquire_timeout_ms);
 					if (promote) {
