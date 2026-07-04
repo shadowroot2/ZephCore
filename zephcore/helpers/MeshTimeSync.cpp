@@ -6,7 +6,6 @@
 
 #include "MeshTimeSync.h"
 
-#include <adapters/gps/ZephyrGPSManager.h>
 #include <adapters/clock/ZephyrRTCDiscover.h>
 #include <helpers/time_sync.h>
 #include <zephyr/kernel.h>
@@ -22,19 +21,6 @@ static long clampl(int64_t v)
 	if (v > 2000000000LL) return 2000000000L;
 	if (v < -2000000000LL) return -2000000000L;
 	return (long)v;
-}
-
-/* GPS gate: only a validated fix younger than GPS_FIX_FRESH_SECS makes the
- * mesh yield — a GPS that is enabled but cannot fix (indoors, dead antenna)
- * stops gating after the window, so those units stay mesh-correctable. */
-static bool gps_gate_active(void)
-{
-	if (!gps_is_available() || !gps_is_enabled()) {
-		return false;
-	}
-	struct gps_state_info info;
-	gps_get_state_info(&info);
-	return info.last_fix_age_s < MeshTimeSync::GPS_FIX_FRESH_SECS;
 }
 
 void MeshTimeSync::reset(uint32_t build_epoch, bool forward_only)
@@ -347,11 +333,6 @@ bool MeshTimeSync::runTick(mesh::RTCClock &rtc)
 		}
 		return false;
 	}
-	if (gps_gate_active()) {
-		LOG_INF("step %+ld s wanted, GPS fix is fresh - not applied",
-		        clampl(v.delta));
-		return false;
-	}
 	if (_forward_only && v.delta < 0) {
 		/* Forward-only roles: post timestamps feed client sync_since
 		 * ordering (room server) / peers hold per-sender replay high-water
@@ -390,6 +371,13 @@ void MeshTimeSync::noteManualSync(uint32_t uptime_secs)
 
 void MeshTimeSync::noteGPSSync(uint32_t uptime_secs)
 {
+	/* A GPS fix owns the clock exactly like a manual set: arm the same 7-day
+	 * suppression window (re-armed on every fix, so a repeater's 48 h GPS
+	 * duty cycle keeps it owning the clock) plus the drift-envelope pedigree.
+	 * A unit whose GPS goes dead becomes mesh-correctable once the window
+	 * lapses without a new fix. */
+	_suppress_uptime = uptime_secs;
+	_suppressed = true;
 	_pedigree_uptime = uptime_secs;
 	_pedigree = true;
 }
@@ -437,11 +425,11 @@ int MeshTimeSync::formatStatus(char *out, size_t cap, uint32_t local_time,
 	char verdict[56];
 	if (v.type == VERDICT_STEP) {
 		/* Annotate steps the shared step policy would refuse, so the
-		 * dry-run never claims a step that will not happen. */
+		 * dry-run never claims a step that will not happen. (Suppression —
+		 * manual or GPS — surfaces as a hold verdict inside evaluateNow,
+		 * so it needs no annotation here.) */
 		const char *note = "";
-		if (gps_gate_active()) {
-			note = " (gps-gated)";
-		} else if (_forward_only && v.delta < 0) {
+		if (_forward_only && v.delta < 0) {
 			note = " (skipped: forward-only)";
 		}
 		snprintf(verdict, sizeof(verdict), "step%+ld%s%s", clampl(v.delta),

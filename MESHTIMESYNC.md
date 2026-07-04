@@ -35,12 +35,12 @@ worth watching that dry-run output for a day before (and after) enabling.
 
 ## What it will NOT do
 
-- It never fights GPS: a node whose GPS has delivered a real fix in the
-  last 72 hours only observes. If GPS is on but cannot get a fix (indoors,
-  dead antenna), mesh correction takes over after 72 hours — until the
-  next real fix.
-- It never overrides a recent manual `time <epoch>` or `clock sync` — any
-  manual set protects the clock from automatic changes for 7 days.
+- It never fights a recent clock set, whether from GPS or from you: any GPS
+  fix or manual `time <epoch>` / `clock sync` protects the clock from
+  automatic changes for 7 days (the same mechanism for both). A live GPS
+  re-arms this on every fix, so it keeps owning the clock. If GPS goes dead
+  (indoors, dead antenna), mesh correction takes over once 7 days pass
+  without a fix — until the next real fix.
 - It never steps more than 1 hour at a time, and at most one step per 6 hours.
 - It does nothing unless at least 6 trustworthy senders are visible and a
   strict majority of them agree (exception: a provably dead clock after a

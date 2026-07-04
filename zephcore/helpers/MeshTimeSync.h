@@ -4,9 +4,9 @@
  *
  * Role-agnostic estimator plus shared step policy. Each role feeds it
  * signature-verified adverts (onAdvertHeard) and calls runTick() from its
- * loop; runTick applies the shared policy (GPS fix-freshness gate,
- * forward-only roles skip backward steps, ±1 h cap, 6 h rate limit) and
- * steps the given clock. Role-specific bookkeeping (neighbor/ACL timestamp
+ * loop; runTick applies the shared policy (7-day suppression armed by any
+ * manual or GPS clock set, forward-only roles skip backward steps, ±1 h cap,
+ * 6 h rate limit) and steps the given clock. Role-specific bookkeeping (neighbor/ACL timestamp
  * shifts, rate-limiter resets) happens in the role after runTick returns
  * true. ZephCore-only divergence from Arduino MeshCore — design rationale
  * in ARCHITECTURE.md, user-facing doc in MESHTIMESYNC.md.
@@ -60,12 +60,6 @@ public:
 	static constexpr int64_t  PEDIGREE_PPM             = 300;
 	static constexpr int64_t  PEDIGREE_BASE_SECS       = 10 * 60;
 	static constexpr uint8_t  BOOTSTRAP_QUORUM         = 3;
-	/* GPS gate: a validated fix younger than this means GPS owns the clock
-	 * (it re-syncs and would step-back a wrong mesh step, poisoning our
-	 * advert high-water marks at peers). Covers the repeater's 48 h GPS
-	 * duty cycle with margin; a unit whose GPS cannot get a fix (indoors,
-	 * dead antenna) becomes mesh-correctable after this window. */
-	static constexpr uint32_t GPS_FIX_FRESH_SECS       = 72 * 3600;
 
 	/* 8-byte prefix is a security floor, not a tuning knob: it is the
 	 * sender's identity for tenure/votes while signatures verify the full
@@ -92,7 +86,7 @@ public:
 		REASON_NO_DATA,       /* no eligible voters */
 		REASON_NO_QUORUM,
 		REASON_NO_MAJORITY,
-		REASON_SUPPRESSED,    /* manual clock set less than 7 days ago */
+		REASON_SUPPRESSED,    /* manual or GPS clock set less than 7 days ago */
 		REASON_RATE_LIMITED,  /* < 6 h since last applied step */
 		REASON_PEDIGREE,      /* drift-envelope physics veto */
 	};
@@ -145,8 +139,9 @@ public:
 	 * 7-day suppression window AND drift-envelope pedigree. Suppression
 	 * gates bootstrap too. */
 	void noteManualSync(uint32_t uptime_secs);
-	/* GPS time sync: arms pedigree only (stepping is gated by GPS fix
-	 * freshness, so no suppression needed). */
+	/* GPS time sync: identical to a manual set — arms the same 7-day
+	 * suppression window and drift-envelope pedigree, re-armed on every fix
+	 * so a live GPS keeps owning the clock. */
 	void noteGPSSync(uint32_t uptime_secs);
 
 	/* Delta of the most recent applied step (for role bookkeeping shifts). */
@@ -154,8 +149,9 @@ public:
 
 	/* Compact status + evidence-table formatter shared by all role CLIs.
 	 * Writes at most `cap` bytes (NUL-terminated), summary first, then as
-	 * many per-sender entries as fit. Annotates verdicts the step policy
-	 * would refuse ("gps-gated", "skipped: forward-only"). */
+	 * many per-sender entries as fit. Annotates a backward step a
+	 * forward-only role would refuse ("skipped: forward-only"); a suppressed
+	 * clock (manual or GPS) surfaces as a "hold (suppressed)" verdict. */
 	int formatStatus(char *out, size_t cap, uint32_t local_time,
 	                 uint32_t uptime_secs, bool enabled) const;
 
