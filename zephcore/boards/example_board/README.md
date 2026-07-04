@@ -23,6 +23,7 @@ Supported Boards
 | Ikoka Nano 30dBm     | `west build -b ikoka_nano_30dbm zephcore` | UF2 drag-drop                 |
 | GAT562 30S Mesh Kit  | `west build -b gat562_30s zephcore`       | UF2 drag-drop or `west flash` |
 | LilyGo T-Echo        | `west build -b lilygo_techo zephcore`     | UF2 drag-drop or `west flash` |
+| LilyGo T-Impulse Plus | `west build -b lilygo_timpulse_plus zephcore` | UF2 drag-drop or `west flash` |
 | Heltec T114          | `west build -b heltec_t114 zephcore`      | UF2 drag-drop or `west flash` |
 | Heltec Mesh Node T096 | `west build -b heltec_t096 zephcore`     | UF2 drag-drop or `west flash` |
 
