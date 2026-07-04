@@ -174,8 +174,8 @@
 			width = <160>;
 			height = <80>;
 			inversion-on;
-			x-offset = <1>;
-			y-offset = <26>;
+			x-offset = <0>;
+			y-offset = <24>;
 			madctl = <0xa8>;
 			colmod = <0x05>;
 			invctr = <7>;
@@ -190,8 +190,8 @@
 			frmctr3 = [01 26 2e 01 26 2e];
 			gamctrp1 = [0f 1a 0f 18 2f 28 20 22 1f 1b 23 37 00 07 02 10];
 			gamctrn1 = [0f 1b 0f 17 33 2c 29 2e 30 2e 30 3b 00 07 03 10];
-			caset = [00 01 00 a0];
-			raset = [00 1a 00 69];
+			caset = [00 00 00 9f];
+			raset = [00 18 00 67];
 		};
 	};
 
