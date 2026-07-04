@@ -267,7 +267,7 @@ void ObserverMesh::harvestTimeSample(Packet *pkt)
 void ObserverMesh::timeSyncTick()
 {
 	if (!_prefs.meshtimesync || !_rtc) return;
-	/* Shared policy (GPS fix-freshness gate) lives in runTick; no
+	/* Shared policy (suppression/pedigree) lives in runTick; no
 	 * observer-side bookkeeping needs shifting on a step. */
 	_timesync.runTick(*_rtc);
 }

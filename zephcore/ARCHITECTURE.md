@@ -345,7 +345,7 @@ ZephCore-only divergence from Arduino MeshCore (like the Adaptive Contention Win
 | Room server | forward-only | post timestamps feed client `sync_since` ordering |
 | Companion | forward-only | own clock stamps outgoing DMs; peers hold per-sender replay high-water marks |
 
-**Step application**: the shared policy (GPS gate, forward-only skip, uint32-overflow guard, set clock, one `zephcore_rtc_save` per step — never per evaluation) lives in `MeshTimeSync::runTick()`; when it returns true, the role shifts its wall-clock-anchored bookkeeping by `lastStepDelta()` — repeater: neighbor `heard_timestamp`s, ACL `last_activity`, login/anon/discover rate-limiter resets; room server: ACL + login limiter.
+**Step application**: the shared policy (suppression/pedigree checks inside `evaluateNow`, forward-only skip, uint32-overflow guard, set clock, one `zephcore_rtc_save` per step — never per evaluation) lives in `MeshTimeSync::runTick()`; when it returns true, the role shifts its wall-clock-anchored bookkeeping by `lastStepDelta()` — repeater: neighbor `heard_timestamp`s, ACL `last_activity`, login/anon/discover rate-limiter resets; room server: ACL + login limiter.
 
 All policy timers (6 h rate limit, 7-day suppression, tenure, sample age) anchor on **uptime, never wall clock** — otherwise the very steps they govern would distort them.
 

@@ -353,8 +353,8 @@ void CompanionMesh::onAdvertTimeSample(const mesh::Identity &id, uint32_t timest
 void CompanionMesh::timeSyncTick()
 {
 	if (!prefs.meshtimesync) return;
-	/* Shared policy (GPS fix-freshness gate, forward-only) lives in
-	 * runTick; no companion-side bookkeeping needs shifting on a step. */
+	/* Shared policy (suppression/pedigree, forward-only) lives in runTick;
+	 * no companion-side bookkeeping needs shifting on a step. */
 	_timesync.runTick(*getRTCClock());
 }
 
