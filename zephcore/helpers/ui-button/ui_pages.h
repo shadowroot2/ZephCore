@@ -139,6 +139,14 @@ struct ui_state *ui_pages_get_state(void);
 void ui_pages_render(void);
 
 /**
+ * Milliseconds until the tiny-panel page-title flash expires, or 0 when not
+ * flashing (and always 0 on normal-sized panels). The UI task uses this to
+ * schedule the single follow-up render that replaces the flashed title with
+ * page content.
+ */
+uint32_t ui_pages_flash_remaining_ms(void);
+
+/**
  * Render a splash screen.
  */
 void ui_pages_render_splash(void);

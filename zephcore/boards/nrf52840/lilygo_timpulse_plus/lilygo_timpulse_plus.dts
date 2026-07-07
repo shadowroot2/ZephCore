@@ -236,10 +236,24 @@
 	};
 };
 
-/* ---- I2C0: SSD1315 OLED ----
+/* ---- I2C0: SSD1315 OLED (64x32 glass) ----
  * SSD1315 is SSD1306-compatible; the solomon,ssd1306 driver drives it. No
- * hardware reset line on this board (SCREEN_RST = -1). Standard 0.96" 128x64
- * orientation — if the panel is mounted rotated, flip segment-remap/com-invdir. */
+ * hardware reset line (SCREEN_RST = -1).
+ *
+ * The physical glass is only 64x32, mapped into the controller's 128x64 RAM
+ * at column 32 / row 32 — LilyGo's Display.ino inits Adafruit_SSD1306(128,64)
+ * then calls setOffsetCursor(32,32), i.e. content is drawn into the visible
+ * window at RAM (32,32). We express that as a 64x32 panel whose origin is
+ * segment 32 / page 4 (row 32 = page 4), while keeping the vendor's 128x64
+ * COM scan: multiplex-ratio 63, display-offset 0, alternative COM pins
+ * (NOT com-sequential). The offsets are inferred from the vendor example and
+ * may need bench trimming; if the window is misplaced, the usual alternate is
+ * multiplex-ratio 31 + display-offset 32 + page-offset 0.
+ *
+ * NOTE: this only fixes the panel geometry. ZephCore's UI is laid out for
+ * 128x64 — a 64x32 panel needs a simplified "tiny" UI (not yet in ZephCore;
+ * upstream MeshCore has a ui-tiny reference). Until then content will overflow
+ * the small window even though it is now positioned correctly. */
 &i2c0 {
 	compatible = "nordic,nrf-twim";
 	status = "okay";
@@ -251,10 +265,10 @@
 	oled: ssd1306@3c {
 		compatible = "solomon,ssd1306";
 		reg = <0x3c>;
-		width = <128>;
-		height = <64>;
-		segment-offset = <0>;
-		page-offset = <0>;
+		width = <64>;
+		height = <32>;
+		segment-offset = <32>;
+		page-offset = <4>;
 		display-offset = <0>;
 		multiplex-ratio = <63>;
 		segment-remap;

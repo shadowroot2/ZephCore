@@ -162,6 +162,14 @@ static void render_work_handler(struct k_work *work)
 	 * OLED: only render when display is on (screen is black when off). */
 	if ((mc_display_is_on() || mc_display_is_epd()) && !splash_active) {
 		ui_pages_render();
+
+		/* Tiny panels flash the page title on a change, then need one
+		 * more render to swap it for content once the flash expires. */
+		uint32_t flash_ms = ui_pages_flash_remaining_ms();
+
+		if (flash_ms > 0) {
+			k_work_reschedule(&render_work, K_MSEC(flash_ms + 20));
+		}
 	}
 #endif
 }

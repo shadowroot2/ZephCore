@@ -49,12 +49,35 @@ LOG_MODULE_REGISTER(ui_pages, CONFIG_ZEPHCORE_BOARD_LOG_LEVEL);
 #define FONT_H       mc_display_font_height()
 #define DISP_W       mc_display_width()
 #define DISP_H       mc_display_height()
-#define LINE_H       (FONT_H + 2)           /* font height + 2px gap */
 #define TOP_BAR_Y    0
 #define DOTS_Y       (FONT_H + 2)           /* just below top bar */
 #define SEP_Y        (DOTS_Y + 4)           /* below dots */
-#define CONTENT_Y    (SEP_Y + 4)            /* below separator */
 #define MAX_CHARS    (DISP_W / (FONT_W ? FONT_W : 1))
+
+/* ---- Tiny-panel mode (e.g. 64x32 wristband OLED) ----
+ * When the panel is too short for the top bar + page dots + separator, drop
+ * that chrome and hand the whole panel to page content, tightening the line
+ * spacing so four rows of the 6x8 font fit in 32px.  Auto-detected from the
+ * panel height, so 128x64 boards are unaffected.  There is no persistent title
+ * bar on tiny panels — the page name is flashed briefly on a page change (see
+ * tiny_flash_kick / render_tiny_title). */
+static inline bool ui_tiny(void)
+{
+	return DISP_H < 48;
+}
+
+static inline int ui_line_h(void)
+{
+	return ui_tiny() ? FONT_H : (FONT_H + 2);   /* drop the inter-line gap */
+}
+
+static inline int ui_content_y(void)
+{
+	return ui_tiny() ? 0 : (SEP_Y + 4);         /* full height when tiny */
+}
+
+#define LINE_H       (ui_line_h())
+#define CONTENT_Y    (ui_content_y())
 
 /* Compact RGB565 palette for small color TFTs.  These are used only through
  * mc_display_has_color(); monochrome displays keep the existing CFB path. */
@@ -95,6 +118,18 @@ static inline int centered_row(int idx, int total)
 
 /* ========== Global State ========== */
 static struct ui_state state;
+
+/* Tiny-mode page-title flash: after a page change we show the page name for
+ * TINY_FLASH_MS, then re-render into content (there is no persistent bar on
+ * tiny panels).  The follow-up render is scheduled by the UI task via
+ * ui_pages_flash_remaining_ms(). */
+#define TINY_FLASH_MS 1000U
+static uint32_t tiny_flash_until;
+
+static void tiny_flash_kick(void)
+{
+	tiny_flash_until = k_uptime_get_32() + TINY_FLASH_MS;
+}
 
 static uint8_t activity_rx[ACTIVITY_GRAPH_SAMPLES];
 static uint8_t activity_tx[ACTIVITY_GRAPH_SAMPLES];
@@ -171,6 +206,10 @@ static char time_source_tag(enum time_sync_source src)
 
 static void render_top_bar(void)
 {
+	if (ui_tiny()) {
+		return;   /* no room for a bar; page title is flashed on change */
+	}
+
 	bool color = mc_display_has_color();
 	/* Right side: "HH:MM<S> XX%" — clock (with 1-char source tag) then
 	 * battery, right-aligned.  Built first so the node name can be clipped
@@ -252,6 +291,10 @@ static void render_top_bar(void)
 
 static void render_page_indicator(void)
 {
+	if (ui_tiny()) {
+		return;   /* no room for dots/separator on a tiny panel */
+	}
+
 	/* Centered dots matching Arduino layout:
 	 * Each dot spaced 10px apart, centered on screen.
 	 * Current page = filled 3x3 block, others = single pixel. */
@@ -489,10 +532,64 @@ static void draw_activity_graph(int x, int y, int w, int h)
 
 /* ========== Page Renderers ========== */
 
+/* ========== Tiny-panel page title (flashed on page change) ========== */
+
+static const char *tiny_page_title(enum ui_page p)
+{
+	switch (p) {
+	case UI_PAGE_MESSAGES:  return "MESSAGES";
+	case UI_PAGE_RECENT:    return "RECENT";
+	case UI_PAGE_RADIO:     return "RADIO";
+	case UI_PAGE_TRAFFIC:   return "TRAFFIC";
+	case UI_PAGE_BLUETOOTH: return "BLUETOOTH";
+	case UI_PAGE_ADVERT:    return "ADVERT";
+	case UI_PAGE_GPS:       return "GPS";
+	case UI_PAGE_BUZZER:    return "BUZZER";
+	case UI_PAGE_LEDS:      return "LEDS";
+	case UI_PAGE_SENSORS:   return "SENSORS";
+	case UI_PAGE_OFFGRID:   return "OFFGRID";
+	case UI_PAGE_DFU:       return "DFU";
+	case UI_PAGE_SHUTDOWN:  return "SHUTDOWN";
+	case UI_PAGE_STATUS:    return "STATUS";
+	default:                return "";
+	}
+}
+
+static void render_tiny_title(void)
+{
+	const char *title = tiny_page_title(active_pages[current_page_idx]);
+	int rows = (state.battery_mv > 0) ? 2 : 1;
+
+	draw_centered(centered_row(0, rows), title);
+
+	if (state.battery_mv > 0) {
+		char buf[8];
+		uint8_t pct = state.battery_pct ? state.battery_pct
+					        : calc_battery_pct(state.battery_mv);
+
+		snprintf(buf, sizeof(buf), "%u%%", pct);
+		draw_centered(centered_row(1, rows), buf);
+	}
+}
+
 static void render_messages(void)
 {
 	/* 3 centered rows: msg count, BLE status, offgrid status */
 	char buf[24];
+
+	if (ui_tiny()) {
+		snprintf(buf, sizeof(buf), "MSG:%u", state.msg_count);
+		draw_centered(centered_row(0, 3), buf);
+		draw_centered(centered_row(1, 3),
+			      state.ble_connected ? "BLE:conn" : "BLE:adv");
+
+		uint32_t up_s = (uint32_t)(k_uptime_get() / 1000);
+
+		snprintf(buf, sizeof(buf), "%uh%02um",
+			 (up_s % 86400) / 3600, (up_s % 3600) / 60);
+		draw_centered(centered_row(2, 3), buf);
+		return;
+	}
 
 	if (use_compact_color_home()) {
 		int y = CONTENT_Y;
@@ -658,6 +755,19 @@ static void render_radio(void)
 	const char *rx_mode = state.lora_rx_duty_cycle ? "DC" : "CONT";
 	uint16_t warn_color = (state.lora_apc_enabled && state.lora_apc_reduction > 0)
 			      ? UI_COLOR_WARN : UI_COLOR_OK;
+
+	if (ui_tiny()) {
+		int tx = state.lora_effective_tx_power > 0
+			 ? state.lora_effective_tx_power : state.lora_tx_power;
+
+		snprintf(buf, sizeof(buf), "%u.%uM", freq_mhz, freq_frac / 100);
+		draw_centered(centered_row(0, 3), buf);
+		snprintf(buf, sizeof(buf), "SF%u BW%u", state.lora_sf, bw_int);
+		draw_centered(centered_row(1, 3), buf);
+		snprintf(buf, sizeof(buf), "P%d %s", tx, rx_mode);
+		draw_centered(centered_row(2, 3), buf);
+		return;
+	}
 
 	if (mc_display_has_color()) {
 		uint16_t state_color = state.lora_tx_active ? UI_COLOR_WARN :
@@ -926,6 +1036,30 @@ static void render_gps(void)
 	char buf[32];
 	int y = CONTENT_Y;
 	bool color = mc_display_has_color();
+
+	if (ui_tiny()) {
+		if (!state.gps_available) {
+			draw_centered(centered_row(0, 1), "No GPS");
+		} else if (!state.gps_enabled) {
+			draw_centered(centered_row(0, 1), "GPS off");
+		} else if (state.gps_state == 2) {
+			snprintf(buf, sizeof(buf), "Sats:%u", state.gps_satellites);
+			draw_centered(centered_row(0, 2), "Searching");
+			draw_centered(centered_row(1, 2), buf);
+		} else if (state.gps_state == 1) {
+			draw_centered(centered_row(0, 2), "Standby");
+			if (state.gps_last_fix_age_s != UINT32_MAX) {
+				char tb[12];
+
+				fmt_duration(tb, sizeof(tb), state.gps_last_fix_age_s);
+				snprintf(buf, sizeof(buf), "fix %s", tb);
+				draw_centered(centered_row(1, 2), buf);
+			}
+		} else {
+			draw_centered(centered_row(0, 1), "GPS off");
+		}
+		return;
+	}
 
 	/* No GPS hardware on this board */
 	if (!state.gps_available) {
@@ -1261,6 +1395,33 @@ static void render_status(void)
 	int y = CONTENT_Y;
 	bool color = mc_display_has_color();
 
+	if (ui_tiny()) {
+		uint32_t up_s = (uint32_t)(k_uptime_get() / 1000);
+
+		snprintf(buf, sizeof(buf), "Up %ud%02uh",
+			 up_s / 86400, (up_s % 86400) / 3600);
+		draw_centered(centered_row(0, 3), buf);
+
+		if (state.rtc_epoch > 1735689600) {
+			uint32_t ds = state.rtc_epoch % 86400;
+
+			snprintf(buf, sizeof(buf), "%02u:%02u UTC",
+				 (unsigned)(ds / 3600), (unsigned)((ds % 3600) / 60));
+		} else {
+			snprintf(buf, sizeof(buf), "no time");
+		}
+		draw_centered(centered_row(1, 3), buf);
+
+		if (state.battery_mv > 0) {
+			uint8_t pct = state.battery_pct ? state.battery_pct
+						        : calc_battery_pct(state.battery_mv);
+
+			snprintf(buf, sizeof(buf), "Batt %u%%", pct);
+			draw_centered(centered_row(2, 3), buf);
+		}
+		return;
+	}
+
 	/* Role label */
 	if (color) {
 		draw_badge(0, y, "MODE", UI_COLOR_ACTIVE);
@@ -1364,6 +1525,16 @@ void ui_pages_render(void)
 	ui_refresh_battery();
 
 	mc_display_clear();
+
+	/* Tiny panels flash the page title briefly after a change, then fall
+	 * through to content on the follow-up render (scheduled by the UI task
+	 * via ui_pages_flash_remaining_ms()). */
+	if (ui_tiny() && k_uptime_get_32() < tiny_flash_until) {
+		render_tiny_title();
+		mc_display_finalize();
+		return;
+	}
+
 	render_top_bar();
 	render_page_indicator();
 
@@ -1374,6 +1545,20 @@ void ui_pages_render(void)
 	}
 
 	mc_display_finalize();
+}
+
+/* Milliseconds until the tiny-panel title flash expires (0 when not flashing).
+ * The UI task uses this to schedule the one follow-up render that swaps the
+ * flashed title for page content. */
+uint32_t ui_pages_flash_remaining_ms(void)
+{
+	if (!ui_tiny()) {
+		return 0;
+	}
+
+	uint32_t now = k_uptime_get_32();
+
+	return (now < tiny_flash_until) ? (tiny_flash_until - now) : 0;
 }
 
 void ui_pages_render_splash(void)
@@ -1404,6 +1589,7 @@ void ui_pages_render_splash(void)
 void ui_pages_next(void)
 {
 	state.shutdown_confirm_time = 0;  /* Reset confirmation on navigate */
+	tiny_flash_kick();
 	current_page_idx++;
 	if (current_page_idx >= ACTIVE_PAGE_COUNT) {
 		current_page_idx = 0;
@@ -1414,6 +1600,7 @@ void ui_pages_next(void)
 void ui_pages_prev(void)
 {
 	state.shutdown_confirm_time = 0;  /* Reset confirmation on navigate */
+	tiny_flash_kick();
 	current_page_idx--;
 	if (current_page_idx < 0) {
 		current_page_idx = ACTIVE_PAGE_COUNT - 1;
@@ -1423,6 +1610,7 @@ void ui_pages_prev(void)
 
 void ui_pages_set(enum ui_page page)
 {
+	tiny_flash_kick();
 	/* Find page in active list, fall back to first active page */
 	for (int i = 0; i < ACTIVE_PAGE_COUNT; i++) {
 		if (active_pages[i] == page) {

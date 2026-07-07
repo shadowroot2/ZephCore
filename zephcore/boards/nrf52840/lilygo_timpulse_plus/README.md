@@ -32,7 +32,7 @@ Bootloader is Adafruit UF2 / SoftDevice **s140 v6.1.1**, app @ `0x26000`
 |-----------------|--------------------|-----------------------------------------------|
 | MCU             | nRF52840           | BLE5, native USB, 1 MB flash / 256 KB RAM     |
 | LoRa            | SX1262 (AcSip S62F)| 22 dBm, embedded 32 MHz TCXO on DIO3          |
-| Display         | SSD1315 128x64 OLED| I2C0 @ 0x3C (SSD1306-compatible, no reset)    |
+| Display         | SSD1315 64x32 OLED | I2C0 @ 0x3C (64x32 glass at RAM col 32/row 32) |
 | GNSS            | u-blox MIA-M10Q    | UART0 @ 38400, enable P1.10                    |
 | Ext flash       | ZD25WQ32C 32 Mbit  | QSPI -> `/ext` LittleFS (contacts/channels)   |
 | IMU             | ICM-20948          | 2nd I2C bus @ 0x69 — present, not used         |
@@ -90,3 +90,28 @@ The QSPI flash needs no verification: the ZD25WQ32C JEDEC id (`ba 60 16`) and
 deep-power-down timings are datasheet-confirmed, and `/ext` reuses the same
 `nordic,qspi-nor` + LittleFS automount path as the older MX25R boards — a blank
 chip auto-formats on first mount, no formatter step required.
+
+## Display / UI status (known incomplete)
+
+The panel is a **64x32** glass mapped into the SSD1315's 128x64 RAM at column
+32 / row 32 (LilyGo `Display.ino` inits `Adafruit_SSD1306(128,64)` then
+`setOffsetCursor(32,32)`). The devicetree now expresses this — `width=64`,
+`height=32`, `segment-offset=32`, `page-offset=4` — but two things remain:
+
+1. **Offsets are inferred, not bench-verified.** If the visible window is
+   misplaced, try the alternate `multiplex-ratio=31` + `display-offset=32` +
+   `page-offset=0`.
+2. **Tiny UI (implemented, needs bench polish).** `helpers/ui-button/ui_pages.c`
+   now has a runtime "tiny mode" (auto-enabled when the panel is <48 px tall):
+   it drops the top bar + page-dots + separator, uses the full height for
+   content with tightened line spacing, and flashes the page title for ~1 s on
+   each change (there is no persistent bar — matches the "no bar, full content"
+   choice). Compact layouts are provided for Messages, Radio, GPS and Status;
+   the remaining pages (Recent, Traffic, Sensors, toggles) render through the
+   normal path at full height and may still clip horizontally until they get
+   their own compact branch. 128x64 boards are unaffected. Pixel positioning
+   was written from the datasheet, not a bench — expect to nudge it on hardware.
+
+Separately, early hardware testing showed **occasional spontaneous reboots** —
+untriaged, likely power/brownout on TX or a fault loop; capture an RTT/USB
+console log from a debug build to get a backtrace.
