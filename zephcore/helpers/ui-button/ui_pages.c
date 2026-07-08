@@ -131,6 +131,7 @@ static void tiny_flash_kick(void)
 	tiny_flash_until = k_uptime_get_32() + TINY_FLASH_MS;
 }
 
+#if MC_DISPLAY_COLOR_PANEL
 static uint8_t activity_rx[ACTIVITY_GRAPH_SAMPLES];
 static uint8_t activity_tx[ACTIVITY_GRAPH_SAMPLES];
 static uint8_t activity_head;
@@ -138,6 +139,7 @@ static bool activity_initialized;
 static uint32_t activity_last_rx;
 static uint32_t activity_last_tx;
 static uint32_t activity_last_sample_ms;
+#endif
 
 /* ========== Active Pages (role-dependent) ========== */
 /* Repeater: minimal pages — status, radio, shutdown.
@@ -420,10 +422,12 @@ static void fmt_compact_count(char *buf, size_t len, uint32_t value)
 	}
 }
 
+#if MC_DISPLAY_COLOR_PANEL
 static bool use_compact_color_home(void)
 {
 	return mc_display_has_color() && DISP_W <= 180 && DISP_H <= 100;
 }
+#endif
 
 /* Short label for the current LoRa radio state, shared across pages. */
 static const char *radio_state_label(void)
@@ -433,6 +437,7 @@ static const char *radio_state_label(void)
 	       state.lora_radio_ready ? "RDY" : "WAIT";
 }
 
+#if MC_DISPLAY_COLOR_PANEL
 static uint8_t clamp_activity_delta(uint32_t delta)
 {
 	return (delta > 15U) ? 15U : (uint8_t)delta;
@@ -529,6 +534,7 @@ static void draw_activity_graph(int x, int y, int w, int h)
 	mc_display_color_text(x + w - 30, y + 1, "RX", UI_COLOR_RX);
 	mc_display_color_text(x + w - 14, y + 1, "TX", UI_COLOR_TX);
 }
+#endif /* MC_DISPLAY_COLOR_PANEL */
 
 /* ========== Page Renderers ========== */
 
@@ -572,7 +578,20 @@ static void render_tiny_title(void)
 	}
 }
 
-static void render_messages(void)
+/*
+ * Per-page renderer split (UI profile pattern)
+ * --------------------------------------------
+ * Each page's capability-divergent bodies live in dedicated _mono / _color
+ * functions.  render_<page>() is a thin dispatcher that picks one:
+ *   - Mono / tiny / e-ink panels use render_<page>_mono().
+ *   - RGB565 color panels use render_<page>_color(), which is compiled ONLY
+ *     when a `tft` node exists in devicetree (MC_DISPLAY_COLOR_PANEL).  On a
+ *     mono board the color body — and every color-only helper it references —
+ *     drops out entirely, so no color RAM/flash is spent.
+ * The bodies are moved verbatim from the old combined function, so on-screen
+ * output is byte-identical to before.
+ */
+static void render_messages_mono(void)
 {
 	/* 3 centered rows: msg count, BLE status, offgrid status */
 	char buf[24];
@@ -590,6 +609,30 @@ static void render_messages(void)
 		draw_centered(centered_row(2, 3), buf);
 		return;
 	}
+
+	snprintf(buf, sizeof(buf), "MSG: %u", state.msg_count);
+	draw_centered(centered_row(0, 4), buf);
+
+	if (state.ble_connected) {
+		draw_centered(centered_row(1, 4), "< Connected >");
+	} else {
+		draw_centered(centered_row(1, 4), "Waiting for app...");
+	}
+
+	snprintf(buf, sizeof(buf), "Offgrid: %s",
+		 state.offgrid_enabled ? "ON" : "OFF");
+	draw_centered(centered_row(2, 4), buf);
+
+	uint32_t up_s = (uint32_t)(k_uptime_get() / 1000);
+	snprintf(buf, sizeof(buf), "Up: %ud %uh %um",
+		 up_s / 86400, (up_s % 86400) / 3600, (up_s % 3600) / 60);
+	draw_centered(centered_row(3, 4), buf);
+}
+
+#if MC_DISPLAY_COLOR_PANEL
+static void render_messages_color(void)
+{
+	char buf[24];
 
 	if (use_compact_color_home()) {
 		int y = CONTENT_Y;
@@ -633,61 +676,52 @@ static void render_messages(void)
 		return;
 	}
 
-	if (mc_display_has_color()) {
-		int y = CONTENT_Y;
-		uint16_t ble_color = state.ble_connected ? UI_COLOR_OK : UI_COLOR_WARN;
-		const char *ble = state.ble_connected ? "BLE OK" : "BLE ADV";
+	int y = CONTENT_Y;
+	uint16_t ble_color = state.ble_connected ? UI_COLOR_OK : UI_COLOR_WARN;
+	const char *ble = state.ble_connected ? "BLE OK" : "BLE ADV";
 
-		draw_badge(0, y, ble, ble_color);
-		draw_badge(DISP_W - color_text_width(state.offgrid_enabled ? "GRID" : "LOCAL") - 4,
-			   y, state.offgrid_enabled ? "GRID" : "LOCAL",
-			   state.offgrid_enabled ? UI_COLOR_ACTIVE : UI_COLOR_DISABLED);
-		y += LINE_H + 2;
+	draw_badge(0, y, ble, ble_color);
+	draw_badge(DISP_W - color_text_width(state.offgrid_enabled ? "GRID" : "LOCAL") - 4,
+		   y, state.offgrid_enabled ? "GRID" : "LOCAL",
+		   state.offgrid_enabled ? UI_COLOR_ACTIVE : UI_COLOR_DISABLED);
+	y += LINE_H + 2;
 
-		mc_display_color_text(0, y, "MESSAGES", UI_COLOR_LABEL);
-		snprintf(buf, sizeof(buf), "%u", state.msg_count);
-		mc_display_color_text(DISP_W - color_text_width(buf), y, buf,
-				      state.msg_count ? UI_COLOR_WARN : UI_COLOR_VALUE);
-		y += LINE_H;
-
-		if (state.ble_connected) {
-			draw_centered_color(y, "Connected", UI_COLOR_OK);
-		} else {
-			draw_centered_color(y, "Waiting for app", UI_COLOR_WARN);
-		}
-		y += LINE_H;
-
-		snprintf(buf, sizeof(buf), "Offgrid %s",
-			 state.offgrid_enabled ? "on" : "off");
-		draw_centered_color(y, buf,
-				    state.offgrid_enabled ? UI_COLOR_ACTIVE
-							  : UI_COLOR_DISABLED);
-		y += LINE_H;
-
-		uint32_t up_s = (uint32_t)(k_uptime_get() / 1000);
-		snprintf(buf, sizeof(buf), "Up: %ud %uh %um",
-			 up_s / 86400, (up_s % 86400) / 3600, (up_s % 3600) / 60);
-		draw_centered_color(y, buf, UI_COLOR_LABEL);
-		return;
-	}
-
-	snprintf(buf, sizeof(buf), "MSG: %u", state.msg_count);
-	draw_centered(centered_row(0, 4), buf);
+	mc_display_color_text(0, y, "MESSAGES", UI_COLOR_LABEL);
+	snprintf(buf, sizeof(buf), "%u", state.msg_count);
+	mc_display_color_text(DISP_W - color_text_width(buf), y, buf,
+			      state.msg_count ? UI_COLOR_WARN : UI_COLOR_VALUE);
+	y += LINE_H;
 
 	if (state.ble_connected) {
-		draw_centered(centered_row(1, 4), "< Connected >");
+		draw_centered_color(y, "Connected", UI_COLOR_OK);
 	} else {
-		draw_centered(centered_row(1, 4), "Waiting for app...");
+		draw_centered_color(y, "Waiting for app", UI_COLOR_WARN);
 	}
+	y += LINE_H;
 
-	snprintf(buf, sizeof(buf), "Offgrid: %s",
-		 state.offgrid_enabled ? "ON" : "OFF");
-	draw_centered(centered_row(2, 4), buf);
+	snprintf(buf, sizeof(buf), "Offgrid %s",
+		 state.offgrid_enabled ? "on" : "off");
+	draw_centered_color(y, buf,
+			    state.offgrid_enabled ? UI_COLOR_ACTIVE
+						  : UI_COLOR_DISABLED);
+	y += LINE_H;
 
 	uint32_t up_s = (uint32_t)(k_uptime_get() / 1000);
 	snprintf(buf, sizeof(buf), "Up: %ud %uh %um",
 		 up_s / 86400, (up_s % 86400) / 3600, (up_s % 3600) / 60);
-	draw_centered(centered_row(3, 4), buf);
+	draw_centered_color(y, buf, UI_COLOR_LABEL);
+}
+#endif /* MC_DISPLAY_COLOR_PANEL */
+
+static void render_messages(void)
+{
+#if MC_DISPLAY_COLOR_PANEL
+	if (mc_display_has_color()) {
+		render_messages_color();
+		return;
+	}
+#endif
+	render_messages_mono();
 }
 
 static void render_recent(void)
@@ -743,7 +777,7 @@ static void render_recent(void)
 	}
 }
 
-static void render_radio(void)
+static void render_radio_mono(void)
 {
 	char buf[32];
 	int y = CONTENT_Y;
@@ -753,8 +787,6 @@ static void render_radio(void)
 	uint16_t bw_frac = state.lora_bw_khz_x10 % 10;
 	const char *packet_state = radio_state_label();
 	const char *rx_mode = state.lora_rx_duty_cycle ? "DC" : "CONT";
-	uint16_t warn_color = (state.lora_apc_enabled && state.lora_apc_reduction > 0)
-			      ? UI_COLOR_WARN : UI_COLOR_OK;
 
 	if (ui_tiny()) {
 		int tx = state.lora_effective_tx_power > 0
@@ -769,7 +801,62 @@ static void render_radio(void)
 		return;
 	}
 
-	if (mc_display_has_color()) {
+	if (bw_frac) {
+		snprintf(buf, sizeof(buf), "%u.%03u BW%u.%u",
+			 freq_mhz, freq_frac, bw_int, bw_frac);
+	} else {
+		snprintf(buf, sizeof(buf), "%u.%03u BW%u",
+			 freq_mhz, freq_frac, bw_int);
+	}
+	mc_display_text(0, y, buf, false);
+	y += LINE_H;
+
+	snprintf(buf, sizeof(buf), "SF%u CR%u SW%02X P%u",
+		 state.lora_sf, state.lora_cr, state.lora_sync_word,
+		 state.lora_preamble_len);
+	mc_display_text(0, y, buf, false);
+	y += LINE_H;
+
+	if (state.lora_apc_enabled) {
+		snprintf(buf, sizeof(buf), "TX:%d/%ddBm APC:on",
+			 state.lora_effective_tx_power, state.lora_tx_power);
+	} else {
+		snprintf(buf, sizeof(buf), "TX:%ddBm APC:off", state.lora_tx_power);
+	}
+	mc_display_text(0, y, buf, false);
+	y += LINE_H;
+
+	snprintf(buf, sizeof(buf), "R%d M%d.%d T%u %s/%s",
+		 state.lora_apc_reduction,
+		 state.lora_apc_margin_x10 / 10,
+		 abs(state.lora_apc_margin_x10 % 10),
+		 state.lora_apc_target_margin, packet_state, rx_mode);
+	mc_display_text(0, y, buf, false);
+	y += LINE_H;
+
+	snprintf(buf, sizeof(buf), "NF%d R%lu T%lu E%lu",
+		 state.lora_noise_floor,
+		 (unsigned long)state.lora_packets_rx,
+		 (unsigned long)state.lora_packets_tx,
+		 (unsigned long)state.lora_packets_err);
+	mc_display_text(0, y, buf, false);
+}
+
+#if MC_DISPLAY_COLOR_PANEL
+static void render_radio_color(void)
+{
+	char buf[32];
+	int y = CONTENT_Y;
+	uint32_t freq_mhz = state.lora_freq_hz / 1000000;
+	uint32_t freq_frac = (state.lora_freq_hz % 1000000 + 500) / 1000;
+	uint16_t bw_int = state.lora_bw_khz_x10 / 10;
+	uint16_t bw_frac = state.lora_bw_khz_x10 % 10;
+	const char *packet_state = radio_state_label();
+	const char *rx_mode = state.lora_rx_duty_cycle ? "DC" : "CONT";
+	uint16_t warn_color = (state.lora_apc_enabled && state.lora_apc_reduction > 0)
+			      ? UI_COLOR_WARN : UI_COLOR_OK;
+
+	{
 		uint16_t state_color = state.lora_tx_active ? UI_COLOR_WARN :
 				       state.lora_in_rx ? UI_COLOR_ACTIVE :
 				       state.lora_radio_ready ? UI_COLOR_OK
@@ -843,49 +930,21 @@ static void render_radio(void)
 							   : UI_COLOR_VALUE);
 		return;
 	}
+}
+#endif /* MC_DISPLAY_COLOR_PANEL */
 
-	if (bw_frac) {
-		snprintf(buf, sizeof(buf), "%u.%03u BW%u.%u",
-			 freq_mhz, freq_frac, bw_int, bw_frac);
-	} else {
-		snprintf(buf, sizeof(buf), "%u.%03u BW%u",
-			 freq_mhz, freq_frac, bw_int);
+static void render_radio(void)
+{
+#if MC_DISPLAY_COLOR_PANEL
+	if (mc_display_has_color()) {
+		render_radio_color();
+		return;
 	}
-	mc_display_text(0, y, buf, false);
-	y += LINE_H;
-
-	snprintf(buf, sizeof(buf), "SF%u CR%u SW%02X P%u",
-		 state.lora_sf, state.lora_cr, state.lora_sync_word,
-		 state.lora_preamble_len);
-	mc_display_text(0, y, buf, false);
-	y += LINE_H;
-
-	if (state.lora_apc_enabled) {
-		snprintf(buf, sizeof(buf), "TX:%d/%ddBm APC:on",
-			 state.lora_effective_tx_power, state.lora_tx_power);
-	} else {
-		snprintf(buf, sizeof(buf), "TX:%ddBm APC:off", state.lora_tx_power);
-	}
-	mc_display_text(0, y, buf, false);
-	y += LINE_H;
-
-	snprintf(buf, sizeof(buf), "R%d M%d.%d T%u %s/%s",
-		 state.lora_apc_reduction,
-		 state.lora_apc_margin_x10 / 10,
-		 abs(state.lora_apc_margin_x10 % 10),
-		 state.lora_apc_target_margin, packet_state, rx_mode);
-	mc_display_text(0, y, buf, false);
-	y += LINE_H;
-
-	snprintf(buf, sizeof(buf), "NF%d R%lu T%lu E%lu",
-		 state.lora_noise_floor,
-		 (unsigned long)state.lora_packets_rx,
-		 (unsigned long)state.lora_packets_tx,
-		 (unsigned long)state.lora_packets_err);
-	mc_display_text(0, y, buf, false);
+#endif
+	render_radio_mono();
 }
 
-static void render_traffic(void)
+static void render_traffic_mono(void)
 {
 	char rx_count[6];
 	char tx_count[6];
@@ -896,39 +955,6 @@ static void render_traffic(void)
 	fmt_compact_count(rx_count, sizeof(rx_count), state.lora_packets_rx);
 	fmt_compact_count(tx_count, sizeof(tx_count), state.lora_packets_tx);
 	fmt_compact_count(err_count, sizeof(err_count), state.lora_packets_err);
-
-	if (mc_display_has_color() && DISP_W >= 120 && DISP_H >= 64) {
-		int graph_y;
-		int graph_h;
-		int x;
-
-		mc_display_color_fill_rect(0, y - 1, DISP_W, COLOR_FONT_H + 2,
-					   UI_COLOR_HEADER_BG);
-		mc_display_color_text(2, y, "TRAFFIC", UI_COLOR_TITLE);
-		if (state.lora_packets_err > 0) {
-			snprintf(buf, sizeof(buf), "E %s", err_count);
-			mc_display_color_text(DISP_W - color_text_width(buf), y, buf,
-					      UI_COLOR_ERROR);
-		}
-		y += LINE_H;
-
-		x = 0;
-		mc_display_color_text(x, y, "RX ", UI_COLOR_LABEL);
-		x += 3 * COLOR_FONT_W;
-		mc_display_color_text(x, y, rx_count, UI_COLOR_RX);
-		x += color_text_width(rx_count) + 10;
-		mc_display_color_text(x, y, "TX ", UI_COLOR_LABEL);
-		x += 3 * COLOR_FONT_W;
-		mc_display_color_text(x, y, tx_count, UI_COLOR_TX);
-
-		graph_y = y + LINE_H + 2;
-		graph_h = (int)DISP_H - graph_y - 2;
-		if (graph_h < 16) {
-			graph_h = 16;
-		}
-		draw_activity_graph(2, graph_y, DISP_W - 4, graph_h);
-		return;
-	}
 
 	draw_centered(y, "Traffic");
 	y += LINE_H;
@@ -943,26 +969,63 @@ static void render_traffic(void)
 	}
 }
 
-static void render_bluetooth(void)
+#if MC_DISPLAY_COLOR_PANEL
+static void render_traffic_color(void)
 {
-	if (mc_display_has_color()) {
-		int y = CONTENT_Y;
-		uint16_t color = !state.ble_enabled ? UI_COLOR_DISABLED :
-				 state.ble_connected ? UI_COLOR_OK : UI_COLOR_WARN;
+	char rx_count[6];
+	char tx_count[6];
+	char err_count[6];
+	char buf[32];
+	int y = CONTENT_Y;
+	int graph_y;
+	int graph_h;
+	int x;
 
-		draw_badge(0, y, "BLE", color);
-		mc_display_color_text(32, y,
-				      !state.ble_enabled ? "disabled" :
-				      state.ble_connected ? "connected" : "advertising",
-				      color);
-		y += LINE_H + 4;
-		draw_centered_color(y,
-				    state.ble_enabled ? "Press to disable"
-						      : "Press to enable",
-				    UI_COLOR_VALUE);
+	fmt_compact_count(rx_count, sizeof(rx_count), state.lora_packets_rx);
+	fmt_compact_count(tx_count, sizeof(tx_count), state.lora_packets_tx);
+	fmt_compact_count(err_count, sizeof(err_count), state.lora_packets_err);
+
+	mc_display_color_fill_rect(0, y - 1, DISP_W, COLOR_FONT_H + 2,
+				   UI_COLOR_HEADER_BG);
+	mc_display_color_text(2, y, "TRAFFIC", UI_COLOR_TITLE);
+	if (state.lora_packets_err > 0) {
+		snprintf(buf, sizeof(buf), "E %s", err_count);
+		mc_display_color_text(DISP_W - color_text_width(buf), y, buf,
+				      UI_COLOR_ERROR);
+	}
+	y += LINE_H;
+
+	x = 0;
+	mc_display_color_text(x, y, "RX ", UI_COLOR_LABEL);
+	x += 3 * COLOR_FONT_W;
+	mc_display_color_text(x, y, rx_count, UI_COLOR_RX);
+	x += color_text_width(rx_count) + 10;
+	mc_display_color_text(x, y, "TX ", UI_COLOR_LABEL);
+	x += 3 * COLOR_FONT_W;
+	mc_display_color_text(x, y, tx_count, UI_COLOR_TX);
+
+	graph_y = y + LINE_H + 2;
+	graph_h = (int)DISP_H - graph_y - 2;
+	if (graph_h < 16) {
+		graph_h = 16;
+	}
+	draw_activity_graph(2, graph_y, DISP_W - 4, graph_h);
+}
+#endif /* MC_DISPLAY_COLOR_PANEL */
+
+static void render_traffic(void)
+{
+#if MC_DISPLAY_COLOR_PANEL
+	if (mc_display_has_color() && DISP_W >= 120 && DISP_H >= 64) {
+		render_traffic_color();
 		return;
 	}
+#endif
+	render_traffic_mono();
+}
 
+static void render_bluetooth_mono(void)
+{
 	if (!state.ble_enabled) {
 		draw_centered(centered_row(0, 2), "BLE: OFF");
 		draw_centered(centered_row(1, 2), "Press to Enable");
@@ -978,31 +1041,43 @@ static void render_bluetooth(void)
 	}
 }
 
-static void render_advert(void)
+#if MC_DISPLAY_COLOR_PANEL
+static void render_bluetooth_color(void)
+{
+	int y = CONTENT_Y;
+	uint16_t color = !state.ble_enabled ? UI_COLOR_DISABLED :
+			 state.ble_connected ? UI_COLOR_OK : UI_COLOR_WARN;
+
+	draw_badge(0, y, "BLE", color);
+	mc_display_color_text(32, y,
+			      !state.ble_enabled ? "disabled" :
+			      state.ble_connected ? "connected" : "advertising",
+			      color);
+	y += LINE_H + 4;
+	draw_centered_color(y,
+			    state.ble_enabled ? "Press to disable"
+					      : "Press to enable",
+			    UI_COLOR_VALUE);
+}
+#endif /* MC_DISPLAY_COLOR_PANEL */
+
+static void render_bluetooth(void)
+{
+#if MC_DISPLAY_COLOR_PANEL
+	if (mc_display_has_color()) {
+		render_bluetooth_color();
+		return;
+	}
+#endif
+	render_bluetooth_mono();
+}
+
+static void render_advert_mono(void)
 {
 	/* Check for recent "Sent!" feedback (show for 2 seconds) */
 	uint32_t now = k_uptime_get_32();
 	bool just_sent = (state.advert_sent_time > 0 &&
 			  (now - state.advert_sent_time) < 2000);
-
-	if (mc_display_has_color()) {
-		int y = CONTENT_Y;
-
-		draw_badge(0, y, "ADV", just_sent ? UI_COLOR_OK : UI_COLOR_ACTIVE);
-		mc_display_color_text(32, y, "Zero-hop advert", UI_COLOR_VALUE);
-		y += LINE_H + 2;
-
-		if (just_sent) {
-			draw_centered_color(y,
-					    state.advert_was_flood ? "Flood sent" : "Sent",
-					    UI_COLOR_OK);
-		} else {
-			draw_centered_color(y, "Press to send", UI_COLOR_VALUE);
-		}
-		y += LINE_H;
-		draw_centered_color(y, "2x press: flood", UI_COLOR_LABEL);
-		return;
-	}
 
 	draw_centered(centered_row(0, 3), "Send Zero-Hop Advert");
 
@@ -1017,6 +1092,41 @@ static void render_advert(void)
 	}
 
 	draw_centered(centered_row(2, 3), "(2x Press: Flood)");
+}
+
+#if MC_DISPLAY_COLOR_PANEL
+static void render_advert_color(void)
+{
+	uint32_t now = k_uptime_get_32();
+	bool just_sent = (state.advert_sent_time > 0 &&
+			  (now - state.advert_sent_time) < 2000);
+	int y = CONTENT_Y;
+
+	draw_badge(0, y, "ADV", just_sent ? UI_COLOR_OK : UI_COLOR_ACTIVE);
+	mc_display_color_text(32, y, "Zero-hop advert", UI_COLOR_VALUE);
+	y += LINE_H + 2;
+
+	if (just_sent) {
+		draw_centered_color(y,
+				    state.advert_was_flood ? "Flood sent" : "Sent",
+				    UI_COLOR_OK);
+	} else {
+		draw_centered_color(y, "Press to send", UI_COLOR_VALUE);
+	}
+	y += LINE_H;
+	draw_centered_color(y, "2x press: flood", UI_COLOR_LABEL);
+}
+#endif /* MC_DISPLAY_COLOR_PANEL */
+
+static void render_advert(void)
+{
+#if MC_DISPLAY_COLOR_PANEL
+	if (mc_display_has_color()) {
+		render_advert_color();
+		return;
+	}
+#endif
+	render_advert_mono();
 }
 
 /* Format seconds into compact time string: "3m20s", "1h05m", "12s" */
@@ -1182,25 +1292,10 @@ static void render_buzzer(void)
 			  state.buzzer_quiet ? "Press to Enable" : "Press to Disable");
 }
 
-static void render_leds(void)
+static void render_leds_mono(void)
 {
 	char buf[24];
 	int y = CONTENT_Y;
-
-	if (mc_display_has_color()) {
-		draw_badge(0, y, "LED", state.leds_disabled ? UI_COLOR_DISABLED
-							      : UI_COLOR_OK);
-		mc_display_color_text(32, y,
-				      state.leds_disabled ? "off" : "on",
-				      state.leds_disabled ? UI_COLOR_DISABLED
-							  : UI_COLOR_OK);
-		y += LINE_H + 4;
-		draw_centered_color(y,
-				    state.leds_disabled ? "Press to enable"
-							: "Press to disable",
-				    UI_COLOR_VALUE);
-		return;
-	}
 
 	snprintf(buf, sizeof(buf), "LEDs: %s",
 		 state.leds_disabled ? "off" : "on");
@@ -1209,6 +1304,36 @@ static void render_leds(void)
 
 	draw_centered(y + 8,
 			  state.leds_disabled ? "Press to Enable" : "Press to Disable");
+}
+
+#if MC_DISPLAY_COLOR_PANEL
+static void render_leds_color(void)
+{
+	int y = CONTENT_Y;
+
+	draw_badge(0, y, "LED", state.leds_disabled ? UI_COLOR_DISABLED
+						      : UI_COLOR_OK);
+	mc_display_color_text(32, y,
+			      state.leds_disabled ? "off" : "on",
+			      state.leds_disabled ? UI_COLOR_DISABLED
+						  : UI_COLOR_OK);
+	y += LINE_H + 4;
+	draw_centered_color(y,
+			    state.leds_disabled ? "Press to enable"
+						: "Press to disable",
+			    UI_COLOR_VALUE);
+}
+#endif /* MC_DISPLAY_COLOR_PANEL */
+
+static void render_leds(void)
+{
+#if MC_DISPLAY_COLOR_PANEL
+	if (mc_display_has_color()) {
+		render_leds_color();
+		return;
+	}
+#endif
+	render_leds_mono();
 }
 
 static void render_sensors(void)
@@ -1277,40 +1402,9 @@ static void render_sensors(void)
 	}
 }
 
-static void render_offgrid(void)
+static void render_offgrid_mono(void)
 {
-	/* Check if confirmation has expired */
-	if (state.offgrid_confirm_time != 0 &&
-		(k_uptime_get_32() - state.offgrid_confirm_time) > CONFIG_ZEPHCORE_UI_CONFIRM_WINDOW_MS) {
-		state.offgrid_confirm_time = 0;
-	}
-
 	char buf[24];
-
-	if (mc_display_has_color()) {
-		int y = CONTENT_Y;
-
-		draw_badge(0, y, "GRID", state.offgrid_enabled ? UI_COLOR_ACTIVE
-								: UI_COLOR_DISABLED);
-		mc_display_color_text(38, y, "client repeat",
-				      state.offgrid_enabled ? UI_COLOR_ACTIVE
-							    : UI_COLOR_LABEL);
-		y += LINE_H + 4;
-		snprintf(buf, sizeof(buf), "Status %s",
-			 state.offgrid_enabled ? "on" : "off");
-		draw_centered_color(y, buf,
-				    state.offgrid_enabled ? UI_COLOR_ACTIVE
-							  : UI_COLOR_DISABLED);
-		y += LINE_H;
-		draw_centered_color(y,
-				    state.offgrid_confirm_time != 0 ?
-					    "Press to confirm" :
-					    (state.offgrid_enabled ? "Press to disable"
-								   : "Press to enable"),
-				    state.offgrid_confirm_time != 0 ? UI_COLOR_WARN
-								    : UI_COLOR_VALUE);
-		return;
-	}
 
 	draw_centered(centered_row(0, 3), "Offgrid Mode");
 
@@ -1327,6 +1421,78 @@ static void render_offgrid(void)
 	}
 }
 
+#if MC_DISPLAY_COLOR_PANEL
+static void render_offgrid_color(void)
+{
+	char buf[24];
+	int y = CONTENT_Y;
+
+	draw_badge(0, y, "GRID", state.offgrid_enabled ? UI_COLOR_ACTIVE
+							: UI_COLOR_DISABLED);
+	mc_display_color_text(38, y, "client repeat",
+			      state.offgrid_enabled ? UI_COLOR_ACTIVE
+						    : UI_COLOR_LABEL);
+	y += LINE_H + 4;
+	snprintf(buf, sizeof(buf), "Status %s",
+		 state.offgrid_enabled ? "on" : "off");
+	draw_centered_color(y, buf,
+			    state.offgrid_enabled ? UI_COLOR_ACTIVE
+						  : UI_COLOR_DISABLED);
+	y += LINE_H;
+	draw_centered_color(y,
+			    state.offgrid_confirm_time != 0 ?
+				    "Press to confirm" :
+				    (state.offgrid_enabled ? "Press to disable"
+							   : "Press to enable"),
+			    state.offgrid_confirm_time != 0 ? UI_COLOR_WARN
+							    : UI_COLOR_VALUE);
+}
+#endif /* MC_DISPLAY_COLOR_PANEL */
+
+static void render_offgrid(void)
+{
+	/* Check if confirmation has expired */
+	if (state.offgrid_confirm_time != 0 &&
+		(k_uptime_get_32() - state.offgrid_confirm_time) > CONFIG_ZEPHCORE_UI_CONFIRM_WINDOW_MS) {
+		state.offgrid_confirm_time = 0;
+	}
+
+#if MC_DISPLAY_COLOR_PANEL
+	if (mc_display_has_color()) {
+		render_offgrid_color();
+		return;
+	}
+#endif
+	render_offgrid_mono();
+}
+
+static void render_dfu_mono(void)
+{
+	draw_centered(centered_row(0, 2), "BLE DFU Update");
+	if (state.dfu_confirm_time != 0) {
+		draw_centered(centered_row(1, 2), "Press to confirm");
+	} else {
+		draw_centered(centered_row(1, 2), "Press to Run");
+	}
+}
+
+#if MC_DISPLAY_COLOR_PANEL
+static void render_dfu_color(void)
+{
+	int y = CONTENT_Y;
+
+	draw_badge(0, y, "DFU", state.dfu_confirm_time != 0
+					? UI_COLOR_WARN : UI_COLOR_ACTIVE);
+	mc_display_color_text(32, y, "BLE update", UI_COLOR_VALUE);
+	y += LINE_H + 4;
+	draw_centered_color(y,
+			    state.dfu_confirm_time != 0 ?
+				    "Press to confirm" : "Press to run",
+			    state.dfu_confirm_time != 0 ? UI_COLOR_WARN
+							: UI_COLOR_VALUE);
+}
+#endif /* MC_DISPLAY_COLOR_PANEL */
+
 static void render_dfu(void)
 {
 	/* Check if confirmation has expired */
@@ -1335,28 +1501,41 @@ static void render_dfu(void)
 		state.dfu_confirm_time = 0;
 	}
 
+#if MC_DISPLAY_COLOR_PANEL
 	if (mc_display_has_color()) {
-		int y = CONTENT_Y;
-
-		draw_badge(0, y, "DFU", state.dfu_confirm_time != 0
-						? UI_COLOR_WARN : UI_COLOR_ACTIVE);
-		mc_display_color_text(32, y, "BLE update", UI_COLOR_VALUE);
-		y += LINE_H + 4;
-		draw_centered_color(y,
-				    state.dfu_confirm_time != 0 ?
-					    "Press to confirm" : "Press to run",
-				    state.dfu_confirm_time != 0 ? UI_COLOR_WARN
-								: UI_COLOR_VALUE);
+		render_dfu_color();
 		return;
 	}
+#endif
+	render_dfu_mono();
+}
 
-	draw_centered(centered_row(0, 2), "BLE DFU Update");
-	if (state.dfu_confirm_time != 0) {
+static void render_shutdown_mono(void)
+{
+	draw_centered(centered_row(0, 2), "Power Off");
+	if (state.shutdown_confirm_time != 0) {
 		draw_centered(centered_row(1, 2), "Press to confirm");
 	} else {
 		draw_centered(centered_row(1, 2), "Press to Run");
 	}
 }
+
+#if MC_DISPLAY_COLOR_PANEL
+static void render_shutdown_color(void)
+{
+	int y = CONTENT_Y;
+
+	draw_badge(0, y, "PWR", state.shutdown_confirm_time != 0
+					? UI_COLOR_WARN : UI_COLOR_ERROR);
+	mc_display_color_text(32, y, "power off", UI_COLOR_VALUE);
+	y += LINE_H + 4;
+	draw_centered_color(y,
+			    state.shutdown_confirm_time != 0 ?
+				    "Press to confirm" : "Press to run",
+			    state.shutdown_confirm_time != 0 ? UI_COLOR_WARN
+							    : UI_COLOR_VALUE);
+}
+#endif /* MC_DISPLAY_COLOR_PANEL */
 
 static void render_shutdown(void)
 {
@@ -1366,27 +1545,13 @@ static void render_shutdown(void)
 		state.shutdown_confirm_time = 0;
 	}
 
+#if MC_DISPLAY_COLOR_PANEL
 	if (mc_display_has_color()) {
-		int y = CONTENT_Y;
-
-		draw_badge(0, y, "PWR", state.shutdown_confirm_time != 0
-						? UI_COLOR_WARN : UI_COLOR_ERROR);
-		mc_display_color_text(32, y, "power off", UI_COLOR_VALUE);
-		y += LINE_H + 4;
-		draw_centered_color(y,
-				    state.shutdown_confirm_time != 0 ?
-					    "Press to confirm" : "Press to run",
-				    state.shutdown_confirm_time != 0 ? UI_COLOR_WARN
-								    : UI_COLOR_VALUE);
+		render_shutdown_color();
 		return;
 	}
-
-	draw_centered(centered_row(0, 2), "Power Off");
-	if (state.shutdown_confirm_time != 0) {
-		draw_centered(centered_row(1, 2), "Press to confirm");
-	} else {
-		draw_centered(centered_row(1, 2), "Press to Run");
-	}
+#endif
+	render_shutdown_mono();
 }
 
 static void render_status(void)

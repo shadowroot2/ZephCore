@@ -621,6 +621,37 @@ Color TFT panels (T114, T096, Wireless Tracker) are wrapped as 1bpp displays for
 
 **Repeater** (3 pages): Status, Radio, Shutdown
 
+### 8.2.1 Renderer Split (mono / color)
+
+Pages whose color layout genuinely diverges from the mono layout are split into
+dedicated renderers behind a compile-time seam, instead of branching on
+capability inline (and never into per-board renderer files):
+
+```
+render_<page>_mono()             — mono / tiny / e-ink layout (always compiled)
+render_<page>_color()            — RGB565 layout, wrapped in
+                                   #if MC_DISPLAY_COLOR_PANEL
+render_<page>()                  — thin dispatcher:
+                                     #if MC_DISPLAY_COLOR_PANEL
+                                     if (mc_display_has_color()) { _color(); return; }
+                                     #endif
+                                     _mono();
+```
+
+`MC_DISPLAY_COLOR_PANEL` is defined (in `display.h`) only when a `tft` node
+exists in devicetree. On a mono/e-ink board the color bodies — and every
+color-only helper they reference (`draw_activity_graph`, `use_compact_color_home`,
+the `activity_*` buffers, …) — are dropped at compile time, so color rendering
+costs zero flash/RAM there. Adding a new color board reuses `_color`; it must
+never fork a board-specific renderer.
+
+Pages with a **shared** flow that only tints per-row (Recent, GPS, Sensors,
+Status) stay as single functions with inline `if (mc_display_has_color())` —
+that already is the "one layout, colored" ideal, and the color branch
+dead-code-eliminates on mono via the constant-false `mc_display_has_color()`.
+Split pages: Messages, Radio, Traffic, Bluetooth, Advert, LEDs, Offgrid, DFU,
+Shutdown.
+
 ### 8.3 Multi-Tap Input
 
 Single button; tap-count → key-code mapping comes from the board's devicetree `tap-codes` (up to 5). Typical mapping:
