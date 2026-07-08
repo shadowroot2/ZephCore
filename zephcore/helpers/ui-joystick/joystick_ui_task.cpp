@@ -372,6 +372,32 @@ static void joystick_ui_input_cb(struct input_event *evt, void *user_data)
 	}
 #endif
 
+	/* Screen-lock combo: user button (INPUT_KEY_0) + joystick center
+	 * (INPUT_KEY_ENTER) held simultaneously. Tracked on raw press/release,
+	 * which are visible here on the global input bus before the per-key
+	 * handling below (INPUT_KEY_0 is otherwise only consumed by the
+	 * longpress/multi-tap filters). Latched so it fires once per combo
+	 * until at least one of the two is released; the stray key events the
+	 * two buttons emit afterwards land in the locked handler harmlessly. */
+	static bool s_userbtn_down;
+	static bool s_center_down;
+	static bool s_lock_combo_latched;
+	if (evt->code == INPUT_KEY_0) {
+		s_userbtn_down = (evt->value != 0);
+	} else if (evt->code == INPUT_KEY_ENTER) {
+		s_center_down = (evt->value != 0);
+	}
+	if (s_userbtn_down && s_center_down) {
+		if (!s_lock_combo_latched) {
+			s_lock_combo_latched = true;
+			if (joystick_queue_initialized) {
+				JoystickUITask::enqueueKey(KEY_LOCK);
+			}
+		}
+	} else {
+		s_lock_combo_latched = false;
+	}
+
 	/* Long press fires on RELEASE so hold duration is known */
 	if (evt->code == INPUT_KEY_ENTER) {
 		if (evt->value) {
@@ -804,6 +830,18 @@ void JoystickUITask::loop()
 
 		if (_locked) {
 			handleLockInput(key, now);
+			_render_immediate = true;
+			_pending_render = true;
+			continue;
+		}
+
+		if (key == KEY_LOCK) {
+			/* Manual lock combo — engage now and stop the idle timer
+			 * (unlock reschedules it). Same locked state the idle
+			 * lockTimerCb would set. */
+			_locked = true;
+			_lock_step = 0;
+			k_timer_stop(&_lock_timer);
 			_render_immediate = true;
 			_pending_render = true;
 			continue;

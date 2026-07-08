@@ -22,6 +22,7 @@
 #define KEY_ENTER_LONG  0xF1   /* long press enter */
 #define KEY_TO_TOP      0xF2   /* long press up   → page up   */
 #define KEY_TO_BOTTOM   0xF3   /* long press down → page down */
+#define KEY_LOCK        0xF4   /* user button + joystick center held together → screen lock */
 
 /* Global action keys emitted by multi tap filter, handled in loop() */
 #define KEY_FLOOD_ADVERT  0x42   /* INPUT_KEY_B: 2 taps → flood advert */
