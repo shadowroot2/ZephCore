@@ -61,7 +61,7 @@ void Dispatcher::begin()
 
 uint8_t Dispatcher::getDutyCyclePercent() const
 {
-	return 10; /* EU 868 default: 10% duty cycle */
+	return 50; /* Custom base preset: 50% duty cycle */
 }
 
 uint32_t Dispatcher::getMaxTxBudgetMs() const

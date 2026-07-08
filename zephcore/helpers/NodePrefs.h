@@ -90,7 +90,7 @@ struct NodePrefs {
 /* Default prefs -- must match LoRaConfig.h defaults for radio interop. */
 static inline void initNodePrefs(NodePrefs* prefs) {
 	memset(prefs, 0, sizeof(NodePrefs));
-	prefs->airtime_factor = 9.0f;  /* Arduino formula: duty% = 100 / (af + 1) → 10% */
+	prefs->airtime_factor = 1.0f;  /* Arduino formula: duty% = 100 / (af + 1) → 50% */
 	prefs->node_lat = 0.0;
 	prefs->node_lon = 0.0;
 #ifdef CONFIG_ZEPHCORE_ADMIN_PASSWORD
@@ -102,7 +102,7 @@ static inline void initNodePrefs(NodePrefs* prefs) {
 	strncpy(prefs->guest_password, CONFIG_ZEPHCORE_GUEST_PASSWORD, sizeof(prefs->guest_password) - 1);
 #endif
 	/* Radio params - MUST match LoRaConfig.h for interop with companion nodes */
-	prefs->freq = 869.618f;           // LoRaConfig::FREQ_HZ / 1000000.0
+	prefs->freq = 867.935f;           // LoRaConfig::FREQ_HZ / 1000000.0
 	prefs->bw = 62.5f;                // LoRaConfig::BANDWIDTH
 	prefs->sf = 8;                    // LoRaConfig::SPREADING_FACTOR
 	prefs->cr = 8;                    // CR 4/8 (MeshCore uses 5-8 for CR 4/5 through 4/8)
@@ -118,7 +118,7 @@ static inline void initNodePrefs(NodePrefs* prefs) {
 	prefs->tx_delay_factor = 0.5f;
 	prefs->direct_tx_delay_factor = 0.3f;
 	prefs->allow_read_only = 0;
-	prefs->multi_acks = 0;
+	prefs->multi_acks = 1;
 	prefs->flood_max = 64;            // max hops for flood packets (0 = blocking all!)
 	prefs->flood_max_unscoped = 64;  // un-scoped flood hop limit (defaults to flood_max)
 	prefs->flood_max_advert = 8;     // ADVERT flood hop limit (upstream default)

@@ -1016,13 +1016,13 @@ int main(void)
 #ifdef ZEPHCORE_LORA
 	/* Initialize prefs with defaults */
 	memset(&companion_mesh.prefs, 0, sizeof(companion_mesh.prefs));
-	companion_mesh.prefs.freq = 869.618f;
+	companion_mesh.prefs.freq = 867.935f;
 	companion_mesh.prefs.bw = 62.5f;
 	companion_mesh.prefs.sf = 8;
 	companion_mesh.prefs.cr = 8;
 	companion_mesh.prefs.tx_power_dbm = 22;
 	companion_mesh.prefs.rx_delay_base = 0.0f;  /* Disabled for companion */
-	companion_mesh.prefs.airtime_factor = 9.0f; /* Arduino formula: 100/(af+1) → 10% (EU 868 default) */
+	companion_mesh.prefs.airtime_factor = 1.0f; /* Arduino formula: 100/(af+1) → 50% */
 	companion_mesh.prefs.rx_duty_cycle = 0;     /* Default OFF: continuous RX */
 	companion_mesh.prefs.rx_boost = 1;          /* Default: boosted RX (+3dB sensitivity, +2mA) */
 	companion_mesh.prefs.apc_enabled = 0;       /* Default: APC off */

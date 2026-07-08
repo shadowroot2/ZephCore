@@ -29,8 +29,26 @@ static const struct gpio_dt_spec tx_led =
 #define HAS_TX_LED 0
 #endif
 
+/* Optional battery charge-status GPIO. ThinkNode M6 exposes EXT_CHRG_DETECT. */
+#if DT_NODE_EXISTS(DT_ALIAS(charge_detect))
+static const struct gpio_dt_spec charge_detect =
+	GPIO_DT_SPEC_GET(DT_ALIAS(charge_detect), gpios);
+#define HAS_CHARGE_DETECT 1
+#else
+#define HAS_CHARGE_DETECT 0
+#endif
+
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(zephcore_board, CONFIG_ZEPHCORE_BOARD_LOG_LEVEL);
+
+#define ZEPHYR_USER_NODE DT_PATH(zephyr_user)
+
+#if DT_NODE_EXISTS(ZEPHYR_USER_NODE) && \
+    DT_NODE_HAS_PROP(ZEPHYR_USER_NODE, charge_power_mw)
+#define CHARGE_POWER_MW DT_PROP(ZEPHYR_USER_NODE, charge_power_mw)
+#else
+#define CHARGE_POWER_MW 0
+#endif
 
 #if DT_NODE_EXISTS(DT_PATH(zephyr_user)) && \
     DT_NODE_HAS_PROP(DT_PATH(zephyr_user), io_channels)
@@ -57,7 +75,6 @@ static const struct device *vbat_enable_dev = NULL;
  *       vbat-mv-multiplier = <7200>;
  *   };
  */
-#define ZEPHYR_USER_NODE DT_PATH(zephyr_user)
 #if DT_NODE_HAS_PROP(ZEPHYR_USER_NODE, vbat_mv_multiplier)
 #define VBAT_MV_MULTIPLIER DT_PROP(ZEPHYR_USER_NODE, vbat_mv_multiplier)
 #else
@@ -88,6 +105,17 @@ static int tx_led_init(void)
 	return 0;
 }
 SYS_INIT(tx_led_init, APPLICATION, 90);
+#endif
+
+#if HAS_CHARGE_DETECT
+static int charge_detect_gpio_init(void)
+{
+	if (gpio_is_ready_dt(&charge_detect)) {
+		gpio_pin_configure_dt(&charge_detect, GPIO_INPUT);
+	}
+	return 0;
+}
+SYS_INIT(charge_detect_gpio_init, APPLICATION, 91);
 #endif
 
 namespace mesh {
@@ -335,6 +363,21 @@ bool ZephyrBoard::isExternalPowered()
 	 * so low-battery auto-shutdown is never inhibited. */
 	return false;
 #endif
+}
+
+bool ZephyrBoard::isBatteryCharging()
+{
+#if HAS_CHARGE_DETECT
+	if (gpio_is_ready_dt(&charge_detect)) {
+		return gpio_pin_get_dt(&charge_detect) > 0;
+	}
+#endif
+	return false;
+}
+
+float ZephyrBoard::getChargePowerWatts()
+{
+	return (float)CHARGE_POWER_MW / 1000.0f;
 }
 
 } /* namespace mesh */

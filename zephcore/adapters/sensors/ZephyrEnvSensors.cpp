@@ -18,6 +18,14 @@
 #include <zephyr/device.h>
 #include <zephyr/logging/log.h>
 
+#if IS_ENABLED(CONFIG_ADC)
+#include <zephyr/drivers/adc.h>
+#endif
+
+#if IS_ENABLED(CONFIG_REGULATOR)
+#include <zephyr/drivers/regulator.h>
+#endif
+
 LOG_MODULE_REGISTER(zephcore_sensors, CONFIG_ZEPHCORE_SENSORS_LOG_LEVEL);
 
 /* ========== Sensor Support ========== */
@@ -26,6 +34,13 @@ LOG_MODULE_REGISTER(zephcore_sensors, CONFIG_ZEPHCORE_SENSORS_LOG_LEVEL);
 #include <zephyr/drivers/sensor.h>
 #else
 #define HAS_ENV_SENSORS 0
+#endif
+
+#if HAS_ENV_SENSORS && IS_ENABLED(CONFIG_ADC) && IS_ENABLED(CONFIG_REGULATOR) && \
+	DT_NODE_EXISTS(DT_NODELABEL(t1000_light_adc))
+#define HAS_T1000_ANALOG_LIGHT 1
+#else
+#define HAS_T1000_ANALOG_LIGHT 0
 #endif
 
 /* INA3221 channel selection attribute — defined in driver's private header
@@ -50,6 +65,158 @@ static const struct device *temp_humidity_dev = NULL;
 static const struct device *pressure_dev = NULL;
 static bool temp_dev_has_pressure = false;  /* BME280/BME680 also have pressure */
 static bool env_available = false;
+#endif
+
+#if HAS_T1000_ANALOG_LIGHT
+static const struct device *t1000_light_adc_dev =
+	DEVICE_DT_GET(DT_PARENT(DT_NODELABEL(t1000_light_adc)));
+static const struct adc_channel_cfg t1000_light_adc_cfg =
+	ADC_CHANNEL_CFG_DT(DT_NODELABEL(t1000_light_adc));
+static const uint8_t t1000_light_adc_channel =
+	DT_REG_ADDR(DT_NODELABEL(t1000_light_adc));
+static const uint8_t t1000_light_adc_resolution =
+	DT_PROP(DT_NODELABEL(t1000_light_adc), zephyr_resolution);
+
+#if IS_ENABLED(CONFIG_REGULATOR) && DT_NODE_EXISTS(DT_NODELABEL(sensor_power))
+static const struct device *t1000_sensor_power =
+	DEVICE_DT_GET_OR_NULL(DT_NODELABEL(sensor_power));
+#else
+static const struct device *t1000_sensor_power = NULL;
+#endif
+
+#if IS_ENABLED(CONFIG_REGULATOR) && DT_NODE_EXISTS(DT_NODELABEL(t1000_sensor_enable))
+static const struct device *t1000_sensor_enable =
+	DEVICE_DT_GET_OR_NULL(DT_NODELABEL(t1000_sensor_enable));
+#else
+static const struct device *t1000_sensor_enable = NULL;
+#endif
+
+static bool t1000_light_available = false;
+
+static bool regulator_ready(const struct device *dev)
+{
+	return dev && device_is_ready(dev);
+}
+
+static int t1000_enable_analog_power(void)
+{
+	int rc;
+
+	rc = regulator_enable(t1000_sensor_power);
+	if (rc < 0) {
+		return rc;
+	}
+
+	rc = regulator_enable(t1000_sensor_enable);
+	if (rc < 0) {
+		regulator_disable(t1000_sensor_power);
+		return rc;
+	}
+
+	k_sleep(K_MSEC(10));
+	return 0;
+}
+
+static void t1000_disable_analog_power(void)
+{
+	regulator_disable(t1000_sensor_enable);
+	regulator_disable(t1000_sensor_power);
+}
+
+static int t1000_adc_read_average_raw(int32_t *raw_avg)
+{
+	const int samples = 15;
+	int32_t sum = 0;
+
+	for (int i = 0; i < samples; ++i) {
+		int16_t sample = 0;
+		struct adc_sequence sequence;
+		int rc;
+
+		sequence = {};
+		sequence.channels = BIT(t1000_light_adc_channel);
+		sequence.buffer = &sample;
+		sequence.buffer_size = sizeof(sample);
+		sequence.resolution = t1000_light_adc_resolution;
+
+		rc = adc_read(t1000_light_adc_dev, &sequence);
+		if (rc < 0) {
+			return rc;
+		}
+
+		sum += sample;
+	}
+
+	*raw_avg = sum / samples;
+	return 0;
+}
+
+static float t1000_light_level_from_raw(int32_t raw)
+{
+	if (raw < 0) {
+		raw = 0;
+	}
+
+	uint32_t mv = ((uint32_t)raw * 3000U + 2048U) / 4096U;
+
+	if (mv <= 80U) {
+		return 0.0f;
+	}
+	if (mv >= 2480U) {
+		return 100.0f;
+	}
+
+	return (100.0f * (float)(mv - 80U)) / 2400.0f;
+}
+
+static void t1000_analog_light_init(void)
+{
+	if (!device_is_ready(t1000_light_adc_dev)) {
+		LOG_WRN("T1000-E light ADC is not ready");
+		return;
+	}
+
+	if (!regulator_ready(t1000_sensor_power) || !regulator_ready(t1000_sensor_enable)) {
+		LOG_WRN("T1000-E analog sensor regulators are not ready");
+		return;
+	}
+
+	int rc = adc_channel_setup(t1000_light_adc_dev, &t1000_light_adc_cfg);
+	if (rc < 0) {
+		LOG_WRN("T1000-E light ADC setup failed: %d", rc);
+		return;
+	}
+
+	t1000_light_available = true;
+	LOG_INF("Found T1000-E analog light sensor");
+}
+
+static bool t1000_read_light(struct env_data *data)
+{
+	int32_t raw = 0;
+	int rc;
+
+	if (!t1000_light_available) {
+		return false;
+	}
+
+	rc = t1000_enable_analog_power();
+	if (rc < 0) {
+		LOG_WRN("T1000-E analog sensor power enable failed: %d", rc);
+		return false;
+	}
+
+	rc = t1000_adc_read_average_raw(&raw);
+	t1000_disable_analog_power();
+	if (rc < 0) {
+		LOG_WRN("T1000-E light ADC read failed: %d", rc);
+		return false;
+	}
+
+	data->light_lux = t1000_light_level_from_raw(raw);
+	data->has_light = true;
+	return true;
+}
 #endif
 
 int env_sensors_init(void)
@@ -148,6 +315,10 @@ check_pressure:
 
 done:
 	env_available = (temp_humidity_dev != NULL) || (pressure_dev != NULL);
+#if HAS_T1000_ANALOG_LIGHT
+	t1000_analog_light_init();
+	env_available = env_available || t1000_light_available;
+#endif
 	if (!env_available) {
 		LOG_INF("No environment sensors found");
 	}
@@ -218,8 +389,12 @@ int env_sensors_read(struct env_data *data)
 		}
 	}
 
+#if HAS_T1000_ANALOG_LIGHT
+	t1000_read_light(data);
+#endif
+
 	return (data->has_temperature || data->has_humidity || data->has_pressure ||
-	        data->has_mcu_temperature) ? 0 : -ENODATA;
+	        data->has_light || data->has_mcu_temperature) ? 0 : -ENODATA;
 #else
 	return -ENOTSUP;
 #endif

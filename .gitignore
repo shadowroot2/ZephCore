@@ -6,6 +6,7 @@ build-*/
 **/build-*/
 **/build_*/
 /twister-out*/
+/.ccache/
 
 # West workspace (recreated by west init/update)
 /.west/
@@ -15,6 +16,7 @@ build-*/
 /modules/
 /tools/
 /zephyr/
+/zephyr-sdk-*/
 
 # Python
 .venv/

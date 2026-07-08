@@ -99,6 +99,16 @@
 		/* NOT regulator-boot-on - enabled on-demand in ZephyrBoard.cpp */
 	};
 
+	/* Sensor analog front-end enable - P0.04 (SENSOR_EN in MeshCore/Meshtastic)
+	 * Required for the T1000-E light sensor on P0.29/AIN5.
+	 */
+	t1000_sensor_enable: t1000-sensor-enable {
+		compatible = "regulator-fixed";
+		regulator-name = "t1000-sensor-enable";
+		enable-gpios = <&gpio0 4 GPIO_ACTIVE_HIGH>;
+		/* NOT regulator-boot-on - enabled only while sampling analog sensors */
+	};
+
 	/* Battery ADC channel reference for ZephyrBoard */
 	zephyr,user {
 		io-channels = <&adc 0>;
@@ -128,6 +138,7 @@
 		buzzer = &buzzer;
 		buzzer-enable = &buzzer_enable;
 		lora0 = &lora;
+		t1000-sensor-enable = &t1000_sensor_enable;
 	};
 };
 
@@ -155,7 +166,7 @@
 	};
 
 	/* Temperature sensor NTC on P0.31 (AIN7) */
-	channel@7 {
+	t1000_ntc_adc: channel@7 {
 		reg = <7>;
 		zephyr,gain = "ADC_GAIN_1_6";
 		zephyr,reference = "ADC_REF_INTERNAL";
@@ -165,7 +176,7 @@
 	};
 
 	/* Light sensor on P0.29 (AIN5) */
-	channel@5 {
+	t1000_light_adc: channel@5 {
 		reg = <5>;
 		zephyr,gain = "ADC_GAIN_1_6";
 		zephyr,reference = "ADC_REF_INTERNAL";

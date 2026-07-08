@@ -8,11 +8,11 @@
  * - nRF52840 SoC with BLE (DCDC regulator, NRF52BoardDCDC)
  * - SX1262 LoRa radio on SPI1 (DIO2 RF switch, DIO3 TCXO 3.3V, 22dBm)
  *   NSS=P1.12, DIO1=P1.06, RESET=P1.10, BUSY=P1.11
- * - GPS L76K on UART0 (9600 baud, generic NMEA)
- *   Control: GPS_EN=P0.06 (active-HIGH), GPS_RESET=P0.29 (active-LOW),
- *            GPS_STANDBY=P0.30, GPS_PPS=P0.31
+ * - GPS L76K/Air530Z-compatible module on UART0 (9600 baud, PCAS/NMEA)
+ *   Control: GPS_EN=P0.06 (active-HIGH), GPS_STANDBY=P0.30, GPS_PPS=P0.31
  * - Battery ADC on AIN4 (P0.28), 1.75:1 voltage divider
  *   ADC_CTRL enable pin: P0.11 (gpio-hog, always HIGH)
+ * - Charge status: EXT_CHRG_DETECT=P0.15 active-LOW
  * - LEDs: RED=P0.12, BLUE=P0.07 (both active-HIGH, LED_STATE_ON=HIGH)
  *   TX LED = BLUE (P_LORA_TX_LED = PIN_LED_BLUE)
  * - Button on P0.17 (active-low, pull-up)
@@ -95,6 +95,7 @@
 	zephyr,user {
 		io-channels = <&adc 4>;
 		vbat-mv-multiplier = <6332>;  /* 1.75:1 divider, 3.6V ref; +0.5% for nRF SAADC gain error */
+		charge-power-mw = <6000>;     /* M6 integrated solar panel rating */
 	};
 
 	/* Board power enable (PIN_PWR_EN = P0.27) — must be HIGH for peripherals */
@@ -103,6 +104,17 @@
 		regulator-name = "pwr-enable";
 		enable-gpios = <&gpio0 27 GPIO_ACTIVE_HIGH>;
 		regulator-boot-on;
+	};
+
+	charge_status_gpios: charge-status-gpios {
+		compatible = "gpio-leds";
+
+		/* Solar charger status (EXT_CHRG_DETECT = P0.15, active-LOW).
+		 * Meshtastic uses this as ThinkNode M6's charge indication. */
+		charge_detect: charge_detect {
+			gpios = <&gpio0 15 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+			label = "Charge Detect";
+		};
 	};
 
 	/* QSPI flash enable (QSPI_FLASH_EN = P0.21) — must be HIGH before flash responds.
@@ -125,24 +137,6 @@
 		};
 	};
 
-	/* GPS hardware reset (GPS_RESET = P0.29, active-LOW) */
-	gps_rst: gps-reset {
-		compatible = "gpio-leds";
-		gps_reset_pin: gps_reset {
-			gpios = <&gpio0 29 GPIO_ACTIVE_LOW>;
-			label = "GPS Reset";
-		};
-	};
-
-	/* GPS standby (GPS_STANDBY = P0.30, active-HIGH = standby) */
-	gps_stby: gps-standby {
-		compatible = "gpio-leds";
-		gps_standby_pin: gps_standby {
-			gpios = <&gpio0 30 GPIO_ACTIVE_HIGH>;
-			label = "GPS Standby";
-		};
-	};
-
 	aliases {
 		led0 = &led_red;
 		led1 = &led_blue;
@@ -151,8 +145,7 @@
 		watchdog0 = &wdt0;
 		lora0 = &lora;
 		gps-enable  = &gps_enable_pin;
-		gps-reset   = &gps_reset_pin;
-		gps-sleep-int = &gps_standby_pin;
+		charge-detect = &charge_detect;
 	};
 };
 
@@ -191,6 +184,17 @@
 &gpio0 {
 	status = "okay";
 
+	/* GPS_STANDBY (P0.30): LOW = standby/sleep, HIGH = force awake.
+	 * Keep it HIGH permanently, matching Meshtastic L76K handling:
+	 * ThinkNode M6 has no M1-style physical GPS switch; runtime GPS power is
+	 * controlled in software through GPS_EN. */
+	gps-standby-hog {
+		gpio-hog;
+		gpios = <30 GPIO_ACTIVE_HIGH>;
+		output-high;
+		line-name = "GPS Standby";
+	};
+
 	/* ADC control (PIN_ADC_CTRL = P0.11) — always HIGH to enable battery ADC.
 	 * Arduino code toggles this before/after ADC reads; keeping it permanently
 	 * HIGH is safe and avoids needing custom ADC ctrl support in ZephCore. */
@@ -208,14 +212,10 @@
 
 /* GPS on UART0 (9600 baud)
  *
- * L76K GPS module (generic NMEA, multi-constellation).
- * Control pins managed by ZephyrGPSManager via aliases:
- *   gps-enable  (GPS_EN  = P0.06): HIGH = GPS powered/active
- *   gps-reset   (GPS_RESET = P0.29): LOW = reset asserted
- *   gps-sleep-int (GPS_STANDBY = P0.30): HIGH = standby
- *
- * zephyr,deferred-init: GPS must be powered (GPS_EN HIGH) before NMEA
- * output begins. ZephyrGPSManager asserts GPS_EN then calls device_init(). */
+ * L76K/Air530Z-compatible GPS module (PCAS/NMEA protocol).
+ * Match the working ThinkNode M1 startup model: let the luatos,air530z driver
+ * initialize at POST_KERNEL and own on-off-gpios/GPS_EN. M6 has no hardware
+ * GPS switch input; runtime on/off still comes only from software/CLI. */
 &uart0 {
 	compatible = "nordic,nrf-uarte";
 	status = "okay";
@@ -225,8 +225,8 @@
 	pinctrl-names = "default", "sleep";
 
 	gnss: gnss {
-		compatible = "gnss-nmea-generic";
-		zephyr,deferred-init;
+		compatible = "luatos,air530z";
+		on-off-gpios = <&gpio0 6 GPIO_ACTIVE_HIGH>;
 	};
 };
 

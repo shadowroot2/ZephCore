@@ -26,10 +26,12 @@ struct env_data {
 	float temperature_c;     /* Temperature in Celsius (external sensor) */
 	float humidity_pct;      /* Relative humidity in percent */
 	float pressure_hpa;      /* Barometric pressure in hPa */
+	float light_lux;         /* Luminosity; T1000-E reports a 0-100 light level */
 	float mcu_temperature_c; /* MCU die temperature in Celsius */
 	bool has_temperature;
 	bool has_humidity;
 	bool has_pressure;
+	bool has_light;
 	bool has_mcu_temperature;
 };
 

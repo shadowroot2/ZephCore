@@ -169,7 +169,7 @@ static void print_banner(void)
 	cli_println("set mqtt.password <pass>   MQTT password");
 	cli_println("set mqtt.iata <code>       Location code (e.g. BUD BTS VIE SEA)");
 	cli_println("set name      <name>       Node display name");
-	cli_println("set freq      <MHz|Hz>     LoRa frequency (e.g. 869.618 or 869618000)");
+	cli_println("set freq      <MHz|Hz>     LoRa frequency (e.g. 867.935 or 867935000)");
 	cli_println("set sf        <7-12>       Spreading factor");
 	cli_println("set bw        <idx>        Bandwidth: 3=62.5 0=125 1=250 2=500 kHz");
 	cli_println("set cr        <5-8>        Coding rate");

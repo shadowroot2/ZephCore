@@ -18,6 +18,7 @@
 
 /* LPP Type Codes (from CayenneLPP spec) */
 #define LPP_ANALOG_INPUT        2     /* 2 bytes, 0.01 signed */
+#define LPP_LUMINOSITY          101   /* 2 bytes, 1 lux unsigned */
 #define LPP_TEMPERATURE         103   /* 2 bytes, 0.1°C signed */
 #define LPP_RELATIVE_HUMIDITY   104   /* 1 byte, 0.5% unsigned */
 #define LPP_BAROMETRIC_PRESSURE 115   /* 2 bytes, 0.1 hPa unsigned */
@@ -32,6 +33,7 @@
 #define LPP_TEMPERATURE_MULT         10
 #define LPP_HUMIDITY_MULT            2
 #define LPP_PRESSURE_MULT            10
+#define LPP_LUMINOSITY_MULT          1
 #define LPP_VOLTAGE_MULT             100
 #define LPP_CURRENT_MULT             1000
 #define LPP_DISTANCE_MULT            1000
@@ -102,6 +104,22 @@ public:
     uint8_t addBarometricPressure(uint8_t channel, float hpa) {
         uint16_t val = (uint16_t)(hpa * LPP_PRESSURE_MULT);
         return addField2Unsigned(channel, LPP_BAROMETRIC_PRESSURE, val);
+    }
+
+    /**
+     * Add luminosity reading
+     * @param channel Channel number
+     * @param lux Luminosity in lux
+     * @return Number of bytes written, or 0 on overflow
+     */
+    uint8_t addLuminosity(uint8_t channel, float lux) {
+        if (isnan(lux) || lux < 0.0f) {
+            lux = 0.0f;
+        } else if (lux > 65535.0f) {
+            lux = 65535.0f;
+        }
+        uint16_t val = (uint16_t)(lux * LPP_LUMINOSITY_MULT);
+        return addField2Unsigned(channel, LPP_LUMINOSITY, val);
     }
 
     /**

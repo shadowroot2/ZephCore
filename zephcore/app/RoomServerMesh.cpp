@@ -135,6 +135,10 @@ int RoomServerMesh::handleRequest(ClientInfo* sender, uint32_t sender_timestamp,
         const uint8_t CH_SELF = 1;
         uint16_t batt_mv = _board.getBattMilliVolts();
         lpp.addVoltage(CH_SELF, batt_mv / 1000.0f);
+        float charge_power_w = _board.getChargePowerWatts();
+        if (_board.isBatteryCharging() && charge_power_w > 0.0f) {
+            lpp.addPower(CH_SELF, charge_power_w);
+        }
 
         /* Environment sensors — prefer external, fallback to MCU die temp */
         struct env_data env;
@@ -155,6 +159,9 @@ int RoomServerMesh::handleRequest(ClientInfo* sender, uint32_t sender_timestamp,
             }
             if (env.has_pressure) {
                 lpp.addBarometricPressure(CH_SELF, env.pressure_hpa);
+            }
+            if (env.has_light) {
+                lpp.addLuminosity(CH_SELF, env.light_lux);
             }
         } else {
             /* No env sensors at all — try MCU temp directly */

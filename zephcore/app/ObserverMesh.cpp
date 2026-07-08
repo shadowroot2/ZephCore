@@ -59,7 +59,7 @@ void ObserverMesh::begin(RepeaterDataStore *store, struct ObserverCreds *creds)
 	initNodePrefs(&_prefs);
 	_prefs.cr           = 5;   /* CR 4/5 */
 	_prefs.tx_power_dbm = 0;   /* observer never TXes anyway */
-	/* freq=869.618, bw=62.5, sf=8 already set by initNodePrefs */
+	/* freq=867.935, bw=62.5, sf=8 already set by initNodePrefs */
 
 	/* Load persisted prefs (overrides defaults with saved values) */
 	if (!_store->loadPrefs(_prefs)) {
@@ -335,7 +335,7 @@ bool ObserverMesh::handleCLI(const char *command, char *reply, int reply_size)
 
 		} else if ((val = find_val(rest, "freq")) != nullptr) {
 			float f = (float)atof(val);
-			/* Accept Hz (e.g. 869618000) or MHz (e.g. 869.618) */
+			/* Accept Hz (e.g. 867935000) or MHz (e.g. 867.935) */
 			if (f > 1000000.0f) f /= 1000000.0f;
 			if (f >= 150.0f && f <= 2500.0f) {
 				_prefs.freq = f;

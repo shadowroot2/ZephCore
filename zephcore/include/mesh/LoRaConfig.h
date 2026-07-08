@@ -10,7 +10,7 @@
 namespace mesh {
 
 struct LoRaConfig {
-	static constexpr uint32_t FREQ_HZ = 869618000;   /* MeshCore default channel (EU 869 MHz ISM) */
+	static constexpr uint32_t FREQ_HZ = 867935000;   /* Custom base preset */
 	static constexpr uint16_t BANDWIDTH = 62;         /* BW_62_KHZ — MeshCore default */
 	static constexpr uint8_t SPREADING_FACTOR = 8;    /* SF8: balance of range vs airtime */
 	static constexpr uint8_t CODING_RATE = 8;         /* CR_4_8: max FEC */

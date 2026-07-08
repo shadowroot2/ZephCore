@@ -9,16 +9,63 @@
 #include <zephyr/sys/printk.h>
 #include <zephyr/drivers/hwinfo.h>
 #include <psa/crypto.h>
+#include <stdint.h>
 #include <string.h>
 #include <mesh/Utils.h>
 
-BUILD_ASSERT(IS_ENABLED(CONFIG_CSPRNG_ENABLED),
-	"ZephyrRNG requires CONFIG_CSPRNG_ENABLED for cryptographic key derivation");
-
 namespace mesh {
+
+#if !IS_ENABLED(CONFIG_CSPRNG_ENABLED)
+static K_MUTEX_DEFINE(fallback_rng_mutex);
+static bool fallback_rng_ready;
+static uint64_t fallback_rng_state[4];
+
+static uint64_t rotl64(uint64_t x, int k)
+{
+	return (x << k) | (x >> (64 - k));
+}
+
+static uint64_t fallback_rng_next_u64(void)
+{
+	const uint64_t result = rotl64(fallback_rng_state[1] * 5, 7) * 9;
+	const uint64_t t = fallback_rng_state[1] << 17;
+
+	fallback_rng_state[2] ^= fallback_rng_state[0];
+	fallback_rng_state[3] ^= fallback_rng_state[1];
+	fallback_rng_state[1] ^= fallback_rng_state[2];
+	fallback_rng_state[0] ^= fallback_rng_state[3];
+	fallback_rng_state[2] ^= t;
+	fallback_rng_state[3] = rotl64(fallback_rng_state[3], 45);
+
+	return result;
+}
+
+static void fallback_rng_init_locked(void)
+{
+	if (fallback_rng_ready) {
+		return;
+	}
+
+	uint8_t seed[sizeof(fallback_rng_state)];
+	ZephyrRNG::mixIdentitySeed(seed, sizeof(seed));
+	memcpy(fallback_rng_state, seed, sizeof(fallback_rng_state));
+	Utils::secureZeroize(seed, sizeof(seed));
+
+	/* xoshiro256** must not be seeded with an all-zero state. The seed mixer
+	 * already rejects degenerate output, but keep a local guard because this
+	 * state persists for all later runtime nonces on no-CSPRNG platforms. */
+	if ((fallback_rng_state[0] | fallback_rng_state[1] |
+	     fallback_rng_state[2] | fallback_rng_state[3]) == 0) {
+		Utils::cryptoPanicReboot("fallback RNG degenerate seed");
+	}
+
+	fallback_rng_ready = true;
+}
+#endif /* !CONFIG_CSPRNG_ENABLED */
 
 void ZephyrRNG::random(uint8_t *dest, size_t sz)
 {
+#if IS_ENABLED(CONFIG_CSPRNG_ENABLED)
 	/* Retry handles transient TRNG-warmup races; cold-reboot on persistent
 	 * failure. Fabricating entropy here would silently produce weak keys
 	 * forever (cf. Debian-OpenSSL 2008). k_msleep is illegal from ISR —
@@ -28,6 +75,23 @@ void ZephyrRNG::random(uint8_t *dest, size_t sz)
 		k_msleep(10);
 	}
 	Utils::cryptoPanicReboot("CSPRNG unavailable after retries");
+#else
+	/* RP2040 has no Zephyr entropy driver. Seed once with the same layered
+	 * jitter/HWID/PSA conditioner used for first-boot identities, then expand
+	 * cheaply for runtime packet tags/nonces. */
+	k_mutex_lock(&fallback_rng_mutex, K_FOREVER);
+	fallback_rng_init_locked();
+
+	size_t pos = 0;
+	while (pos < sz) {
+		uint64_t block = fallback_rng_next_u64();
+		size_t chunk = (sz - pos < sizeof(block)) ? (sz - pos) : sizeof(block);
+		memcpy(dest + pos, &block, chunk);
+		Utils::secureZeroize(&block, sizeof(block));
+		pos += chunk;
+	}
+	k_mutex_unlock(&fallback_rng_mutex);
+#endif
 }
 
 /* ===== Jitter sampling + online health check =============================
@@ -230,10 +294,14 @@ void ZephyrRNG::mixIdentitySeed(uint8_t *out, size_t out_len,
 #ifndef CONFIG_ARCH_POSIX
 	bool health_ok = sample_cpu_jitter(pool, sizeof(pool), 112, 200);
 	if (!health_ok) {
+#if IS_ENABLED(CONFIG_ZEPHCORE_RNG_DEBUG)
 		printk("ZephyrRNG: jitter health check failed, resampling 400ms\n");
+#endif
 		health_ok = sample_cpu_jitter(pool, sizeof(pool), 112, 400);
 		if (!health_ok) {
+#if IS_ENABLED(CONFIG_ZEPHCORE_RNG_DEBUG)
 			printk("ZephyrRNG: jitter health still failing — continuing with mixed sources\n");
+#endif
 		}
 	}
 #endif /* CONFIG_ARCH_POSIX */

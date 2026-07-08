@@ -1117,6 +1117,13 @@ int CompanionMesh::appendSelfTelemetry(uint8_t *reply, uint8_t permissions)
 				reply[i++] = (press >> 8) & 0xFF;
 				reply[i++] = press & 0xFF;
 			}
+			if (env.has_light) {
+				reply[i++] = CH_SELF;
+				reply[i++] = LPP_LUMINOSITY;
+				uint16_t light = (uint16_t)env.light_lux;
+				reply[i++] = (light >> 8) & 0xFF;
+				reply[i++] = light & 0xFF;
+			}
 		}
 
 		// Power monitor telemetry (INA219/INA3221/ina2xx)

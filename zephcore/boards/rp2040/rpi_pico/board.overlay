@@ -1,0 +1,103 @@
+#include <zephyr/dt-bindings/gpio/gpio.h>
+#include <zephyr/dt-bindings/adc/adc.h>
+#include <zephyr/dt-bindings/lora/sx126x.h>
+#include <zephyr/dt-bindings/pinctrl/rpi-pico-rp2040-pinctrl.h>
+
+/ {
+	chosen {
+		zephyr,console = &cdc_acm_uart;
+		zephyr,shell-uart = &cdc_acm_uart;
+	};
+
+	aliases {
+		/delete-property/ led0;
+		lora-tx-led = &led0;
+		lora0 = &lora;
+	};
+
+	zephyr,user {
+		io-channels = <&adc 0>;
+		vbat-mv-multiplier = <10230>;
+	};
+};
+
+&pinctrl {
+	spi1_lora_default: spi1_lora_default {
+		group1 {
+			pinmux = <SPI1_SCK_P10>,
+				 <SPI1_TX_P11>;
+		};
+
+		group2 {
+			pinmux = <SPI1_RX_P12>;
+			input-enable;
+		};
+	};
+};
+
+&spi0 {
+	status = "disabled";
+};
+
+&spi1 {
+	clock-frequency = <DT_FREQ_M(8)>;
+	status = "okay";
+	pinctrl-0 = <&spi1_lora_default>;
+	pinctrl-names = "default";
+	cs-gpios = <&gpio0 3 GPIO_ACTIVE_LOW>;
+
+	lora: lora@0 {
+		compatible = "semtech,sx1262";
+		reg = <0>;
+		spi-max-frequency = <DT_FREQ_M(8)>;
+
+		reset-gpios = <&gpio0 15 GPIO_ACTIVE_LOW>;
+		busy-gpios = <&gpio0 2 GPIO_ACTIVE_HIGH>;
+		dio1-gpios = <&gpio0 20 (GPIO_PULL_DOWN | GPIO_ACTIVE_HIGH)>;
+
+		startup-delay-ms = <10>;
+		dio2-tx-enable;
+		dio3-tcxo-voltage = <SX126X_DIO3_TCXO_1V8>;
+		tcxo-power-startup-delay-ms = <10>;
+		rx-boosted;
+	};
+};
+
+&adc {
+	status = "okay";
+	pinctrl-0 = <&adc_default>;
+	pinctrl-names = "default";
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	channel@0 {
+		reg = <0>;
+		zephyr,gain = "ADC_GAIN_1";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,resolution = <12>;
+	};
+};
+
+&zephyr_udc0 {
+	status = "okay";
+
+	cdc_acm_uart: cdc_acm_uart {
+		compatible = "zephyr,cdc-acm-uart";
+	};
+};
+
+&code_partition {
+	reg = <0x00000100 0x0017ff00>;
+};
+
+&flash0 {
+	partitions {
+		lfs_partition: partition@180000 {
+			label = "lfs";
+			reg = <0x00180000 0x00080000>;
+		};
+	};
+};
+
+#include "../../common/filesystem.dtsi"

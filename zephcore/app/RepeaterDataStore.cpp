@@ -219,7 +219,7 @@ bool RepeaterDataStore::loadPrefs(NodePrefs& prefs) {
         prefs.bw < 7.0f || prefs.bw > 500.0f) {
         LOG_WRN("Invalid radio params in prefs, using defaults: freq=%.3f sf=%u bw=%.1f",
                 (double)prefs.freq, prefs.sf, (double)prefs.bw);
-        prefs.freq = 869.618f;
+        prefs.freq = 867.935f;
         prefs.bw = 62.5f;
         prefs.sf = 8;
         prefs.cr = 8;
