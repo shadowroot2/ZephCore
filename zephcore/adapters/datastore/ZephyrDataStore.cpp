@@ -506,8 +506,11 @@ void ZephyrDataStore::loadPrefs(NodePrefs &prefs)
 		LOG_ERR("loadPrefs: read failed");
 		return;
 	}
-	if (len < 88) {
-		LOG_ERR("loadPrefs: file too small (%d bytes, need 88)", (int)len);
+	if (len < 90) {
+		/* gps_interval occupies bytes 86-89, so a shorter blob would read
+		 * its top bytes from uninitialized stack — reject rather than load a
+		 * garbage interval. */
+		LOG_ERR("loadPrefs: file too small (%d bytes, need 90)", (int)len);
 		return;
 	}
 	LOG_DBG("loadPrefs: loaded %d bytes from %s", (int)len, PREFS_FILE);

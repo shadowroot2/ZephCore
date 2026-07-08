@@ -370,7 +370,10 @@ extern "C" void mesh_housekeeping_ui_refresh(void)
 		s_lora_radio->getPacketsSent(),
 		s_lora_radio->getPacketsRecvErrors());
 
-	/* Update GPS satellite count even without fix */
+	/* Update GPS satellite count even without fix. When GPS is disabled, push
+	 * a zeroed count — gps_enable(false) already zeros the internal count, but
+	 * this refresh is otherwise gated on gps_is_enabled() and would leave the
+	 * UI showing a stale value from before the toggle-off. */
 	if (gps_is_enabled()) {
 		struct gps_position gpos;
 
@@ -379,6 +382,8 @@ extern "C" void mesh_housekeeping_ui_refresh(void)
 			ui_set_gps_data(false, (uint8_t)gpos.satellites,
 					0, 0, 0);
 		}
+	} else {
+		ui_set_gps_data(false, 0, 0, 0, 0);
 	}
 
 	/* Update GPS state machine info (state, last fix age, next search) */
