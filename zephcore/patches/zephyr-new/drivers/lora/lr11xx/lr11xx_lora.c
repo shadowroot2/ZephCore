@@ -429,8 +429,19 @@ static void lr11xx_dio1_work_handler(struct k_work *work)
 		data->dio1_stuck_count = 0;
 	}
 
-	/* ── RX done ── */
-	if (irq & LR11XX_SYSTEM_IRQ_RX_DONE) {
+	/* ── RX done ──
+	 * Gated on no error bits: a CRC-failed packet asserts RX_DONE and
+	 * CRC_ERROR together on this chip family (same as SX126x — see the
+	 * sx126x patch's "they co-fire here"; LBM's radio_planner likewise
+	 * checks errors before RX_DONE), so an ungated done-first read
+	 * would deliver corrupted payloads as valid.  A good packet
+	 * coalesced with an earlier HEADER_ERROR in the same handler
+	 * window is dropped too — the header error may have shifted the
+	 * RX buffer pointer (errata handling below), making the read
+	 * suspect.  The error branch below owns the window instead. */
+	if ((irq & LR11XX_SYSTEM_IRQ_RX_DONE) &&
+	    !(irq & (LR11XX_SYSTEM_IRQ_CRC_ERROR |
+		     LR11XX_SYSTEM_IRQ_HEADER_ERROR))) {
 		lr11xx_radio_rx_buffer_status_t rx_stat;
 		lr11xx_radio_get_rx_buffer_status(ctx, &rx_stat);
 
@@ -525,20 +536,33 @@ static void lr11xx_dio1_work_handler(struct k_work *work)
 		}
 	}
 
-	/* ── CRC / Header error ── */
-	if (irq & LR11XX_SYSTEM_IRQ_CRC_ERROR ||
-	    ((irq & LR11XX_SYSTEM_IRQ_HEADER_ERROR) &&
-	     !(irq & LR11XX_SYSTEM_IRQ_SYNC_WORD_HEADER_VALID))) {
-		LOG_DBG("RX error: CRC=%d HDR=%d",
+	/* ── CRC / Header error ──
+	 * Plain `CRC || HDR` — no SYNC_WORD_HEADER_VALID gate (RadioLib
+	 * readData's false-alarm filter).  IRQ status is bulk-cleared on
+	 * every handler entry, so a set HEADER_ERROR always belongs to
+	 * this window; a SYNC_VALID bit latched by another packet in the
+	 * same window must not suppress the errata standby below. */
+	if (irq & (LR11XX_SYSTEM_IRQ_CRC_ERROR |
+		   LR11XX_SYSTEM_IRQ_HEADER_ERROR)) {
+		LOG_DBG("RX error: CRC=%d HDR=%d RXDONE=%d",
 			(irq & LR11XX_SYSTEM_IRQ_CRC_ERROR) ? 1 : 0,
-			(irq & LR11XX_SYSTEM_IRQ_HEADER_ERROR) ? 1 : 0);
+			(irq & LR11XX_SYSTEM_IRQ_HEADER_ERROR) ? 1 : 0,
+			(irq & LR11XX_SYSTEM_IRQ_RX_DONE) ? 1 : 0);
 
-		/* LR1110 errata: header error can shift the RX buffer
-		 * pointer by 4 bytes. Standby clears the shift. */
+		/* LR1110 errata: a header error makes the chip's reported
+		 * buffer_start_pointer stale by +4 for every subsequent
+		 * packet (stacking) until a standby resets the shift.
+		 * Arduino MeshCore's CustomLR1110 calls standby() on every
+		 * header error unconditionally — mirror that. */
 		if (irq & LR11XX_SYSTEM_IRQ_HEADER_ERROR) {
 			lr11xx_system_set_standby(ctx,
 						  LR11XX_SYSTEM_STANDBY_CFG_RC);
 		}
+
+		/* Drop whatever the failed (or coalesced) packet left in
+		 * the RX buffer — RadioLib clears it on the CRC-error read
+		 * path too. */
+		lr11xx_regmem_clear_rxbuffer(ctx);
 
 		if (!data->tx_active) {
 			lr11xx_restart_rx(data);

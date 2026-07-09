@@ -601,8 +601,17 @@ static void lr20xx_dio1_work_handler(struct k_work *work)
 		data->dio1_stuck_count = 0;
 	}
 
-	/* ── RX done ── */
-	if (irq & LR20XX_SYSTEM_IRQ_RX_DONE) {
+	/* ── RX done ──
+	 * Gated on no error bits: a CRC-failed packet asserts RX_DONE and
+	 * CRC_ERROR together on this chip family (same as SX126x/LR11xx),
+	 * so an ungated done-first read would deliver corrupted payloads
+	 * as valid.  A good packet coalesced with an earlier header error
+	 * in the same handler window is dropped too — the aborted packet
+	 * may have left bytes in the RX FIFO, misaligning the read.  The
+	 * error branch below owns the window instead. */
+	if ((irq & LR20XX_SYSTEM_IRQ_RX_DONE) &&
+	    !(irq & (LR20XX_SYSTEM_IRQ_CRC_ERROR |
+		     LR20XX_SYSTEM_IRQ_LORA_HEADER_ERROR))) {
 		uint16_t pkt_len = 0;
 		lr20xx_radio_common_get_rx_packet_length(ctx, &pkt_len);
 
@@ -688,13 +697,23 @@ static void lr20xx_dio1_work_handler(struct k_work *work)
 		}
 	}
 
-	/* ── CRC / Header error ── */
-	if (irq & LR20XX_SYSTEM_IRQ_CRC_ERROR ||
-	    ((irq & LR20XX_SYSTEM_IRQ_LORA_HEADER_ERROR) &&
-	     !(irq & LR20XX_SYSTEM_IRQ_SYNC_WORD_HEADER_VALID))) {
-		LOG_WRN("RX error: CRC=%d HDR=%d",
+	/* ── CRC / Header error ──
+	 * Plain `CRC || HDR` — no SYNC_WORD_HEADER_VALID gate.  IRQ status
+	 * is bulk-cleared on every handler entry, so a set header error
+	 * always belongs to this window; a SYNC_VALID bit latched by
+	 * another packet in the same window must not suppress it. */
+	if (irq & (LR20XX_SYSTEM_IRQ_CRC_ERROR |
+		   LR20XX_SYSTEM_IRQ_LORA_HEADER_ERROR)) {
+		LOG_WRN("RX error: CRC=%d HDR=%d RXDONE=%d",
 			(irq & LR20XX_SYSTEM_IRQ_CRC_ERROR) ? 1 : 0,
-			(irq & LR20XX_SYSTEM_IRQ_LORA_HEADER_ERROR) ? 1 : 0);
+			(irq & LR20XX_SYSTEM_IRQ_LORA_HEADER_ERROR) ? 1 : 0,
+			(irq & LR20XX_SYSTEM_IRQ_RX_DONE) ? 1 : 0);
+
+		/* Drop whatever the failed (or coalesced) packet left in
+		 * the RX FIFO so the next packet's read starts aligned —
+		 * lr20xx_restart_rx does not clear it (only full start_rx
+		 * does). */
+		lr20xx_radio_fifo_clear_rx(ctx);
 
 		if (!data->tx_active) {
 			lr20xx_restart_rx(data);
