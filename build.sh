@@ -204,7 +204,7 @@ print(str(size // 1048576) + "MB")
             )
             # MCUboot/sysbuild boards: only the merged (MCUboot + signed app)
             # image is bootable on a bare/existing chip at 0x0. The signed app
-            # alone requires MCUboot already present and must land at 0x20000 —
+            # alone requires MCUboot already present and must land at 0x10000 —
             # publishing it standalone as a "plain .bin" bricks boards when
             # flashed the same way as classic-ESP32's self-contained zephyr.bin
             # (see GH #42). Don't ship it.
@@ -212,7 +212,7 @@ print(str(size // 1048576) + "MB")
             --output firmware/"$board_clean_for_path"-companion-"$COMMIT_HASH"-merged.bin \
             --flash-mode dio --flash-freq 40m --flash-size "$FLASH_SIZE" \
             0x00000 build/mcuboot/zephyr/zephyr.bin \
-            0x20000 build/zephcore/zephyr/zephyr.signed.bin
+            0x10000 build/zephcore/zephyr/zephyr.signed.bin
         fi
         
         if [[ $2 == "repeaters" ]]; then
@@ -256,7 +256,7 @@ print(str(size // 1048576) + "MB")
             --output firmware/"$board_clean_for_path"-repeater-"$COMMIT_HASH"-merged.bin \
             --flash-mode dio --flash-freq 40m --flash-size "$FLASH_SIZE" \
             0x00000 build/mcuboot/zephyr/zephyr.bin \
-            0x20000 build/zephcore/zephyr/zephyr.signed.bin
+            0x10000 build/zephcore/zephyr/zephyr.signed.bin
 
             # Signed app image for WiFi OTA: uploaded to MCUboot slot1 via the
             # repeater's /update page. NOT bootable standalone — never flash this

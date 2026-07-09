@@ -52,44 +52,10 @@
 };
 
 /*
- * Flash partitions — ZephCore 8 MB layout matching the ESP32-S3-FN8 tracker
- * class. Delete unused lpcore slots, storage, scratch, and coredump partitions.
- * Place LittleFS at 0x7A0000 - 0x800000 (384 KB).
+ * Flash partitions live in partitions.overlay (this dir) so the identical map
+ * is fed to both the app and the MCUboot image — see that file and
+ * sysbuild/CMakeLists.txt.
  */
-/delete-node/ &slot0_lpcore_partition;
-/delete-node/ &slot1_lpcore_partition;
-/delete-node/ &storage_partition;
-/delete-node/ &scratch_partition;
-/delete-node/ &coredump_partition;
-/delete-node/ &slot0_partition;
-/delete-node/ &slot1_partition;
-
-/ {
-	chosen {
-		zephyr,settings-partition = &storage_partition;
-	};
-};
-
-&flash0 {
-	partitions {
-		slot0_partition: partition@20000 {
-			label = "image-0";
-			reg = <0x20000 0x3BE000>;
-		};
-		slot1_partition: partition@3de000 {
-			label = "image-1";
-			reg = <0x3DE000 0x3BE000>;
-		};
-		storage_partition: partition@79c000 {
-			label = "storage";
-			reg = <0x79C000 0x4000>;
-		};
-		lfs_partition: partition@7a0000 {
-			label = "lfs";
-			reg = <0x7A0000 0x60000>;
-		};
-	};
-};
 
 /* LittleFS auto-mount — standard /lfs mount point */
 #include "../../common/filesystem.dtsi"

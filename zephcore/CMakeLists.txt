@@ -405,6 +405,27 @@ if(ZEPHCORE_BOARD_OVERLAY AND EXISTS ${ZEPHCORE_BOARD_OVERLAY})
     endif()
 endif()
 
+# Flash partition layout lives in a separate boards/<...>/<board>/partitions.overlay
+# so the SAME file can be fed to the MCUboot image too (see sysbuild/CMakeLists.txt).
+# The app and MCUboot MUST share one flash map — otherwise MCUboot stages/looks for
+# the OTA image at a different address than the app writes it to, and OTA silently
+# reverts on reboot. Keeping it in its own file is what makes that sharing possible.
+set(ZEPHCORE_BOARD_PARTITIONS "")
+file(GLOB_RECURSE BOARD_PARTITIONS_CANDIDATES "${CMAKE_CURRENT_SOURCE_DIR}/boards/*/${BOARD_BASE}/partitions.overlay")
+if(BOARD_PARTITIONS_CANDIDATES)
+    list(GET BOARD_PARTITIONS_CANDIDATES 0 ZEPHCORE_BOARD_PARTITIONS)
+endif()
+if(NOT ZEPHCORE_BOARD_PARTITIONS AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_BASE}/partitions.overlay")
+    set(ZEPHCORE_BOARD_PARTITIONS "${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_BASE}/partitions.overlay")
+endif()
+if(ZEPHCORE_BOARD_PARTITIONS AND EXISTS ${ZEPHCORE_BOARD_PARTITIONS})
+    if(EXTRA_DTC_OVERLAY_FILE)
+        set(EXTRA_DTC_OVERLAY_FILE "${EXTRA_DTC_OVERLAY_FILE};${ZEPHCORE_BOARD_PARTITIONS}" CACHE STRING "" FORCE)
+    else()
+        set(EXTRA_DTC_OVERLAY_FILE "${ZEPHCORE_BOARD_PARTITIONS}" CACHE STRING "" FORCE)
+    endif()
+endif()
+
 
 # Debug: Show what configs are being used
 message(STATUS "ZephCore config hierarchy:")
