@@ -47,14 +47,13 @@ renamed. Names must match MeshCore's canonical `config.json`
 mismatches.
 
 Notes on the mapping:
-- **ESP32 offers `flash-wipe` only — because of an offset mismatch, not flashability.**
-  Our `-update.bin` (the MCUboot-signed app) *is* serial-flashable, but only at ZephCore's
-  app-slot offset `0x20000` (`slot0_partition: partition@20000` in every ESP32 overlay;
-  MCUboot itself owns `0x0`–`0x20000`). Mesh America's `flash-update` hardcodes `0x10000`
-  (MeshCore's slot layout) and the catalog schema has no offset override, so it would write
-  the app inside our MCUboot partition and the board wouldn't boot. `flash-wipe` (full merged
-  image at `0x0`) is offset-independent and always works. Enabling `flash-update` would mean
-  moving our MCUboot partition to `0x10000` to match MeshCore — out of scope.
+- **ESP32 offers both `flash-wipe` and `flash-update`.** `flash-wipe` = the `-merged.bin`
+  (MCUboot + app) written at `0x0`. `flash-update` = the `-update.bin` (MCUboot-signed app)
+  written at `0x10000`. As of 2026-07-09 ZephCore's ESP32 app slot is at `0x10000` (see
+  `boards/esp32/<board>/partitions.overlay`), matching Mesh America's fixed flash-update
+  offset — so app-only updates that keep settings now work. `build.sh` ships `-update.bin`
+  for both ESP32 companion and repeater roles. **Classic-ESP32 (T-Beam)** uses simple boot
+  (no MCUboot), produces no `-update.bin`, and is naturally flash-wipe-only.
 - **Companion firmware** is one image serving BLE + USB; it's listed under both
   `companionBle` and `companionUsb` (same file). Native-Linux companions use a
   custom `companionTcp` role.

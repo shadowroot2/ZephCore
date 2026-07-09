@@ -163,6 +163,13 @@ def files_for(assets, board, token):
         merged = find_file(assets, stem, token, variant, r"-merged\.bin")
         if merged:
             out.append(("flash-wipe", merged, "Full install (bootloader + firmware)"))
+        # App-only update, written at 0x10000 over an existing MCUboot. Our slot0
+        # is at 0x10000 (matches Mesh America's fixed flash-update offset), so this
+        # is valid. Classic-ESP32 (simple boot, no MCUboot) has no -update.bin and
+        # is naturally skipped by the presence check.
+        update = find_file(assets, stem, token, variant, r"-update\.bin")
+        if update:
+            out.append(("flash-update", update, "Update (app only; keeps settings)"))
     elif kind == "linux":
         elf = find_file(assets, stem, token, variant, r"")
         if elf:
