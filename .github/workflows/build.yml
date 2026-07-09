@@ -222,6 +222,8 @@ jobs:
   create-release:
     needs: [build-nrf, build-esp32-companions, build-esp32-repeaters, build-linux]
     runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.tag.outputs.release_tag }}
 
     steps:
     - name: generate release tag
@@ -266,3 +268,75 @@ jobs:
         body: ""
         draft: false
         files: firmware/*
+
+  # Publish firmware + provider catalog for the Mesh America configurator
+  # (apps.meshamerica.com). GitHub Release assets have no CORS header, so the
+  # browser flasher cannot fetch them; instead we force-push the firmware and a
+  # generated catalog.json to the `firmware-dist` orphan branch, served from
+  # CORS-clean hosts (firmware via jsDelivr, catalog via raw.githubusercontent).
+  # The stable catalog URL registered with Mesh America is:
+  #   https://raw.githubusercontent.com/<owner>/<repo>/firmware-dist/catalog.json
+  publish-catalog:
+    needs: create-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - uses: actions/setup-python@v6
+      with:
+        python-version: '${{ env.python_version }}'
+
+    # Pull every board's firmware back into a single firmware/ directory.
+    - uses: actions/cache/restore@v5
+      with:
+        path: firmware
+        key: cache-firmware-nrf-${{ github.sha }}
+    - uses: actions/cache/restore@v5
+      with:
+        path: firmware
+        key: cache-firmware-esp32-companions-${{ github.sha }}
+    - uses: actions/cache/restore@v5
+      with:
+        path: firmware
+        key: cache-firmware-esp32-repeaters-${{ github.sha }}
+    - uses: actions/cache/restore@v5
+      with:
+        path: firmware
+        key: cache-firmware-linux-${{ github.sha }}
+
+    - name: generate provider catalog
+      run: |
+        python gen_provider_catalog.py --firmware-dir firmware \
+          --url-base "https://cdn.jsdelivr.net/gh/${{ github.repository }}@firmware-dist" \
+          --version "${{ needs.create-release.outputs.release_tag }}" \
+          --out catalog.json
+
+    - name: publish firmware + catalog to firmware-dist branch
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        tag="${{ needs.create-release.outputs.release_tag }}"
+        work="$(mktemp -d)"
+        cp catalog.json "$work/"
+        cp firmware/* "$work/"
+        {
+          echo "# ZephCore firmware-dist"
+          echo
+          echo "Auto-generated distribution branch for the Mesh America device"
+          echo "configurator. Force-pushed by the \`build firmware\` workflow each"
+          echo "release -- do not edit by hand."
+          echo
+          echo "- Catalog (register this URL): https://raw.githubusercontent.com/${{ github.repository }}/firmware-dist/catalog.json"
+          echo "- Firmware (jsDelivr): https://cdn.jsdelivr.net/gh/${{ github.repository }}@firmware-dist/"
+          echo "- Built from release: $tag"
+        } > "$work/README.md"
+        cd "$work"
+        git init -q -b firmware-dist
+        git config user.name "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git add -A
+        git commit -q -m "firmware-dist: $tag"
+        git push -f "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git" firmware-dist
