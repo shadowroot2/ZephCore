@@ -49,6 +49,7 @@ static void simple_sort(T* arr, int count, Comparator cmp) {
 LOG_MODULE_REGISTER(zephcore_repeater, CONFIG_ZEPHCORE_MAIN_LOG_LEVEL);
 
 #if IS_ENABLED(CONFIG_ZEPHCORE_REPEATER_UPLINK) && IS_ENABLED(CONFIG_MQTT_LIB)
+#define UPLINK_STATUS_INTERVAL_MS 300000
 static RepeaterMesh *s_uplink_mesh;
 /* Runs on the WiFi thread; the mesh time-sync module is main-thread-only, so
  * flag the trusted sync and let loop() arm suppression + drift envelope. */
@@ -1017,14 +1018,14 @@ void RepeaterMesh::begin(RepeaterDataStore* store) {
                              _uplink_status_topic, _uplink_packets_topic);
         mqtt_publisher_set_connect_cb([]() {
             /* Runs on the MQTT publisher thread — DON'T publish here. It would
-             * race the main-thread status path on the shared static JSON buffer
+             * race the main-thread producer on the publisher's staging buffer
              * and toggle the battery-ADC regulator off-main. Defer to the main
              * loop via an atomic flag drained in maintenanceLoop(). */
             if (s_uplink_mesh) {
                 atomic_set(&s_uplink_mesh->_uplink_connect_pending, 1);
             }
         });
-        _uplink_next_status_at = futureMillis(300000);
+        _uplink_next_status_at = futureMillis(UPLINK_STATUS_INTERVAL_MS);
         LOG_INF("Repeater uplink active: %s", _uplink_packets_topic);
     } else {
         LOG_INF("Repeater uplink inactive");
@@ -1385,7 +1386,7 @@ void RepeaterMesh::loop() {
     }
     if (_uplink_next_status_at && millisHasNowPassed(_uplink_next_status_at)) {
         publishUplinkStatus("online");
-        _uplink_next_status_at = futureMillis(300000);
+        _uplink_next_status_at = futureMillis(UPLINK_STATUS_INTERVAL_MS);
     }
     if (atomic_cas(&s_uplink_sntp_pending, 1, 0)) {
         /* SNTP set the clock (trusted) — arm suppression + drift envelope. */

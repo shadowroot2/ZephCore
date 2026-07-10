@@ -8,7 +8,7 @@
  * LittleFS.  Nothing is hardcoded.
  *
  * Event loop:
- *   LORA_RX  → ObserverMesh::loop() → enqueuePacket() → mqtt_publisher_enqueue()
+ *   LORA_RX  → ObserverMesh::loop() → enqueuePacket() → mqtt_publisher_commit()
  *   CLI_RX   → ObserverMesh::handleCLI() (set/get commands)
  */
 
@@ -352,8 +352,8 @@ int main(void)
 	 * this observer on the map (requires lat/lon to be configured). */
 	mqtt_publisher_set_connect_cb([]() {
 		/* Runs on the MQTT publisher thread — defer to the main loop. Publishing
-		 * here would race the periodic-status path on publishStatus()'s shared
-		 * static JSON buffer; publishSelfAdvert() also signs + formats. */
+		 * here would race the main-thread producer on the publisher's staging
+		 * buffer; publishSelfAdvert() also signs + formats. */
 		k_event_post(&mesh_events, MESH_EVENT_MQTT_CONNECT);
 	});
 	k_timer_start(&status_timer, K_SECONDS(300), K_SECONDS(300));

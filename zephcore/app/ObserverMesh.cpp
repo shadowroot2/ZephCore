@@ -19,12 +19,7 @@ LOG_MODULE_REGISTER(zephcore_observer, CONFIG_ZEPHCORE_OBSERVER_LOG_LEVEL);
 #include <stdlib.h>
 #include <time.h>
 
-/* Forward declaration — implemented in ZephyrMQTTPublisher.c */
-extern "C" {
-	void mqtt_publisher_enqueue(const char *topic, const char *payload, int payload_len);
-	bool mqtt_publisher_is_connected(void);
-	void mqtt_publisher_reconnect(void);
-}
+#include <ZephyrMQTTPublisher.h>
 
 /* Forward declaration — implemented in ZephyrWiFiStation.c */
 extern "C" {
@@ -136,9 +131,17 @@ void ObserverMesh::buildStatusJson(const char *status, char *out, size_t out_siz
 
 void ObserverMesh::publishStatus(const char *status)
 {
-	static char json_buf[768];
-	buildStatusJson(status, json_buf, sizeof(json_buf));
-	mqtt_publisher_enqueue(_status_topic, json_buf, strlen(json_buf));
+	/* Gate on connected: without it the 300 s status timer fills the
+	 * publish queue with stale "online" messages while WiFi or the broker
+	 * is down, and they all flush with old timestamps on reconnect. The
+	 * on-connect status is posted via MESH_EVENT_MQTT_CONNECT, after
+	 * CONNACK, so nothing is lost by skipping here. */
+	if (!mqtt_publisher_is_connected()) return;
+
+	size_t json_cap;
+	char *json_buf = mqtt_publisher_stage(&json_cap);
+	buildStatusJson(status, json_buf, json_cap);
+	mqtt_publisher_commit(MQTT_PUB_TOPIC_STATUS, (int)strlen(json_buf));
 }
 
 void ObserverMesh::buildTopics()
@@ -185,8 +188,10 @@ void ObserverMesh::enqueuePacket(Packet *pkt)
 	/* Get current timestamp from RTC */
 	uint32_t now_epoch = _rtc ? _rtc->getCurrentTime() : 0;
 
-	/* Build JSON payload matching meshcoretomqtt packet format */
-	static char json_buf[1024];
+	/* Build JSON payload matching meshcoretomqtt packet format, directly
+	 * in the publisher's staging buffer (main-thread-only producer). */
+	size_t json_cap;
+	char *json_buf = mqtt_publisher_stage(&json_cap);
 	struct MeshcorePacketJson pj = {
 		_prefs.node_name,
 		_pubkey_hex,
@@ -201,14 +206,14 @@ void ObserverMesh::enqueuePacket(Packet *pkt)
 		(int)(_last_score * 1000.0f),
 		hash_hex,
 	};
-	int json_len = meshcore_build_packet_json(json_buf, sizeof(json_buf), &pj);
+	int json_len = meshcore_build_packet_json(json_buf, json_cap, &pj);
 
-	if (json_len < 0 || json_len >= (int)sizeof(json_buf)) {
+	if (json_len < 0 || json_len >= (int)json_cap) {
 		LOG_WRN("Packet JSON truncated (len=%d)", json_len);
-		json_len = (int)sizeof(json_buf) - 1;
+		json_len = (int)json_cap - 1;
 	}
 
-	mqtt_publisher_enqueue(_packets_topic, json_buf, json_len);
+	mqtt_publisher_commit(MQTT_PUB_TOPIC_PACKETS, json_len);
 }
 
 DispatcherAction ObserverMesh::onRecvPacket(Packet *pkt)
@@ -652,7 +657,8 @@ void ObserverMesh::publishSelfAdvert()
 	Utils::toHex(raw_hex, raw, raw_len);
 	raw_hex[raw_len * 2] = '\0';
 
-	static char json_buf[1024];
+	size_t json_cap;
+	char *json_buf = mqtt_publisher_stage(&json_cap);
 	struct MeshcorePacketJson pj = {
 		name,
 		_pubkey_hex,
@@ -667,14 +673,14 @@ void ObserverMesh::publishSelfAdvert()
 		0,                        /* score */
 		"0000000000000000",       /* hash (not computed for self-advert) */
 	};
-	int json_len = meshcore_build_packet_json(json_buf, sizeof(json_buf), &pj);
+	int json_len = meshcore_build_packet_json(json_buf, json_cap, &pj);
 
-	if (json_len < 0 || json_len >= (int)sizeof(json_buf)) {
+	if (json_len < 0 || json_len >= (int)json_cap) {
 		LOG_WRN("publishSelfAdvert: JSON truncated");
 		return;
 	}
 
-	mqtt_publisher_enqueue(_packets_topic, json_buf, json_len);
+	mqtt_publisher_commit(MQTT_PUB_TOPIC_PACKETS, json_len);
 	LOG_INF("Self-advert published (lat=%.6f lon=%.6f)",
 		(double)_creds->lat_e6 / 1e6, (double)_creds->lon_e6 / 1e6);
 }
