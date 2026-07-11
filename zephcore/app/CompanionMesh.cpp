@@ -212,6 +212,9 @@ CompanionMesh::CompanionMesh(mesh::Radio &radio, mesh::MillisecondClock &ms, mes
 	_vcontact_cli_cb = nullptr;
 	memset(_vcontact_pubkey, 0, sizeof(_vcontact_pubkey));
 	_vcontact_lastmod = 0;
+	_vcontact_last_ts = 0;
+	memset(_vcontact_pending, 0, sizeof(_vcontact_pending));
+	_vcontact_pending_count = 0;
 	memset(&prefs, 0, sizeof(prefs));
 	prefs.node_lat = 0;
 	prefs.node_lon = 0;
@@ -228,7 +231,12 @@ void CompanionMesh::begin()
 	mesh::Utils::sha256(_vcontact_pubkey, PUB_KEY_SIZE,
 		(const uint8_t *)vc_salt, sizeof(vc_salt) - 1,
 		self_id.pub_key, PUB_KEY_SIZE);
-	_vcontact_lastmod = (uint32_t)getRTCClock()->getCurrentTime();
+	/* Stamp lastmod only if a time source already ran (hardware RTC restore
+	 * happens before begin()). Otherwise stay deferred (lastmod = 0) until
+	 * vcontactClockSynced() — an advert stamped now would show as 1970. */
+	if (vcontactClockValid()) {
+		_vcontact_lastmod = (uint32_t)getRTCClock()->getCurrentTime();
+	}
 #ifdef CONFIG_ZEPHCORE_APC
 	_power_ctrl.setSF(prefs.sf);
 	_power_ctrl.setTargetMargin(prefs.apc_margin);
@@ -616,8 +624,10 @@ bool CompanionMesh::continueContactIteration()
 		_contact_iter_idx++;
 		return true;
 	} else if (_contact_iter_idx == getNumContacts()) {
-		// Virtual tail entry: the v-contact (never in the real table)
-		if (isVContactEnabled() && _vcontact_lastmod > _contact_iter_since) {
+		// Virtual tail entry: the v-contact (never in the real table).
+		// vcontactReady() implies lastmod != 0 — deferred (clock-invalid)
+		// state is excluded so the app never sees a 1970 timestamp.
+		if (vcontactReady() && _vcontact_lastmod > _contact_iter_since) {
 			if (_vcontact_lastmod > _contact_iter_lastmod) {
 				_contact_iter_lastmod = _vcontact_lastmod;
 			}
@@ -880,6 +890,30 @@ bool CompanionMesh::isVContactKey(const uint8_t *key, int prefix_len) const
 	return memcmp(key, _vcontact_pubkey, prefix_len) == 0;
 }
 
+bool CompanionMesh::vcontactClockValid()
+{
+	/* Anything before the firmware build epoch is a never-synced clock. */
+	return (uint32_t)getRTCClock()->getCurrentTime() >= (uint32_t)FIRMWARE_BUILD_EPOCH;
+}
+
+void CompanionMesh::vcontactClockSynced()
+{
+	if (!isVContactEnabled() || !vcontactClockValid()) {
+		return;
+	}
+	if (_vcontact_lastmod == 0) {
+		/* Deferred activation: first valid time source — stamp and announce.
+		 * From here the contact also appears in CMD_GET_CONTACTS syncs. */
+		vcontactPushAdvert();
+	}
+	/* Flush notices buffered while the clock was invalid; queueing them now
+	 * gives them real timestamps instead of 1970. */
+	for (uint8_t i = 0; i < _vcontact_pending_count; i++) {
+		vcontactQueueText(_vcontact_pending[i]);
+	}
+	_vcontact_pending_count = 0;
+}
+
 void CompanionMesh::vcontactQueueText(const char *text)
 {
 	/* Offline-queue frames cap at 172 bytes and the V3 header takes 16, so
@@ -924,12 +958,33 @@ void CompanionMesh::vcontactNotify(const char *text)
 {
 	if (!isVContactEnabled() || !text || !text[0]) return;
 	LOG_INF("vcontact notify: %s", text);
+	if (!vcontactClockValid()) {
+		/* Clock never synced — a message queued now would show as 1970.
+		 * Buffer it; vcontactClockSynced() flushes with a real timestamp.
+		 * Drop-oldest when full (restart reason + battery is the whole
+		 * expected population). */
+		if (_vcontact_pending_count >= (uint8_t)ARRAY_SIZE(_vcontact_pending)) {
+			memmove(_vcontact_pending[0], _vcontact_pending[1],
+				sizeof(_vcontact_pending[0]) * (ARRAY_SIZE(_vcontact_pending) - 1));
+			_vcontact_pending_count = ARRAY_SIZE(_vcontact_pending) - 1;
+		}
+		strncpy(_vcontact_pending[_vcontact_pending_count], text,
+			sizeof(_vcontact_pending[0]) - 1);
+		_vcontact_pending[_vcontact_pending_count][sizeof(_vcontact_pending[0]) - 1] = '\0';
+		_vcontact_pending_count++;
+		return;
+	}
 	vcontactQueueText(text);
 }
 
 void CompanionMesh::vcontactPushAdvert()
 {
 	if (!isVContactEnabled()) return;
+	if (!vcontactClockValid()) {
+		/* Defer — an advert stamped now would carry a 1970 timestamp.
+		 * vcontactClockSynced() re-runs this once a time source arrives. */
+		return;
+	}
 	/* Bump lastmod so incremental contact syncs (since > 0) pick up the
 	 * rename/re-enable. */
 	_vcontact_lastmod = (uint32_t)getRTCClock()->getCurrentTime();
@@ -959,19 +1014,31 @@ bool CompanionMesh::vcontactHandleFrame(const uint8_t *data, size_t len)
 				sendPacketError(ERR_UNSUPPORTED);
 				return true;
 			}
-			char line[MAX_TEXT_LEN + 1];
-			size_t text_len = len - 13;
-			if (text_len > MAX_TEXT_LEN) text_len = MAX_TEXT_LEN;
-			memcpy(line, &data[13], text_len);
-			line[text_len] = '\0';
-			LOG_INF("vcontact CLI: '%s'", line);
+			/* Dedupe app resends: retry attempts of the same message reuse
+			 * its timestamp (only the attempt byte changes). Without this a
+			 * retry re-executes the CLI line → duplicate responses. Dupes
+			 * still get the full ack choreography so the app settles. */
+			uint32_t msg_timestamp = get_le32(&data[3]);
+			bool dup = (msg_timestamp != 0 && msg_timestamp == _vcontact_last_ts);
+			_vcontact_last_ts = msg_timestamp;
 
 			char reply[VCONTACT_CLI_REPLY_SIZE];
 			reply[0] = '\0';
-			if (_vcontact_cli_cb) {
-				_vcontact_cli_cb(line, reply);
+			if (!dup) {
+				char line[MAX_TEXT_LEN + 1];
+				size_t text_len = len - 13;
+				if (text_len > MAX_TEXT_LEN) text_len = MAX_TEXT_LEN;
+				memcpy(line, &data[13], text_len);
+				line[text_len] = '\0';
+				LOG_INF("vcontact CLI: '%s'", line);
+
+				if (_vcontact_cli_cb) {
+					_vcontact_cli_cb(line, reply);
+				} else {
+					strcpy(reply, "CLI not available");
+				}
 			} else {
-				strcpy(reply, "CLI not available");
+				LOG_DBG("vcontact CLI: dup ts=%u, re-ack only", msg_timestamp);
 			}
 
 			/* Synthesize the normal send/ack choreography: SENT response,
@@ -979,7 +1046,7 @@ bool CompanionMesh::vcontactHandleFrame(const uint8_t *data, size_t len)
 			uint32_t ack = 0;
 			getRNG()->random((uint8_t *)&ack, 4);
 			if (ack == 0) ack = 1;
-			sendPacketSent(MSG_SEND_SENT_DIRECT, ack, 100);
+			sendPacketSent(MSG_SEND_SENT_DIRECT, ack, 3000);
 			uint8_t ack_push[8];
 			memcpy(ack_push, &ack, 4);
 			memset(&ack_push[4], 0, 4);  /* trip time: 0 ms */
@@ -1890,6 +1957,10 @@ bool CompanionMesh::handleProtocolFrame(const uint8_t *data, size_t len)
 		cancelSyncPending();
 		cleanupSignState();
 
+		/* If a time source already ran (hardware RTC, GPS), activate the
+		 * deferred v-contact and flush buffered notices for this session. */
+		vcontactClockSynced();
+
 		// Return SELF_INFO
 		uint8_t rsp[90];  // 58 fixed + up to 32 bytes name
 		size_t i = 0;
@@ -1936,7 +2007,7 @@ bool CompanionMesh::handleProtocolFrame(const uint8_t *data, size_t len)
 				ContactInfo c;
 				if (getContactByIdx(i, c) && c.type != ADV_TYPE_NONE) total++;
 			}
-			if (isVContactEnabled()) total++;  /* virtual tail entry */
+			if (vcontactReady()) total++;  /* virtual tail entry (post time sync) */
 			uint8_t rsp[5];
 			rsp[0] = PACKET_CONTACT_START;
 			put_le32(&rsp[1], total);
@@ -2470,6 +2541,7 @@ bool CompanionMesh::handleProtocolFrame(const uint8_t *data, size_t len)
 			if (gps_has_time_sync()) {
 				LOG_DBG("Ignoring phone time sync - GPS time sync active");
 				sendPacketOk();
+				vcontactClockSynced();  /* GPS time counts as valid too */
 				return true;
 			}
 
@@ -2482,6 +2554,9 @@ bool CompanionMesh::handleProtocolFrame(const uint8_t *data, size_t len)
 				zephcore_rtc_save(secs);  /* persist to hardware RTC */
 				_timesync.noteManualSync((uint32_t)(k_uptime_get() / 1000));
 				sendPacketOk();
+				/* App just gave us wall time — activate the deferred
+				 * v-contact and flush buffered notices. */
+				vcontactClockSynced();
 			} else {
 				sendPacketError(ERR_ILLEGAL_ARG);
 			}

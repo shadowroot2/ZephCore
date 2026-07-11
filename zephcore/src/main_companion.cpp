@@ -62,6 +62,7 @@ LOG_MODULE_REGISTER(zephcore_main, CONFIG_ZEPHCORE_MAIN_LOG_LEVEL);
 #include <app/CompanionMesh.h>
 #include <helpers/CommonCLI.h>
 #include <helpers/ClientACL.h>
+#include <helpers/StatsFormatHelper.h>
 #include <helpers/battery_curve.h>
 #endif
 
@@ -559,9 +560,11 @@ static void mesh_event_loop(void)
 		if (events & MESH_EVENT_RTC_SAVE) {
 			zephcore_rtc_save((uint32_t)atomic_get(&pending_rtc_epoch));
 #ifdef ZEPHCORE_LORA
-			/* GPS just set the clock — arm the mesh time-sync drift envelope. */
+			/* GPS just set the clock — arm the mesh time-sync drift envelope
+			 * and activate the deferred v-contact / flush buffered notices. */
 			if (companion_mesh_ptr) {
 				companion_mesh_ptr->noteGPSTimeSync();
+				companion_mesh_ptr->vcontactClockSynced();
 			}
 #endif
 		}
@@ -784,6 +787,23 @@ public:
 				"on state=%s sats=%u no fix",
 				state, gsi.satellites);
 		}
+	}
+
+	/* Stats — same JSON format as the repeater CLI (StatsFormatHelper), so
+	 * `stats-core` / `stats-radio` / `stats-packets` work over USB and the
+	 * v-contact chat instead of the base-class "not available" stubs. */
+	void formatStatsReply(char* reply) override {
+		StatsFormatHelper::formatCoreStats(reply, zephyr_board, ms_clock,
+			companion_mesh.getErrFlags(), &packet_mgr);
+	}
+	void formatRadioStatsReply(char* reply) override {
+		StatsFormatHelper::formatRadioStats(reply, &lora_radio, lora_radio,
+			companion_mesh.getTotalAirTime(), companion_mesh.getReceiveAirTime());
+	}
+	void formatPacketStatsReply(char* reply) override {
+		StatsFormatHelper::formatPacketStats(reply, lora_radio,
+			companion_mesh.getNumSentFlood(), companion_mesh.getNumSentDirect(),
+			companion_mesh.getNumRecvFlood(), companion_mesh.getNumRecvDirect());
 	}
 };
 
@@ -1187,7 +1207,7 @@ int main(void)
 	LOG_INF("=== ZephCore starting ===");
 
 	/* Log reset reason so we can diagnose random reboots */
-	char boot_cause_msg[64];
+	char boot_cause_msg[96];  /* fits "Restarted:" + all six cause labels */
 	boot_cause_msg[0] = '\0';
 	{
 		uint32_t cause;
@@ -1200,17 +1220,21 @@ int main(void)
 				(cause & RESET_WATCHDOG)  ? " WATCHDOG"  : "",
 				(cause & RESET_CPU_LOCKUP)? " LOCKUP"    : "");
 			hwinfo_clear_reset_cause();
-			/* Informative causes become a v-contact message once the
-			 * mesh is up (queued below, after RTC restore + prefs load).
-			 * Plain POR/PIN — the user just powered the device on — is
-			 * noise and stays log-only. A deliberate CLI/app reboot shows
-			 * as SOFTWARE, doubling as a "reboot completed" confirmation. */
-			if (cause & (RESET_SOFTWARE | RESET_BROWNOUT |
-				     RESET_WATCHDOG | RESET_CPU_LOCKUP)) {
+			/* Every known cause becomes a v-contact message once the mesh
+			 * is up (queued below, after RTC restore + prefs load) — the
+			 * message rides the offline queue only, so the "noise" of a
+			 * routine power-on costs nothing over the air and doubles as
+			 * a power-integrity breadcrumb (dead battery, loose contact).
+			 * A deliberate CLI/app reboot shows as SOFTWARE, doubling as
+			 * a "reboot completed" confirmation. */
+			if (cause & (RESET_PIN | RESET_SOFTWARE | RESET_BROWNOUT |
+				     RESET_POR | RESET_WATCHDOG | RESET_CPU_LOCKUP)) {
 				snprintf(boot_cause_msg, sizeof(boot_cause_msg),
-					 "Restarted:%s%s%s%s",
+					 "Restarted:%s%s%s%s%s%s",
+					 (cause & RESET_PIN)        ? " PIN(reset button)" : "",
 					 (cause & RESET_SOFTWARE)   ? " SOFTWARE" : "",
 					 (cause & RESET_BROWNOUT)   ? " BROWNOUT" : "",
+					 (cause & RESET_POR)        ? " POR(power-on)" : "",
 					 (cause & RESET_WATCHDOG)   ? " WATCHDOG" : "",
 					 (cause & RESET_CPU_LOCKUP) ? " LOCKUP"   : "");
 			}

@@ -483,7 +483,8 @@ contact named `v<node_name>` that exists only toward the connected BLE/USB app.
 Chatting with it runs the same text CLI as the USB serial sideband; the reply
 comes back as normal chat messages. The firmware also uses it to emit
 unsolicited notices: a one-shot low-battery alert and a restart-reason message
-(SOFTWARE/WATCHDOG/LOCKUP/BROWNOUT causes only — plain power-on is log-only).
+(all causes: PIN/SOFTWARE/BROWNOUT/POR/WATCHDOG/LOCKUP — offline-queue only,
+so routine power-on "noise" costs nothing over the air).
 
 **Identity**: pubkey = `SHA256("zc-vcontact" || self_pubkey)` — stable per
 node, unique per device, and deliberately **not a real keypair**: no private
@@ -508,6 +509,26 @@ runtime enable and rename, `CONTACT_DELETED` on disable. App-side contact
 delete (`CMD_REMOVE_CONTACT`) turns the feature off. Send/ack choreography is
 synthesized (SENT + immediate SEND_CONFIRMED, trip time 0). CLI replies are
 chunked at ≤150 chars on line breaks (offline-queue frames cap at 172 bytes).
+
+**Clock gating (no 1970 timestamps)**: while the RTC has never been synced
+(time < firmware build epoch) the v-contact is *deferred* — withheld from
+contact sync and adverts, and notices are buffered in a small RAM slot
+(`_vcontact_pending`) instead of queued with an epoch-0 timestamp.
+`vcontactClockSynced()` activates it and flushes the buffer; hooked at
+`CMD_APP_START` (covers hardware-RTC boards, already valid), successful
+`CMD_SET_DEVICE_TIME` (typical app connect flow), and GPS time sync.
+
+**Resend dedupe**: app retry attempts reuse the message timestamp (only the
+attempt byte changes); `_vcontact_last_ts` suppresses re-execution — a dupe
+gets the full ack choreography but the CLI does not run twice. Side effect:
+sending the identical command twice within the same wall-clock second only
+executes once (same app-side timestamp). Synthesized `est_timeout` is 3 s so
+the app's retry timer doesn't race the loopback confirmation.
+
+**Stats**: `CompanionCLICallbacks` overrides
+`formatStatsReply`/`formatRadioStatsReply`/`formatPacketStatsReply` with the
+repeater's `StatsFormatHelper` JSON, so `stats-core`/`stats-radio`/
+`stats-packets` return real data over USB and the v-contact.
 
 **Notices ride the offline queue** — emitted while nothing is connected, they
 are delivered on the first app connect/sync. RAM-backed: lost on reboot (the

@@ -177,6 +177,11 @@ public:
 	void vcontactPushAdvert();
 	/** Push CONTACT_DELETED for the v-contact (call after runtime disable). */
 	void vcontactPushDeleted();
+	/** Clock became (or may have become) valid — activate the v-contact if it
+	 *  was deferred (no more 1970 adverts) and flush buffered notices so they
+	 *  carry sane timestamps. Self-gating; safe to call speculatively. Hooked
+	 *  at CMD_APP_START, CMD_SET_DEVICE_TIME, and GPS time sync. */
+	void vcontactClockSynced();
 
 #ifdef CONFIG_ZEPHCORE_APC
 	/* Adaptive Power Control hooks used by the USB text CLI. */
@@ -490,10 +495,18 @@ private:
 	void queueContactMessage(const ContactInfo &contact, mesh::Packet *pkt,
 		uint8_t txt_type, uint32_t sender_timestamp, const uint8_t *extra, int extra_len, const char *text);
 
-	/* V-contact internals */
+	/* V-contact internals. _vcontact_lastmod == 0 means "not yet activated":
+	 * the clock was invalid (pre-1970s epoch) when we would have stamped it,
+	 * so the contact is withheld from sync/adverts until a time source
+	 * arrives — otherwise the app shows a 1970 last-heard timestamp. */
 	VContactCLICallback _vcontact_cli_cb;
 	uint8_t _vcontact_pubkey[PUB_KEY_SIZE];
 	uint32_t _vcontact_lastmod;
+	uint32_t _vcontact_last_ts;      /* dedupe: app resends carry the same msg timestamp */
+	char _vcontact_pending[2][64];   /* notices buffered while the clock is invalid */
+	uint8_t _vcontact_pending_count;
+	bool vcontactClockValid();
+	bool vcontactReady() { return isVContactEnabled() && _vcontact_lastmod != 0; }
 	void buildVContact(ContactInfo &c) const;
 	bool isVContactKey(const uint8_t *key, int prefix_len) const;
 	/** Intercept protocol frames addressed to the v-contact. Returns true when
