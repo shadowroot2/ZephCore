@@ -209,6 +209,9 @@ CompanionMesh::CompanionMesh(mesh::Radio &radio, mesh::MillisecondClock &ms, mes
 	_dirty_channels_expiry = 0;
 	memset(_send_scope.key, 0, sizeof(_send_scope.key));
 	_send_scope_force_unscoped = false;
+	_vcontact_cli_cb = nullptr;
+	memset(_vcontact_pubkey, 0, sizeof(_vcontact_pubkey));
+	_vcontact_lastmod = 0;
 	memset(&prefs, 0, sizeof(prefs));
 	prefs.node_lat = 0;
 	prefs.node_lon = 0;
@@ -217,6 +220,15 @@ CompanionMesh::CompanionMesh(mesh::Radio &radio, mesh::MillisecondClock &ms, mes
 void CompanionMesh::begin()
 {
 	BaseChatMesh::begin();
+
+	/* Derive the v-contact pubkey from our identity: stable per node, unique
+	 * per device. Deliberately NOT a real keypair — no private key exists
+	 * anywhere, so nothing addressed to this key is decryptable by anyone. */
+	static const char vc_salt[] = "zc-vcontact";
+	mesh::Utils::sha256(_vcontact_pubkey, PUB_KEY_SIZE,
+		(const uint8_t *)vc_salt, sizeof(vc_salt) - 1,
+		self_id.pub_key, PUB_KEY_SIZE);
+	_vcontact_lastmod = (uint32_t)getRTCClock()->getCurrentTime();
 #ifdef CONFIG_ZEPHCORE_APC
 	_power_ctrl.setSF(prefs.sf);
 	_power_ctrl.setTargetMargin(prefs.apc_margin);
@@ -603,6 +615,22 @@ bool CompanionMesh::continueContactIteration()
 		}
 		_contact_iter_idx++;
 		return true;
+	} else if (_contact_iter_idx == getNumContacts()) {
+		// Virtual tail entry: the v-contact (never in the real table)
+		if (isVContactEnabled() && _vcontact_lastmod > _contact_iter_since) {
+			if (_vcontact_lastmod > _contact_iter_lastmod) {
+				_contact_iter_lastmod = _vcontact_lastmod;
+			}
+			ContactInfo vc;
+			buildVContact(vc);
+			uint8_t rsp[CONTACT_FRAME_SIZE];
+			size_t n = serializeContact(rsp, vc, PACKET_CONTACT);
+			if (!writeFrame(rsp, n)) {
+				return true;  /* retry this step when TX drains */
+			}
+		}
+		_contact_iter_idx++;
+		return true;
 	} else {
 		// Send PACKET_CONTACT_END with most_recent_lastmod
 		uint8_t rsp[5];
@@ -814,6 +842,196 @@ void CompanionMesh::queueContactMessage(const ContactInfo &contact, mesh::Packet
 
 	LOG_DBG("queueContactMessage: frame_len=%d type=0x%02x", i, frame[0]);
 	queueOfflineMessage(frame, i);
+}
+
+/* ========== V-contact: loopback admin contact ==========
+ * A synthesized CHAT contact ("v<node_name>") that exists only toward the
+ * connected BLE/USB app. Chat messages to it run the text CLI; replies and
+ * unsolicited notices (battery alert, restart reason) come back as normal
+ * contact messages via the offline queue. Invariants:
+ *   - never enters the real contacts table (and thus never the RF RX
+ *     matching path) — CMD_ADD_UPDATE_CONTACT is intercepted to a no-op OK;
+ *   - no packet object is ever created for it — interception happens before
+ *     any sendMessage/sendRequest path, so nothing can reach the radio;
+ *   - its pubkey is SHA256-derived with no private key, so even hand-crafted
+ *     over-the-air traffic addressed to it is undecryptable and dropped. */
+
+void CompanionMesh::buildVContact(ContactInfo &c) const
+{
+	memcpy(c.id.pub_key, _vcontact_pubkey, PUB_KEY_SIZE);
+	c.type = ADV_TYPE_CHAT;
+	c.flags = 0;
+	c.out_path_len = 0;  /* zero-hop direct — renders as "0 hops" in the app */
+	c.shared_secret_valid = false;
+	memset(c.out_path, 0, sizeof(c.out_path));
+	c.name[0] = 'v';
+	StrHelper::strzcpy(&c.name[1], prefs.node_name, sizeof(c.name) - 1);
+	c.last_advert_timestamp = _vcontact_lastmod;
+	c.lastmod = _vcontact_lastmod;
+	c.gps_lat = 0;
+	c.gps_lon = 0;
+	c.sync_since = 0;
+}
+
+bool CompanionMesh::isVContactKey(const uint8_t *key, int prefix_len) const
+{
+	if (!isVContactEnabled()) return false;
+	if (prefix_len > PUB_KEY_SIZE) prefix_len = PUB_KEY_SIZE;
+	return memcmp(key, _vcontact_pubkey, prefix_len) == 0;
+}
+
+void CompanionMesh::vcontactQueueText(const char *text)
+{
+	/* Offline-queue frames cap at 172 bytes and the V3 header takes 16, so
+	 * split long CLI replies into <=150-char chunks, preferring line breaks.
+	 * Each chunk becomes its own chat message; getCurrentTimeUnique() keeps
+	 * their timestamps strictly increasing so the app orders them. */
+	static const size_t CHUNK_MAX = 150;
+	ContactInfo vc;
+	buildVContact(vc);
+
+	const char *p = text;
+	size_t remaining = strlen(text);
+	while (remaining > 0) {
+		size_t take = remaining;
+		if (take > CHUNK_MAX) {
+			take = CHUNK_MAX;
+			for (size_t i = take; i > CHUNK_MAX / 2; i--) {
+				if (p[i - 1] == '\n') { take = i; break; }
+			}
+		}
+		char chunk[CHUNK_MAX + 1];
+		memcpy(chunk, p, take);
+		chunk[take] = '\0';
+		size_t adv = take;
+		for (size_t i = 0; i < take; i++) {
+			if (chunk[i] == '\r') chunk[i] = ' ';  /* CRLF CLI output → LF */
+		}
+		while (take > 0 && (chunk[take - 1] == '\n' || chunk[take - 1] == ' ')) {
+			chunk[--take] = '\0';  /* trim trailing break of this bubble */
+		}
+		if (take > 0) {
+			queueContactMessage(vc, nullptr, TXT_TYPE_PLAIN,
+				getRTCClock()->getCurrentTimeUnique(), nullptr, 0, chunk);
+		}
+		p += adv;
+		remaining -= adv;
+	}
+	sendPush(PUSH_CODE_MSG_WAITING);
+}
+
+void CompanionMesh::vcontactNotify(const char *text)
+{
+	if (!isVContactEnabled() || !text || !text[0]) return;
+	LOG_INF("vcontact notify: %s", text);
+	vcontactQueueText(text);
+}
+
+void CompanionMesh::vcontactPushAdvert()
+{
+	if (!isVContactEnabled()) return;
+	/* Bump lastmod so incremental contact syncs (since > 0) pick up the
+	 * rename/re-enable. */
+	_vcontact_lastmod = (uint32_t)getRTCClock()->getCurrentTime();
+	ContactInfo vc;
+	buildVContact(vc);
+	uint8_t rsp[CONTACT_FRAME_SIZE];
+	size_t n = serializeContact(rsp, vc);  /* no header — push code is separate */
+	sendPush(PUSH_CODE_NEW_ADVERT, rsp, n);
+}
+
+void CompanionMesh::vcontactPushDeleted()
+{
+	sendPush(PUSH_CODE_CONTACT_DELETED, _vcontact_pubkey, PUB_KEY_SIZE);
+}
+
+bool CompanionMesh::vcontactHandleFrame(const uint8_t *data, size_t len)
+{
+	if (!isVContactEnabled()) return false;
+
+	switch (data[0]) {
+	case CMD_SEND_TXT_MSG:
+		/* Same frame layout as the real handler: cmd(1) + txt_type(1) +
+		 * attempt(1) + timestamp(4) + pub_key_prefix(6) + text(N). */
+		if (len >= 14 && isVContactKey(&data[7], 6)) {
+			uint8_t txt_type = data[1];
+			if (txt_type != TXT_TYPE_PLAIN && txt_type != TXT_TYPE_CLI_DATA) {
+				sendPacketError(ERR_UNSUPPORTED);
+				return true;
+			}
+			char line[MAX_TEXT_LEN + 1];
+			size_t text_len = len - 13;
+			if (text_len > MAX_TEXT_LEN) text_len = MAX_TEXT_LEN;
+			memcpy(line, &data[13], text_len);
+			line[text_len] = '\0';
+			LOG_INF("vcontact CLI: '%s'", line);
+
+			char reply[VCONTACT_CLI_REPLY_SIZE];
+			reply[0] = '\0';
+			if (_vcontact_cli_cb) {
+				_vcontact_cli_cb(line, reply);
+			} else {
+				strcpy(reply, "CLI not available");
+			}
+
+			/* Synthesize the normal send/ack choreography: SENT response,
+			 * then an immediate delivery confirmation (loopback, 0 ms). */
+			uint32_t ack = 0;
+			getRNG()->random((uint8_t *)&ack, 4);
+			if (ack == 0) ack = 1;
+			sendPacketSent(MSG_SEND_SENT_DIRECT, ack, 100);
+			uint8_t ack_push[8];
+			memcpy(ack_push, &ack, 4);
+			memset(&ack_push[4], 0, 4);  /* trip time: 0 ms */
+			sendPush(PUSH_CODE_SEND_CONFIRMED, ack_push, 8);
+
+			if (reply[0] != '\0') {
+				vcontactQueueText(reply);
+			}
+			return true;
+		}
+		return false;
+
+	case CMD_GET_CONTACT_BY_KEY:
+		if (len >= 1 + PUB_KEY_SIZE && isVContactKey(&data[1], PUB_KEY_SIZE)) {
+			ContactInfo vc;
+			buildVContact(vc);
+			uint8_t rsp[CONTACT_FRAME_SIZE];
+			size_t n = serializeContact(rsp, vc, PACKET_CONTACT);
+			writeFrame(rsp, n);
+			return true;
+		}
+		return false;
+
+	case CMD_ADD_UPDATE_CONTACT:
+	case CMD_RESET_PATH:
+		/* Never let the v-contact into the real contacts table (it must stay
+		 * out of the RF RX matching path); path resets are meaningless for a
+		 * loopback contact. Reply OK so app-side flows don't surface errors. */
+		if (len >= 1 + PUB_KEY_SIZE && isVContactKey(&data[1], PUB_KEY_SIZE)) {
+			sendPacketOk();
+			return true;
+		}
+		return false;
+
+	case CMD_REMOVE_CONTACT:
+		/* App-side delete turns the feature off (mirrors user intent);
+		 * `set v.contact on` (USB CLI) brings it back. */
+		if (len >= 1 + PUB_KEY_SIZE && isVContactKey(&data[1], PUB_KEY_SIZE)) {
+			prefs.v_contact_enabled = 0;
+			_store->savePrefs(prefs);
+			sendPacketOk();
+			return true;
+		}
+		return false;
+
+	default:
+		/* Every other pubkey-addressed opcode (login, telemetry, binary req,
+		 * path discovery, export, ...) resolves the contact via
+		 * lookupContactByPubKey(); the v-contact is never in the table, so
+		 * they fail with ERR_NOT_FOUND before any packet exists. */
+		return false;
+	}
 }
 
 void CompanionMesh::queueLocalSentContactMessage(const ContactInfo &contact,
@@ -1648,6 +1866,12 @@ bool CompanionMesh::handleProtocolFrame(const uint8_t *data, size_t len)
 		resetContactIterator();
 	}
 
+	/* V-contact interception — must run before any contact lookup so a frame
+	 * addressed to the loopback contact can never create a radio packet. */
+	if (vcontactHandleFrame(data, len)) {
+		return true;
+	}
+
 	switch (data[0]) {
 	case CMD_APP_START: {
 		if (len < 8) {
@@ -1712,6 +1936,7 @@ bool CompanionMesh::handleProtocolFrame(const uint8_t *data, size_t len)
 				ContactInfo c;
 				if (getContactByIdx(i, c) && c.type != ADV_TYPE_NONE) total++;
 			}
+			if (isVContactEnabled()) total++;  /* virtual tail entry */
 			uint8_t rsp[5];
 			rsp[0] = PACKET_CONTACT_START;
 			put_le32(&rsp[1], total);
@@ -2149,6 +2374,8 @@ bool CompanionMesh::handleProtocolFrame(const uint8_t *data, size_t len)
 			_store->savePrefs(prefs);
 			/* Push the new name to BLE so scanners see it without a reboot. */
 			zephcore_ble_update_name(prefs.node_name);
+			/* v-contact name tracks the node name — update the app's copy. */
+			vcontactPushAdvert();
 		}
 		sendPacketOk();
 		return true;

@@ -674,6 +674,25 @@ void ZephyrDataStore::loadPrefs(NodePrefs &prefs)
 			prefs.meshtimesync = 0;
 		}
 	}
+
+	/* Offset 152: v_contact_enabled (ZephCore extension, default 1 = on) */
+	if (off < len) {
+		prefs.v_contact_enabled = buf[off++];
+		if (prefs.v_contact_enabled > 1) {
+			prefs.v_contact_enabled = 1;
+		}
+	} else {
+		prefs.v_contact_enabled = 1;
+	}
+
+	/* Offset 153: v_battery_alert_mv (ZephCore extension, 2 bytes LE).
+	 * 0xFFFF sentinel = derive from board auto-shutdown threshold; 0 = off. */
+	if (off + 2 <= len) {
+		prefs.v_battery_alert_mv = (uint16_t)buf[off] | ((uint16_t)buf[off + 1] << 8);
+		off += 2;
+	} else {
+		prefs.v_battery_alert_mv = 0xFFFF;
+	}
 }
 
 void ZephyrDataStore::savePrefs(const NodePrefs &prefs)
@@ -750,7 +769,12 @@ void ZephyrDataStore::savePrefs(const NodePrefs &prefs)
 	buf[off++] = prefs.rx_duty_cycle;
 	/* Offset 151: meshtimesync (ZephCore extension) */
 	buf[off++] = prefs.meshtimesync;
-	/* Total: 152 bytes */
+	/* Offset 152: v_contact_enabled (ZephCore extension) */
+	buf[off++] = prefs.v_contact_enabled;
+	/* Offset 153: v_battery_alert_mv (ZephCore extension, 2 bytes LE) */
+	buf[off++] = prefs.v_battery_alert_mv & 0xFF;
+	buf[off++] = (prefs.v_battery_alert_mv >> 8) & 0xFF;
+	/* Total: 155 bytes */
 
 	bool ok = atomicReplaceFile(PREFS_FILE, buf, off);
 	LOG_DBG("savePrefs: wrote %s, ok=%d (%d bytes), name='%.16s'",

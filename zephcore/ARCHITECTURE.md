@@ -476,6 +476,54 @@ Handles the binary BLE protocol with ~50 command opcodes. Key features:
 - **Ed25519 signing**: 3-phase flow (start→data→finish) for signing up to 8KB
 - **Flood scope**: Transport key filtering for region-scoped sends
 
+### 6.2.1 V-Contact (Loopback Admin Contact)
+
+ZephCore-only feature (no Arduino equivalent). The companion synthesizes a CHAT
+contact named `v<node_name>` that exists only toward the connected BLE/USB app.
+Chatting with it runs the same text CLI as the USB serial sideband; the reply
+comes back as normal chat messages. The firmware also uses it to emit
+unsolicited notices: a one-shot low-battery alert and a restart-reason message
+(SOFTWARE/WATCHDOG/LOCKUP/BROWNOUT causes only — plain power-on is log-only).
+
+**Identity**: pubkey = `SHA256("zc-vcontact" || self_pubkey)` — stable per
+node, unique per device, and deliberately **not a real keypair**: no private
+key exists anywhere.
+
+**No-RF invariants** (all enforced in `CompanionMesh`):
+1. `vcontactHandleFrame()` intercepts `CMD_SEND_TXT_MSG` (and the handful of
+   other opcodes that must succeed) *before* any contact lookup — the CLI runs
+   and the reply is written straight into the offline queue. **No packet
+   object is ever created**, so nothing can reach the dispatcher or radio.
+2. The v-contact never enters the real contacts table (`CMD_ADD_UPDATE_CONTACT`
+   for its key is intercepted to a no-op OK), so it is never in the RF RX
+   matching path. Every other pubkey-addressed opcode (login, telemetry,
+   binary req, path discovery…) misses `lookupContactByPubKey()` and fails
+   `ERR_NOT_FOUND` before a packet exists.
+3. Even a hand-crafted over-the-air packet addressed to the derived pubkey is
+   inert: unknown dest, undecryptable by everyone including this node.
+
+**App plumbing**: appears as a virtual tail entry in the `CMD_GET_CONTACTS`
+iteration (and `+1` in the CONTACT_START total); pushed as `NEW_ADVERT` on
+runtime enable and rename, `CONTACT_DELETED` on disable. App-side contact
+delete (`CMD_REMOVE_CONTACT`) turns the feature off. Send/ack choreography is
+synthesized (SENT + immediate SEND_CONFIRMED, trip time 0). CLI replies are
+chunked at ≤150 chars on line breaks (offline-queue frames cap at 172 bytes).
+
+**Notices ride the offline queue** — emitted while nothing is connected, they
+are delivered on the first app connect/sync. RAM-backed: lost on reboot (the
+restart-reason message partially compensates) and bounded by
+`CONFIG_ZEPHCORE_OFFLINE_QUEUE_SIZE`.
+
+**Settings** (companion `v.*` CLI namespace, prefs offsets 152–154):
+- `set/get v.contact on|off` — default on.
+- `set/get v.batteryalert <mV>|0|default` — default = board auto-shutdown
+  threshold + 200 mV (so the alert wins the race against the 90 s shutdown
+  confirm window), 3500 mV on boards without auto-shutdown. Alert latches
+  once per discharge cycle; re-arms on external power, recovery above
+  threshold + 150 mV, or threshold change. Sampling mirrors
+  `ui_auto_shutdown_check()` (30 s gate, 3-strike confirm) but lives in
+  `main_companion.cpp` so headless builds alert too.
+
 ### 6.3 RepeaterMesh
 
 Autonomous operation features:

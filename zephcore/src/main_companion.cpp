@@ -97,9 +97,10 @@ extern "C" void bt_ctlr_assert_handle(char *file, uint32_t line)
 #define MESH_EVENT_CONTACT_ITER  BIT(10) /* Continue contact-dump iteration on main thread */
 
 #ifdef ZEPHCORE_LORA
-/* Forward decl — data_store + companion_mesh_ptr statics are defined further
+/* Forward decls — data_store + companion_mesh_ptr statics are defined further
  * down in the file, so mesh_event_loop() can't reference them directly. */
 static void save_prefs_to_flash(void);
+static void vcontact_battery_alert_check(void);
 #endif
 
 /* Pending epoch for a deferred zephcore_rtc_save(). gps_fix_callback runs on
@@ -535,6 +536,11 @@ static void mesh_event_loop(void)
 			 * and compiled out unless the board sets a threshold — no
 			 * extra poll, just a cheap call on the existing tick. */
 			ui_auto_shutdown_check();
+
+			/* V-contact low-battery alert — independent of the UI-driven
+			 * auto-shutdown above (which is a weak no-op on headless
+			 * builds), same 30 s self-throttle. */
+			vcontact_battery_alert_check();
 		}
 
 		/* Off-main pref mutators (e.g. the autoshutdown CLI handler on
@@ -661,11 +667,12 @@ static void save_prefs_to_flash(void)
 	data_store.savePrefs(companion_mesh_ptr->prefs);
 }
 
-/* ========== Companion CLI (USB text sideband only) ==========
- * Text CLI lives on USB CDC only: its '<' sync byte cleanly separates binary
- * V3 frames from text, whereas BLE NUS frames have no prefix and V3 opcodes
- * overlap printable ASCII, so a BLE text sideband can't be disambiguated. */
-#if ZEPHCORE_USB_STACK
+/* ========== Companion text CLI ==========
+ * One CommonCLI instance shared by two front-ends: the USB CDC text sideband
+ * (its '<' sync byte separates binary V3 frames from text; BLE NUS has no
+ * such prefix, so a direct BLE text sideband can't be disambiguated) and the
+ * v-contact chat, which carries CLI lines inside the binary protocol on
+ * either transport — so this block is NOT gated on ZEPHCORE_USB_STACK. */
 
 class CompanionCLICallbacks : public CommonCLICallbacks {
 public:
@@ -785,26 +792,20 @@ static ClientACL companion_acl;  /* unused by CommonCLI but required by construc
 static CommonCLI companion_cli(zephyr_board, rtc_clock, companion_acl,
 			       &companion_mesh.prefs, &companion_cli_cbs);
 
-/* Dispatch a CLI text line from USB, reply back over USB CDC. Output mirrors
- * the repeater's serial CLI ("\r\n  -> <reply>\r\n", CRLF) so the
- * flasher.meshcore.io serial console renders companion replies identically. */
 #if defined(CONFIG_ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS) && \
 	CONFIG_ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS > 0
+#define ZEPHCORE_HAS_AUTO_SHUTDOWN 1
+#else
+#define ZEPHCORE_HAS_AUTO_SHUTDOWN 0
+#endif
+
+#if ZEPHCORE_HAS_AUTO_SHUTDOWN
 /* Companion-only CLI sideband for the low-battery auto-shutdown threshold.
  * Handled here (not in shared CommonCLI) so the pref persists via the
  * companion datastore and the command never appears on repeater builds.
  * Returns true if the line was a recognised autoshutdown command. */
 static bool handle_autoshutdown_cli(const char *line, char *reply)
 {
-	if (strcmp(line, "help") == 0 || strcmp(line, "?") == 0) {
-		/* No global CLI help exists; list only the companion-specific extras
-		 * and make clear the standard set/get radio+mesh commands also work. */
-		strcpy(reply,
-		       "Auto-shutdown (plus the standard set/get commands):\r\n"
-		       "  get autoshutdown      - show low-battery cutoff\r\n"
-		       "  set autoshutdown <mV> - 0 = off, or 1-5000 mV");
-		return true;
-	}
 	if (strcmp(line, "get autoshutdown") == 0) {
 		uint16_t mv = companion_mesh.prefs.auto_shutdown_mv;
 		if (mv == 0) {
@@ -850,25 +851,210 @@ static bool handle_autoshutdown_cli(const char *line, char *reply)
 	}
 	return false;
 }
-#endif
+#endif /* ZEPHCORE_HAS_AUTO_SHUTDOWN */
 
-/* Executes a text-CLI line — runs on the MAIN thread (drained from
- * companion_cli_queue in the event loop).  CommonCLI::handleCommand touches
- * mesh state shared with loop(), so it must not run on sysworkq. */
-static void companion_cli_run(const char *line)
+/* V-contact battery alert state — defined below with the checker. */
+static void vcontact_battery_alert_rearm(void);
+
+/* Resolve the effective v-contact battery-alert threshold in mV.
+ * 0 = alert off; the 0xFFFF sentinel derives the board default: 200 mV above
+ * the auto-shutdown cutoff so the alert wins the race against the shutdown
+ * confirm window (90 s), falling back to 3500 mV on boards without one. */
+static uint16_t vcontact_battery_alert_threshold_mv(void)
 {
-	char reply[CLI_REPLY_SIZE];
+	uint16_t pref = companion_mesh.prefs.v_battery_alert_mv;
+	if (pref == 0) return 0;
+	if (pref != 0xFFFF) return pref;
+	uint16_t cutoff = companion_mesh.prefs.auto_shutdown_mv;
+	return cutoff ? (uint16_t)(cutoff + 200) : 3500;
+}
+
+/* Companion-only `v.*` commands (v-contact settings) + the shared help text.
+ * Runs on the main thread for both front-ends (USB lines are drained from
+ * companion_cli_queue in the event loop; v-contact lines arrive via
+ * handleProtocolFrame). PREFS_DIRTY keeps the flash write on the main loop
+ * regardless. Returns true if the line was recognised. */
+static bool handle_vcontact_cli(const char *line, char *reply)
+{
+	if (strcmp(line, "help") == 0 || strcmp(line, "?") == 0) {
+		/* No global CLI help exists; list only the companion-specific extras
+		 * and make clear the standard set/get radio+mesh commands also work. */
+		strcpy(reply,
+		       "Companion extras (standard set/get commands also work):\r\n"
+#if ZEPHCORE_HAS_AUTO_SHUTDOWN
+		       "  get|set autoshutdown <mV>     - low-batt cutoff, 0 = off\r\n"
+#endif
+		       "  get|set v.contact on|off      - loopback admin contact\r\n"
+		       "  get|set v.batteryalert <mV>   - 0 = off, or default");
+		return true;
+	}
+	if (strcmp(line, "get v.contact") == 0) {
+		snprintf(reply, CLI_REPLY_SIZE, "v.contact: %s",
+			 companion_mesh.prefs.v_contact_enabled ? "on" : "off");
+		return true;
+	}
+	if (strncmp(line, "set v.contact ", 14) == 0) {
+		const char *arg = line + 14;
+		while (*arg == ' ') arg++;
+		bool en;
+		if (strcmp(arg, "on") == 0 || strcmp(arg, "1") == 0) {
+			en = true;
+		} else if (strcmp(arg, "off") == 0 || strcmp(arg, "0") == 0) {
+			en = false;
+		} else {
+			strcpy(reply, "ERROR: use on|off|1|0");
+			return true;
+		}
+		bool was = companion_mesh.prefs.v_contact_enabled != 0;
+		companion_mesh.prefs.v_contact_enabled = en ? 1 : 0;
+		k_event_post(&mesh_events, MESH_EVENT_PREFS_DIRTY);
+		/* Tell a connected app right away — add or remove the contact. */
+		if (en && !was) {
+			companion_mesh.vcontactPushAdvert();
+		} else if (!en && was) {
+			companion_mesh.vcontactPushDeleted();
+		}
+		snprintf(reply, CLI_REPLY_SIZE, "OK - v.contact %s", en ? "on" : "off");
+		return true;
+	}
+	if (strcmp(line, "get v.batteryalert") == 0) {
+		uint16_t pref = companion_mesh.prefs.v_battery_alert_mv;
+		if (pref == 0) {
+			strcpy(reply, "v.batteryalert: off");
+		} else if (pref == 0xFFFF) {
+			snprintf(reply, CLI_REPLY_SIZE, "v.batteryalert: default (%u mV)",
+				 vcontact_battery_alert_threshold_mv());
+		} else {
+			snprintf(reply, CLI_REPLY_SIZE, "v.batteryalert: %u mV", pref);
+		}
+		return true;
+	}
+	if (strncmp(line, "set v.batteryalert ", 19) == 0) {
+		const char *arg = line + 19;
+		while (*arg == ' ') arg++;
+		uint16_t v;
+		if (strncmp(arg, "default", 7) == 0) {
+			v = 0xFFFF;
+		} else {
+			/* Numbers only, same validation as autoshutdown. */
+			char *end = NULL;
+			long n = strtol(arg, &end, 10);
+			while (*end == ' ' || *end == '\r' || *end == '\n' || *end == '\t') {
+				end++;
+			}
+			if (arg[0] < '0' || arg[0] > '9' || *end != '\0' || n > 5000) {
+				strcpy(reply, "ERROR: use 0 (off), 1-5000 mV, or default");
+				return true;
+			}
+			v = (uint16_t)n;
+		}
+		companion_mesh.prefs.v_battery_alert_mv = v;
+		k_event_post(&mesh_events, MESH_EVENT_PREFS_DIRTY);
+		vcontact_battery_alert_rearm();
+		if (v == 0) {
+			strcpy(reply, "OK - v.batteryalert off");
+		} else if (v == 0xFFFF) {
+			snprintf(reply, CLI_REPLY_SIZE, "OK - v.batteryalert default (%u mV)",
+				 vcontact_battery_alert_threshold_mv());
+		} else {
+			snprintf(reply, CLI_REPLY_SIZE, "OK - v.batteryalert %u mV", v);
+		}
+		return true;
+	}
+	return false;
+}
+
+/* Transport-neutral CLI line execution — runs on the MAIN thread only
+ * (CommonCLI::handleCommand touches mesh state shared with loop()). Both the
+ * USB text sideband and the v-contact chat funnel through here. `reply` must
+ * be CLI_REPLY_SIZE (== VCONTACT_CLI_REPLY_SIZE). */
+static_assert(VCONTACT_CLI_REPLY_SIZE == CLI_REPLY_SIZE,
+	      "v-contact reply buffer must match CommonCLI reply size");
+
+static void companion_cli_exec(const char *line, char *reply)
+{
 	reply[0] = '\0';
-#if defined(CONFIG_ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS) && \
-	CONFIG_ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS > 0
+	if (handle_vcontact_cli(line, reply)) {
+		return;
+	}
+#if ZEPHCORE_HAS_AUTO_SHUTDOWN
 	if (handle_autoshutdown_cli(line, reply)) {
-		zephcore_usb_companion_write_text("\r\n  -> ", 7);
-		zephcore_usb_companion_write_text(reply, strlen(reply));
-		zephcore_usb_companion_write_text("\r\n", 2);
 		return;
 	}
 #endif
 	companion_cli.handleCommand(0, line, reply);
+}
+
+/* ========== V-contact battery alert ==========
+ * Deliberately NOT hooked into ui_auto_shutdown_check() — that is a weak
+ * no-op on headless builds. Same proven pattern though: 30 s ADC sample gate
+ * off the 5 s housekeeping tick, 3-strike confirm so a TX-induced sag can't
+ * false-trigger, skip while externally powered. One-shot latch per discharge
+ * cycle; re-arms on charge/recovery (threshold + 150 mV) or threshold change.
+ * The message rides the offline queue, so it still reaches the app if nothing
+ * is connected when it fires. */
+static bool vcontact_batt_latched;
+static uint8_t vcontact_batt_low_count;
+
+static void vcontact_battery_alert_rearm(void)
+{
+	vcontact_batt_latched = false;
+	vcontact_batt_low_count = 0;
+}
+
+static void vcontact_battery_alert_check(void)
+{
+	if (!companion_mesh.isVContactEnabled()) {
+		return;
+	}
+	uint16_t thresh = vcontact_battery_alert_threshold_mv();
+	if (thresh == 0) {
+		return;
+	}
+
+	uint32_t now = k_uptime_get_32();
+	static uint32_t next_check_ms;  /* 0 at boot → first tick samples */
+	if (next_check_ms != 0 && (now - next_check_ms) < 30000) {
+		return;
+	}
+	next_check_ms = now;
+
+	uint16_t mv = zephyr_board.getBattMilliVolts();
+	if (mv == 0) {  /* no battery hardware / no reading */
+		vcontact_batt_low_count = 0;
+		return;
+	}
+	if (zephyr_board.isExternalPowered() || mv >= thresh + 150) {
+		/* charging or recovered — re-arm for the next discharge cycle */
+		vcontact_battery_alert_rearm();
+		return;
+	}
+	if (mv >= thresh) {
+		vcontact_batt_low_count = 0;
+		return;
+	}
+	if (vcontact_batt_latched) {
+		return;
+	}
+	if (++vcontact_batt_low_count < 3) {
+		return;
+	}
+	vcontact_batt_latched = true;
+	char msg[48];
+	snprintf(msg, sizeof(msg), "Battery low: %u mV (alert at %u mV)", mv, thresh);
+	companion_mesh.vcontactNotify(msg);
+}
+
+#if ZEPHCORE_USB_STACK
+/* Executes a text-CLI line from USB, reply back over USB CDC. Output mirrors
+ * the repeater's serial CLI ("\r\n  -> <reply>\r\n", CRLF) so the
+ * flasher.meshcore.io serial console renders companion replies identically.
+ * Runs on the MAIN thread (drained from companion_cli_queue in the event
+ * loop). */
+static void companion_cli_run(const char *line)
+{
+	char reply[CLI_REPLY_SIZE];
+	companion_cli_exec(line, reply);
 	if (reply[0] != '\0') {
 		zephcore_usb_companion_write_text("\r\n  -> ", 7);
 		zephcore_usb_companion_write_text(reply, strlen(reply));
@@ -1001,6 +1187,8 @@ int main(void)
 	LOG_INF("=== ZephCore starting ===");
 
 	/* Log reset reason so we can diagnose random reboots */
+	char boot_cause_msg[64];
+	boot_cause_msg[0] = '\0';
 	{
 		uint32_t cause;
 		if (hwinfo_get_reset_cause(&cause) == 0) {
@@ -1012,6 +1200,20 @@ int main(void)
 				(cause & RESET_WATCHDOG)  ? " WATCHDOG"  : "",
 				(cause & RESET_CPU_LOCKUP)? " LOCKUP"    : "");
 			hwinfo_clear_reset_cause();
+			/* Informative causes become a v-contact message once the
+			 * mesh is up (queued below, after RTC restore + prefs load).
+			 * Plain POR/PIN — the user just powered the device on — is
+			 * noise and stays log-only. A deliberate CLI/app reboot shows
+			 * as SOFTWARE, doubling as a "reboot completed" confirmation. */
+			if (cause & (RESET_SOFTWARE | RESET_BROWNOUT |
+				     RESET_WATCHDOG | RESET_CPU_LOCKUP)) {
+				snprintf(boot_cause_msg, sizeof(boot_cause_msg),
+					 "Restarted:%s%s%s%s",
+					 (cause & RESET_SOFTWARE)   ? " SOFTWARE" : "",
+					 (cause & RESET_BROWNOUT)   ? " BROWNOUT" : "",
+					 (cause & RESET_WATCHDOG)   ? " WATCHDOG" : "",
+					 (cause & RESET_CPU_LOCKUP) ? " LOCKUP"   : "");
+			}
 		}
 	}
 
@@ -1169,6 +1371,8 @@ int main(void)
 	companion_mesh.setPinChangeCallback([](uint32_t new_pin) {
 		zephcore_ble_set_passkey(new_pin);
 	});
+	/* V-contact chat lines run the same CLI as the USB text sideband. */
+	companion_mesh.setVContactCLICallback(companion_cli_exec);
 	companion_mesh_ptr = &companion_mesh;
 
 	/* Set LoRa callbacks for event-driven packet processing */
@@ -1184,6 +1388,14 @@ int main(void)
 	 * for static init).  After begin(), point at the real prefs so that
 	 * CMD_SET_RADIO_PARAMS changes are visible to lora_radio.reconfigure(). */
 	lora_radio.setPrefs(&companion_mesh.prefs);
+
+	/* Queue the restart-reason notice from the v-contact. Deferred to here so
+	 * begin() has derived the v-contact key, prefs (enable flag) are loaded,
+	 * and the hardware-RTC restore above gives the message a sane timestamp.
+	 * It sits in the offline queue until the first app connect/sync. */
+	if (boot_cause_msg[0] != '\0') {
+		companion_mesh.vcontactNotify(boot_cause_msg);
+	}
 
 	/* Push initial state to UI display */
 	ui_set_node_name(companion_mesh.prefs.node_name);

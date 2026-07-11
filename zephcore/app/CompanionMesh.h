@@ -91,6 +91,12 @@ typedef void (*RadioReconfigureCallback)(void);
 /* BLE PIN change callback */
 typedef void (*PinChangeCallback)(uint32_t new_pin);
 
+/* V-contact CLI execution callback — runs a text-CLI line and fills `reply`
+ * (buffer is VCONTACT_CLI_REPLY_SIZE). Registered by main_companion so the
+ * v-contact chat reuses the same CommonCLI instance as the USB text CLI. */
+#define VCONTACT_CLI_REPLY_SIZE 256
+typedef void (*VContactCLICallback)(const char *line, char *reply);
+
 /**
  * CompanionMesh: Application layer for ZephCore Companion device
  *
@@ -153,6 +159,24 @@ public:
 	 * Set callback for BLE PIN change.
 	 */
 	void setPinChangeCallback(PinChangeCallback cb) { _pin_change_cb = cb; }
+
+	/* ---- V-contact: loopback admin contact ("v<node_name>") ----
+	 * A synthesized CHAT contact visible only to the connected BLE/USB app.
+	 * Messages to it are short-circuited into the CLI before any packet is
+	 * created — nothing ever reaches the dispatcher or the radio. Its pubkey
+	 * is SHA256("zc-vcontact" || self pubkey); no private key exists and it
+	 * is never registered in the RF RX matching path, so over-the-air
+	 * traffic addressed to it is inert. */
+	void setVContactCLICallback(VContactCLICallback cb) { _vcontact_cli_cb = cb; }
+	bool isVContactEnabled() const { return prefs.v_contact_enabled != 0; }
+	/** Queue an unsolicited v-contact message (battery alert, restart reason).
+	 *  Goes through the offline queue — delivered on next app connect/sync. */
+	void vcontactNotify(const char *text);
+	/** Push the v-contact to a connected app as a NEW_ADVERT (call after
+	 *  runtime enable or rename). No-op push when nothing is connected. */
+	void vcontactPushAdvert();
+	/** Push CONTACT_DELETED for the v-contact (call after runtime disable). */
+	void vcontactPushDeleted();
 
 #ifdef CONFIG_ZEPHCORE_APC
 	/* Adaptive Power Control hooks used by the USB text CLI. */
@@ -465,6 +489,18 @@ private:
 
 	void queueContactMessage(const ContactInfo &contact, mesh::Packet *pkt,
 		uint8_t txt_type, uint32_t sender_timestamp, const uint8_t *extra, int extra_len, const char *text);
+
+	/* V-contact internals */
+	VContactCLICallback _vcontact_cli_cb;
+	uint8_t _vcontact_pubkey[PUB_KEY_SIZE];
+	uint32_t _vcontact_lastmod;
+	void buildVContact(ContactInfo &c) const;
+	bool isVContactKey(const uint8_t *key, int prefix_len) const;
+	/** Intercept protocol frames addressed to the v-contact. Returns true when
+	 *  the frame was fully handled (response already written). */
+	bool vcontactHandleFrame(const uint8_t *data, size_t len);
+	/** Chunk `text` into offline-queue contact messages from the v-contact. */
+	void vcontactQueueText(const char *text);
 
 	void addPendingAck(uint32_t expected, int contact_idx);
 	int findAndRemoveAck(uint32_t ack, uint32_t *out_sent_time = nullptr);

@@ -86,6 +86,8 @@ struct NodePrefs {
 	uint8_t wake_on_msg;            // 0 = don't wake display on message, 1 = wake (default)
 	uint16_t screen_off_secs;       // 0 = default (Kconfig), else 5–300
 	uint16_t auto_shutdown_mv;      // low-batt auto-shutdown threshold; 0 = off, else 2900–4200
+	uint8_t v_contact_enabled;      // v-contact (loopback admin chat via BLE/USB); 1 = on (default)
+	uint16_t v_battery_alert_mv;    // 0 = alert off; 0xFFFF = board default (auto_shutdown+200); else mV
 };
 
 /* Default prefs -- must match LoRaConfig.h defaults for radio interop. */
@@ -135,4 +137,6 @@ static inline void initNodePrefs(NodePrefs* prefs) {
 	prefs->apc_enabled = 0;           // Default OFF — fixed TX power
 	prefs->apc_margin = 16;           // Default 16 dB target link margin
 	prefs->wake_on_msg = 1;           // Default ON — wake display when message arrives
+	prefs->v_contact_enabled = 1;     // Default ON — v-contact loopback admin chat (companion)
+	prefs->v_battery_alert_mv = 0xFFFF; // Sentinel: derive from board auto-shutdown threshold
 }
