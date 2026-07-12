@@ -997,6 +997,35 @@ static bool handle_vcontact_cli(const char *line, char *reply)
 	return false;
 }
 
+/* Pre-shutdown hook, registered with the UI layer and called on the main
+ * thread just before a low-battery power-off.  If an app is connected, queue a
+ * live v-contact notice and return true so the UI defers the power-off by a
+ * short grace (letting the notify→fetch→send round-trip finish).  If nobody is
+ * connected, persist the reason to flash and return false (power off now) — the
+ * offline queue doesn't survive System OFF, so the flash marker is the only way
+ * the shutdown gets reported, which it does on the next boot. */
+static bool companion_shutdown_hook(int reason)
+{
+	const char *msg = (reason == UI_SHUTDOWN_LOW_BATTERY)
+			  ? "Powering off: low battery"
+			  : "Powering off";
+
+	bool connected = zephcore_ble_is_connected();
+#if ZEPHCORE_USB_STACK
+	connected = connected ||
+		(zephcore_ble_get_active_iface() == ZEPHCORE_IFACE_USB &&
+		 !zephcore_usb_companion_is_text_session());
+#endif
+
+	if (connected && companion_mesh.isVContactEnabled()) {
+		companion_mesh.vcontactNotify(msg);
+		return true;   /* deliver live — ask the UI for the grace delay */
+	}
+
+	data_store.saveShutdownReason((uint8_t)reason);
+	return false;      /* nobody listening — flash marker, power off now */
+}
+
 /* Transport-neutral CLI line execution — runs on the MAIN thread only
  * (CommonCLI::handleCommand touches mesh state shared with loop()). Both the
  * USB text sideband and the v-contact chat funnel through here. `reply` must
@@ -1259,6 +1288,21 @@ int main(void)
 	}
 	data_store.begin();
 
+	/* Fold a persisted shutdown reason into the boot notice.  Written just
+	 * before a previous low-battery System OFF when no app was connected to
+	 * receive it live (the offline queue doesn't survive power-off).  The
+	 * hardware reset cause on this boot is just POR, so without this the
+	 * reason would be lost. */
+	{
+		uint8_t sdr = data_store.takeShutdownReason();
+		if (sdr == UI_SHUTDOWN_LOW_BATTERY) {
+			size_t l = strlen(boot_cause_msg);
+			snprintf(boot_cause_msg + l, sizeof(boot_cause_msg) - l,
+				 "%sLast shutdown: low battery",
+				 l ? " | " : "");
+		}
+	}
+
 	/* First-boot migration: fix NVS (BLE bonds) before bt_enable() runs.
 	 *
 	 * nRF52 stores BLE bonds in storage_partition (NVS) at 0xD0000.  UF2
@@ -1404,6 +1448,7 @@ int main(void)
 	ui_set_battery_provider(get_battery_mv);
 	ui_set_power_source_provider([]() { return zephyr_board.isExternalPowered(); });
 	ui_set_auto_shutdown_mv(companion_mesh.prefs.auto_shutdown_mv);
+	ui_set_shutdown_hook(companion_shutdown_hook);
 	companion_mesh.setRadioReconfigureCallback(radio_reconfigure);
 	companion_mesh.setPinChangeCallback([](uint32_t new_pin) {
 		zephcore_ble_set_passkey(new_pin);

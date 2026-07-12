@@ -481,6 +481,28 @@ bool ZephyrDataStore::saveMainIdentity(const mesh::LocalIdentity &identity)
 	return atomicReplaceFile(MAIN_ID_FILE, buf, n);
 }
 
+/* ── Shutdown-reason breadcrumb ────────────────────────────────────── */
+
+void ZephyrDataStore::saveShutdownReason(uint8_t code)
+{
+	/* Best-effort: called at a software power-off, possibly at low battery. */
+	(void)atomicReplaceFile(SHUTDOWN_FILE, &code, 1);
+}
+
+uint8_t ZephyrDataStore::takeShutdownReason()
+{
+	uint8_t code = 0;
+	size_t len = 0;
+
+	if (openRead(SHUTDOWN_FILE, &code, sizeof(code), len) && len >= 1) {
+		removeFile(SHUTDOWN_FILE);
+		return code;
+	}
+	/* Stray/empty file — clear it so it can't linger. */
+	removeFile(SHUTDOWN_FILE);
+	return 0;
+}
+
 /* ── Preferences ───────────────────────────────────────────────────── */
 
 void ZephyrDataStore::loadPrefs(NodePrefs &prefs)

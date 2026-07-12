@@ -383,8 +383,30 @@ void ui_set_auto_shutdown_mv(uint16_t mv)
 	s_auto_shutdown_mv = mv;
 }
 
+/* Pre-shutdown hook + deferred power-off.  When the hook reports an app is
+ * connected (live notice queued), the power-off is deferred by a grace period
+ * on a work item so the main loop keeps running and delivers the message. */
+static ui_shutdown_fn s_shutdown_hook;
+static bool s_shutting_down;
+
+static void shutdown_work_fn(struct k_work *work)
+{
+	ARG_UNUSED(work);
+#ifdef CONFIG_POWEROFF
+	ui_prepare_for_system_off();
+	sys_poweroff();
+	CODE_UNREACHABLE;
+#endif
+}
+static K_WORK_DELAYABLE_DEFINE(s_shutdown_work, shutdown_work_fn);
+
+void ui_set_shutdown_hook(ui_shutdown_fn fn)
+{
+	s_shutdown_hook = fn;
+}
+
 #ifdef CONFIG_ZEPHCORE_UI_DISPLAY
-static void auto_shutdown_warn_screen(void)
+static void auto_shutdown_warn_screen(bool hold)
 {
 	/* Wake the panel (OLED may be blanked by auto-off; EPD is always
 	 * visible). Centre two lines; the message persists on e-paper after
@@ -409,8 +431,12 @@ static void auto_shutdown_warn_screen(void)
 	mc_display_finalize();
 
 	/* OLED blanks the instant power drops, so hold long enough to read it.
-	 * EPD keeps the image with no power, so skip the delay. */
-	if (!mc_display_is_epd()) {
+	 * EPD keeps the image with no power, so skip the delay. The deferred-
+	 * poweroff (grace) path passes hold=false: it must NOT block the main
+	 * thread, because that thread has to service the app's message fetch
+	 * during the grace window — the grace timer provides the on-screen dwell
+	 * instead. */
+	if (hold && !mc_display_is_epd()) {
 		k_sleep(K_MSEC(3000));
 	}
 }
@@ -418,6 +444,9 @@ static void auto_shutdown_warn_screen(void)
 
 void ui_auto_shutdown_check(void)
 {
+	if (s_shutting_down) {
+		return;  /* power-off already committed (deferred grace running) */
+	}
 	if (!s_batt_provider || s_auto_shutdown_mv == 0) {
 		return;  /* no battery provider, or runtime-disabled */
 	}
@@ -452,15 +481,35 @@ void ui_auto_shutdown_check(void)
 
 	LOG_WRN("auto-shutdown: confirmed — powering off");
 
-#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
-	auto_shutdown_warn_screen();
-#endif
+	/* Let the app layer report the shutdown. If it queued a live notice to a
+	 * connected app, it returns true and we defer the power-off by a short
+	 * grace so the notify→fetch→send round-trip can finish; otherwise it
+	 * persisted the reason to flash (reported on next boot) and we power off
+	 * now. */
+	bool grace = s_shutdown_hook ? s_shutdown_hook(UI_SHUTDOWN_LOW_BATTERY)
+				     : false;
+	s_shutting_down = true;
 
 #ifdef CONFIG_POWEROFF
+	if (grace) {
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
+		auto_shutdown_warn_screen(false);  /* draw, don't block the loop */
+#endif
+		k_work_schedule(&s_shutdown_work, K_MSEC(UI_SHUTDOWN_GRACE_MS));
+		return;  /* main loop keeps running → delivers the notice */
+	}
+
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
+	auto_shutdown_warn_screen(true);  /* nothing to deliver — 3 s OLED hold */
+#endif
 	ui_prepare_for_system_off();
 	sys_poweroff();
 	CODE_UNREACHABLE;
 #else
+	(void)grace;
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
+	auto_shutdown_warn_screen(true);
+#endif
 	LOG_WRN("auto-shutdown: CONFIG_POWEROFF not enabled — cannot power off");
 #endif
 }
@@ -469,6 +518,7 @@ void ui_auto_shutdown_check(void)
 
 void ui_set_auto_shutdown_mv(uint16_t mv) { (void)mv; }
 void ui_auto_shutdown_check(void) { }
+void ui_set_shutdown_hook(ui_shutdown_fn fn) { (void)fn; }
 
 #endif /* CONFIG_ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS > 0 */
 

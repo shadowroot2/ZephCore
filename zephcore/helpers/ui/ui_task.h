@@ -235,6 +235,27 @@ void ui_set_power_source_provider(bool (*provider)(void));
  */
 void ui_set_auto_shutdown_mv(uint16_t mv);
 
+/* Reason codes passed to the shutdown hook. */
+#define UI_SHUTDOWN_LOW_BATTERY  1
+
+/* Grace period (ms) the poweroff is deferred by when the hook asks for it
+ * (an app is connected and a live notice was queued), so the notify→fetch→
+ * send round-trip can complete before power is cut. */
+#define UI_SHUTDOWN_GRACE_MS     1000
+
+/**
+ * Register a pre-shutdown hook, called from ui_auto_shutdown_check() just
+ * before power-off. The companion uses it to report the shutdown to the
+ * connected app (v-contact). Return value:
+ *   true  = an app is connected and a live notice was queued — defer the
+ *           poweroff by UI_SHUTDOWN_GRACE_MS so the app can fetch it.
+ *   false = nothing to deliver live (persist to flash instead) — power off
+ *           immediately.
+ * The hook runs on the main thread and must not block.
+ */
+typedef bool (*ui_shutdown_fn)(int reason);
+void ui_set_shutdown_hook(ui_shutdown_fn fn);
+
 /**
  * Low-battery auto-shutdown check (companion only).
  *
