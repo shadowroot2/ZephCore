@@ -65,6 +65,9 @@ struct NodePrefs {
 	uint8_t apc_enabled;            // 1 = APC on, 0 = fixed TX power
 	uint8_t apc_margin;             // APC target link margin dB (6-30)
 	uint8_t meshtimesync;           // 1 = mesh time-sync clock correction on (default off)
+	uint8_t cad_auto;               // 1 = adaptive-CAD staircase acts on probe stats (default off = dry-run)
+	int8_t cad_offset;              // operating detPeak offset from family base (-4..4)
+	uint8_t cad_probe_interval;     // seconds between CAD probes (0 = probing off, default 60)
 
 	/* ---- Companion-only fields ---- */
 	uint8_t manual_add_contacts;
@@ -136,6 +139,9 @@ static inline void initNodePrefs(NodePrefs* prefs) {
 	prefs->rx_duty_cycle = 0;         // Default OFF — continuous RX for best reliability
 	prefs->apc_enabled = 0;           // Default OFF — fixed TX power
 	prefs->apc_margin = 16;           // Default 16 dB target link margin
+	prefs->cad_auto = 0;              // Default OFF — dry-run: probes + counters only
+	prefs->cad_offset = 0;            // Family base detPeak (SF+13 on SX126x)
+	prefs->cad_probe_interval = 60;   // One CAD probe per minute
 	prefs->wake_on_msg = 1;           // Default ON — wake display when message arrives
 	prefs->v_contact_enabled = 1;     // Default ON — v-contact loopback admin chat (companion)
 	prefs->v_battery_alert_mv = 0xFFFF; // Sentinel: derive from board auto-shutdown threshold

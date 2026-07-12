@@ -38,6 +38,8 @@ Dispatcher::Dispatcher(Radio &radio, MillisecondClock &ms, PacketManager &mgr)
 	_err_flags = 0;
 	radio_nonrx_start = 0;
 	prev_isrecv_mode = true;
+	cad_offset_shadow = 0;
+	cad_offset_shadow_valid = false;
 	n_sent_flood = n_sent_direct = 0;
 	n_recv_flood = n_recv_direct = 0;
 	_tx_queued_cb = nullptr;
@@ -180,6 +182,20 @@ void Dispatcher::maintenanceLoop()
 	if (getAGCResetInterval() > 0 && millisHasNowPassed(next_agc_reset_time)) {
 		_radio->resetAGC();
 		next_agc_reset_time = futureMillis(getAGCResetInterval());
+	}
+
+	/* Adaptive CAD: probe scheduling + staircase live in the radio;
+	 * we only surface offset changes so the app layer can persist them. */
+	_radio->cadMaintenance();
+
+	int8_t cad_off = _radio->getCadOffset();
+
+	if (!cad_offset_shadow_valid) {
+		cad_offset_shadow = cad_off;
+		cad_offset_shadow_valid = true;
+	} else if (cad_off != cad_offset_shadow) {
+		cad_offset_shadow = cad_off;
+		onCadOffsetChanged(cad_off);
 	}
 }
 

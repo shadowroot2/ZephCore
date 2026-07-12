@@ -68,7 +68,7 @@ index 17689720dd2..09982dc2e70 100644
  		return -EINVAL;
  	}
 diff --git a/drivers/lora/native/sx126x/sx126x.c b/drivers/lora/native/sx126x/sx126x.c
-index 30243ba5dc7..ef06d9273ae 100644
+index 30243ba5dc7..5315e5d80ef 100644
 --- a/drivers/lora/native/sx126x/sx126x.c
 +++ b/drivers/lora/native/sx126x/sx126x.c
 @@ -6,14 +6,21 @@
@@ -748,16 +748,17 @@ index 30243ba5dc7..ef06d9273ae 100644
  	/* Set sync word */
  	ret = sx126x_set_sync_word(dev, config->public_network);
  	if (ret < 0) {
-@@ -721,6 +1207,8 @@ out:
+@@ -721,6 +1207,9 @@ out:
  	return ret;
  }
  
 +static int sx126x_lora_cad(const struct device *dev, k_timeout_t timeout);
++static uint32_t sx126x_cad_timeout_ms(struct sx126x_data *data);
 +
  static int sx126x_lora_send_async(const struct device *dev,
  				  uint8_t *data_buf, uint32_t data_len,
  				  struct k_poll_signal *async)
-@@ -738,11 +1226,27 @@ static int sx126x_lora_send_async(const struct device *dev,
+@@ -738,11 +1227,27 @@ static int sx126x_lora_send_async(const struct device *dev,
  		return -EINVAL;
  	}
  
@@ -787,7 +788,7 @@ index 30243ba5dc7..ef06d9273ae 100644
  	k_mutex_lock(&data->lock, K_FOREVER);
  
  	ret = sx126x_ensure_ready(dev);
-@@ -752,6 +1256,58 @@ static int sx126x_lora_send_async(const struct device *dev,
+@@ -752,6 +1257,59 @@ static int sx126x_lora_send_async(const struct device *dev,
  		return ret;
  	}
  
@@ -795,7 +796,8 @@ index 30243ba5dc7..ef06d9273ae 100644
 +	if (data->config.cad.mode == LORA_CAD_MODE_LBT) {
 +		k_mutex_unlock(&data->lock);
 +		atomic_set(&data->state, SX126X_REST_STATE);
-+		int cad_ret = sx126x_lora_cad(dev, K_MSEC(200));
++		int cad_ret = sx126x_lora_cad(dev,
++					      K_MSEC(sx126x_cad_timeout_ms(data)));
 +		if (cad_ret > 0) {
 +			LOG_DBG("LBT: channel busy");
 +			k_mutex_lock(&data->lock, K_FOREVER);
@@ -846,7 +848,7 @@ index 30243ba5dc7..ef06d9273ae 100644
  	data->tx_async_signal = async;
  	k_msgq_purge(&data->tx_msgq);
  
-@@ -777,6 +1333,31 @@ static int sx126x_lora_send_async(const struct device *dev,
+@@ -777,6 +1335,31 @@ static int sx126x_lora_send_async(const struct device *dev,
  	/* Enable antenna and set TX path */
  	sx126x_set_rf_path(dev, true, true);
  
@@ -878,7 +880,7 @@ index 30243ba5dc7..ef06d9273ae 100644
  	/* Start transmission with 10 second timeout */
  	ret = sx126x_set_tx(dev, 10000);
  	if (ret < 0) {
-@@ -847,6 +1428,8 @@ static int sx126x_lora_recv(const struct device *dev, uint8_t *data_buf,
+@@ -847,6 +1430,8 @@ static int sx126x_lora_recv(const struct device *dev, uint8_t *data_buf,
  	}
  
  	data->rx_cb = NULL;
@@ -887,7 +889,7 @@ index 30243ba5dc7..ef06d9273ae 100644
  	k_msgq_purge(&data->rx_msgq);
  
  	/* Set packet parameters for variable length reception */
-@@ -918,6 +1501,8 @@ static int sx126x_lora_recv_async(const struct device *dev,
+@@ -918,6 +1503,8 @@ static int sx126x_lora_recv_async(const struct device *dev,
  		/* Stop async reception */
  		data->rx_cb = NULL;
  		data->rx_cb_user_data = NULL;
@@ -896,7 +898,7 @@ index 30243ba5dc7..ef06d9273ae 100644
  		if (atomic_cas(&data->state, SX126X_STATE_RX, SX126X_STATE_IDLE)) {
  			sx126x_set_standby(dev, SX126X_STANDBY_RC);
  			sx126x_set_sleep(dev);
-@@ -932,6 +1517,19 @@ static int sx126x_lora_recv_async(const struct device *dev,
+@@ -932,6 +1519,19 @@ static int sx126x_lora_recv_async(const struct device *dev,
  		return -EINVAL;
  	}
  
@@ -916,7 +918,7 @@ index 30243ba5dc7..ef06d9273ae 100644
  	if (!atomic_cas(&data->state, SX126X_REST_STATE, SX126X_STATE_RX)) {
  		LOG_ERR("Busy");
  		k_mutex_unlock(&data->lock);
-@@ -945,8 +1543,18 @@ static int sx126x_lora_recv_async(const struct device *dev,
+@@ -945,8 +1545,18 @@ static int sx126x_lora_recv_async(const struct device *dev,
  		return ret;
  	}
  
@@ -935,7 +937,7 @@ index 30243ba5dc7..ef06d9273ae 100644
  
  	/* Set packet parameters */
  	ret = sx126x_set_packet_params(dev,
-@@ -959,6 +1567,7 @@ static int sx126x_lora_recv_async(const struct device *dev,
+@@ -959,6 +1569,7 @@ static int sx126x_lora_recv_async(const struct device *dev,
  				       SX126X_LORA_IQ_INVERTED : SX126X_LORA_IQ_STANDARD);
  	if (ret < 0) {
  		data->rx_cb = NULL;
@@ -943,7 +945,7 @@ index 30243ba5dc7..ef06d9273ae 100644
  		sx126x_set_sleep(dev);
  		k_mutex_unlock(&data->lock);
  		return ret;
-@@ -971,11 +1580,21 @@ static int sx126x_lora_recv_async(const struct device *dev,
+@@ -971,11 +1582,21 @@ static int sx126x_lora_recv_async(const struct device *dev,
  	ret = sx126x_set_rx(dev, 0);
  	if (ret < 0) {
  		data->rx_cb = NULL;
@@ -965,7 +967,7 @@ index 30243ba5dc7..ef06d9273ae 100644
  	k_mutex_unlock(&data->lock);
  	return 0;
  }
-@@ -1051,7 +1670,7 @@ static int sx126x_lora_test_cw(const struct device *dev, uint32_t frequency,
+@@ -1051,7 +1672,7 @@ static int sx126x_lora_test_cw(const struct device *dev, uint32_t frequency,
  
  	/* Set PA config and TX power */
  	ret = sx126x_hal_configure_tx_params(dev, tx_power, frequency,
@@ -974,7 +976,7 @@ index 30243ba5dc7..ef06d9273ae 100644
  	if (ret < 0) {
  		sx126x_set_sleep(dev);
  		k_mutex_unlock(&data->lock);
-@@ -1083,14 +1702,595 @@ static int sx126x_lora_test_cw(const struct device *dev, uint32_t frequency,
+@@ -1083,14 +1704,671 @@ static int sx126x_lora_test_cw(const struct device *dev, uint32_t frequency,
  	return 0;
  }
  
@@ -1224,6 +1226,29 @@ index 30243ba5dc7..ef06d9273ae 100644
 +	return sf + 13;
 +}
 +
++/* Blocking-CAD wait budget scaled to the actual CAD duration:
++ * nSym * Tsym + 32/BW radio-side, plus IRQ latency / work-queue margin.
++ * The old fixed 200 ms fit 2-symbol CAD everywhere but is exceeded by
++ * 4-symbol CAD on slow presets (SF12 @ 62.5 kHz = ~262 ms). */
++static uint32_t sx126x_cad_timeout_ms(struct sx126x_data *data)
++{
++	struct lora_modem_config *mc = &data->config;
++	uint8_t sf = (uint8_t)mc->datarate;
++	uint8_t symb_nb = mc->cad.symbol_num ?
++			  (uint8_t)mc->cad.symbol_num : 2;
++	uint32_t bw_hz = bandwidth_to_hz(mc->bandwidth);
++
++	if (bw_hz == 0 || sf < 5 || sf > 12) {
++		return 200;
++	}
++
++	uint32_t tsym_us = ((1UL << sf) * 1000000UL) / bw_hz;
++	/* +1 symbol covers the 32/BW startup + internal processing tail */
++	uint32_t ms = ((symb_nb + 1U) * tsym_us) / 1000U + 100U;
++
++	return MAX(ms, 200U);
++}
++
 +static int sx126x_do_cad(const struct device *dev, struct sx126x_data *data)
 +{
 +	struct lora_modem_config *mc = &data->config;
@@ -1237,6 +1262,21 @@ index 30243ba5dc7..ef06d9273ae 100644
 +	}
 +	if (mc->cad.detection_peak != 0) {
 +		detect_peak = mc->cad.detection_peak;
++	} else if (data->cad_peak_offset != 0) {
++		/* Adaptive-CAD operating offset (base +/- learned delta).
++		 * Clamped to a sane absolute window around the family scale. */
++		int peak = (int)detect_peak + data->cad_peak_offset;
++
++		if (peak < 15) {
++			peak = 15;
++		} else if (peak > 40) {
++			peak = 40;
++		}
++		detect_peak = (uint8_t)peak;
++	}
++	if (data->cad_probe_peak != 0) {
++		/* One-shot calibration probe: absolute peak wins over all. */
++		detect_peak = data->cad_probe_peak;
 +	}
 +
 +	/* SET_CAD must run from STANDBY_RC (DS).  LBT is entered from continuous RX
@@ -1379,6 +1419,44 @@ index 30243ba5dc7..ef06d9273ae 100644
 +	if (ret < 0) {
 +		atomic_set(&data->state, SX126X_REST_STATE);
 +	}
++
++	return ret;
++}
++
++/* -- Extension API: adaptive CAD -- */
++
++void sx126x_cad_set_peak_offset(const struct device *dev, int8_t offset)
++{
++	struct sx126x_data *data = dev->data;
++
++	data->cad_peak_offset = offset;
++}
++
++uint8_t sx126x_cad_base_peak(const struct device *dev)
++{
++	struct sx126x_data *data = dev->data;
++
++	return sx126x_cad_detect_peak((uint8_t)data->config.datarate);
++}
++
++int sx126x_cad_probe(const struct device *dev, int8_t peak_offset)
++{
++	struct sx126x_data *data = dev->data;
++	int base = (int)sx126x_cad_base_peak(dev);
++	int peak = base + peak_offset;
++	int ret;
++
++	if (peak < 15) {
++		peak = 15;
++	} else if (peak > 40) {
++		peak = 40;
++	}
++
++	/* One-shot absolute override consumed by sx126x_do_cad().  Probes and
++	 * LBT both run on the mesh loop thread, so no concurrent CAD exists. */
++	data->cad_probe_peak = (uint8_t)peak;
++	ret = sx126x_lora_cad(dev, K_MSEC(sx126x_cad_timeout_ms(data)));
++	data->cad_probe_peak = 0;
 +
 +	return ret;
 +}
@@ -1577,7 +1655,7 @@ index 30243ba5dc7..ef06d9273ae 100644
  };
  
  #ifdef CONFIG_PM_DEVICE
-@@ -1112,6 +2312,7 @@ static int sx126x_pm_action(const struct device *dev,
+@@ -1112,6 +2390,7 @@ static int sx126x_pm_action(const struct device *dev,
  static int sx126x_init(const struct device *dev)
  {
  	struct sx126x_data *data = dev->data;
@@ -1585,7 +1663,7 @@ index 30243ba5dc7..ef06d9273ae 100644
  	int ret;
  
  	/* Initialize data structures */
-@@ -1121,9 +2322,29 @@ static int sx126x_init(const struct device *dev)
+@@ -1121,9 +2400,29 @@ static int sx126x_init(const struct device *dev)
  	k_msgq_init(&data->rx_msgq, (char *)&data->rx_result,
  		    sizeof(struct sx126x_rx_result), 1);
  	k_work_init(&data->irq_work, sx126x_irq_work_handler);
@@ -1616,10 +1694,10 @@ index 30243ba5dc7..ef06d9273ae 100644
  	/* Initialize HAL */
  	ret = sx126x_hal_init(dev);
 diff --git a/drivers/lora/native/sx126x/sx126x.h b/drivers/lora/native/sx126x/sx126x.h
-index 9dbf3f26586..2598b56d048 100644
+index 9dbf3f26586..b18bebceec7 100644
 --- a/drivers/lora/native/sx126x/sx126x.h
 +++ b/drivers/lora/native/sx126x/sx126x.h
-@@ -56,13 +56,69 @@ struct sx126x_data {
+@@ -56,13 +56,74 @@ struct sx126x_data {
  	/* Async RX callback */
  	lora_recv_cb rx_cb;
  	void *rx_cb_user_data;
@@ -1686,6 +1764,11 @@ index 9dbf3f26586..2598b56d048 100644
 +	struct k_sem cad_sem;
 +	int cad_result;
 +	bool cad_active;
++	/* Adaptive-CAD: signed offset applied to the per-SF base detPeak on
++	 * every LBT CAD (set via sx126x_cad_set_peak_offset).  cad_probe_peak,
++	 * when non-zero, overrides everything for one calibration probe. */
++	int8_t cad_peak_offset;
++	uint8_t cad_probe_peak;
  };
  
  #endif /* ZEPHYR_DRIVERS_LORA_SX126X_SX126X_INTERNAL_H_ */

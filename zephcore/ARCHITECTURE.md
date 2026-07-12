@@ -425,6 +425,26 @@ Algorithm in `triggerNoiseFloorCalibrate()`:
 - Periodic bypass: every 16th tick accepts unconditionally
 - EMA: `floor += round_nearest((sample - floor) / 8)`, clamped to [-120, -50] dBm
 
+### 5.3.1 Adaptive CAD (LBT detPeak calibration)
+
+`cadDetPeak` is a correlation peak-to-noise threshold in the despreader (not
+dBm), so the right LBT sensitivity is site-dependent (chirp-like interference
+varies) and cannot be derived from the RSSI floor. `LoRaRadioBase::cadMaintenance()`
+(housekeeping tick) runs one calibration CAD probe per `cad.probe.interval`
+(default 60 s) at a signed **level** relative to the family's per-SF base
+detPeak, restarts RX, and classifies busy verdicts via a ground-truth filter
+(pre-probe RSSI near floor; post-busy ~8-symbol wait for real RX activity →
+`tp`, else suspected `fp`). Per-level counters decay 6-hourly and reset on any
+RF param change. With `cad.auto on`, a one-sided staircase steps the operating
+offset down when the frontier level shows FP ≤ 1% over ≥300 probes, up quickly
+when the operating level exceeds 2× target over ≥50 probes; offset clamped
+−4…+4, persisted via `Dispatcher::onCadOffsetChanged()`. Probe + offset plumbing
+is per-driver extension API (`*_cad_probe`, `*_cad_set_peak_offset`,
+`*_cad_base_peak`); LBT CAD runs 4 symbols (set in `buildModemConfig`), and the
+drivers scale their blocking-CAD timeout to `nSym·Tsym + margin`. CLI: `get cad`,
+`set cad.auto/offset/probe.interval/reset`. SX127x: unsupported (no HW CAD).
+User doc: `ADAPTIVE_CAD.md`.
+
 ### 5.4 LR1110 Driver Errata Workarounds
 
 The custom `lr11xx_lora.c` driver handles several LR1110 firmware bugs:

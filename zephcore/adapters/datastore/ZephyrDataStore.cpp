@@ -693,6 +693,31 @@ void ZephyrDataStore::loadPrefs(NodePrefs &prefs)
 	} else {
 		prefs.v_battery_alert_mv = 0xFFFF;
 	}
+
+	/* Offset 155: cad_auto (ZephCore extension, default 0 = dry-run) */
+	if (off < len) {
+		prefs.cad_auto = buf[off++];
+		if (prefs.cad_auto > 1) {
+			prefs.cad_auto = 0;
+		}
+	}
+
+	/* Offset 156: cad_offset (ZephCore extension, signed -4..4, default 0) */
+	if (off < len) {
+		prefs.cad_offset = (int8_t)buf[off++];
+		if (prefs.cad_offset < -4 || prefs.cad_offset > 4) {
+			prefs.cad_offset = 0;
+		}
+	}
+
+	/* Offset 157: cad_probe_interval (ZephCore extension, seconds; 0 = off).
+	 * Absent in pre-existing files → keep the in-RAM default (60). */
+	if (off < len) {
+		prefs.cad_probe_interval = buf[off++];
+		if (prefs.cad_probe_interval != 0 && prefs.cad_probe_interval < 10) {
+			prefs.cad_probe_interval = 10;
+		}
+	}
 }
 
 void ZephyrDataStore::savePrefs(const NodePrefs &prefs)
@@ -774,7 +799,13 @@ void ZephyrDataStore::savePrefs(const NodePrefs &prefs)
 	/* Offset 153: v_battery_alert_mv (ZephCore extension, 2 bytes LE) */
 	buf[off++] = prefs.v_battery_alert_mv & 0xFF;
 	buf[off++] = (prefs.v_battery_alert_mv >> 8) & 0xFF;
-	/* Total: 155 bytes */
+	/* Offset 155: cad_auto (ZephCore extension) */
+	buf[off++] = prefs.cad_auto;
+	/* Offset 156: cad_offset (ZephCore extension, signed) */
+	buf[off++] = (uint8_t)prefs.cad_offset;
+	/* Offset 157: cad_probe_interval (ZephCore extension, seconds) */
+	buf[off++] = prefs.cad_probe_interval;
+	/* Total: 158 bytes */
 
 	bool ok = atomicReplaceFile(PREFS_FILE, buf, off);
 	LOG_DBG("savePrefs: wrote %s, ok=%d (%d bytes), name='%.16s'",

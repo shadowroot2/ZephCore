@@ -20,6 +20,23 @@
 #define NOISE_FLOOR_SAMPLING_THRESHOLD   14  /* dB above floor to reject as interference */
 #define DEFAULT_NOISE_FLOOR              0   /* sentinel: seed from first sample */
 
+/* --- Adaptive CAD (LBT detPeak calibration) ---
+ * Housekeeping-tick CAD probes accumulate per-level busy/free statistics;
+ * a one-sided staircase converges on the lowest detPeak offset whose
+ * false-positive rate stays under target.  Levels are signed offsets from
+ * the chip family's per-SF base detPeak (SX126x: SF+13; LR11xx/LR20xx:
+ * 56-68 table) so the C++ layer stays scale-independent. */
+#define CAD_LEVEL_MIN            (-4)  /* most sensitive probe level */
+#define CAD_LEVEL_MAX            4     /* least sensitive probe level */
+#define CAD_NUM_LEVELS           (CAD_LEVEL_MAX - CAD_LEVEL_MIN + 1)
+#define CAD_SWEEP_MIN            (-3)  /* dry-run sweep window */
+#define CAD_SWEEP_MAX            2
+#define CAD_FP_TARGET_PERMILLE   10    /* step-down needs FP rate <= 1% */
+#define CAD_STEP_DOWN_MIN_PROBES 300   /* samples before a down-step call */
+#define CAD_STEP_UP_MIN_PROBES   50    /* samples before an up-step call */
+#define CAD_PROBE_RSSI_GUARD     7     /* dB above floor = channel visibly busy, skip probe */
+#define CAD_STATS_DECAY_MS       (6UL * 3600UL * 1000UL)  /* halve counters every 6 h */
+
 /* --- RX ring buffer --- */
 #define RX_RING_SIZE 8  /* ~2 KB; buffers burst arrivals at SF7/BW500 */
 

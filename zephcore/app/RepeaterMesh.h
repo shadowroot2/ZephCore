@@ -179,6 +179,24 @@ protected:
         return _prefs.multi_acks;
     }
 
+    /* Adaptive CAD */
+    int formatCadStatus(char* buf, int cap) override {
+        return _radio->formatCadStatus(buf, cap);
+    }
+    void applyCadPrefs() override {
+        _radio->setCadParams(_prefs.cad_auto != 0, _prefs.cad_offset,
+                             _prefs.cad_probe_interval);
+    }
+    void resetCadStats() override {
+        _radio->resetCadStats();
+    }
+    void onCadOffsetChanged(int8_t offset) override {
+        /* Staircase steps are hours apart — persisting immediately is
+         * fine for flash wear and survives unexpected reboots. */
+        _prefs.cad_offset = offset;
+        savePrefs();
+    }
+
     mesh::DispatcherAction onRecvPacket(mesh::Packet* pkt) override;
 
     void onAnonDataRecv(mesh::Packet* packet, const uint8_t* secret, const mesh::Identity& sender, uint8_t* data, size_t len) override;

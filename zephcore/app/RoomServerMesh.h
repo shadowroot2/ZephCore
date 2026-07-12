@@ -148,6 +148,22 @@ protected:
         return _prefs.multi_acks;
     }
 
+    /* Adaptive CAD */
+    int formatCadStatus(char* buf, int cap) override {
+        return _radio->formatCadStatus(buf, cap);
+    }
+    void applyCadPrefs() override {
+        _radio->setCadParams(_prefs.cad_auto != 0, _prefs.cad_offset,
+                             _prefs.cad_probe_interval);
+    }
+    void resetCadStats() override {
+        _radio->resetCadStats();
+    }
+    void onCadOffsetChanged(int8_t offset) override {
+        _prefs.cad_offset = offset;
+        savePrefs();
+    }
+
     mesh::DispatcherAction onRecvPacket(mesh::Packet* pkt) override;
 
     void onAdvertRecv(mesh::Packet* packet, const mesh::Identity& id, uint32_t timestamp, const uint8_t* app_data, size_t app_data_len) override;

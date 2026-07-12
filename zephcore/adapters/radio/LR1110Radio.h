@@ -29,6 +29,9 @@ protected:
 	void hwSetRxBoost(bool enable) override;
 	void hwResetAGC() override;
 	uint32_t hwWakeupTimeUs() override;
+	int hwCadProbe(int8_t level) override;
+	void hwCadSetPeakOffset(int8_t offset) override;
+	uint8_t hwCadBasePeak() override;
 };
 
 } /* namespace mesh */

@@ -203,6 +203,11 @@ bool RepeaterDataStore::loadPrefs(NodePrefs& prefs) {
     fs_read(&file, &prefs.flood_max_advert, sizeof(prefs.flood_max_advert));
     /* Mesh time sync (absent in <297-byte files; no-op EOF read keeps default 0 = off) */
     fs_read(&file, &prefs.meshtimesync, sizeof(prefs.meshtimesync));
+    /* Adaptive CAD (absent in <300-byte files; no-op EOF reads keep defaults
+     * auto=0, offset=0, probe_interval=60) */
+    fs_read(&file, &prefs.cad_auto, sizeof(prefs.cad_auto));
+    fs_read(&file, &prefs.cad_offset, sizeof(prefs.cad_offset));
+    fs_read(&file, &prefs.cad_probe_interval, sizeof(prefs.cad_probe_interval));
 
     fs_close(&file);
 
@@ -234,6 +239,9 @@ bool RepeaterDataStore::loadPrefs(NodePrefs& prefs) {
     if (prefs.apc_enabled > 1) prefs.apc_enabled = 0;
     if (prefs.apc_margin < 6 || prefs.apc_margin > 30) prefs.apc_margin = 16;
     if (prefs.meshtimesync > 1) prefs.meshtimesync = 0;
+    if (prefs.cad_auto > 1) prefs.cad_auto = 0;
+    if (prefs.cad_offset < -4 || prefs.cad_offset > 4) prefs.cad_offset = 0;
+    if (prefs.cad_probe_interval != 0 && prefs.cad_probe_interval < 10) prefs.cad_probe_interval = 10;
 
     /* One-time format upgrade: old files (< 294 bytes) never saved the ZephCore
      * extension fields, and stored path_hash_mode/loop_detect as zero padding.
@@ -333,6 +341,10 @@ bool RepeaterDataStore::savePrefs(const NodePrefs& prefs) {
     fs_write(&file, &prefs.flood_max_advert, sizeof(prefs.flood_max_advert));
     /* Mesh time sync on/off (offset 296) */
     fs_write(&file, &prefs.meshtimesync, sizeof(prefs.meshtimesync));
+    /* Adaptive CAD (offsets 297-299) */
+    fs_write(&file, &prefs.cad_auto, sizeof(prefs.cad_auto));
+    fs_write(&file, &prefs.cad_offset, sizeof(prefs.cad_offset));
+    fs_write(&file, &prefs.cad_probe_interval, sizeof(prefs.cad_probe_interval));
 
     ret = fs_sync(&file);
     fs_close(&file);

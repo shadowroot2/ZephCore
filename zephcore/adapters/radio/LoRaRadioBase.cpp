@@ -9,6 +9,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/random/random.h>
 #include <string.h>
+#include <stdio.h>
 #include <math.h>
 
 
@@ -46,6 +47,8 @@ LoRaRadioBase::LoRaRadioBase(const struct device *lora_dev, MainBoard &board,
 	  _last_rssi(0), _last_snr(0),
 	  _rx_head(0), _rx_tail(0),
 	  _noise_floor(DEFAULT_NOISE_FLOOR), _calibration_threshold(0), _ema_unguarded(0),
+	  _cad_auto(false), _cad_offset(0), _cad_probe_interval_s(0),
+	  _cad_last_probe_ms(0), _cad_last_decay_ms(0), _cad_probe_rr(0),
 	  _rx_duty_cycle_enabled(IS_ENABLED(CONFIG_ZEPHCORE_LORA_RX_DUTY_CYCLE)),
 	  _rx_boost_enabled(true),
 	  _tx_power_reduction_db(0),
@@ -62,6 +65,7 @@ LoRaRadioBase::LoRaRadioBase(const struct device *lora_dev, MainBoard &board,
 	k_poll_signal_init(&_tx_signal);
 	k_sem_init(&_tx_start_sem, 0, 1);
 	memset(_rx_ring, 0, sizeof(_rx_ring));
+	memset(_cad_stats, 0, sizeof(_cad_stats));
 }
 
 /* ── TX wait thread ──────────────────────────────────────────── */
@@ -246,6 +250,14 @@ void LoRaRadioBase::buildModemConfig(struct lora_modem_config &cfg, bool tx)
 	 * direction-only fast path (which skips hwConfigure). RX paths
 	 * never read cad.mode, so this is harmless during receive. */
 	cfg.cad.mode = LORA_CAD_MODE_LBT;
+
+	/* 4-symbol CAD at every SF (drivers default to 2 when this is 0).
+	 * Our LBT runs against mesh packets that are mostly payload airtime;
+	 * payload chirps correlate less reliably per symbol than preamble
+	 * upchirps, so the extra looks matter — AN1200.48 itself recommends
+	 * 4 symbols at SF9+.  The drivers scale their blocking-CAD timeout
+	 * from this value, so slow presets stay covered. */
+	cfg.cad.symbol_num = LORA_CAD_SYMB_4;
 }
 
 uint32_t LoRaRadioBase::getActiveFrequencyHz() const
@@ -446,6 +458,8 @@ void LoRaRadioBase::reconfigure()
 	hwCancelReceive();
 	atomic_set(&_in_recv_mode, 0);
 	_config_cached = false;  /* Force full reconfigure */
+	/* CAD probe statistics are only valid for one freq/SF/BW config. */
+	resetCadStats();
 	startReceive();
 
 	uint32_t freq = _prefs ? (uint32_t)(_prefs->freq * 1000000.0f)
@@ -929,6 +943,230 @@ bool LoRaRadioBase::isChannelActive(int threshold)
 	}
 	int16_t rssi = hwGetCurrentRSSI();
 	return rssi > (_noise_floor + threshold);
+}
+
+/* ── Adaptive CAD (LBT detPeak calibration) ───────────────────────────── */
+
+void LoRaRadioBase::setCadParams(bool auto_enabled, int8_t offset,
+				 uint16_t probe_interval_s)
+{
+	if (offset < CAD_LEVEL_MIN) offset = CAD_LEVEL_MIN;
+	if (offset > CAD_LEVEL_MAX) offset = CAD_LEVEL_MAX;
+
+	_cad_auto = auto_enabled;
+	_cad_offset = offset;
+	_cad_probe_interval_s = probe_interval_s;
+	hwCadSetPeakOffset(_cad_offset);
+
+	LOG_INF("cad: auto=%d offset=%d probe_interval=%us",
+		(int)auto_enabled, (int)offset, (unsigned)probe_interval_s);
+}
+
+void LoRaRadioBase::resetCadStats()
+{
+	memset(_cad_stats, 0, sizeof(_cad_stats));
+	_cad_probe_rr = 0;
+}
+
+void LoRaRadioBase::decayCadStats()
+{
+	for (int i = 0; i < CAD_NUM_LEVELS; i++) {
+		_cad_stats[i].probes >>= 1;
+		_cad_stats[i].busy >>= 1;
+		_cad_stats[i].fp >>= 1;
+		_cad_stats[i].tp >>= 1;
+	}
+}
+
+int8_t LoRaRadioBase::pickCadProbeLevel()
+{
+	_cad_probe_rr++;
+
+	if (!_cad_auto) {
+		/* Dry-run: even sweep across the observation window so the
+		 * user sees the whole FP-vs-detPeak curve in `get cad`. */
+		int span = CAD_SWEEP_MAX - CAD_SWEEP_MIN + 1;
+
+		return (int8_t)(CAD_SWEEP_MIN + (_cad_probe_rr % span));
+	}
+
+	/* Auto: concentrate samples on the frontier (one step more sensitive
+	 * than the operating point); every 4th probe self-checks the
+	 * operating level. */
+	int8_t frontier = _cad_offset > CAD_LEVEL_MIN ? (int8_t)(_cad_offset - 1)
+						      : _cad_offset;
+
+	return ((_cad_probe_rr & 3) == 0) ? _cad_offset : frontier;
+}
+
+void LoRaRadioBase::cadStaircaseStep()
+{
+	/* Step down (more sensitive) when the frontier level has enough
+	 * samples and its suspected-FP rate is at or under target. */
+	if (_cad_offset > CAD_LEVEL_MIN) {
+		CadLevelStats &f = _cad_stats[(_cad_offset - 1) - CAD_LEVEL_MIN];
+
+		if (f.probes >= CAD_STEP_DOWN_MIN_PROBES &&
+		    (uint32_t)f.fp * 1000U <=
+		    (uint32_t)f.probes * CAD_FP_TARGET_PERMILLE) {
+			_cad_offset--;
+			hwCadSetPeakOffset(_cad_offset);
+			LOG_INF("cad: step down -> offset %d (frontier %up/%ufp)",
+				(int)_cad_offset, f.probes, f.fp);
+			return;
+		}
+	}
+
+	/* Step up (less sensitive) when the operating level itself shows
+	 * FPs well above target.  Lower sample bar: FPs at the operating
+	 * point cost real TX opportunities, react quickly. */
+	if (_cad_offset < CAD_LEVEL_MAX) {
+		CadLevelStats &o = _cad_stats[_cad_offset - CAD_LEVEL_MIN];
+
+		if (o.probes >= CAD_STEP_UP_MIN_PROBES &&
+		    (uint32_t)o.fp * 1000U >
+		    (uint32_t)o.probes * 2U * CAD_FP_TARGET_PERMILLE) {
+			_cad_offset++;
+			hwCadSetPeakOffset(_cad_offset);
+			LOG_INF("cad: step up -> offset %d (operating %up/%ufp)",
+				(int)_cad_offset, o.probes, o.fp);
+		}
+	}
+}
+
+void LoRaRadioBase::cadMaintenance()
+{
+	if (_cad_probe_interval_s == 0) {
+		return;
+	}
+
+	int64_t now = k_uptime_get();
+
+	/* Periodic decay keeps the stats fresh (and counters bounded). */
+	if (_cad_last_decay_ms == 0) {
+		_cad_last_decay_ms = now;
+	} else if (now - _cad_last_decay_ms > (int64_t)CAD_STATS_DECAY_MS) {
+		decayCadStats();
+		_cad_last_decay_ms = now;
+	}
+
+	if (now - _cad_last_probe_ms < (int64_t)_cad_probe_interval_s * 1000) {
+		return;
+	}
+
+	/* Same guards as the noise-floor calibrator: only probe from idle
+	 * continuous/duty-cycle RX, never during TX or an active packet,
+	 * never while the chip is in its duty-cycle sleep (BUSY) phase. */
+	if (!atomic_get(&_in_recv_mode) || atomic_get(&_tx_active)) {
+		return;
+	}
+	if (!isRadioReady() || isReceiving()) {
+		return;
+	}
+
+	/* Ground-truth prefilter: skip when the channel is visibly busy —
+	 * a busy verdict against strong traffic teaches us nothing about
+	 * false positives.  (Below-noise-floor LoRa can't be excluded here;
+	 * the post-probe RX check below handles that side.) */
+	int16_t rssi = hwGetCurrentRSSI();
+
+	if (rssi == -128) {
+		return;
+	}
+	if (_noise_floor != DEFAULT_NOISE_FLOOR &&
+	    rssi > _noise_floor + CAD_PROBE_RSSI_GUARD) {
+		return;
+	}
+
+	_cad_last_probe_ms = now;
+
+	int8_t level = pickCadProbeLevel();
+	int ret = hwCadProbe(level);
+
+	/* The probe leaves the chip in STANDBY (driver state REST) — re-arm
+	 * RX immediately so an incoming packet isn't lost while we classify.
+	 * In duty-cycle mode this re-enters the DC cycle (same path as the
+	 * parked-RX watchdog re-arm). */
+	atomic_set(&_in_recv_mode, 0);
+	startReceive();
+
+	if (ret < 0) {
+		if (ret != -ENOSYS) {
+			LOG_WRN("cad: probe failed (%d)", ret);
+		}
+		return;
+	}
+
+	CadLevelStats &s = _cad_stats[level - CAD_LEVEL_MIN];
+
+	if (s.probes >= 0xFFF0) {
+		decayCadStats();
+	}
+	s.probes++;
+
+	if (ret > 0) {
+		s.busy++;
+
+		/* Ground-truth post-check: a real LoRa signal that tripped
+		 * CAD keeps transmitting — after RX restart its preamble or
+		 * header trips the receive path within a few symbols.  Wait
+		 * ~8 symbols, then classify.  RX is already armed, so the
+		 * packet itself is not at risk during this sleep. */
+		uint8_t sf = getActiveSpreadingFactor();
+		uint16_t bw_x10 = getActiveBandwidthKHzX10();
+		uint32_t tsym_us = bw_x10 ? (uint32_t)(((1UL << sf) * 10000UL)
+						       / bw_x10) : 1024;
+		uint32_t wait_ms = (8U * tsym_us) / 1000U;
+
+		if (wait_ms < 20) wait_ms = 20;
+		if (wait_ms > 400) wait_ms = 400;
+		k_sleep(K_MSEC(wait_ms));
+
+		if (isReceiving()) {
+			s.tp++;
+		} else {
+			s.fp++;
+		}
+	}
+
+	if (_cad_auto) {
+		cadStaircaseStep();
+	}
+}
+
+int LoRaRadioBase::formatCadStatus(char *buf, int cap)
+{
+	uint8_t base = hwCadBasePeak();
+	int n = 0;
+
+	if (base == 0) {
+		return snprintf(buf, cap, "CAD: not supported by this radio");
+	}
+
+	int peak = (int)base + _cad_offset;
+
+	n += snprintf(buf + n, cap > n ? cap - n : 0,
+		      "auto:%s offset:%d peak:%d (base %u, 4 sym) probe:%us",
+		      _cad_auto ? "on" : "off", (int)_cad_offset, peak,
+		      base, (unsigned)_cad_probe_interval_s);
+
+	for (int i = 0; i < CAD_NUM_LEVELS; i++) {
+		CadLevelStats &s = _cad_stats[i];
+
+		if (s.probes == 0) {
+			continue;
+		}
+		/* FP rate in tenths of a percent */
+		uint32_t fp_pm = ((uint32_t)s.fp * 1000U) / s.probes;
+
+		n += snprintf(buf + n, cap > n ? cap - n : 0,
+			      "\nlvl %+d (peak %d): %u probes, %u busy, %u fp, %u tp (fp %u.%u%%)",
+			      i + CAD_LEVEL_MIN, (int)base + i + CAD_LEVEL_MIN,
+			      s.probes, s.busy, s.fp, s.tp,
+			      (unsigned)(fp_pm / 10), (unsigned)(fp_pm % 10));
+	}
+
+	return n;
 }
 
 /* ── Power saving ─────────────────────────────────────────────────────── */

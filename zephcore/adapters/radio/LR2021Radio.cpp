@@ -78,4 +78,19 @@ void LR2021Radio::hwResetAGC()
 	lr20xx_reset_agc(_dev);
 }
 
+int LR2021Radio::hwCadProbe(int8_t level)
+{
+	return lr20xx_cad_probe(_dev, level);
+}
+
+void LR2021Radio::hwCadSetPeakOffset(int8_t offset)
+{
+	lr20xx_cad_set_peak_offset(_dev, offset);
+}
+
+uint8_t LR2021Radio::hwCadBasePeak()
+{
+	return lr20xx_cad_base_peak(_dev);
+}
+
 } /* namespace mesh */

@@ -95,6 +95,10 @@ struct lr11xx_data {
 	struct k_sem cad_sem;
 	int cad_result;
 	bool cad_active;
+	/* Adaptive-CAD: signed offset applied to the per-SF base detPeak on
+	 * every LBT CAD; cad_probe_peak overrides for one calibration probe. */
+	int8_t cad_peak_offset;
+	uint8_t cad_probe_peak;
 
 	/* Deferred hardware init — heavy SPI/radio work runs on first config() */
 	bool hw_initialized;
@@ -710,6 +714,29 @@ static uint32_t lr11xx_lora_airtime(const struct device *dev,
 /* Forward declaration — needed by LBT in send_async */
 static int lr11xx_lora_cad(const struct device *dev, k_timeout_t timeout);
 
+/* Blocking-CAD wait budget scaled to the actual CAD duration:
+ * nSym * Tsym + startup radio-side, plus IRQ latency margin.  A fixed
+ * 200 ms fits 2-symbol CAD everywhere but is exceeded by 4-symbol CAD
+ * on slow presets (SF12 @ 62.5 kHz = ~262 ms). */
+static uint32_t lr11xx_cad_timeout_ms(struct lr11xx_data *data)
+{
+	struct lora_modem_config *mc = &data->modem_cfg;
+	uint8_t sf = (uint8_t)mc->datarate;
+	uint8_t symb_nb = mc->cad.symbol_num ?
+			  (uint8_t)mc->cad.symbol_num : 2;
+	uint32_t bw_hz = (uint32_t)(bw_enum_to_khz(mc->bandwidth) * 1000.0f);
+
+	if (bw_hz == 0 || sf < 5 || sf > 12) {
+		return 200;
+	}
+
+	uint32_t tsym_us = ((1UL << sf) * 1000000UL) / bw_hz;
+	/* +1 symbol covers radio startup + internal processing tail */
+	uint32_t ms = ((symb_nb + 1U) * tsym_us) / 1000U + 100U;
+
+	return MAX(ms, 200U);
+}
+
 /* ── Driver API: send_async ─────────────────────────────────────────── */
 
 static int lr11xx_lora_send_async(const struct device *dev,
@@ -732,7 +759,8 @@ static int lr11xx_lora_send_async(const struct device *dev,
 	 * to re-arm. */
 	if (data->modem_cfg.cad.mode == LORA_CAD_MODE_LBT) {
 		bool was_in_rx = data->in_rx_mode;
-		int cad_ret = lr11xx_lora_cad(dev, K_MSEC(200));
+		int cad_ret = lr11xx_lora_cad(dev,
+					      K_MSEC(lr11xx_cad_timeout_ms(data)));
 		if (cad_ret > 0) {
 			if (was_in_rx && data->async_rx_cb != NULL) {
 				k_mutex_lock(&data->spi_mutex, K_FOREVER);
@@ -1136,6 +1164,21 @@ static int lr11xx_do_cad(struct lr11xx_data *data)
 	}
 	if (mc->cad.detection_peak != 0) {
 		detect_peak = mc->cad.detection_peak;
+	} else if (data->cad_peak_offset != 0) {
+		/* Adaptive-CAD operating offset (base +/- learned delta).
+		 * LR11xx detPeak scale is ~48-90 — never mix with SX126x. */
+		int peak = (int)detect_peak + data->cad_peak_offset;
+
+		if (peak < 48) {
+			peak = 48;
+		} else if (peak > 90) {
+			peak = 90;
+		}
+		detect_peak = (uint8_t)peak;
+	}
+	if (data->cad_probe_peak != 0) {
+		/* One-shot calibration probe: absolute peak wins over all. */
+		detect_peak = data->cad_probe_peak;
 	}
 
 	lr11xx_radio_cad_params_t cad = {
@@ -1224,6 +1267,44 @@ static int lr11xx_lora_cad_async(const struct device *dev,
 
 	int ret = lr11xx_do_cad(data);
 	k_mutex_unlock(&data->spi_mutex);
+
+	return ret;
+}
+
+/* ── Extension API: adaptive CAD ────────────────────────────────────── */
+
+void lr11xx_cad_set_peak_offset(const struct device *dev, int8_t offset)
+{
+	struct lr11xx_data *data = dev->data;
+
+	data->cad_peak_offset = offset;
+}
+
+uint8_t lr11xx_cad_base_peak(const struct device *dev)
+{
+	struct lr11xx_data *data = dev->data;
+
+	return lr11xx_cad_detect_peak((uint8_t)data->modem_cfg.datarate);
+}
+
+int lr11xx_cad_probe(const struct device *dev, int8_t peak_offset)
+{
+	struct lr11xx_data *data = dev->data;
+	int base = (int)lr11xx_cad_base_peak(dev);
+	int peak = base + peak_offset;
+	int ret;
+
+	if (peak < 48) {
+		peak = 48;
+	} else if (peak > 90) {
+		peak = 90;
+	}
+
+	/* One-shot absolute override consumed by lr11xx_do_cad().  Probes and
+	 * LBT both run on the mesh loop thread, so no concurrent CAD exists. */
+	data->cad_probe_peak = (uint8_t)peak;
+	ret = lr11xx_lora_cad(dev, K_MSEC(lr11xx_cad_timeout_ms(data)));
+	data->cad_probe_peak = 0;
 
 	return ret;
 }

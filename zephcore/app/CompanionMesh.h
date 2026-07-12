@@ -353,6 +353,14 @@ protected:
 	uint8_t getDutyCyclePercent() const override;
 	uint8_t getExtraAckTransmitCount() const override;
 
+	/* Adaptive CAD: persist the staircase's learned offset */
+	void onCadOffsetChanged(int8_t offset) override {
+		prefs.cad_offset = offset;
+		if (_store) {
+			_store->savePrefs(prefs);
+		}
+	}
+
 	/* Auto-add filtering overrides */
 	bool isAutoAddEnabled() const override;
 	bool shouldAutoAddContactType(uint8_t type) const override;

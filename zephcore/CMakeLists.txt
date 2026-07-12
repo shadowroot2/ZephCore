@@ -687,6 +687,11 @@ else()
     helpers/TransportKeyStore.cpp
     helpers/ui/ui_mesh_actions.cpp
     app/CompanionMesh.cpp
+    # CommonCLI backs the v-contact loopback admin chat (companion_cli_exec in
+    # main_companion.cpp), which is NOT gated on the wired-USB stack — so it
+    # must be compiled unconditionally. Builds without CONFIG_LOG/COMPANION_USB/
+    # COMPANION_SERIAL (e.g. plain ESP32/S3 companions) failed to link otherwise.
+    helpers/CommonCLI.cpp
   )
   # Companion transport: TCP socket on native Linux, serial (UART) on boards
   # with no Bluetooth controller (e.g. STM32WL), BLE NUS everywhere else.
@@ -724,7 +729,6 @@ else()
   if(CONFIG_LOG OR CONFIG_ZEPHCORE_COMPANION_USB OR CONFIG_ZEPHCORE_COMPANION_SERIAL)
     target_sources(app PRIVATE
       adapters/usb/ZephyrCompanionUSB.cpp
-      helpers/CommonCLI.cpp  # backs the wired text CLI dispatch
     )
     if(NOT CONFIG_CDC_ACM_SERIAL_INITIALIZE_AT_BOOT AND (CONFIG_USB_CDC_ACM OR CONFIG_USBD_CDC_ACM_CLASS))
       target_sources(app PRIVATE

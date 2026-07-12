@@ -82,6 +82,11 @@ public:
     virtual uint8_t getAPCTargetMargin() const { return 16; }
     virtual void setAPCTargetMargin(uint8_t margin_db) { (void)margin_db; }
 
+    // Adaptive CAD (LBT detPeak calibration)
+    virtual int formatCadStatus(char* buf, int cap) { (void)buf; (void)cap; return 0; }
+    virtual void applyCadPrefs() {}
+    virtual void resetCadStats() {}
+
     // Mesh time sync (all roles wire one; nullptr = not compiled/available)
     virtual MeshTimeSync* getMeshTimeSync() { return nullptr; }
 
