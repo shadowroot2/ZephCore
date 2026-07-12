@@ -22,18 +22,11 @@
 
 ---
 
-The headline of this release is **browser flashing via the Mesh America configurator** — and, in wiring
-it up, we found and fixed a bug that was silently breaking **WiFi-OTA on every ESP32-S3 / ESP32-C board**.
-Alongside it: **Adaptive CAD**, a self-tuning listen-before-talk that calibrates itself to each site;
-**V-Contact**, an in-app admin channel for companions; and a batch of LoRa-driver reliability fixes.
+The headline of this release:
+**Adaptive CAD**, a self-tuning listen-before-talk that calibrates itself to each site;
+**V-Contact**, an in-app admin "channel" for companions; and a batch of LoRa-driver reliability fixes.
 
 ## Highlights
-
-### New: flash ZephCore from your browser — Mesh America configurator
-ZephCore is now a listed provider in the **[Mesh America Device Configurator](https://apps.meshamerica.com)**.
-Pick your board and flash directly — companion (BLE and USB) or repeater — no toolchain, no drag-and-drop.
-Catalog and firmware publish automatically each release. Details in
-**[PROVIDER_CATALOG.md](https://github.com/liquidraver/ZephCore/blob/master/PROVIDER_CATALOG.md)**.
 
 ### Fixed: ESP32 WiFi-OTA silently reverted — upload hit 100%, then booted the *old* firmware
 On ESP32-S3 / ESP32-C boards, the app and MCUboot bootloader were using different flash partition tables,
