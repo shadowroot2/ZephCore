@@ -510,7 +510,13 @@ private:
 	VContactCLICallback _vcontact_cli_cb;
 	uint8_t _vcontact_pubkey[PUB_KEY_SIZE];
 	uint32_t _vcontact_lastmod;
-	uint32_t _vcontact_last_ts;      /* dedupe: app resends carry the same msg timestamp */
+	/* Dedupe app resends: a retry reuses the message timestamp (only the
+	 * attempt byte changes). The retry lands several seconds later, after other
+	 * messages, so a single last-seen slot misses it — track a ring of recent
+	 * timestamps instead. */
+	static const uint8_t VCONTACT_DEDUP_SLOTS = 16;
+	uint32_t _vcontact_recent_ts[VCONTACT_DEDUP_SLOTS];
+	uint8_t _vcontact_recent_head;
 	char _vcontact_pending[2][64];   /* notices buffered while the clock is invalid */
 	uint8_t _vcontact_pending_count;
 	bool vcontactClockValid();

@@ -212,7 +212,8 @@ CompanionMesh::CompanionMesh(mesh::Radio &radio, mesh::MillisecondClock &ms, mes
 	_vcontact_cli_cb = nullptr;
 	memset(_vcontact_pubkey, 0, sizeof(_vcontact_pubkey));
 	_vcontact_lastmod = 0;
-	_vcontact_last_ts = 0;
+	memset(_vcontact_recent_ts, 0, sizeof(_vcontact_recent_ts));
+	_vcontact_recent_head = 0;
 	memset(_vcontact_pending, 0, sizeof(_vcontact_pending));
 	_vcontact_pending_count = 0;
 	memset(&prefs, 0, sizeof(prefs));
@@ -1014,52 +1015,71 @@ bool CompanionMesh::vcontactHandleFrame(const uint8_t *data, size_t len)
 				sendPacketError(ERR_UNSUPPORTED);
 				return true;
 			}
-			/* Dedupe app resends: retry attempts of the same message reuse
-			 * its timestamp (only the attempt byte changes). Without this a
-			 * retry re-executes the CLI line → duplicate responses. Dupes
-			 * still get the full ack choreography so the app settles. */
 			uint32_t msg_timestamp = get_le32(&data[3]);
-			bool dup = (msg_timestamp != 0 && msg_timestamp == _vcontact_last_ts);
-			_vcontact_last_ts = msg_timestamp;
 
-			/* Emit the SENT response FIRST. It is the synchronous reply the
-			 * app's send request blocks on; the CLI command below runs on this
-			 * thread and can take a second or more (e.g. `get cad`, `advert`).
-			 * Deferring SENT until after the command ran let the app's response
-			 * timer fire and auto-retry the send, producing the duplicate
-			 * replies (and the lingering "sending" state) users reported. */
+			/* Extract the text now — needed both for the ack hash below and
+			 * for the CLI call. */
+			char line[MAX_TEXT_LEN + 1];
+			size_t text_len = len - 13;
+			if (text_len > MAX_TEXT_LEN) text_len = MAX_TEXT_LEN;
+			memcpy(line, &data[13], text_len);
+			line[text_len] = '\0';
+
+			/* Compute the SAME delivery-ack the app expects for this exact
+			 * (timestamp, attempt, text): sha256 over ts(4) + (attempt&3)(1) +
+			 * text, salted with our pubkey — identical to composeMsgPacket() on
+			 * the real send path. The old code sent a RANDOM ack, which never
+			 * matched the value the app derives locally, so the app treated the
+			 * loopback message as un-acked and resent it once (attempt=1) a few
+			 * seconds later → duplicate reply. Emitting the correct SENT +
+			 * CONFIRMED up front (before the CLI runs) settles the app at once. */
+			uint8_t hbuf[5 + MAX_TEXT_LEN];
+			memcpy(hbuf, &data[3], 4);          /* timestamp, on-wire LE bytes */
+			hbuf[4] = (data[2] & 3);            /* attempt & 3 */
+			memcpy(&hbuf[5], line, text_len);
 			uint32_t ack = 0;
-			getRNG()->random((uint8_t *)&ack, 4);
+			mesh::Utils::sha256((uint8_t *)&ack, 4, hbuf, 5 + text_len,
+				self_id.pub_key, PUB_KEY_SIZE);
 			if (ack == 0) ack = 1;
+
 			sendPacketSent(MSG_SEND_SENT_DIRECT, ack, 3000);
+			uint8_t ack_push[8];
+			memcpy(ack_push, &ack, 4);
+			memset(&ack_push[4], 0, 4);         /* trip time: 0 ms */
+			sendPush(PUSH_CODE_SEND_CONFIRMED, ack_push, 8);
 
-			char reply[VCONTACT_CLI_REPLY_SIZE];
-			reply[0] = '\0';
+			/* Dedupe app resends: a retry reuses the message timestamp (only
+			 * the attempt byte changes). The correct ack above should stop most
+			 * retries, but a CONFIRMED lost under BLE congestion still triggers
+			 * one — and it lands after other messages, so match against a ring
+			 * of recent timestamps (a single last-seen slot misses it). A
+			 * surviving retry re-acks (done above) without re-running the CLI. */
+			bool dup = false;
+			if (msg_timestamp != 0) {
+				for (uint8_t i = 0; i < VCONTACT_DEDUP_SLOTS; i++) {
+					if (_vcontact_recent_ts[i] == msg_timestamp) { dup = true; break; }
+				}
+				if (!dup) {
+					_vcontact_recent_ts[_vcontact_recent_head] = msg_timestamp;
+					_vcontact_recent_head =
+						(_vcontact_recent_head + 1) % VCONTACT_DEDUP_SLOTS;
+				}
+			}
+
 			if (!dup) {
-				char line[MAX_TEXT_LEN + 1];
-				size_t text_len = len - 13;
-				if (text_len > MAX_TEXT_LEN) text_len = MAX_TEXT_LEN;
-				memcpy(line, &data[13], text_len);
-				line[text_len] = '\0';
 				LOG_INF("vcontact CLI: '%s'", line);
-
+				char reply[VCONTACT_CLI_REPLY_SIZE];
+				reply[0] = '\0';
 				if (_vcontact_cli_cb) {
 					_vcontact_cli_cb(line, reply);
 				} else {
 					strcpy(reply, "CLI not available");
 				}
+				if (reply[0] != '\0') {
+					vcontactQueueText(reply);
+				}
 			} else {
 				LOG_DBG("vcontact CLI: dup ts=%u, re-ack only", msg_timestamp);
-			}
-
-			/* Delivery confirmation (loopback, 0 ms trip), then the reply. */
-			uint8_t ack_push[8];
-			memcpy(ack_push, &ack, 4);
-			memset(&ack_push[4], 0, 4);  /* trip time: 0 ms */
-			sendPush(PUSH_CODE_SEND_CONFIRMED, ack_push, 8);
-
-			if (reply[0] != '\0') {
-				vcontactQueueText(reply);
 			}
 			return true;
 		}
