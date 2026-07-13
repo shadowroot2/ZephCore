@@ -77,7 +77,7 @@ MAKER_BY_DEVICE = {
     "LilyGo T-Lora C6": "lilygo",
     "ProMicro nrf52 (faketec)": "promicro",
     "Heltec T114": "heltec",
-    "Heltec T096": "heltec",
+    "Heltec Mesh Node T096": "heltec",
     "Heltec v3": "heltec",
     "Heltec v4": "heltec",
     "Heltec v4.3": "heltec",
@@ -149,7 +149,7 @@ BOARDS = [
 
     # --- nRF52: new ZephCore-only hardware (own tile) ---------------------
     dict(stem="lilygo_timpulse_plus", kind="nrf", device="LilyGo T-Impulse Plus", new=True, img="lora.svg"),
-    dict(stem="heltec_t096",          kind="nrf", device="Heltec T096",           new=True, img="lora.svg"),
+    dict(stem="heltec_t096",          kind="nrf", device="Heltec Mesh Node T096",  new=True, img="lora.svg"),
 
     # --- ESP32 (sysbuild/MCUboot, -merged.bin): fold ---------------------
     dict(stem="xiao_esp32c3",                      kind="esp32", device="Seeed Studio Xiao C3"),
