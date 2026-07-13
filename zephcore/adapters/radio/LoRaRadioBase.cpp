@@ -990,48 +990,77 @@ int8_t LoRaRadioBase::pickCadProbeLevel()
 		return (int8_t)(CAD_SWEEP_MIN + (_cad_probe_rr % span));
 	}
 
-	/* Auto: concentrate samples on the frontier (one step more sensitive
-	 * than the operating point); every 4th probe self-checks the
-	 * operating level. */
-	int8_t frontier = _cad_offset > CAD_LEVEL_MIN ? (int8_t)(_cad_offset - 1)
-						      : _cad_offset;
-
-	return ((_cad_probe_rr & 3) == 0) ? _cad_offset : frontier;
+	/* Auto: sample the operating level AND both neighbours so the staircase
+	 * can read the local FP curvature (slope below vs. above) and seek the
+	 * knee.  op is the shared term of both slopes → weight it half; each
+	 * neighbour a quarter.  Out-of-range neighbours fall back to op. */
+	int8_t lvl;
+	switch (_cad_probe_rr & 3) {
+	case 1:  lvl = (int8_t)(_cad_offset - 1); break;  /* more sensitive */
+	case 3:  lvl = (int8_t)(_cad_offset + 1); break;  /* less sensitive */
+	default: lvl = _cad_offset; break;                /* operating (0, 2) */
+	}
+	if (lvl < CAD_LEVEL_MIN || lvl > CAD_LEVEL_MAX) {
+		lvl = _cad_offset;
+	}
+	return lvl;
 }
 
 void LoRaRadioBase::cadStaircaseStep()
 {
-	/* Step down (more sensitive) when the frontier level has enough
-	 * samples and its suspected-FP rate is at or under target. */
-	if (_cad_offset > CAD_LEVEL_MIN) {
-		CadLevelStats &f = _cad_stats[(_cad_offset - 1) - CAD_LEVEL_MIN];
+	/* Knee-seeking controller — see the CAD_KNEE_SLOPE / CAD_PLATEAU_CLEAN
+	 * notes in radio_common.h.  Reads local curvature from three rungs and
+	 * steps toward the knee (the most sensitive detPeak whose FP has already
+	 * bottomed out), using slopes so the decision is site-floor-independent. */
+	int oi = _cad_offset - CAD_LEVEL_MIN;
 
-		if (f.probes >= CAD_STEP_DOWN_MIN_PROBES &&
-		    (uint32_t)f.fp * 1000U <=
-		    (uint32_t)f.probes * CAD_FP_TARGET_PERMILLE) {
-			_cad_offset--;
-			hwCadSetPeakOffset(_cad_offset);
-			LOG_INF("cad: step down -> offset %d (frontier %up/%ufp)",
-				(int)_cad_offset, f.probes, f.fp);
-			return;
+	/* Per-level FP rate in permille, or -1 when too few samples to trust. */
+	auto rate = [&](int idx) -> int {
+		if (idx < 0 || idx >= CAD_NUM_LEVELS) {
+			return -1;
 		}
+		CadLevelStats &s = _cad_stats[idx];
+		if (s.probes < CAD_STEP_MIN_PROBES) {
+			return -1;
+		}
+		return (int)(((uint32_t)s.fp * 1000U) / s.probes);
+	};
+
+	int r_op = rate(oi);
+	if (r_op < 0) {
+		return;  /* operating level not warm yet — no basis to step */
+	}
+	int r_up = rate(oi + 1);  /* one step less sensitive */
+	int r_dn = rate(oi - 1);  /* frontier, one step more sensitive */
+
+	/* Step UP (less sensitive) when the level above is markedly cleaner —
+	 * we're on the steep part of the curve, below the knee. */
+	if (_cad_offset < CAD_LEVEL_MAX && r_up >= 0 &&
+	    r_op - r_up >= CAD_KNEE_SLOPE_PERMILLE) {
+		_cad_offset++;
+		hwCadSetPeakOffset(_cad_offset);
+		LOG_INF("cad: step up -> offset %d (op %d dn->up %d)",
+			(int)_cad_offset, r_op, r_up);
+		return;
 	}
 
-	/* Step up (less sensitive) when the operating level itself shows
-	 * FPs well above target.  Lower sample bar: FPs at the operating
-	 * point cost real TX opportunities, react quickly. */
-	if (_cad_offset < CAD_LEVEL_MAX) {
-		CadLevelStats &o = _cad_stats[_cad_offset - CAD_LEVEL_MIN];
-
-		if (o.probes >= CAD_STEP_UP_MIN_PROBES &&
-		    (uint32_t)o.fp * 1000U >
-		    (uint32_t)o.probes * 2U * CAD_FP_TARGET_PERMILLE) {
-			_cad_offset++;
-			hwCadSetPeakOffset(_cad_offset);
-			LOG_INF("cad: step up -> offset %d (operating %up/%ufp)",
-				(int)_cad_offset, o.probes, o.fp);
-		}
+	/* Step DOWN (more sensitive) only on a flat plateau that is already
+	 * clean: the frontier is no worse than operating (nothing to lose) AND
+	 * FP here is low enough that reclaiming sensitivity is cheap.  The clean
+	 * guard is what keeps a flat-but-noisy curve from descending to the
+	 * sensitive rail — there, holding position is the least-bad move. */
+	if (_cad_offset > CAD_LEVEL_MIN && r_dn >= 0 &&
+	    r_dn - r_op < CAD_KNEE_SLOPE_PERMILLE &&
+	    r_op <= CAD_PLATEAU_CLEAN_PERMILLE) {
+		_cad_offset--;
+		hwCadSetPeakOffset(_cad_offset);
+		LOG_INF("cad: step down -> offset %d (op %d dn %d)",
+			(int)_cad_offset, r_op, r_dn);
+		return;
 	}
+
+	/* Otherwise: at the knee (steep below, flat above) or a noisy flat
+	 * plateau — hold. */
 }
 
 void LoRaRadioBase::cadMaintenance()
@@ -1107,22 +1136,48 @@ void LoRaRadioBase::cadMaintenance()
 	if (ret > 0) {
 		s.busy++;
 
-		/* Ground-truth post-check: a real LoRa signal that tripped
-		 * CAD keeps transmitting — after RX restart its preamble or
-		 * header trips the receive path within a few symbols.  Wait
-		 * ~8 symbols, then classify.  RX is already armed, so the
-		 * packet itself is not at risk during this sleep. */
+		/* Ground-truth post-check: was the CAD hit a REAL signal or a
+		 * correlator false positive?  A real transmitter that tripped
+		 * CAD keeps radiating, so over the next preamble+header window
+		 * one of two things shows up:
+		 *   (a) the restarted RX syncs on it   -> isReceiving(), or
+		 *   (b) instantaneous RSSI climbs above the noise floor.
+		 * (b) is the important addition: the probe tears RX down to run
+		 * CAD, and the STANDBY->RX restart routinely eats the preamble of
+		 * a real packet, so RX never re-syncs — the old isReceiving()-only
+		 * snapshot booked those strong-but-missed packets as false
+		 * positives, a ~detPeak-independent floor that flattened the FP
+		 * curve and drove the staircase to the ceiling.  Channel energy
+		 * doesn't depend on winning the preamble race, so it recovers
+		 * them.  Neither signal over the whole window => genuine FP.  A
+		 * below-floor packet we can neither sync nor see stays ambiguous
+		 * and counts as FP — bias toward higher detPeak (the safe side).
+		 * The prefilter above guaranteed RSSI <= floor+guard pre-probe,
+		 * so a rise past that threshold now is a newly-arrived signal. */
 		uint8_t sf = getActiveSpreadingFactor();
 		uint16_t bw_x10 = getActiveBandwidthKHzX10();
 		uint32_t tsym_us = bw_x10 ? (uint32_t)(((1UL << sf) * 10000UL)
 						       / bw_x10) : 1024;
-		uint32_t wait_ms = (8U * tsym_us) / 1000U;
+		uint32_t step_ms = (3U * tsym_us) / 1000U;  /* ~3 symbols/sample */
 
-		if (wait_ms < 20) wait_ms = 20;
-		if (wait_ms > 400) wait_ms = 400;
-		k_sleep(K_MSEC(wait_ms));
+		if (step_ms < 5) step_ms = 5;
+		if (step_ms > 100) step_ms = 100;
 
-		if (isReceiving()) {
+		bool floor_valid = (_noise_floor != DEFAULT_NOISE_FLOOR);
+		int16_t rssi_thresh = _noise_floor + CAD_PROBE_RSSI_GUARD;
+
+		bool real = false;
+		for (int k = 0; k < 4 && !real; k++) {  /* ~12 symbols total */
+			k_sleep(K_MSEC(step_ms));
+			if (isReceiving()) {
+				real = true;
+			} else if (floor_valid &&
+				   hwGetCurrentRSSI() > rssi_thresh) {
+				real = true;
+			}
+		}
+
+		if (real) {
 			s.tp++;
 		} else {
 			s.fp++;
@@ -1147,27 +1202,37 @@ int LoRaRadioBase::formatCadStatus(char *buf, int cap)
 	 * Header:  a:on o:1 pk:22(b21/4s) iv:15s
 	 *   a  auto on/off   o  offset   pk operating peak
 	 *   b  family base   4s symbols   iv probe interval
-	 * Level:   -3(18) 22p 18b 16f 2t 72%
-	 *   level(peak)  probes busy fp tp  fp-rate%%  (integer). */
+	 * Level:  *+1(22) 22p 18b 16f 2t 72%
+	 *   '*' = operating rung   level(peak)  probes busy fp tp  fp-rate%%. */
 	n += snprintf(buf + n, cap > n ? cap - n : 0,
 		      "a:%s o:%d pk:%d(b%u/4s) iv:%us",
 		      _cad_auto ? "on" : "off", (int)_cad_offset,
 		      (int)base + _cad_offset, base,
 		      (unsigned)_cad_probe_interval_s);
 
-	for (int i = 0; i < CAD_NUM_LEVELS; i++) {
-		CadLevelStats &s = _cad_stats[i];
+	/* Only the 3 rungs around the operating offset — the far rungs are mildly
+	 * irrelevant; what matters is where we sit on the ladder. The window is
+	 * clamped to stay inside [CAD_LEVEL_MIN, CAD_LEVEL_MAX] while still showing
+	 * 3 rungs, so at either end it slides inward rather than dropping a line. */
+	int cur = _cad_offset;
+	if (cur < CAD_LEVEL_MIN) cur = CAD_LEVEL_MIN;
+	if (cur > CAD_LEVEL_MAX) cur = CAD_LEVEL_MAX;
+	int lo = cur - 1, hi = cur + 1;
+	if (lo < CAD_LEVEL_MIN) { lo = CAD_LEVEL_MIN; hi = lo + 2; }
+	if (hi > CAD_LEVEL_MAX) { hi = CAD_LEVEL_MAX; lo = hi - 2; }
 
-		if (s.probes == 0) {
-			continue;
-		}
-		/* Integer FP rate, rounded to nearest percent. */
-		unsigned fp_pct = (unsigned)(((uint32_t)s.fp * 100U + s.probes / 2)
-					     / s.probes);
+	for (int lvl = lo; lvl <= hi; lvl++) {
+		CadLevelStats &s = _cad_stats[lvl - CAD_LEVEL_MIN];
+
+		/* Integer FP rate, rounded to nearest percent (0 when unprobed). */
+		unsigned fp_pct = s.probes
+			? (unsigned)(((uint32_t)s.fp * 100U + s.probes / 2) / s.probes)
+			: 0;
 
 		n += snprintf(buf + n, cap > n ? cap - n : 0,
-			      "\n%+d(%d) %up %ub %uf %ut %u%%",
-			      i + CAD_LEVEL_MIN, (int)base + i + CAD_LEVEL_MIN,
+			      "\n%c%+d(%d) %up %ub %uf %ut %u%%",
+			      lvl == cur ? '*' : ' ',
+			      lvl, (int)base + lvl,
 			      s.probes, s.busy, s.fp, s.tp, fp_pct);
 	}
 

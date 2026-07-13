@@ -687,9 +687,13 @@ public:
 	const char* getRole() override { return "companion"; }
 	bool formatFileSystem() override { return data_store.formatFileSystem(); }
 
-	/* Advert / timer controls — mesh-internal; stub for now. */
+	/* Advert — the companion can originate its own self-advert. delay_millis is
+	 * unused (companion sends flood at 0 ms / zero-hop immediately, matching the
+	 * app-triggered path); previously a no-op stub, so `advert` from the CLI
+	 * reported success but transmitted nothing. */
 	void sendSelfAdvertisement(int delay_millis, bool flood) override {
-		(void)delay_millis; (void)flood;
+		(void)delay_millis;
+		companion_mesh.sendSelfAdvert(flood);
 	}
 	void updateAdvertTimer() override {}
 	void updateFloodAdvertTimer() override {}
@@ -1378,19 +1382,15 @@ int main(void)
 	}
 
 #ifdef ZEPHCORE_LORA
-	/* Initialize prefs with defaults */
-	memset(&companion_mesh.prefs, 0, sizeof(companion_mesh.prefs));
-	companion_mesh.prefs.freq = 869.618f;
-	companion_mesh.prefs.bw = 62.5f;
-	companion_mesh.prefs.sf = 8;
-	companion_mesh.prefs.cr = 8;
-	companion_mesh.prefs.tx_power_dbm = 22;
-	companion_mesh.prefs.rx_delay_base = 0.0f;  /* Disabled for companion */
-	companion_mesh.prefs.airtime_factor = 9.0f; /* Arduino formula: 100/(af+1) → 10% (EU 868 default) */
-	companion_mesh.prefs.rx_duty_cycle = 0;     /* Default OFF: continuous RX */
-	companion_mesh.prefs.rx_boost = 1;          /* Default: boosted RX (+3dB sensitivity, +2mA) */
-	companion_mesh.prefs.apc_enabled = 0;       /* Default: APC off */
-	companion_mesh.prefs.apc_margin = 20;       /* Companions: more conservative margin (mobile) */
+	/* Initialize prefs with defaults via the single source of truth
+	 * (initNodePrefs) so every field — including new ones added later — gets
+	 * its proper default. A hand-maintained subset here silently drifts: any
+	 * field not listed defaults to 0, and on upgrade the past-EOF read in
+	 * loadPrefs then keeps that 0 instead of the real default (this is what
+	 * zeroed cad_probe_interval / cad_auto and, earlier, the GPS settings). */
+	initNodePrefs(&companion_mesh.prefs);
+	/* Companion-specific overrides vs. initNodePrefs defaults: */
+	companion_mesh.prefs.apc_margin = 20;       /* mobile: more conservative than the 16 default */
 	companion_mesh.prefs.auto_shutdown_mv = CONFIG_ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS; /* low-batt cutoff (0=off) */
 	companion_mesh.prefs.gps_interval = CONFIG_ZEPHCORE_GPS_POLL_INTERVAL_SEC; /* 5-min duty cycle (0=always-on) */
 

@@ -37,9 +37,23 @@
 #define CAD_NUM_LEVELS           (CAD_LEVEL_MAX - CAD_LEVEL_MIN + 1)
 #define CAD_SWEEP_MIN            (-4)  /* dry-run sweep window (get cad with auto off) */
 #define CAD_SWEEP_MAX            4
-#define CAD_FP_TARGET_PERMILLE   10    /* step-down needs FP rate <= 1% */
-#define CAD_STEP_DOWN_MIN_PROBES 300   /* samples before a down-step call */
-#define CAD_STEP_UP_MIN_PROBES   50    /* samples before an up-step call */
+/* Knee-seeking staircase (replaces the earlier absolute-FP-target band).  The
+ * FP-vs-detPeak curve falls as detPeak rises (less sensitive → fewer false
+ * detects) and flattens past a knee; the sweet spot is the knee — the most
+ * sensitive detPeak whose FP has already bottomed out.  The controller reads
+ * the local curve SLOPE from three rungs (frontier op-1, operating op, op+1)
+ * rather than an absolute FP level, so it converges the same way regardless of
+ * a site's FP floor (which varies with traffic and classifier residual).
+ *  - KNEE_SLOPE: the per-level FP change (permille) that counts as "steep".
+ *    Below the knee the curve drops fast (step up toward the knee); at/above it
+ *    the curve is flat (slope < KNEE_SLOPE).
+ *  - PLATEAU_CLEAN: on a flat plateau, only reclaim sensitivity (step down) if
+ *    FP is already this low — the guard that stops a flat-but-noisy curve from
+ *    walking to the sensitive rail (there, holding is the least-bad move; a
+ *    genuinely quiet flat-low site descends to the floor, which is correct). */
+#define CAD_KNEE_SLOPE_PERMILLE     50    /* >=5%/level FP change = steep */
+#define CAD_PLATEAU_CLEAN_PERMILLE  50    /* <=5% FP = clean enough to descend */
+#define CAD_STEP_MIN_PROBES         120   /* per-level samples before a step call */
 #define CAD_PROBE_RSSI_GUARD     7     /* dB above floor = channel visibly busy, skip probe */
 #define CAD_STATS_DECAY_MS       (6UL * 3600UL * 1000UL)  /* halve counters every 6 h */
 

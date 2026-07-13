@@ -66,19 +66,35 @@ reset completely whenever the radio parameters change (frequency, SF, BW
 `cad.auto` ships **on**, on repeaters and companions alike. A one-sided
 staircase controller acts on the probe stats:
 
-- Probes concentrate on the **frontier** — one level more sensitive than
-  the current operating point (3 of every 4 probes), with the remainder
-  self-checking the operating level.
-- **Step down** (more sensitive) when the frontier has ≥300 samples and
-  its false-positive rate is ≤1%.
-- **Step up** (less sensitive) quickly when the operating level itself
-  shows a false-positive rate above 2% over ≥50 samples — false positives
-  at the operating point cost real transmissions.
-- The offset is persisted to flash whenever it steps.
+The controller is **knee-seeking**. The false-positive-vs-detPeak curve
+falls as detPeak rises (less sensitive → fewer false detects) and flattens
+past a knee; the sweet spot is that knee — the most sensitive detPeak whose
+FP has already bottomed out. Probes sample the operating level and **both
+neighbours** (op−1 more sensitive, op+1 less sensitive; op weighted half, each
+neighbour a quarter) so the staircase can read the local curve *slope*:
 
-At the default 15-second probe interval a step decision lands roughly
-every **1–2 hours**, so the node tracks a changing RF environment within
-that window without thrashing.
+- **Step up** (less sensitive) when the level above is markedly cleaner —
+  FP drops ≥5%/level (`CAD_KNEE_SLOPE_PERMILLE`). That means we're on the
+  steep part below the knee; climb toward it.
+- **Step down** (more sensitive) only on a flat plateau (frontier no worse
+  than operating, slope <5%/level) that is **already clean** (FP ≤5%,
+  `CAD_PLATEAU_CLEAN_PERMILLE`) — reclaim sensitivity that costs nothing.
+- Otherwise **hold** — either at the knee (steep below, flat above) or on a
+  noisy flat plateau.
+
+Using slopes rather than an absolute FP target makes convergence independent
+of a site's FP *floor* (which varies with traffic and with the classifier's
+residual false-positive rate). The clean-plateau guard is what stops a
+flat-but-noisy curve from walking to the sensitive rail: there, holding is the
+least-bad move, while a genuinely quiet flat-low site correctly descends to
+the floor. Each involved rung needs ≥120 samples (`CAD_STEP_MIN_PROBES`)
+before a step, so a decision lands roughly every 1–2 hours at the default
+interval.
+
+A step decision requires the operating rung (and, for the direction chosen,
+its neighbour) to be warm; `get cad`'s three-rung window shows exactly those
+levels, so the slope the controller is acting on is visible directly. The
+offset is persisted to flash whenever it steps.
 
 The offset is clamped to **−8…+12** levels around the family base — wide
 enough that a dense hilltop can settle much less sensitive and a quiet

@@ -36,9 +36,59 @@ import sys
 # Provider identity
 # ---------------------------------------------------------------------------
 
-MAKER_KEY = "zephcore"
-MAKER_NAME = "ZephCore"
 DEVICE_CLASS = "zephcore"
+
+# `maker` is the DEVICE MANUFACTURER (not the firmware provider — the ZephCore
+# provider badge comes from Mesh America's registration, independent of this).
+# Folded devices use MeshCore's exact maker key so they group under the same
+# brand; new tiles use the hardware maker. Display names for the maker map:
+MAKERS = {
+    "rak": "RAK Wireless",
+    "seeed": "Seeed Studio",
+    "elecrow": "Elecrow",
+    "lilygo": "LilyGo",
+    "heltec": "Heltec",
+    "promicro": "ProMicro",
+    "gat-iot": "GAT-IoT",
+    "uniteng": "UnitEng",
+    "Ikoka": "Ikoka",
+    "femtofox": "Femtofox",
+}
+
+# Manufacturer per device name.
+MAKER_BY_DEVICE = {
+    "RAK WisBlock / WisMesh (RAK 4631)": "rak",
+    "RAK WisMesh 1W Booster (3401 + 13302)": "rak",
+    "RAK WisMesh Tag": "rak",
+    "Seeed Studio Wio Tracker L1 Pro": "seeed",
+    "Seeed Studio SenseCAP T1000-E": "seeed",
+    "Seeed Studio SenseCAP Solar": "seeed",
+    "Seeed Studio Xiao nRF52 WIO": "seeed",
+    "Seeed Studio Xiao C3": "seeed",
+    "Seeed Studio Xiao S3 WIO": "seeed",
+    "Seeed Studio Xiao ESP32-C6": "seeed",
+    "Elecrow ThinkNode M1": "elecrow",
+    "Elecrow ThinkNode M3": "elecrow",
+    "Elecrow ThinkNode M6": "elecrow",
+    "Ikoka Nano": "Ikoka",
+    "LilyGo T-Echo": "lilygo",
+    "LilyGo T-Beam (SX1262)": "lilygo",
+    "LilyGo T-Impulse Plus": "lilygo",
+    "LilyGo T-Lora C6": "lilygo",
+    "ProMicro nrf52 (faketec)": "promicro",
+    "Heltec T114": "heltec",
+    "Heltec T096": "heltec",
+    "Heltec v3": "heltec",
+    "Heltec v4": "heltec",
+    "Heltec v4.3": "heltec",
+    "Heltec Wireless Tracker": "heltec",
+    "Heltec Wireless Tracker v2": "heltec",
+    "GAT-IoT GAT562 30s": "gat-iot",
+    "UnitEng Station G2": "uniteng",
+    "Femtofox (Luckfox Pico Mini)": "femtofox",
+    "RAK6421 WisMesh (Raspberry Pi)": "rak",
+    "RAK6421 WisMesh (Raspberry Pi 5)": "rak",
+}
 
 DESCRIPTION = (
     "ZephCore is an independent, ground-up implementation of the MeshCore "
@@ -99,7 +149,7 @@ BOARDS = [
 
     # --- nRF52: new ZephCore-only hardware (own tile) ---------------------
     dict(stem="lilygo_timpulse_plus", kind="nrf", device="LilyGo T-Impulse Plus", new=True, img="lora.svg"),
-    dict(stem="heltec_t096",          kind="nrf", device="Heltec T96",            new=True, img="lora.svg"),
+    dict(stem="heltec_t096",          kind="nrf", device="Heltec T096",           new=True, img="lora.svg"),
 
     # --- ESP32 (sysbuild/MCUboot, -merged.bin): fold ---------------------
     dict(stem="xiao_esp32c3",                      kind="esp32", device="Seeed Studio Xiao C3"),
@@ -182,6 +232,7 @@ def build(assets, url_base, version):
     devices = {}   # name -> device object (first-seen order preserved)
     order = []
     used_roles = set()
+    used_makers = set()
     stats = {"fold": 0, "new": 0, "skipped": []}
 
     def spec_files(triples):
@@ -208,8 +259,10 @@ def build(assets, url_base, version):
             continue
 
         if name not in devices:
+            maker = MAKER_BY_DEVICE[name]   # KeyError if a device is unmapped
+            used_makers.add(maker)
             dev = {
-                "maker": MAKER_KEY,
+                "maker": maker,
                 "class": DEVICE_CLASS,
                 "name": name,
                 "type": DEVICE_TYPE[board["kind"]],
@@ -230,7 +283,7 @@ def build(assets, url_base, version):
 
     catalog = {
         "description": DESCRIPTION,
-        "maker": {MAKER_KEY: {"name": MAKER_NAME}},
+        "maker": {k: {"name": MAKERS[k]} for k in sorted(used_makers)},
         "device": [devices[n] for n in order],
     }
     role_map = {k: v for k, v in CUSTOM_ROLES.items() if k in used_roles}

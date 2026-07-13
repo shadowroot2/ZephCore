@@ -1022,6 +1022,17 @@ bool CompanionMesh::vcontactHandleFrame(const uint8_t *data, size_t len)
 			bool dup = (msg_timestamp != 0 && msg_timestamp == _vcontact_last_ts);
 			_vcontact_last_ts = msg_timestamp;
 
+			/* Emit the SENT response FIRST. It is the synchronous reply the
+			 * app's send request blocks on; the CLI command below runs on this
+			 * thread and can take a second or more (e.g. `get cad`, `advert`).
+			 * Deferring SENT until after the command ran let the app's response
+			 * timer fire and auto-retry the send, producing the duplicate
+			 * replies (and the lingering "sending" state) users reported. */
+			uint32_t ack = 0;
+			getRNG()->random((uint8_t *)&ack, 4);
+			if (ack == 0) ack = 1;
+			sendPacketSent(MSG_SEND_SENT_DIRECT, ack, 3000);
+
 			char reply[VCONTACT_CLI_REPLY_SIZE];
 			reply[0] = '\0';
 			if (!dup) {
@@ -1041,12 +1052,7 @@ bool CompanionMesh::vcontactHandleFrame(const uint8_t *data, size_t len)
 				LOG_DBG("vcontact CLI: dup ts=%u, re-ack only", msg_timestamp);
 			}
 
-			/* Synthesize the normal send/ack choreography: SENT response,
-			 * then an immediate delivery confirmation (loopback, 0 ms). */
-			uint32_t ack = 0;
-			getRNG()->random((uint8_t *)&ack, 4);
-			if (ack == 0) ack = 1;
-			sendPacketSent(MSG_SEND_SENT_DIRECT, ack, 3000);
+			/* Delivery confirmation (loopback, 0 ms trip), then the reply. */
 			uint8_t ack_push[8];
 			memcpy(ack_push, &ack, 4);
 			memset(&ack_push[4], 0, 4);  /* trip time: 0 ms */
@@ -1092,8 +1098,34 @@ bool CompanionMesh::vcontactHandleFrame(const uint8_t *data, size_t len)
 		}
 		return false;
 
+	case CMD_SEND_TELEMETRY_REQ:
+		/* Contact telemetry request: [cmd][3 reserved][32-byte pubkey].
+		 * The v-contact represents THIS node, so its telemetry is our own
+		 * self-telemetry. Synthesize the SENT ack the app blocks on, then push
+		 * a TELEMETRY_RESPONSE tagged with the v-contact key so the app matches
+		 * it to the loopback contact. (Real contacts fall through to the async
+		 * RF path below; the loopback key just isn't in the contacts table.) */
+		if (len >= 4 + PUB_KEY_SIZE && isVContactKey(&data[4], PUB_KEY_SIZE)) {
+			uint32_t tag = 0;
+			getRNG()->random((uint8_t *)&tag, 4);
+			if (tag == 0) tag = 1;
+			sendPacketSent(MSG_SEND_SENT_DIRECT, tag, 3000);
+
+			uint8_t rsp[8 + 4 + 11 + 11 + (12 * POWER_MAX_CHANNELS) + 8];
+			int i = 0;
+			rsp[i++] = PUSH_CODE_TELEMETRY_RESPONSE;
+			rsp[i++] = 0;  /* reserved */
+			memcpy(&rsp[i], _vcontact_pubkey, 6);
+			i += 6;
+			i += appendSelfTelemetry(&rsp[i],
+				TELEM_PERM_BASE | TELEM_PERM_LOCATION | TELEM_PERM_ENVIRONMENT);
+			sendPush(rsp[0], &rsp[1], i - 1);
+			return true;
+		}
+		return false;
+
 	default:
-		/* Every other pubkey-addressed opcode (login, telemetry, binary req,
+		/* Every other pubkey-addressed opcode (login, binary req,
 		 * path discovery, export, ...) resolves the contact via
 		 * lookupContactByPubKey(); the v-contact is never in the table, so
 		 * they fail with ERR_NOT_FOUND before any packet exists. */
