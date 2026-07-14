@@ -463,6 +463,7 @@ static void action_ble_toggle(void)
 
 	LOG_INF("BLE toggle → %s", now_enabled ? "on" : "off");
 	s->ble_enabled = now_enabled;
+	ui_led_set_ble_enabled(now_enabled);
 	mesh_ble_set_enabled(now_enabled);
 	schedule_render();
 }
@@ -495,6 +496,8 @@ static void action_deep_sleep(void)
 {
 #ifdef CONFIG_POWEROFF
 	LOG_INF("deep sleep: shutting down...");
+
+	ui_notify_shutdown();
 
 	/* Shutdown melody — blocking wait is fine on this terminal path. */
 #ifdef CONFIG_ZEPHCORE_UI_BUZZER
@@ -588,8 +591,10 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 		return;
 	}
 
-	/* Reset auto-off timer on any button press */
-	mc_display_reset_auto_off();
+	/* Any button press should wake/restore the display backlight and reset
+	 * auto-off. This is harmless when already on and fixes EPD frontlights
+	 * whose GPIO state can be off while the bistable content remains visible. */
+	mc_display_on();
 #endif
 
 	/* Dismiss splash screen on any button press */
@@ -661,6 +666,14 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 		break;
 
 	case INPUT_KEY_LEFT:
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
+		/* Some one-button boards map double tap to KEY_LEFT. On the Advert
+		 * page that gesture means flood advert, not page-back. */
+		if (ui_pages_current() == UI_PAGE_ADVERT) {
+			action_flood_advert();
+			break;
+		}
+#endif
 		action_page_prev();
 		break;
 
@@ -870,6 +883,7 @@ void ui_set_ble_status(bool connected, const char *name)
 	struct ui_state *s = get_state();
 
 	s->ble_connected = connected;
+	ui_led_set_ble_connected(connected);
 	if (name) {
 		strncpy(s->device_name, name, sizeof(s->device_name) - 1);
 		s->device_name[sizeof(s->device_name) - 1] = '\0';
@@ -1026,6 +1040,7 @@ void ui_set_ble_enabled(bool enabled)
 	struct ui_state *s = get_state();
 
 	s->ble_enabled = enabled;
+	ui_led_set_ble_enabled(enabled);
 }
 
 void ui_set_buzzer_quiet(bool quiet)

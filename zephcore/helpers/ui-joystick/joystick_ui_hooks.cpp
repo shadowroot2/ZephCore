@@ -118,11 +118,13 @@ extern "C" void ui_notify(enum ui_event event)
 
 	switch (event) {
 	case UI_EVENT_BLE_CONNECTED:
+		ui_led_set_ble_connected(true);
 		s_task->setBLEConnected(true);
 		s_task->notify();
 		break;
 
 	case UI_EVENT_BLE_DISCONNECTED:
+		ui_led_set_ble_connected(false);
 		s_task->setBLEConnected(false);
 		s_task->notify();
 		break;
@@ -200,6 +202,7 @@ extern "C" void ui_notify_packet_sent(void)
 extern "C" void ui_set_ble_status(bool connected, const char *name)
 {
 	(void)name;
+	ui_led_set_ble_connected(connected);
 	if (s_task) {
 		s_task->setBLEConnected(connected);
 		s_task->notify();
@@ -243,6 +246,7 @@ extern "C" void ui_set_battery(uint16_t mv, uint8_t /*pct*/)
 
 extern "C" void ui_set_ble_enabled(bool enabled)
 {
+	ui_led_set_ble_enabled(enabled);
 	if (s_task) {
 		s_task->setBLEEnabled(enabled);
 	}

@@ -41,6 +41,7 @@ ESP32_boards=(
     heltec_wifi_lora32_v4/esp32s3/procpu
     heltec_wifi_lora32_v43/esp32s3/procpu
     heltec_wireless_tracker/esp32s3/procpu
+    thinknode_m5/esp32s3/procpu
     ttgo_tbeam/esp32/procpu
 )
 
@@ -199,9 +200,15 @@ size = parse_cell(m.group(1))
 print(str(size // 1048576) + "MB")
                 ' "${ZEPHYR_DTS:-build/zephcore/zephyr/zephyr.dts}"
             )
+            FLASH_MODE="dio"
+            FLASH_FREQ="40m"
+            if [[ $board == "thinknode_m5/esp32s3/procpu" ]]; then
+                FLASH_MODE="dio"
+                FLASH_FREQ="80m"
+            fi
             python -m esptool --chip "$chip" merge-bin \
             --output firmware/"$board_clean_for_path"-companion-"$COMMIT_HASH"-merged.bin \
-            --flash-mode dio --flash-freq 40m --flash-size "$FLASH_SIZE" \
+            --flash-mode "$FLASH_MODE" --flash-freq "$FLASH_FREQ" --flash-size "$FLASH_SIZE" \
             0x00000 build/mcuboot/zephyr/zephyr.bin \
             0x20000 build/zephcore/zephyr/zephyr.signed.bin
             mv build/zephcore/zephyr/zephyr.signed.bin firmware/"$board_clean_for_path"-companion-"$COMMIT_HASH".bin

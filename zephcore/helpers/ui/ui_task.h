@@ -165,6 +165,13 @@ void ui_set_leds_disabled(bool disabled);
 void ui_set_heartbeat_led(bool enabled);
 
 /**
+ * Update LED-only BLE state. Boards that opt in with the ble-status-led alias
+ * can mirror the heartbeat while BLE is enabled but not connected.
+ */
+void ui_led_set_ble_connected(bool connected);
+void ui_led_set_ble_enabled(bool enabled);
+
+/**
  * Flash the heartbeat LED immediately on message receipt.
  * Cancels the current cycle, pulses, then resumes normal heartbeat.
  */
@@ -216,19 +223,33 @@ void ui_set_power_source_provider(bool (*provider)(void));
  * Set the runtime low-battery auto-shutdown threshold in millivolts.
  * 0 disables the check. Seeded at boot from prefs (which default to
  * CONFIG_ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS) and updated live by the CLI.
- * No-op on builds where the feature is compiled out (non-nRF52).
  */
 void ui_set_auto_shutdown_mv(uint16_t mv);
+
+/**
+ * Register an optional hook called just before shutdown.
+ * battery_mv is the confirmed low battery reading; uptime_ms is boot uptime.
+ * The hook runs in the caller's thread and may block briefly.
+ */
+typedef void (*ui_auto_shutdown_notify_cb_t)(uint16_t battery_mv, uint32_t uptime_ms);
+void ui_set_auto_shutdown_notify_callback(ui_auto_shutdown_notify_cb_t cb);
+
+/**
+ * Send the registered shutdown notification immediately, if any.
+ * Manual shutdown paths use the current battery reading; auto-shutdown uses
+ * the confirmed low-battery reading directly.
+ */
+void ui_notify_shutdown(void);
 
 /**
  * Low-battery auto-shutdown check (companion only).
  *
  * Call from the periodic housekeeping tick — it self-throttles its own ADC
- * sampling, so calling it every tick is cheap (no extra polling). When
- * CONFIG_ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS is 0 this is a no-op. Otherwise,
- * if the battery is below the threshold AND not externally powered, it shows
- * a brief warning (3 s on OLED, instant-persist on e-paper) and powers off
- * via ui_prepare_for_system_off() + sys_poweroff().
+ * sampling, so calling it every tick is cheap (no extra polling). When the
+ * runtime threshold is 0 this is a no-op. Otherwise, if the battery is below
+ * the threshold AND not externally powered, it shows a brief warning (3 s on
+ * OLED, instant-persist on e-paper) and powers off via
+ * ui_prepare_for_system_off() + sys_poweroff().
  */
 void ui_auto_shutdown_check(void);
 

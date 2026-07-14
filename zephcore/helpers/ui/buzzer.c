@@ -364,21 +364,13 @@ static void note_work_handler(struct k_work *work)
 
 int buzzer_init(void)
 {
-	/* Check for buzzer alias in devicetree */
-	const struct device *pwm_dev = DEVICE_DT_GET_OR_NULL(DT_NODELABEL(pwm0));
-
-	if (!pwm_dev || !device_is_ready(pwm_dev)) {
-		LOG_INF("no PWM device found - buzzer disabled");
-		return -ENODEV;
-	}
-
-	/* Get PWM spec from the buzzer node via alias */
 	if (!DT_HAS_ALIAS(buzzer)) {
 		LOG_INF("no buzzer alias in DT - buzzer disabled");
 		return -ENODEV;
 	}
 
-	/* PWM spec from the pwm-leds buzzer node */
+	/* PWM spec from the pwm-leds buzzer node. Do not assume the PWM
+	 * controller is named pwm0; ESP32 LEDC boards expose it as ledc0. */
 	ctx.pwm = (struct pwm_dt_spec)PWM_DT_SPEC_GET(DT_ALIAS(buzzer));
 
 	if (!pwm_is_ready_dt(&ctx.pwm)) {

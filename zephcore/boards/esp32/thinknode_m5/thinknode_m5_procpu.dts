@@ -1,0 +1,271 @@
+/*
+ * SPDX-License-Identifier: MIT
+ * Elecrow ThinkNode M5 — ESP32-S3-WROOM-1-N4 + SX1262
+ *
+ * Hardware mapping is ported from official MeshCore variants/thinknode_m5:
+ *   LoRa SPI2:  SCLK=16, MOSI=15, MISO=7, NSS=17
+ *   LoRa ctrl:  EN=46, DIO1=4, RESET=6, BUSY=5, DIO2 RF switch, DIO3 3.3V TCXO
+ *   GPS UART1:  TX=19, RX=20, EN=11, RESET=13, SWITCH=10
+ *   Battery:    GPIO8 ADC, 12 dB attenuation, 2.11 divider multiplier
+ *   I2C0:       SDA=2, SCL=1
+ *   I2C1:       SDA=48, SCL=47, PCA9557 GPIO expander @0x18
+ *   E-Ink SPI3: SCLK=38, MOSI=45, CS=39, DC=40, RST=41, BUSY=42
+ *   Console:    UART0 TX=43, RX=44
+ *   Buttons:    USER=21, PWR/BACK=14
+ *   Buzzer:     GPIO9
+ */
+
+/dts-v1/;
+
+#include <espressif/esp32s3/esp32s3_wroom_n4.dtsi>
+#include "thinknode_m5-pinctrl.dtsi"
+#include <zephyr/dt-bindings/adc/adc.h>
+#include <zephyr/dt-bindings/input/input-event-codes.h>
+#include <zephyr/dt-bindings/lora/sx126x.h>
+#include <zephyr/dt-bindings/pwm/pwm.h>
+#include <espressif/partitions_0x0_default_4M.dtsi>
+
+/ {
+	model = "Elecrow ThinkNode M5";
+	compatible = "elecrow,thinknode-m5";
+
+	chosen {
+		zephyr,sram = &sram1;
+		zephyr,console = &uart0;
+		zephyr,shell-uart = &uart0;
+		zephyr,flash = &flash0;
+		zephyr,code-partition = &slot0_partition;
+		zephyr,bt-hci = &esp32_bt_hci;
+	};
+
+		aliases {
+			lora0 = &lora;
+			sw0 = &page_button;
+			sw1 = &enter_button;
+			watchdog0 = &wdt0;
+			buzzer = &buzzer;
+			gps-enable = &gps_enable_pin;
+			gps-reset = &gps_reset_pin;
+	};
+
+	buttons: buttons {
+		compatible = "gpio-keys";
+
+			page_button: button_0 {
+				gpios = <&gpio0 21 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
+				label = "Page Button";
+				zephyr,code = <INPUT_KEY_0>;
+			};
+
+			enter_button: button_1 {
+				gpios = <&gpio0 14 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
+				label = "Enter Button";
+				zephyr,code = <INPUT_KEY_ENTER>;
+			};
+		};
+
+	page_btn_multitap {
+		compatible = "zephcore,input-multi-tap";
+		input-codes = <INPUT_KEY_0>;
+		tap-codes = <INPUT_KEY_1 INPUT_KEY_LEFT>;
+		tap-delay-ms = <400>;
+	};
+
+	lora_power: lora-power {
+		compatible = "regulator-fixed";
+		regulator-name = "lora-power";
+		enable-gpios = <&gpio1 14 GPIO_ACTIVE_HIGH>;  /* GPIO46 */
+		regulator-boot-on;
+		regulator-always-on;
+	};
+
+	gps_en: gps-enable {
+		compatible = "gpio-leds";
+		gps_enable_pin: gps_enable {
+			gpios = <&gpio0 11 GPIO_ACTIVE_HIGH>;
+			label = "GPS Enable";
+		};
+	};
+
+	gps_rst: gps-reset {
+		compatible = "gpio-leds";
+		gps_reset_pin: gps_reset {
+			gpios = <&gpio0 13 GPIO_ACTIVE_LOW>;
+			label = "GPS Reset";
+		};
+	};
+
+	gps_switch: gps-switch {
+		compatible = "gpio-keys";
+		gps_sw: gps_sw {
+			gpios = <&gpio0 10 GPIO_ACTIVE_HIGH>;
+			label = "GPS Switch";
+			zephyr,code = <INPUT_KEY_G>;
+		};
+	};
+
+	zephyr,user {
+		io-channels = <&adc0 7>;       /* GPIO8 = ADC1 channel 7 */
+		/* Same formula style as M1: ADC full-scale * divider.
+		 * ESP32 Zephyr ADC_GAIN_1_4 maps to 12 dB attenuation, so the
+		 * logical full-scale is 1100mV / (1/4) = 4400mV. Meshtastic's M5
+		 * divider compensation is 2.0: 4400 * 2.0 = 8800. */
+		vbat-mv-multiplier = <8800>;
+	};
+
+	pwmbuzzer {
+		compatible = "pwm-leds";
+		buzzer: buzzer {
+			pwms = <&ledc0 0 PWM_MSEC(20) PWM_POLARITY_NORMAL>;
+		};
+	};
+};
+
+&cpu0 {
+	clock-frequency = <DT_FREQ_M(240)>;
+};
+
+&cpu1 {
+	clock-frequency = <DT_FREQ_M(240)>;
+};
+
+&gpio0 { status = "okay"; };
+&gpio1 { status = "okay"; };
+&wdt0 { status = "okay"; };
+&trng0 { status = "okay"; };
+
+&uart0 {
+	status = "okay";
+	current-speed = <115200>;
+	pinctrl-0 = <&uart0_default>;
+	pinctrl-names = "default";
+};
+
+&usb_serial {
+	status = "disabled";
+};
+
+&esp32_bt_hci {
+	status = "okay";
+};
+
+&wifi {
+	status = "okay";
+};
+
+&ledc0 {
+	pinctrl-0 = <&ledc0_default>;
+	pinctrl-names = "default";
+	status = "okay";
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	channel0@0 {
+		reg = <0x0>;
+		timer = <0>;
+	};
+};
+
+&i2c0 {
+	status = "okay";
+	clock-frequency = <I2C_BITRATE_FAST>;
+	pinctrl-0 = <&i2c0_default>;
+	pinctrl-names = "default";
+
+	#include "../../common/sensors-i2c.dtsi"
+	#include "../../common/rtc-i2c.dtsi"
+};
+
+&uart1 {
+	status = "okay";
+	current-speed = <9600>;
+	pinctrl-0 = <&uart1_default>;
+	pinctrl-names = "default";
+
+	gnss: gnss {
+		compatible = "luatos,air530z";
+		on-off-gpios = <&gpio0 11 GPIO_ACTIVE_HIGH>;
+	};
+};
+
+&spi2 {
+	status = "okay";
+	#address-cells = <1>;
+	#size-cells = <0>;
+	pinctrl-0 = <&spim2_default>;
+	pinctrl-names = "default";
+	cs-gpios = <&gpio0 17 GPIO_ACTIVE_LOW>;
+
+	lora: lora@0 {
+		compatible = "semtech,sx1262";
+		reg = <0>;
+		spi-max-frequency = <8000000>;
+
+		reset-gpios = <&gpio0 6 GPIO_ACTIVE_LOW>;
+		busy-gpios = <&gpio0 5 GPIO_ACTIVE_HIGH>;
+		dio1-gpios = <&gpio0 4 (GPIO_PULL_DOWN | GPIO_ACTIVE_HIGH)>;
+
+		dio2-tx-enable;
+		dio3-tcxo-voltage = <SX126X_DIO3_TCXO_3V3>;
+		tcxo-power-startup-delay-ms = <10>;
+		startup-delay-ms = <10>;
+		rx-boosted;
+	};
+};
+
+&adc0 {
+	status = "okay";
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	channel@7 {
+		reg = <7>;
+		/* MeshCore reads M5 VBAT with ADC_11db; Zephyr's closest ESP32
+		 * mapping is ADC_GAIN_1_4 -> ADC_ATTEN_DB_12. */
+		zephyr,gain = "ADC_GAIN_1_4";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,resolution = <12>;
+	};
+};
+
+/*
+ * Flash partitions — 4 MB layout with a small NVS store and LittleFS area.
+ * Matches the existing XIAO ESP32-S3 ZephCore 4 MB companion layout.
+ */
+/delete-node/ &slot0_lpcore_partition;
+/delete-node/ &slot1_lpcore_partition;
+/delete-node/ &storage_partition;
+/delete-node/ &scratch_partition;
+/delete-node/ &coredump_partition;
+/delete-node/ &slot0_partition;
+/delete-node/ &slot1_partition;
+
+/ {
+	chosen {
+		zephyr,settings-partition = &storage_partition;
+	};
+};
+
+&flash0 {
+	partitions {
+		slot0_partition: partition@20000 {
+			label = "image-0";
+			reg = <0x20000 0x1BE000>;
+		};
+		slot1_partition: partition@1de000 {
+			label = "image-1";
+			reg = <0x1DE000 0x1BE000>;
+		};
+		storage_partition: partition@39c000 {
+			label = "storage";
+			reg = <0x39C000 0x4000>;
+		};
+		lfs_partition: partition@3a0000 {
+			label = "lfs";
+			reg = <0x3A0000 0x60000>;
+		};
+	};
+};
+
+#include "../../common/filesystem.dtsi"

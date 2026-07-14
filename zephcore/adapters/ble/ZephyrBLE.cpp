@@ -6,18 +6,17 @@
  * Pairing is triggered reactively by ATT_ERR_AUTHENTICATION on secured GATT
  * attributes (Apple §55 compliant — no proactive Security Request on connect).
  *
- * Advertising: always uses the identity address (BT_LE_ADV_OPT_USE_IDENTITY in
- * start_adv).  On ESP32, CONFIG_BT_PRIVACY=y is load-bearing (the Espressif
- * controller's privacy-OFF Secure-Connections path MIC-fails against iOS — see
- * findings.md Issue #34), but USE_IDENTITY keeps us off the RPA so the Android
- * companion's "connect from app" still works.  nRF/MG24 keep privacy OFF and
- * already advertise identity, so USE_IDENTITY is a no-op there.
+ * Advertising: legacy connectable advertising with the NUS UUID.  When host
+ * privacy is enabled, start_adv() adds BT_LE_ADV_OPT_USE_IDENTITY so ESP32 can
+ * keep its privacy-enabled security path without advertising an RPA.  Boards
+ * that disable privacy advertise like Arduino MeshCore: no extra identity flag.
  */
 
 #include <stdio.h>
 #include <string.h>
 #include <zephyr/kernel.h>
 #include <zephyr/sys/util.h>
+#include <zephyr/sys/printk.h>
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(zephcore_ble, CONFIG_ZEPHCORE_BLE_LOG_LEVEL);
@@ -53,6 +52,12 @@ LOG_MODULE_REGISTER(zephcore_ble, CONFIG_ZEPHCORE_BLE_LOG_LEVEL);
  * stuck frame retries at this cadence.  Slow enough to not hammer the
  * BLE stack when the link is marginal, fast enough to recover quickly. */
 #define BLE_TX_OVERFLOW_RETRY_MS 250
+
+#if IS_ENABLED(CONFIG_ZEPHCORE_BLE_BOOT_DIAG)
+#define BLE_BOOT_DIAG(...) printk(__VA_ARGS__)
+#else
+#define BLE_BOOT_DIAG(...) do { } while (0)
+#endif
 
 /* App push notifications are 0x80+; protocol response packets are < 0x80. */
 #define PUSH_CODE_BASE 0x80
@@ -1228,15 +1233,19 @@ static void start_adv(void)
 
 	uint16_t interval = fast_adv_active ? BT_ADV_FAST_INTERVAL : BT_ADV_INTERVAL;
 
-	/* USE_IDENTITY: advertise the stable identity address instead of an RPA,
-	 * even when CONFIG_BT_PRIVACY=y.  Keeps the controller in its (working)
-	 * privacy-enabled SC encryption path for iOS while exposing a fixed address
-	 * so the Android companion app's "connect from app" flow works.  See
-	 * findings.md Issue #34 iOS-privacy capture (controller MIC failure 0x3d on
-	 * the privacy-off SC path). */
+	/* USE_IDENTITY only matters when host privacy is enabled.  ESP32 keeps the
+	 * privacy-enabled controller path, but advertises the stable identity
+	 * address so the companion can discover and reconnect predictably.  Do not
+	 * set BT_LE_ADV_OPT_SCANNABLE here: legacy connectable advertising is
+	 * scannable in Zephyr, and Meshtastic also only sets scan-response data. */
+	uint32_t options = BT_LE_ADV_OPT_CONN;
+	if (IS_ENABLED(CONFIG_BT_PRIVACY)) {
+		options |= BT_LE_ADV_OPT_USE_IDENTITY;
+	}
+
 	struct bt_le_adv_param adv_param = {
 		.id = BT_ID_DEFAULT,
-		.options = BT_LE_ADV_OPT_CONN | BT_LE_ADV_OPT_USE_IDENTITY,
+		.options = options,
 		.interval_min = interval,
 		.interval_max = interval,
 	};
@@ -1244,10 +1253,15 @@ static void start_adv(void)
 	int err = bt_le_adv_start(&adv_param, ad, ad_len, sd, sd_len);
 	if (err && err != -EALREADY) {
 		LOG_ERR("adv start failed: %d", err);
+		BLE_BOOT_DIAG("BLE diag: adv start failed err=%d enabled=%d ad=%u sd=%u name=%s\n",
+			      err, ble_enabled ? 1 : 0, (unsigned)ad_len, (unsigned)sd_len,
+			      device_name);
 		adv_running = false;
 	} else {
 		LOG_INF("BLE advertising: %s",
 			fast_adv_active ? "20ms fast (60s)" : "211ms slow");
+		BLE_BOOT_DIAG("BLE diag: adv started err=%d interval=%u ad=%u sd=%u name=%s\n",
+			      err, interval, (unsigned)ad_len, (unsigned)sd_len, device_name);
 		adv_running = true;
 	}
 }
@@ -1281,17 +1295,21 @@ void zephcore_ble_init(const struct ble_callbacks *cbs)
 void zephcore_ble_start(const char *name)
 {
 	if (IS_ENABLED(CONFIG_SETTINGS)) {
+		BLE_BOOT_DIAG("BLE diag: settings_load begin\n");
 		/* NVS self-initializes the storage_partition on first mount: a
 		 * region carved from the old app slot reads as "all sectors closed",
 		 * which nvs_startup() reformats (erase-all) before settings load.
 		 * No app-side seeding needed. */
-		settings_load();
+		int settings_err = settings_load();
+		BLE_BOOT_DIAG("BLE diag: settings_load err=%d\n", settings_err);
 #if IS_ENABLED(CONFIG_BT_GATT_SERVICE_CHANGED)
 		gatt_layout_check_after_settings_load();
 #endif
 	}
 
 	build_device_name_and_adv(name);
+	BLE_BOOT_DIAG("BLE diag: built adv name=%s name_len=%u\n",
+		      device_name, (unsigned)strlen(device_name));
 	LOG_DBG("init complete, starting adv");
 	start_fast_adv();
 }
@@ -1389,10 +1407,12 @@ void zephcore_ble_set_enabled(bool enable)
 		k_work_cancel_delayable(&adv_slow_work);
 
 		LOG_INF("BLE disabled");
+		BLE_BOOT_DIAG("BLE diag: disabled\n");
 	} else {
 		/* Re-enable advertising — start fast window */
 		start_fast_adv();
 		LOG_INF("BLE enabled");
+		BLE_BOOT_DIAG("BLE diag: enabled\n");
 	}
 }
 bool zephcore_ble_is_enabled(void)
