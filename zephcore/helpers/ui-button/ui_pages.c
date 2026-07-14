@@ -20,7 +20,9 @@
 
 #include <time_sync.h>
 #include <ZephyrSensorManager.h>
+#include <helpers/battery_curve.h>
 
+#include <zephyr/devicetree.h>
 #include <zephyr/kernel.h>
 #include <stdio.h>
 #include <string.h>
@@ -81,6 +83,15 @@ static struct ui_state state;
  * Companion: full page set matching Arduino UI.
  * Navigation walks this array instead of the raw enum. */
 
+#define UI_HAS_GPS_PAGE \
+	(DT_HAS_COMPAT_STATUS_OKAY(gnss_nmea_generic) || \
+	 DT_HAS_COMPAT_STATUS_OKAY(u_blox_m8) || \
+	 DT_HAS_COMPAT_STATUS_OKAY(u_blox_f9p) || \
+	 DT_HAS_COMPAT_STATUS_OKAY(quectel_lcx6g) || \
+	 DT_HAS_COMPAT_STATUS_OKAY(quectel_lc76g) || \
+	 DT_HAS_COMPAT_STATUS_OKAY(luatos_air530z) || \
+	 DT_NODE_EXISTS(DT_ALIAS(gps_enable)))
+
 #ifdef ZEPHCORE_REPEATER
 static const enum ui_page active_pages[] = {
 	UI_PAGE_STATUS,
@@ -94,8 +105,12 @@ static const enum ui_page active_pages[] = {
 	UI_PAGE_RADIO,
 	UI_PAGE_BLUETOOTH,
 	UI_PAGE_ADVERT,
+#if UI_HAS_GPS_PAGE
 	UI_PAGE_GPS,
+#endif
+#ifdef CONFIG_ZEPHCORE_UI_BUZZER
 	UI_PAGE_BUZZER,
+#endif
 	UI_PAGE_LEDS,
 	UI_PAGE_SENSORS,
 	UI_PAGE_OFFGRID,
@@ -113,13 +128,7 @@ static int current_page_idx;
 
 static uint8_t calc_battery_pct(uint16_t mv)
 {
-	if (mv >= 4200) {
-		return 100;
-	}
-	if (mv <= 3000) {
-		return 0;
-	}
-	return (uint8_t)((mv - 3000) * 100 / 1200);
+	return battery_curve_lookup(&battery_curve_default, mv);
 }
 
 /* ========== Helper: Top Bar (Node Name + Battery) ========== */

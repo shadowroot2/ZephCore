@@ -55,6 +55,8 @@ void ui_play_startup_chime(void)
  * led1 is also claimed as a message indicator in non-repeater companion builds
  * when both led0 and led1 are present. The heartbeat cycle turns led1 on
  * only when msg count > 0, giving a visual unread-message reminder.
+ * If a board also declares ble-status-led, that LED follows the heartbeat
+ * while BLE is enabled but no client is connected.
  */
 
 #if DT_NODE_HAS_PROP(DT_ALIAS(led0), gpios)
@@ -80,14 +82,40 @@ static const struct gpio_dt_spec s_msg_led =
 #define HAS_MSG_LED 0
 #endif
 
+#if DT_NODE_HAS_PROP(DT_ALIAS(ble_status_led), gpios)
+static const struct gpio_dt_spec s_ble_status_led =
+	GPIO_DT_SPEC_GET(DT_ALIAS(ble_status_led), gpios);
+#define HAS_BLE_STATUS_LED 1
+#else
+#define HAS_BLE_STATUS_LED 0
+#endif
+
+#if DT_NODE_HAS_PROP(DT_ALIAS(led_enable), gpios)
+static const struct gpio_dt_spec s_led_enable =
+	GPIO_DT_SPEC_GET(DT_ALIAS(led_enable), gpios);
+#define HAS_LED_ENABLE 1
+#else
+#define HAS_LED_ENABLE 0
+#endif
+
+#if HAS_BLE_STATUS_LED && DT_SAME_NODE(DT_ALIAS(ble_status_led), DT_ALIAS(led0))
+#define HEARTBEAT_IS_BLE_STATUS_LED 1
+#else
+#define HEARTBEAT_IS_BLE_STATUS_LED 0
+#endif
+
 #define LED_CYCLE_MS    4000   /* Total heartbeat period */
-#define LED_ON_MS         20   /* Normal pulse width */
+#define LED_ON_MS        120   /* Normal pulse width */
 #define LED_ON_MSG_MS    200   /* Pulse width when unread messages */
 
 #if HAS_HEARTBEAT_LED
 static struct k_work_delayable s_led_on_work;
 static struct k_work_delayable s_led_off_work;
 static bool s_leds_disabled;
+#if HAS_BLE_STATUS_LED
+static bool s_ble_enabled = true;
+static bool s_ble_connected;
+#endif
 
 /*
  * Weak: returns current unread message count for pulse-width adaptation.
@@ -96,12 +124,30 @@ static bool s_leds_disabled;
  */
 __attribute__((weak)) uint16_t ui_led_get_msg_count(void) { return 0; }
 
+static void heartbeat_led_set(bool on)
+{
+#if HAS_LED_ENABLE
+	if (on) {
+		gpio_pin_set_dt(&s_led_enable, 1);
+	}
+#endif
+	gpio_pin_set_dt(&s_heartbeat_led, on ? 1 : 0);
+#if HAS_LED_ENABLE
+	if (!on) {
+		gpio_pin_set_dt(&s_led_enable, 0);
+	}
+#endif
+}
+
 static void led_off_work_handler(struct k_work *work)
 {
 	ARG_UNUSED(work);
-	gpio_pin_set_dt(&s_heartbeat_led, 0);
+	heartbeat_led_set(false);
 #if HAS_MSG_LED
 	gpio_pin_set_dt(&s_msg_led, 0);
+#endif
+#if HAS_BLE_STATUS_LED
+	gpio_pin_set_dt(&s_ble_status_led, 0);
 #endif
 	uint16_t on_ms = (ui_led_get_msg_count() > 0) ? LED_ON_MSG_MS : LED_ON_MS;
 
@@ -115,10 +161,25 @@ static void led_on_work_handler(struct k_work *work)
 	uint16_t on_ms = (mc > 0) ? LED_ON_MSG_MS : LED_ON_MS;
 
 	if (!s_leds_disabled) {
-		gpio_pin_set_dt(&s_heartbeat_led, 1);
+#if HAS_BLE_STATUS_LED
+		bool ble_waiting = s_ble_enabled && !s_ble_connected;
+#endif
+#if !HEARTBEAT_IS_BLE_STATUS_LED
+		heartbeat_led_set(true);
+#else
+		if (ble_waiting) {
+			heartbeat_led_set(true);
+		}
+#endif
 #if HAS_MSG_LED
-		if (mc > 0) {
+		bool msg_led_on = (mc > 0);
+		if (msg_led_on) {
 			gpio_pin_set_dt(&s_msg_led, 1);
+		}
+#endif
+#if HAS_BLE_STATUS_LED && !HEARTBEAT_IS_BLE_STATUS_LED
+		if (ble_waiting) {
+			gpio_pin_set_dt(&s_ble_status_led, 1);
 		}
 #endif
 	}
@@ -138,6 +199,12 @@ void ui_led_heartbeat_init(void)
 #if HAS_HEARTBEAT_LED
 	if (gpio_is_ready_dt(&s_heartbeat_led)) {
 		gpio_pin_configure_dt(&s_heartbeat_led, GPIO_OUTPUT_INACTIVE);
+#if HAS_LED_ENABLE
+		if (gpio_is_ready_dt(&s_led_enable)) {
+			gpio_pin_configure_dt(&s_led_enable, GPIO_OUTPUT_INACTIVE);
+			LOG_INF("LED enable ready");
+		}
+#endif
 		k_work_init_delayable(&s_led_on_work, led_on_work_handler);
 		k_work_init_delayable(&s_led_off_work, led_off_work_handler);
 		k_work_reschedule(&s_led_on_work, K_NO_WAIT);
@@ -147,6 +214,12 @@ void ui_led_heartbeat_init(void)
 	if (gpio_is_ready_dt(&s_msg_led)) {
 		gpio_pin_configure_dt(&s_msg_led, GPIO_OUTPUT_INACTIVE);
 		LOG_INF("msg LED ready");
+	}
+#endif
+#if HAS_BLE_STATUS_LED && !HEARTBEAT_IS_BLE_STATUS_LED
+	if (gpio_is_ready_dt(&s_ble_status_led)) {
+		gpio_pin_configure_dt(&s_ble_status_led, GPIO_OUTPUT_INACTIVE);
+		LOG_INF("BLE status LED ready");
 	}
 #endif
 #endif
@@ -162,13 +235,34 @@ void ui_set_heartbeat_led(bool enabled)
 	} else {
 		k_work_cancel_delayable(&s_led_on_work);
 		k_work_cancel_delayable(&s_led_off_work);
-		gpio_pin_set_dt(&s_heartbeat_led, 0);
+		heartbeat_led_set(false);
 #if HAS_MSG_LED
 		gpio_pin_set_dt(&s_msg_led, 0);
+#endif
+#if HAS_BLE_STATUS_LED
+		gpio_pin_set_dt(&s_ble_status_led, 0);
 #endif
 	}
 #else
 	(void)enabled;
+#endif
+}
+
+void ui_led_set_ble_connected(bool connected)
+{
+#if HAS_BLE_STATUS_LED
+	s_ble_connected = connected;
+#else
+	ARG_UNUSED(connected);
+#endif
+}
+
+void ui_led_set_ble_enabled(bool enabled)
+{
+#if HAS_BLE_STATUS_LED
+	s_ble_enabled = enabled;
+#else
+	ARG_UNUSED(enabled);
 #endif
 }
 
@@ -179,9 +273,12 @@ void ui_set_leds_disabled(bool disabled)
 	if (disabled) {
 		k_work_cancel_delayable(&s_led_on_work);
 		k_work_cancel_delayable(&s_led_off_work);
-		gpio_pin_set_dt(&s_heartbeat_led, 0);
+		heartbeat_led_set(false);
 #if HAS_MSG_LED
 		gpio_pin_set_dt(&s_msg_led, 0);
+#endif
+#if HAS_BLE_STATUS_LED
+		gpio_pin_set_dt(&s_ble_status_led, 0);
 #endif
 	} else if (!k_work_delayable_is_pending(&s_led_on_work) &&
 		   !k_work_delayable_is_pending(&s_led_off_work)) {
@@ -206,7 +303,7 @@ void ui_led_flash_msg(void)
 	if (!s_leds_disabled && gpio_is_ready_dt(&s_heartbeat_led)) {
 		k_work_cancel_delayable(&s_led_on_work);
 		k_work_cancel_delayable(&s_led_off_work);
-		gpio_pin_set_dt(&s_heartbeat_led, 1);
+		heartbeat_led_set(true);
 		k_work_reschedule(&s_led_off_work, K_MSEC(LED_ON_MSG_MS));
 	}
 #endif
@@ -219,9 +316,9 @@ void ui_led_flash_shutdown(void)
 #if HAS_HEARTBEAT_LED
 	if (gpio_is_ready_dt(&s_heartbeat_led)) {
 		for (int i = 0; i < 3; i++) {
-			gpio_pin_set_dt(&s_heartbeat_led, 1);
+			heartbeat_led_set(true);
 			k_sleep(K_MSEC(100));
-			gpio_pin_set_dt(&s_heartbeat_led, 0);
+			heartbeat_led_set(false);
 			if (i < 2) {
 				k_sleep(K_MSEC(100));
 			}
@@ -357,10 +454,8 @@ void ui_prepare_for_system_off(void)
 
 /* ========== Low-battery auto-shutdown ==========
  * Companion only. Driven off the existing housekeeping tick — self-throttled,
- * so there is no dedicated poll. Disabled entirely (compiled out) unless a
- * board sets CONFIG_ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS > 0. */
-#if defined(CONFIG_ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS) && \
-	CONFIG_ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS > 0
+ * so there is no dedicated poll. A threshold of 0 disables runtime checks but
+ * keeps the code present so CLI/prefs can enable it later. */
 
 /* How often we actually sample the ADC for the shutdown check. The caller
  * fires every housekeeping tick (~5 s); this gate keeps the divider from
@@ -377,10 +472,34 @@ void ui_prepare_for_system_off(void)
  * overridden at boot from prefs and live via the CLI (ui_set_auto_shutdown_mv). */
 static uint16_t s_auto_shutdown_mv = CONFIG_ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS;
 static uint8_t  s_low_count;
+static ui_auto_shutdown_notify_cb_t s_auto_shutdown_notify_cb;
+static bool s_shutdown_notify_sent;
 
 void ui_set_auto_shutdown_mv(uint16_t mv)
 {
 	s_auto_shutdown_mv = mv;
+}
+
+void ui_set_auto_shutdown_notify_callback(ui_auto_shutdown_notify_cb_t cb)
+{
+	s_auto_shutdown_notify_cb = cb;
+}
+
+static void notify_shutdown_with_mv(uint16_t mv, uint32_t uptime_ms)
+{
+	if (!s_auto_shutdown_notify_cb || s_shutdown_notify_sent) {
+		return;
+	}
+
+	s_shutdown_notify_sent = true;
+	s_auto_shutdown_notify_cb(mv, uptime_ms);
+}
+
+void ui_notify_shutdown(void)
+{
+	uint16_t mv = s_batt_provider ? s_batt_provider() : 0;
+
+	notify_shutdown_with_mv(mv, k_uptime_get_32());
 }
 
 #ifdef CONFIG_ZEPHCORE_UI_DISPLAY
@@ -452,6 +571,8 @@ void ui_auto_shutdown_check(void)
 
 	LOG_WRN("auto-shutdown: confirmed — powering off");
 
+	notify_shutdown_with_mv(mv, now);
+
 #ifdef CONFIG_ZEPHCORE_UI_DISPLAY
 	auto_shutdown_warn_screen();
 #endif
@@ -464,13 +585,6 @@ void ui_auto_shutdown_check(void)
 	LOG_WRN("auto-shutdown: CONFIG_POWEROFF not enabled — cannot power off");
 #endif
 }
-
-#else  /* feature disabled (non-nRF52 / threshold default 0) */
-
-void ui_set_auto_shutdown_mv(uint16_t mv) { (void)mv; }
-void ui_auto_shutdown_check(void) { }
-
-#endif /* CONFIG_ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS > 0 */
 
 /* ========== Shared splash logo ==========
  * 128×13 ZephCore wordmark, MSB-first row-major (Adafruit XBM/drawBitmap

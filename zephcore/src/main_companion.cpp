@@ -18,6 +18,8 @@
 LOG_MODULE_REGISTER(zephcore_main, CONFIG_ZEPHCORE_MAIN_LOG_LEVEL);
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
+#include <zephyr/drivers/uart.h>
+#include <zephyr/sys/ring_buffer.h>
 
 #include <ZephyrDataStore.h>
 #include <adapters/clock/ZephyrRTCClock.h>
@@ -41,6 +43,12 @@ LOG_MODULE_REGISTER(zephcore_main, CONFIG_ZEPHCORE_MAIN_LOG_LEVEL);
  * enabled (CONFIG_ZEPHCORE_COMPANION_USB, default-y on USB-capable boards). */
 #define ZEPHCORE_USB_STACK \
 	(IS_ENABLED(CONFIG_LOG) || IS_ENABLED(CONFIG_ZEPHCORE_COMPANION_USB))
+
+#define ZEPHCORE_UART_TEXT_CLI \
+	(!ZEPHCORE_USB_STACK && DT_HAS_CHOSEN(zephyr_console) && \
+	 IS_ENABLED(CONFIG_UART_INTERRUPT_DRIVEN))
+
+#define ZEPHCORE_TEXT_CLI (ZEPHCORE_USB_STACK || ZEPHCORE_UART_TEXT_CLI)
 
 #if ZEPHCORE_USB_STACK
 #include <ZephyrCompanionUSB.h>
@@ -96,6 +104,7 @@ extern "C" void bt_ctlr_assert_handle(char *file, uint32_t line)
 /* Forward decl — data_store + companion_mesh_ptr statics are defined further
  * down in the file, so mesh_event_loop() can't reference them directly. */
 static void save_prefs_to_flash(void);
+static void auto_shutdown_notify_public(uint16_t battery_mv, uint32_t uptime_ms);
 #endif
 
 /* Pending epoch for a deferred zephcore_rtc_save(). gps_fix_callback runs on
@@ -137,7 +146,7 @@ static void request_rtc_save(uint32_t epoch)
 static void process_companion_rx(void);   /* runs on MAIN thread (see ble_on_rx_frame) */
 static void run_contact_iteration(void);  /* runs on MAIN thread (see MESH_EVENT_CONTACT_ITER) */
 static void housekeeping_timer_fn(struct k_timer *timer);
-#if ZEPHCORE_USB_STACK
+#if ZEPHCORE_TEXT_CLI
 static void companion_cli_run(const char *line);  /* main-thread text-CLI exec */
 #endif
 
@@ -155,9 +164,9 @@ static void joystick_signal_tx(void)
 }
 #endif
 
-#if ZEPHCORE_USB_STACK
-/* Completed USB text-CLI lines are run on the MAIN thread (the USB adapter
- * assembles them on sysworkq).  CommonCLI::handleCommand mutates mesh state
+#if ZEPHCORE_TEXT_CLI
+/* Completed text-CLI lines are run on the MAIN thread (USB/UART adapters
+ * assemble them off-main).  CommonCLI::handleCommand mutates mesh state
  * shared with loop(), so it can't run on sysworkq — same hazard as the
  * binary protocol path.  Drained on MESH_EVENT_BLE_RX. */
 #define CLI_LINE_BUF_SIZE 256
@@ -475,12 +484,12 @@ static void mesh_event_loop(void)
 			gps_process_event();
 		}
 
-		/* Parse inbound BLE/USB frames + USB text-CLI lines HERE (main
+		/* Parse inbound BLE/USB frames + text-CLI lines HERE (main
 		 * thread) before loop() drains any outbound they enqueued — keeps
 		 * all mesh-state mutation on one thread (see ble_on_rx_frame). */
 		if (events & MESH_EVENT_BLE_RX) {
 			process_companion_rx();
-#if ZEPHCORE_USB_STACK
+#if ZEPHCORE_TEXT_CLI
 			struct companion_cli_line c;
 			while (k_msgq_get(&companion_cli_queue, &c, K_NO_WAIT) == 0) {
 				companion_cli_run(c.buf);
@@ -591,6 +600,17 @@ static void tx_queued_callback(uint32_t delay_ms, void *user_data)
 	ARG_UNUSED(user_data);
 	k_work_reschedule(&tx_drain_work, K_MSEC(delay_ms));
 }
+
+static void format_uptime(uint32_t uptime_ms, char *out, size_t out_len)
+{
+	uint32_t mins = uptime_ms / 60000U;
+	uint32_t days = mins / (24U * 60U);
+	uint32_t hours = (mins / 60U) % 24U;
+	uint32_t rem_mins = mins % 60U;
+
+	snprintf(out, out_len, "%ud %uh %um", days, hours, rem_mins);
+}
+
 #endif
 
 static mesh::ZephyrRTCClock rtc_clock;
@@ -645,11 +665,54 @@ static void save_prefs_to_flash(void)
 	data_store.savePrefs(companion_mesh_ptr->prefs);
 }
 
-/* ========== Companion CLI (USB text sideband only) ==========
- * Text CLI lives on USB CDC only: its '<' sync byte cleanly separates binary
- * V3 frames from text, whereas BLE NUS frames have no prefix and V3 opcodes
- * overlap printable ASCII, so a BLE text sideband can't be disambiguated. */
-#if ZEPHCORE_USB_STACK
+static void auto_shutdown_notify_public(uint16_t battery_mv, uint32_t uptime_ms)
+{
+	if (!companion_mesh_ptr || companion_mesh_ptr->getNumChannels() <= 0) {
+		return;
+	}
+
+	ChannelDetails public_channel;
+	bool found = false;
+	for (int i = 0; i < companion_mesh_ptr->getNumChannels(); i++) {
+		ChannelDetails ch;
+		if (companion_mesh_ptr->getChannel(i, ch) && strcmp(ch.name, "Public") == 0) {
+			public_channel = ch;
+			found = true;
+			break;
+		}
+	}
+	if (!found) {
+		LOG_WRN("auto-shutdown: Public channel not found, skip shutdown message");
+		return;
+	}
+
+	char uptime[24];
+	char text[96];
+	format_uptime(uptime_ms, uptime, sizeof(uptime));
+	snprintf(text, sizeof(text), "shutting down on voltage: %u.%02uV, uptime: %s",
+		 battery_mv / 1000U, (battery_mv % 1000U) / 10U, uptime);
+
+	uint32_t ts = rtc_clock.getCurrentTimeUnique();
+	if (!companion_mesh_ptr->sendGroupMessage(ts, public_channel.channel,
+						 companion_mesh_ptr->prefs.node_name,
+						 text, (int)strlen(text))) {
+		LOG_WRN("auto-shutdown: unable to queue shutdown message");
+		return;
+	}
+
+	uint32_t deadline = k_uptime_get_32() + 8000U;
+	do {
+		companion_mesh_ptr->loop();
+		k_sleep(K_MSEC(100));
+	} while ((int32_t)(k_uptime_get_32() - deadline) < 0);
+}
+
+/* ========== Companion CLI (text sideband) ==========
+ * USB CDC boards use the existing USB text sideband. Boards like Heltec V3
+ * expose only a console UART in companion mode, so they get the same CLI over
+ * DT_CHOSEN(zephyr_console). BLE NUS is intentionally not used for text CLI:
+ * V3 opcodes overlap printable ASCII and cannot be disambiguated there. */
+#if ZEPHCORE_TEXT_CLI
 
 class CompanionCLICallbacks : public CommonCLICallbacks {
 public:
@@ -702,11 +765,109 @@ static ClientACL companion_acl;  /* unused by CommonCLI but required by construc
 static CommonCLI companion_cli(zephyr_board, rtc_clock, companion_acl,
 			       &companion_mesh.prefs, &companion_cli_cbs);
 
-/* Dispatch a CLI text line from USB, reply back over USB CDC. Output mirrors
+static void companion_cli_dispatch(const char *line);
+
+#if ZEPHCORE_UART_TEXT_CLI
+#define UART_CLI_RING_BUF_SIZE 256
+#define UART_CLI_LINE_MAX     128
+
+static const struct device *const uart_cli_dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_console));
+static uint8_t uart_cli_ring_data[UART_CLI_RING_BUF_SIZE];
+static struct ring_buf uart_cli_ring;
+static char uart_cli_line[UART_CLI_LINE_MAX];
+static uint8_t uart_cli_len;
+static bool uart_cli_banner_sent;
+
+static void uart_cli_rx_work_fn(struct k_work *work);
+K_WORK_DEFINE(uart_cli_rx_work, uart_cli_rx_work_fn);
+#endif
+
+static void companion_cli_write_text(const char *text, size_t len)
+{
+#if ZEPHCORE_USB_STACK
+	zephcore_usb_companion_write_text(text, len);
+#elif ZEPHCORE_UART_TEXT_CLI
+	if (!uart_cli_dev || !device_is_ready(uart_cli_dev)) {
+		return;
+	}
+	for (size_t i = 0; i < len; i++) {
+		uart_poll_out(uart_cli_dev, (unsigned char)text[i]);
+	}
+#else
+	ARG_UNUSED(text);
+	ARG_UNUSED(len);
+#endif
+}
+
+#if ZEPHCORE_UART_TEXT_CLI
+static void uart_cli_isr(const struct device *dev, void *user_data)
+{
+	ARG_UNUSED(user_data);
+
+	while (uart_irq_update(dev) && uart_irq_is_pending(dev)) {
+		if (uart_irq_rx_ready(dev)) {
+			uint8_t buf[64];
+			int recv_len = uart_fifo_read(dev, buf, sizeof(buf));
+			if (recv_len > 0) {
+				ring_buf_put(&uart_cli_ring, buf, recv_len);
+				k_work_submit(&uart_cli_rx_work);
+			}
+		}
+	}
+}
+
+static void uart_cli_rx_work_fn(struct k_work *work)
+{
+	ARG_UNUSED(work);
+
+	uint8_t byte;
+	while (ring_buf_get(&uart_cli_ring, &byte, 1) == 1) {
+		if (byte == '\n' || byte == '\r') {
+			if (uart_cli_len > 0) {
+				uart_cli_line[uart_cli_len] = '\0';
+				companion_cli_dispatch(uart_cli_line);
+				uart_cli_len = 0;
+			}
+		} else if (byte == 0x7F || byte == '\b') {
+			if (uart_cli_len > 0) {
+				uart_cli_len--;
+				companion_cli_write_text("\b \b", 3);
+			}
+		} else if (byte >= 0x20 && byte <= 0x7E) {
+			if (!uart_cli_banner_sent) {
+				static const char banner[] = "\r\n=== ZephCore Companion ===\r\n";
+				uart_cli_banner_sent = true;
+				companion_cli_write_text(banner, sizeof(banner) - 1);
+			}
+			if (uart_cli_len < UART_CLI_LINE_MAX - 1) {
+				uart_cli_line[uart_cli_len++] = (char)byte;
+				companion_cli_write_text((const char *)&byte, 1);
+			}
+		}
+	}
+}
+
+static void companion_uart_cli_init(void)
+{
+	ring_buf_init(&uart_cli_ring, sizeof(uart_cli_ring_data), uart_cli_ring_data);
+
+	if (!device_is_ready(uart_cli_dev)) {
+		LOG_ERR("UART CLI device not ready");
+		return;
+	}
+
+	if (uart_irq_callback_user_data_set(uart_cli_dev, uart_cli_isr, NULL) != 0) {
+		LOG_ERR("UART CLI callback setup failed");
+		return;
+	}
+	uart_irq_rx_enable(uart_cli_dev);
+	LOG_INF("UART text CLI ready on %s", uart_cli_dev->name);
+}
+#endif /* ZEPHCORE_UART_TEXT_CLI */
+
+/* Dispatch a CLI text line, reply back over the active text transport. Output mirrors
  * the repeater's serial CLI ("\r\n  -> <reply>\r\n", CRLF) so the
  * flasher.meshcore.io serial console renders companion replies identically. */
-#if defined(CONFIG_ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS) && \
-	CONFIG_ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS > 0
 /* Companion-only CLI sideband for the low-battery auto-shutdown threshold.
  * Handled here (not in shared CommonCLI) so the pref persists via the
  * companion datastore and the command never appears on repeater builds.
@@ -767,7 +928,6 @@ static bool handle_autoshutdown_cli(const char *line, char *reply)
 	}
 	return false;
 }
-#endif
 
 /* Executes a text-CLI line — runs on the MAIN thread (drained from
  * companion_cli_queue in the event loop).  CommonCLI::handleCommand touches
@@ -776,24 +936,21 @@ static void companion_cli_run(const char *line)
 {
 	char reply[CLI_REPLY_SIZE];
 	reply[0] = '\0';
-#if defined(CONFIG_ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS) && \
-	CONFIG_ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS > 0
 	if (handle_autoshutdown_cli(line, reply)) {
-		zephcore_usb_companion_write_text("\r\n  -> ", 7);
-		zephcore_usb_companion_write_text(reply, strlen(reply));
-		zephcore_usb_companion_write_text("\r\n", 2);
+		companion_cli_write_text("\r\n  -> ", 7);
+		companion_cli_write_text(reply, strlen(reply));
+		companion_cli_write_text("\r\n", 2);
 		return;
 	}
-#endif
 	companion_cli.handleCommand(0, line, reply);
 	if (reply[0] != '\0') {
-		zephcore_usb_companion_write_text("\r\n  -> ", 7);
-		zephcore_usb_companion_write_text(reply, strlen(reply));
+		companion_cli_write_text("\r\n  -> ", 7);
+		companion_cli_write_text(reply, strlen(reply));
 	}
-	zephcore_usb_companion_write_text("\r\n", 2);
+	companion_cli_write_text("\r\n", 2);
 }
 
-/* USB-adapter callback (runs on sysworkq).  Just queue the line and wake the
+/* Text-adapter callback (runs on sysworkq).  Just queue the line and wake the
  * main thread — the actual handleCommand happens in companion_cli_run(). */
 static void companion_cli_dispatch(const char *line)
 {
@@ -803,11 +960,11 @@ static void companion_cli_dispatch(const char *line)
 	if (k_msgq_put(&companion_cli_queue, &c, K_NO_WAIT) == 0) {
 		k_event_post(&mesh_events, MESH_EVENT_BLE_RX);
 	} else {
-		zephcore_usb_companion_write_text("\r\n  -> busy\r\n", 13);
+		companion_cli_write_text("\r\n  -> busy\r\n", 13);
 	}
 }
 
-#endif  /* ZEPHCORE_USB_STACK */
+#endif  /* ZEPHCORE_TEXT_CLI */
 
 #endif
 
@@ -886,6 +1043,10 @@ static void gps_fix_callback(double lat, double lon, int64_t utc_time)
 /* bt_ready callback — BLE stack is up, start advertising */
 static void bt_ready(int err)
 {
+#if IS_ENABLED(CONFIG_ZEPHCORE_BLE_BOOT_DIAG)
+	printk("BLE diag: bt_ready err=%d ble_disabled=%u\n",
+	       err, (unsigned)companion_mesh.prefs.ble_disabled);
+#endif
 	if (err) {
 		LOG_ERR("bt_enable failed: %d", err);
 		return;
@@ -1084,6 +1245,7 @@ int main(void)
 	ui_set_battery_provider(get_battery_mv);
 	ui_set_power_source_provider([]() { return zephyr_board.isExternalPowered(); });
 	ui_set_auto_shutdown_mv(companion_mesh.prefs.auto_shutdown_mv);
+	ui_set_auto_shutdown_notify_callback(auto_shutdown_notify_public);
 	companion_mesh.setRadioReconfigureCallback(radio_reconfigure);
 	companion_mesh.setPinChangeCallback([](uint32_t new_pin) {
 		zephcore_ble_set_passkey(new_pin);
@@ -1198,6 +1360,8 @@ int main(void)
 	zephcore_usb_companion_set_tx_drain_cb(usb_on_tx_drain);
 	/* Text CLI sideband — activates when first byte is not '<'. */
 	zephcore_usb_companion_set_cli_line_cb(companion_cli_dispatch);
+#elif ZEPHCORE_UART_TEXT_CLI
+	companion_uart_cli_init();
 #endif
 
 #if IS_ENABLED(CONFIG_BT)

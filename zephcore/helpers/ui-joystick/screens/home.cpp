@@ -7,6 +7,7 @@
 #include "../joystick_screens.h"
 #include "../joystick_ui_task.h"
 #include "screen_helpers.h"
+#include <helpers/battery_curve.h>
 #include <zephyr/kernel.h>
 #include <stdio.h>
 #include <ZephyrSensorManager.h>
@@ -44,9 +45,7 @@ int HomeScreen::render(JoystickDisplay &display)
 	if (_task->getBatteryDisplayMode() == 1) {
 		snprintf(batt, sizeof(batt), "%.1fV", (double)batt_mv / 1000.0);
 	} else {
-		int pct = ((int)batt_mv - kBattMinMv) * 100 / (kBattMaxMv - kBattMinMv);
-		if (pct < 0) pct = 0;
-		if (pct > 100) pct = 100;
+		int pct = battery_curve_lookup(&battery_curve_default, batt_mv);
 		snprintf(batt, sizeof(batt), "%d%%", pct);
 	}
 

@@ -16,6 +16,7 @@
  */
 
 #include <zephyr/dt-bindings/input/input-event-codes.h>
+#include <zephyr/dt-bindings/adc/adc.h>
 
 / {
 	chosen {
@@ -28,22 +29,22 @@
 	buttons: buttons {
 	};
 
-	/* Battery ADC — ZephCore reads via zephyr,user { io-channels }
-	 * Upstream vbatt node uses voltage-divider compatible which ZephCore
-	 * doesn't use. Multiplier: 3300mV full-scale * 5.42x = 17886.
-	 * (5.42x is Arduino's empirical divider factor for V3/V4.) */
+	/* Battery ADC — ZephCore reads via zephyr,user { io-channels }.
+	 * GPIO1 is ADC unit 1, so use &adc0. &adc1 is ADC unit 2 and overlaps
+	 * GPIO11 / SX1262 MISO on this board. Multiplier matches official
+	 * MeshCore Heltec V3 ADC_MULTIPLIER=5.42; the previous 5720 value
+	 * reported about 4.45V on a fully charged 1S LiPo. */
 	zephyr,user {
-		io-channels = <&adc1 0>;
-		vbat-mv-multiplier = <17886>;
+		io-channels = <&adc0 0>;
+		vbat-mv-multiplier = <5420>;
 	};
 
-	/* Battery ADC enable — GPIO37 (gpio1 pin 5) must be driven to read.
-	 * Upstream has adc_ctrl power-domain-gpio; ZephCore expects a
-	 * regulator-fixed named vbat_enable. */
+	/* Battery ADC enable — GPIO37 (gpio1 pin 5) drives the divider.
+	 * Active high matches V3.2/V4. Early V3 boards may need ACTIVE_LOW. */
 	vbat_enable: vbat-enable {
 		compatible = "regulator-fixed";
 		regulator-name = "vbat-enable";
-		enable-gpios = <&gpio1 5 GPIO_ACTIVE_LOW>;
+		enable-gpios = <&gpio1 5 GPIO_ACTIVE_HIGH>;
 	};
 
 	/* Vext — GPIO36, active-LOW enables rail (matches Arduino periph_power / MeshCore
@@ -105,6 +106,29 @@
 		vin-supply = <&vext_enable>;
 	};
 };
+
+/* Battery ADC channel config. Without channel@0, adc_channel_setup_dt() fails
+ * and getBattMilliVolts() returns 0 before reading the ADC. */
+&adc0 {
+	status = "okay";
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	channel@0 {
+		reg = <0>;
+		zephyr,gain = "ADC_GAIN_1";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,resolution = <12>;
+	};
+};
+
+/* Remove upstream battery nodes that point at the wrong ADC unit and claim
+ * GPIO37 separately from our vbat_enable regulator. */
+/ {
+	/delete-node/ vbatt;
+};
+/delete-node/ &adc_ctrl;
 
 /*
  * Flash partitions — reclaim unused space from 8MB layout.

@@ -292,6 +292,14 @@ config ZEPHCORE_BLE_DFU
 	  magic (0xA8) and resets; the bootloader then advertises for DFU and the
 	  phone's DFU tool reconnects to flash. nRF52 only.
 
+config ZEPHCORE_BLE_BOOT_DIAG
+	bool "Print BLE boot diagnostics"
+	default n
+	help
+	  Print minimal BLE bring-up status with printk even when production
+	  logging is disabled. Intended for board bring-up when bt_enable or
+	  advertising can fail before normal logs are available.
+
 endmenu # BLE Configuration
 
 menu "Linux Companion Transport (native_sim)"
@@ -711,7 +719,7 @@ config ZEPHCORE_UI_TIME_SOURCE_FRESH_HOURS
 
 config ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS
 	int "Low-battery auto-shutdown threshold (mV, 0 = disabled)"
-	default 3300 if SOC_SERIES_NRF52
+	default 3250 if SOC_SERIES_NRF52
 	default 0
 	help
 	  Companion only. When the battery falls below this voltage the device
@@ -721,7 +729,7 @@ config ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS
 	  housekeeping tick (no extra polling) and is skipped while externally
 	  powered (USB/charger) via MainBoard::isExternalPowered().
 
-	  3300 mV is ~10% SoC on the default LiPo curve (battery_curve.c) — a
+	  3250 mV is near the low end of the default LiPo curve (battery_curve.c) — a
 	  protective floor that still leaves headroom for the under-load voltage
 	  sag during a TX burst. Requires CONFIG_POWEROFF to actually power down.
 
@@ -729,7 +737,7 @@ config ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS
 	  tunable at runtime over the USB CLI ("set autoshutdown <mv>" /
 	  "get autoshutdown", 0 = off or 1-5000 mV), persisted to flash.
 
-	  Defaults ON (3300) for nRF52 only: that is where isExternalPowered()
+	  Defaults ON (3250) for nRF52 only: that is where isExternalPowered()
 	  reads VBUS, so the "plugged in" gate actually works. ESP32 / MG24 /
 	  nRF54L stay at 0 (off) — isExternalPowered() is a stub there, so a
 	  USB/mains-powered node could otherwise self-shutdown on a low ADC
@@ -737,16 +745,13 @@ config ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS
 
 config ZEPHCORE_UI_CONFIRM_WINDOW_MS
 	int "Double-press confirmation window (ms)"
-	default 500
+	default 3000
 	depends on ZEPHCORE_UI_DISPLAY
 	help
 	  Maximum time between the two KEY_ENTER presses that confirm
 	  destructive actions (shutdown, DFU, offgrid toggle).  The default
-	  500 ms suits boards where ENTER is a direct short tap.  Boards
-	  with only one button that emit ENTER via a zephyr,input-longpress
-	  filter (T-Echo, RAK4631 Pocket) need a longer window — two
-	  1 s holds plus the release gap do not fit in 500 ms.  Set to
-	  3000 on such boards.
+	  3000 ms leaves enough time for e-paper redraws and boards where
+	  ENTER is emitted by a zephyr,input-longpress filter.
 
 config ZEPHCORE_DISPLAY_INSET
 	int "Display inset margin (pixels)"

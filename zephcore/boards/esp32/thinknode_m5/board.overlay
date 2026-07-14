@@ -1,0 +1,105 @@
+/*
+ * Elecrow ThinkNode M5 application-only peripherals.
+ *
+ * Keep the PCA9557/E-Ink nodes out of the base DTS so MCUboot does not pull
+ * I2C/GPIO-expander/display drivers into its minimal build.
+ */
+
+/ {
+	chosen {
+		zephyr,display = &epd;
+	};
+
+	aliases {
+		led0 = &exp_red_led;
+		led1 = &exp_blue_led;
+		led-enable = &exp_led_enable;
+		ble-status-led = &exp_blue_led;
+		lora-tx-led = &exp_blue_led;
+	};
+
+	eink_power: eink-power {
+		compatible = "regulator-fixed";
+		regulator-name = "eink-power";
+		enable-gpios = <&pca9557 4 GPIO_ACTIVE_HIGH>;
+		regulator-boot-on;
+		regulator-always-on;
+	};
+
+	/* Display frontlight/backlight enable (PCA9557 pin 5).
+	 * MeshCore drives EXP_PIN_BACKLIGHT HIGH while PIN_BUTTON2 is pressed and
+	 * LOW when idle, so this rail is active-high. */
+	disp_pwr_enable: disp-pwr-enable {
+		compatible = "regulator-fixed";
+		regulator-name = "disp-pwr-enable";
+		enable-gpios = <&pca9557 5 GPIO_ACTIVE_HIGH>;
+	};
+
+	expander_leds {
+		compatible = "gpio-leds";
+
+		exp_red_led: exp_red_led {
+			gpios = <&pca9557 3 GPIO_ACTIVE_HIGH>;
+			label = "PCA9557 Red Power LED";
+		};
+
+		exp_led_enable: exp_led_enable {
+			gpios = <&pca9557 2 GPIO_ACTIVE_HIGH>;
+			label = "PCA9557 LED Enable";
+		};
+
+		exp_blue_led: exp_blue_led {
+			gpios = <&pca9557 1 GPIO_ACTIVE_HIGH>;
+			label = "PCA9557 Blue Status/TX LED";
+		};
+	};
+
+	mipi_dbi {
+		compatible = "zephyr,mipi-dbi-spi";
+		spi-dev = <&spi3>;
+		dc-gpios = <&gpio1 8 GPIO_ACTIVE_HIGH>;     /* GPIO40 */
+		reset-gpios = <&gpio1 9 GPIO_ACTIVE_LOW>;    /* GPIO41 */
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		epd: ssd16xxfb@0 {
+			compatible = "solomon,ssd1681";
+			mipi-max-frequency = <4000000>;
+			reg = <0>;
+			width = <200>;
+			height = <200>;
+			rotation = <270>;
+			busy-gpios = <&gpio1 10 GPIO_ACTIVE_HIGH>;  /* GPIO42 */
+			vin-supply = <&eink_power>;
+
+			tssv = <0x80>;
+
+			full    { border-waveform = <0x05>; };
+			partial { border-waveform = <0x80>; };
+		};
+	};
+};
+
+&i2c1 {
+	status = "okay";
+	clock-frequency = <I2C_BITRATE_FAST>;
+	pinctrl-0 = <&i2c1_default>;
+	pinctrl-names = "default";
+
+	pca9557: gpio-expander@18 {
+		compatible = "nxp,pca9554";
+		reg = <0x18>;
+		gpio-controller;
+		#gpio-cells = <2>;
+		ngpios = <8>;
+	};
+};
+
+&spi3 {
+	status = "okay";
+	#address-cells = <1>;
+	#size-cells = <0>;
+	pinctrl-0 = <&spim3_default>;
+	pinctrl-names = "default";
+	cs-gpios = <&gpio1 7 GPIO_ACTIVE_LOW>;  /* GPIO39 */
+};

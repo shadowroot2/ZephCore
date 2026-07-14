@@ -1,0 +1,88 @@
+/*
+ * SPDX-License-Identifier: MIT
+ * Elecrow ThinkNode M5 pin control
+ *
+ * Official MeshCore mapping:
+ *   LoRa SPI2: SCLK=GPIO16, MOSI=GPIO15, MISO=GPIO7
+ *   I2C0:      SDA=GPIO2,  SCL=GPIO1
+ *   I2C1:      SDA=GPIO48, SCL=GPIO47 (PCA9557)
+ *   E-Ink SPI3: SCLK=GPIO38, MOSI=GPIO45
+ *   UART0:     TX=GPIO43, RX=GPIO44 (USB-UART console)
+ *   GPS UART1: TX=GPIO19, RX=GPIO20
+ */
+
+#include <zephyr/dt-bindings/pinctrl/esp-pinctrl-common.h>
+#include <zephyr/dt-bindings/pinctrl/esp32s3-pinctrl.h>
+#include <zephyr/dt-bindings/pinctrl/esp32s3-gpio-sigmap.h>
+
+&pinctrl {
+	spim2_default: spim2_default {
+		group1 {
+			pinmux = <SPIM2_MISO_GPIO7>,
+				 <SPIM2_SCLK_GPIO16>;
+		};
+		group2 {
+			pinmux = <SPIM2_MOSI_GPIO15>;
+			output-low;
+		};
+	};
+
+	i2c0_default: i2c0_default {
+		group1 {
+			pinmux = <I2C0_SDA_GPIO2>,
+				 <I2C0_SCL_GPIO1>;
+			bias-pull-up;
+			drive-open-drain;
+			output-high;
+		};
+	};
+
+	i2c1_default: i2c1_default {
+		group1 {
+			pinmux = <I2C1_SDA_GPIO48>,
+				 <I2C1_SCL_GPIO47>;
+			bias-pull-up;
+			drive-open-drain;
+			output-high;
+		};
+	};
+
+	spim3_default: spim3_default {
+		group1 {
+			pinmux = <SPIM3_SCLK_GPIO38>;
+		};
+		group2 {
+			pinmux = <SPIM3_MOSI_GPIO45>;
+			output-low;
+		};
+	};
+
+	uart0_default: uart0_default {
+		group1 {
+			pinmux = <UART0_TX_GPIO43>;
+			output-high;
+		};
+		group2 {
+			pinmux = <UART0_RX_GPIO44>;
+			bias-pull-up;
+		};
+	};
+
+	uart1_default: uart1_default {
+		group1 {
+			pinmux = <UART1_TX_GPIO19>;
+			output-high;
+		};
+		group2 {
+			pinmux = <UART1_RX_GPIO20>;
+			bias-pull-up;
+		};
+	};
+
+	ledc0_default: ledc0_default {
+		group1 {
+			pinmux = <LEDC_CH0_GPIO9>;
+			output-enable;
+		};
+	};
+};

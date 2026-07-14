@@ -134,6 +134,13 @@ WEAK void ui_set_auto_shutdown_mv(uint16_t mv)
 	ARG_UNUSED(mv);
 }
 
+WEAK void ui_set_auto_shutdown_notify_callback(ui_auto_shutdown_notify_cb_t cb)
+{
+	ARG_UNUSED(cb);
+}
+
+WEAK void ui_notify_shutdown(void) { }
+
 WEAK void ui_auto_shutdown_check(void) { }
 
 WEAK void ui_refresh_battery(void) { }
