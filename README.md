@@ -15,7 +15,10 @@ ZephCore — это порт прошивки [MeshCore](https://github.com/mesh
 - **ThinkNode M6 repeater**: исправлен старт GPS. M6 теперь использует рабочую схему `luatos,air530z`, питание GPS через `GPS_EN`, а `GPS_STANDBY` удерживается в активном состоянии. GPS на M6 снова получает спутники и фикс.
 - **ThinkNode M6 solar telemetry**: добавлен бинарный признак зарядки батареи и отображение мощности `6W` только для M6, когда реально активен сигнал зарядки.
 - **Seeed T1000-E**: добавлена поддержка аналогового датчика освещенности и передача luminosity в телеметрию.
-- **Raspberry Pi Pico W + Waveshare SX1262**: добавлена поддержка новой платы в режиме repeater. Сборка идет под `rpi_pico`, пины сверены с рабочей прошивкой MeshCore `PicoW_repeater-v1.14.1`.
+- **ThinkNode M5 companion**: добавлена новая ESP32-S3 плата с E-Ink, PCA9557, buzzer, backlight, кнопками, SX1262, GPS и батарейной кривой. Исправлен BLE advertising на M5: для Zephyr ESP32 connectable advertising требует `CONFIG_ESP32_BT_CTLR_LE_MASTER=y`.
+- **Heltec V3 companion**: учтены фиксы отображения батареи и ухода в sleep при низком питании. Коэффициент батареи откалиброван по MeshCore/Meshtastic: `vbat-mv-multiplier=<5420>`, чтобы полный 1S LiPo не отображался как завышенные `4.45V`.
+- **Low-battery notify**: перед уходом в сон/выключение companion может отправлять сообщение в Public с напряжением батареи и uptime.
+- **Raspberry Pi Pico W + Waveshare SX1262**: добавлена поддержка новой платы в режиме repeater. Сборка идет под `rpi_picow`, пины сверены с рабочей прошивкой MeshCore `PicoW_repeater-v1.14.1`.
 - **BLE в repeater/room/observer**: Bluetooth полностью отключается для repeater, room-server и observer сборок. BLE-конфиги вынесены отдельно и подключаются только для client/companion.
 - **Базовый LoRa-пресет**: частота `867.935 MHz`, SF8, BW 62.5 kHz, CR 4/8, duty cycle 50%.
 - **Multi ACKs**: включены по умолчанию для новых настроек узла.
@@ -62,10 +65,11 @@ ZephCore — это порт прошивки [MeshCore](https://github.com/mesh
 | **XIAO ESP32-S3** | ESP32-S3 | SX1262 | BLE 5.0, 8 MB flash, 8 MB PSRAM |
 | **Station G2** | ESP32-S3 | SX1262 + PA | OLED SH1106, GPS, 16 MB flash, 8 MB PSRAM |
 | **LilyGo TLoRa C6** | ESP32-C6 | SX1262 | BLE 5.0, Wi-Fi 6 |
-| **Heltec V3** | ESP32-S3 | SX1262 | OLED SSD1306, 8 MB flash |
+| **Heltec V3** | ESP32-S3 | SX1262 | OLED SSD1306, 8 MB flash, откалиброванный battery ADC, sleep при низком питании |
 | **Heltec V4.2** | ESP32-S3 | SX1262 + GC1109 PA | OLED SSD1306, 16 MB flash, 2 MB PSRAM |
 | **Heltec V4.3** | ESP32-S3 | SX1262 + KCT8103L PA | OLED SSD1306, 16 MB flash, 2 MB PSRAM |
 | **Heltec Wireless Tracker** | ESP32-S3 | SX1262 | ST7735R 160x80 TFT, UC6580 GPS |
+| **ThinkNode M5** | ESP32-S3 | SX1262 | E-Ink SSD1681, PCA9557, GPS, buzzer, backlight, battery ADC, BLE companion |
 | **LilyGo T-Beam v1.2** | ESP32 PICO-D4 | SX1262 | AXP2101 PMU, GNSS, USB-UART CLI |
 
 ### RP2040
