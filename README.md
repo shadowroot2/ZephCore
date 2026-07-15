@@ -14,10 +14,12 @@ ZephCore — это порт прошивки [MeshCore](https://github.com/mesh
 
 - **ThinkNode M6 repeater**: исправлен старт GPS. M6 теперь использует рабочую схему `luatos,air530z`, питание GPS через `GPS_EN`, а `GPS_STANDBY` удерживается в активном состоянии. GPS на M6 снова получает спутники и фикс.
 - **ThinkNode M6 solar telemetry**: добавлен бинарный признак зарядки батареи и отображение мощности `6W` только для M6, когда реально активен сигнал зарядки.
-- **Seeed T1000-E**: добавлена поддержка аналогового датчика освещенности и передача luminosity в телеметрию.
+- **Seeed T1000-E**: добавлена поддержка аналогового датчика освещенности и передача luminosity в телеметрию. Battery ADC сверено с MeshCore/Meshtastic: используется тот же 2:1 делитель, в ZephCore это `vbat-mv-multiplier=<7236>`.
 - **ThinkNode M5 companion**: добавлена новая ESP32-S3 плата с E-Ink, PCA9557, buzzer, backlight, кнопками, SX1262, GPS и батарейной кривой. Исправлены BLE advertising, старт Air530Z GPS по схеме M1/M6, UART GPS и телеметрия температуры MCU.
+- **ESP32 companion power tuning**: для ThinkNode M5 и Heltec V3 отключен Wi-Fi, BLE TX power снижен до более холодного режима, чтобы уменьшить нагрев и расход батареи.
 - **Heltec V3 companion**: учтены фиксы отображения батареи и ухода в sleep при низком питании. Коэффициент батареи откалиброван по MeshCore/Meshtastic: `vbat-mv-multiplier=<5420>`, чтобы полный 1S LiPo не отображался как завышенные `4.45V`.
-- **Low-battery notify**: перед уходом в сон/выключение companion может отправлять сообщение в Public с напряжением батареи и uptime.
+- **Low-battery shutdown/notify**: companion-сборки по умолчанию используют порог `3250 mV` на nRF52; перед уходом в сон/выключение может отправляться сообщение в Public с напряжением батареи и uptime.
+- **Локальное время UI**: добавлен runtime offset часового пояса через CLI `get tz` / `set tz <minutes>`. Глобальный дефолт этой ветки — `300` минут (GMT+5); RTC, GPS и протокольные timestamps остаются UTC.
 - **Raspberry Pi Pico W + Waveshare SX1262**: добавлена поддержка новой платы в режиме repeater. Сборка идет под `rpi_picow`, пины сверены с рабочей прошивкой MeshCore `PicoW_repeater-v1.14.1`.
 - **BLE в repeater/room/observer**: Bluetooth полностью отключается для repeater, room-server и observer сборок. BLE-конфиги вынесены отдельно и подключаются только для client/companion.
 - **Базовый LoRa-пресет**: частота `867.935 MHz`, SF8, BW 62.5 kHz, CR 4/8, duty cycle 50%.
@@ -30,11 +32,11 @@ ZephCore — это порт прошивки [MeshCore](https://github.com/mesh
 
 | Файл | Плата | Роль | Формат |
 |------|-------|------|--------|
-| `shadow-20260715-thinknode-m1-client.uf2` | ThinkNode M1 | client/companion | UF2 |
-| `shadow-20260715-thinknode-m5-client-merged.bin` | ThinkNode M5 | client/companion | ESP32-S3 merged-bin, flash offset `0x0` |
+| `shadow-20260715-thinknode-m1-client-tz300.uf2` | ThinkNode M1 | client/companion | UF2, UI timezone default GMT+5 |
+| `shadow-20260715-thinknode-m5-client-tz300-merged.bin` | ThinkNode M5 | client/companion | ESP32-S3 merged-bin, flash offset `0x0`, UI timezone default GMT+5 |
 | `shadow-20260715-thinknode-m6-repeater.uf2` | ThinkNode M6 | repeater | UF2 |
-| `shadow-20260715-heltec-v3-client-merged.bin` | Heltec V3 | client/companion | ESP32-S3 merged-bin, flash offset `0x0` |
-| `shadow-20260715-t1000-e-client.uf2` | Seeed T1000-E | client/companion | UF2 |
+| `shadow-20260715-heltec-v3-client-ble6-wifi-off-tzcli-merged.bin` | Heltec V3 | client/companion | ESP32-S3 merged-bin, flash offset `0x0`, BLE 6 dBm, Wi-Fi off |
+| `shadow-20260715-t1000-e-client-tz300.uf2` | Seeed T1000-E | client/companion | UF2, light telemetry, battery/autoshutdown fixes |
 
 ## Зачем Zephyr?
 
@@ -222,6 +224,9 @@ ZephCore заменяет статические задержки `txdelay`, `rx
 
 - `get txdelay` — показывает текущую adaptive delay оценку.
 - `get backoff.multiplier` / `set backoff.multiplier` — управляет reactive backoff.
+- `get tz` / `set tz <minutes>` — задает смещение локального времени UI в минутах, например `set tz 300` для GMT+5.
+- `get autoshutdown` / `set autoshutdown <mV>` — показывает или задает порог ухода companion в сон/выключение по батарее.
+- `get adc.multiplier` — показывает текущий ADC multiplier и прочитанное напряжение батареи в mV.
 
 ## Энергосбережение
 
@@ -254,6 +259,8 @@ ZephCore заменяет статические задержки `txdelay`, `rx
 | `CONFIG_ZEPHCORE_GPS_POLL_INTERVAL_SEC` | 300 | GPS duty interval для companion |
 | `CONFIG_ZEPHCORE_GPS_FIRST_FIX_TIMEOUT_SEC` | 300 | Cold-start окно для первого GPS fix |
 | `CONFIG_ZEPHCORE_REPEATER_GPS_INTERVAL_SEC` | 172800 | GPS duty interval для repeater/room-server |
+| `CONFIG_ZEPHCORE_UI_TIMEZONE_OFFSET_MINUTES` | 300 | Смещение локального времени UI в минутах; UTC timestamps не меняет |
+| `CONFIG_ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS` | 3250 на nRF52 | Порог low-battery shutdown для companion, `0` отключает |
 | `CONFIG_ZEPHCORE_WIFI_OTA` | n | WiFi AP + HTTP OTA для ESP32 repeaters |
 | `CONFIG_ZEPHCORE_REPEATER_UPLINK` | n | WiFi+MQTT uplink для ESP32 repeater |
 | `CONFIG_ZEPHCORE_PACKET_LOGGING` | n | Arduino-compatible packet logging |
