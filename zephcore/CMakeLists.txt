@@ -521,6 +521,7 @@ target_sources(app PRIVATE
   adapters/gps/ZephyrGPSManager.cpp
   adapters/sensors/ZephyrEnvSensors.cpp
   helpers/AdvertDataHelpers.cpp
+  helpers/ui/ui_timezone.c
   helpers/oled_power.c
   helpers/fatal_reboot.c
 )

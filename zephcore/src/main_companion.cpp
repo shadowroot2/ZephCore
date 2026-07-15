@@ -31,6 +31,7 @@ LOG_MODULE_REGISTER(zephcore_main, CONFIG_ZEPHCORE_MAIN_LOG_LEVEL);
 #include <helpers/time_sync.h>
 #include "ui_task.h"
 #include "ui_mesh_actions.h"
+#include <helpers/ui/ui_timezone.h>
 #include "oled_power.h"
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
 #include "buzzer.h"
@@ -1234,6 +1235,7 @@ int main(void)
 
 	/* Load prefs from storage */
 	data_store.loadPrefs(companion_mesh.prefs);
+	ui_set_timezone_offset_minutes(companion_mesh.prefs.ui_timezone_offset_minutes);
 
 	/* Apply saved BLE PIN (0 = use Kconfig default) */
 	if (companion_mesh.prefs.ble_pin >= 100000 && companion_mesh.prefs.ble_pin <= 999999) {

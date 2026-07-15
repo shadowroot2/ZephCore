@@ -17,6 +17,7 @@
 #include "ui_pages.h"
 #include "ui_task.h"
 #include "display.h"
+#include <helpers/ui/ui_timezone.h>
 
 #include <time_sync.h>
 #include <ZephyrSensorManager.h>
@@ -158,7 +159,7 @@ static void render_top_bar(void)
 	 * Before sync, getCurrentTime() returns bare uptime (~seconds),
 	 * so check for a sane epoch (after Jan 1 2025 = 1735689600). */
 	if (state.rtc_epoch > 1735689600) {
-		uint32_t day_sec = state.rtc_epoch % 86400;
+		uint32_t day_sec = ui_local_day_seconds(state.rtc_epoch);
 		uint8_t hh = day_sec / 3600;
 		uint8_t mm = (day_sec % 3600) / 60;
 
@@ -608,12 +609,14 @@ static void render_status(void)
 
 	/* Clock — only if RTC has been synced (after Jan 1 2025) */
 	if (state.rtc_epoch > 1735689600) {
-		uint32_t day_sec = state.rtc_epoch % 86400;
+		uint32_t day_sec = ui_local_day_seconds(state.rtc_epoch);
 		uint8_t hh = day_sec / 3600;
 		uint8_t mm = (day_sec % 3600) / 60;
 		uint8_t ss = day_sec % 60;
+		char tz[10];
 
-		snprintf(buf, sizeof(buf), "Time: %02u:%02u:%02u UTC", hh, mm, ss);
+		ui_timezone_format_label(tz, sizeof(tz));
+		snprintf(buf, sizeof(buf), "Time: %02u:%02u:%02u %s", hh, mm, ss, tz);
 		mc_display_text(0, y, buf, false);
 	} else {
 		mc_display_text(0, y, "Time: not synced", false);

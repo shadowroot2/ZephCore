@@ -85,6 +85,7 @@ struct NodePrefs {
 	uint8_t wake_on_msg;            // 0 = don't wake display on message, 1 = wake (default)
 	uint16_t screen_off_secs;       // 0 = default (Kconfig), else 5–300
 	uint16_t auto_shutdown_mv;      // low-batt auto-shutdown threshold; 0 = off, else 2900–4200
+	int16_t ui_timezone_offset_minutes; // UI-only timezone offset; RTC/protocol stay UTC
 };
 
 /* Default prefs -- must match LoRaConfig.h defaults for radio interop. */
@@ -134,4 +135,5 @@ static inline void initNodePrefs(NodePrefs* prefs) {
 	prefs->apc_enabled = 0;           // Default OFF — fixed TX power
 	prefs->apc_margin = 16;           // Default 16 dB target link margin
 	prefs->wake_on_msg = 1;           // Default ON — wake display when message arrives
+	prefs->ui_timezone_offset_minutes = CONFIG_ZEPHCORE_UI_TIMEZONE_OFFSET_MINUTES;
 }

@@ -663,6 +663,18 @@ void ZephyrDataStore::loadPrefs(NodePrefs &prefs)
 			prefs.rx_duty_cycle = 0;
 		}
 	}
+
+	/* Offset 151: UI timezone offset in minutes (2 bytes LE).
+	 * Absent in older files -> keep caller/default Kconfig offset. */
+	if (off + 2 <= len) {
+		prefs.ui_timezone_offset_minutes = (int16_t)((uint16_t)buf[off] |
+			((uint16_t)buf[off + 1] << 8));
+		off += 2;
+		if (prefs.ui_timezone_offset_minutes < -1439 ||
+		    prefs.ui_timezone_offset_minutes > 1439) {
+			prefs.ui_timezone_offset_minutes = CONFIG_ZEPHCORE_UI_TIMEZONE_OFFSET_MINUTES;
+		}
+	}
 }
 
 void ZephyrDataStore::savePrefs(const NodePrefs &prefs)
@@ -737,7 +749,10 @@ void ZephyrDataStore::savePrefs(const NodePrefs &prefs)
 	buf[off++] = (prefs.auto_shutdown_mv >> 8) & 0xFF;
 	/* Offset 150: rx_duty_cycle (ZephCore extension) */
 	buf[off++] = prefs.rx_duty_cycle;
-	/* Total: 151 bytes */
+	/* Offset 151: UI timezone offset in minutes (ZephCore extension, 2 bytes LE) */
+	buf[off++] = (uint16_t)prefs.ui_timezone_offset_minutes & 0xFF;
+	buf[off++] = ((uint16_t)prefs.ui_timezone_offset_minutes >> 8) & 0xFF;
+	/* Total: 153 bytes */
 
 	bool ok = atomicReplaceFile(PREFS_FILE, buf, off);
 	LOG_DBG("savePrefs: wrote %s, ok=%d (%d bytes), name='%.16s'",

@@ -152,7 +152,7 @@
 };
 
 &wifi {
-	status = "okay";
+	status = "disabled";
 };
 
 &ledc0 {

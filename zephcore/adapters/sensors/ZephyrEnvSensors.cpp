@@ -6,7 +6,7 @@
  *
  * Environment sensors (temp/humidity/pressure):
  *   SHTC3, AHT20/DHT20/AM2301B, SHT4x, SHT3xD, BME280, BME680, BMP280, BMP388, LPS22HB
- *   MCU die temperature as fallback (nordic,nrf-temp)
+ *   MCU die temperature as fallback when no external sensor is present
  *
  * Power monitors (voltage/current/power):
  *   INA219, INA3221, INA226, INA228, INA230, INA232, INA236, INA237
@@ -384,9 +384,7 @@ int env_sensors_read(struct env_data *data)
 		}
 	}
 
-	/* === MCU die temperature — always read when available ===
-	 * Used as fallback when no external temp sensor, and always
-	 * available via has_mcu_temperature for telemetry decisions. */
+	/* === MCU die temperature — fallback when no external temp sensor exists. */
 #ifdef MCU_TEMP_NODE
 	const struct device *mcu_temp = DEVICE_DT_GET(MCU_TEMP_NODE);
 	if (mcu_temp && device_is_ready(mcu_temp)) {
