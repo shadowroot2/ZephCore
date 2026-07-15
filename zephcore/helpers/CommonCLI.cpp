@@ -9,6 +9,7 @@
 #include <adapters/clock/ZephyrRTCDiscover.h>
 #include <helpers/TxtDataHelpers.h>
 #include <helpers/AdvertDataHelpers.h>
+#include <helpers/ui/ui_timezone.h>
 #include <adapters/board/ZephyrBoard.h>
 #include <adapters/gps/ZephyrGPSManager.h>
 #include <zephyr/fs/fs.h>
@@ -40,6 +41,29 @@ static bool isValidName(const char* n) {
             *n == ',' || *n == '?' || *n == '*') return false;
         n++;
     }
+    return true;
+}
+
+static const char *skip_spaces(const char *s)
+{
+    while (*s == ' ' || *s == '\t') s++;
+    return s;
+}
+
+static bool parseTimezoneOffsetMinutes(const char *arg, int16_t *out_minutes)
+{
+    arg = skip_spaces(arg);
+    if (*arg == '\0') return false;
+
+    char *end = nullptr;
+    long minutes = strtol(arg, &end, 10);
+    if (end == arg) return false;
+
+    end = (char *)skip_spaces(end);
+    if (*end != '\0') return false;
+    if (minutes < -1439 || minutes > 1439) return false;
+
+    *out_minutes = (int16_t)minutes;
     return true;
 }
 
@@ -119,6 +143,10 @@ void CommonCLI::loadPrefs(const char* path) {
     ok = ok && prefs_read(&file, &_prefs->apc_margin, sizeof(_prefs->apc_margin));           // 293
     ok = ok && prefs_read(&file, &_prefs->flood_max_unscoped, sizeof(_prefs->flood_max_unscoped)); // 294
     ok = ok && prefs_read(&file, &_prefs->flood_max_advert, sizeof(_prefs->flood_max_advert)); // 295
+    int16_t tz_offset = _prefs->ui_timezone_offset_minutes;
+    if (fs_read(&file, &tz_offset, sizeof(tz_offset)) == (ssize_t)sizeof(tz_offset)) {
+        _prefs->ui_timezone_offset_minutes = tz_offset;
+    }
 
     if (!ok) {
         LOG_WRN("Prefs file %s truncated, some fields use defaults", path);
@@ -164,6 +192,8 @@ void CommonCLI::loadPrefs(const char* path) {
     _prefs->apc_margin = constrain(_prefs->apc_margin, (uint8_t)6, (uint8_t)30);
     _prefs->flood_max_unscoped = constrain(_prefs->flood_max_unscoped, (uint8_t)0, (uint8_t)64);
     _prefs->flood_max_advert = constrain(_prefs->flood_max_advert, (uint8_t)0, (uint8_t)64);
+    _prefs->ui_timezone_offset_minutes =
+        constrain(_prefs->ui_timezone_offset_minutes, (int16_t)-1439, (int16_t)1439);
 
     LOG_INF("Loaded prefs from %s", path);
 }
@@ -231,6 +261,7 @@ void CommonCLI::savePrefs(const char* path) {
     fs_write(&file, &_prefs->apc_margin, sizeof(_prefs->apc_margin));
     fs_write(&file, &_prefs->flood_max_unscoped, sizeof(_prefs->flood_max_unscoped));
     fs_write(&file, &_prefs->flood_max_advert, sizeof(_prefs->flood_max_advert));
+    fs_write(&file, &_prefs->ui_timezone_offset_minutes, sizeof(_prefs->ui_timezone_offset_minutes));
 
     fs_close(&file);
     LOG_INF("Saved prefs to %s", path);
@@ -535,6 +566,11 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
             uint32_t s = gps_get_poll_interval_sec();  // now-effective value
             if (s == 0) strcpy(reply, "> always on (0)");
             else snprintf(reply, CLI_REPLY_SIZE, "> %u", (unsigned)s);
+        } else if (strcmp(config, "tz") == 0) {
+            char tz[12];
+            ui_timezone_format_label(tz, sizeof(tz));
+            snprintf(reply, CLI_REPLY_SIZE, "> %s (%d min)",
+                     tz, (int)_prefs->ui_timezone_offset_minutes);
         } else if (memcmp(config, "dc.restarts", 11) == 0) {
             snprintf(reply, CLI_REPLY_SIZE, "> %u",
                      (uint32_t)_callbacks->getDutyCycleTimeoutRestarts());
@@ -942,6 +978,23 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
                 if (val == 0) strcpy(reply, "OK - gps duty=0 (always on)");
                 else snprintf(reply, CLI_REPLY_SIZE, "OK - gps duty=%u s", (unsigned)val);
             }
+        } else if (memcmp(config, "tz ", 3) == 0) {
+            const char *arg = config + 3;
+            int16_t offset = 0;
+            if (strcmp(skip_spaces(arg), "default") == 0) {
+                offset = CONFIG_ZEPHCORE_UI_TIMEZONE_OFFSET_MINUTES;
+            } else if (!parseTimezoneOffsetMinutes(arg, &offset)) {
+                strcpy(reply, "usage: set tz <minutes|-1439..1439|default>");
+                return;
+            }
+
+            _prefs->ui_timezone_offset_minutes = offset;
+            ui_set_timezone_offset_minutes(offset);
+            savePrefs();
+
+            char tz[12];
+            ui_timezone_format_label(tz, sizeof(tz));
+            snprintf(reply, CLI_REPLY_SIZE, "OK - tz=%s (%d min)", tz, (int)offset);
         } else {
             snprintf(reply, CLI_REPLY_SIZE, "unknown config: %s", config);
         }

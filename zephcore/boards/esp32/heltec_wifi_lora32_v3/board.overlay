@@ -3,7 +3,7 @@
  * Heltec WiFi LoRa 32 V3 — ZephCore overlay
  *
  * The upstream Zephyr DTS already defines SX1262, SSD1306 OLED, button,
- * LED, battery ADC, Vext/ADC control, I2C0, SPI2, BLE, and WiFi.
+ * LED, battery ADC, Vext/ADC control, I2C0, SPI2, and BLE.
  * This overlay adds ZephCore-specific integration on top.
  *
  * LoRa SPI2 pins:  SCLK=9, MOSI=10, MISO=11, NSS=8
@@ -79,6 +79,12 @@
 /* Enable native USB serial for console/CLI */
 &usb_serial {
 	status = "okay";
+};
+
+/* ZephCore Heltec V3 companion uses BLE only. Keep the ESP32 Wi-Fi block
+ * disabled so the driver cannot be pulled in by board defaults. */
+&wifi {
+	status = "disabled";
 };
 
 /* Add RX boosted mode and DIO1 pull-down to LoRa radio.

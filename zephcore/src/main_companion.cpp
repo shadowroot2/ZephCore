@@ -31,6 +31,7 @@ LOG_MODULE_REGISTER(zephcore_main, CONFIG_ZEPHCORE_MAIN_LOG_LEVEL);
 #include <helpers/time_sync.h>
 #include "ui_task.h"
 #include "ui_mesh_actions.h"
+#include <helpers/ui/ui_timezone.h>
 #include "oled_power.h"
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
 #include "buzzer.h"
@@ -754,11 +755,52 @@ public:
 	}
 
 	/* Temp radio params — deferred; stub for now. */
-	void applyTempRadioParams(float freq, float bw, uint8_t sf, uint8_t cr,
-				  int timeout_mins) override {
-		(void)freq; (void)bw; (void)sf; (void)cr; (void)timeout_mins;
-	}
-};
+		void applyTempRadioParams(float freq, float bw, uint8_t sf, uint8_t cr,
+					  int timeout_mins) override {
+			(void)freq; (void)bw; (void)sf; (void)cr; (void)timeout_mins;
+		}
+
+		bool setGpsEnabled(bool enabled) override {
+			if (!gps_is_available()) return false;
+			gps_enable(enabled);
+			return true;
+		}
+
+		bool isGpsEnabled() const override {
+			return gps_is_enabled();
+		}
+
+		void formatGpsStatsReply(char* reply) override {
+			if (!gps_is_enabled()) {
+				strcpy(reply, "off");
+				return;
+			}
+
+			struct gps_state_info gsi;
+			gps_get_state_info(&gsi);
+
+			static const char* const state_str[] = { "off", "standby", "acquiring" };
+			const char* state = gsi.state < 3 ? state_str[gsi.state] : "unknown";
+
+			struct gps_position pos;
+			bool has_pos = gps_get_last_known_position(&pos);
+
+			if (has_pos) {
+				snprintf(reply, CLI_REPLY_SIZE,
+					 "on state=%s sats=%u fix=%us ago lat=%.6f lon=%.6f",
+					 state, gsi.satellites, gsi.last_fix_age_s,
+					 pos.latitude_ndeg / 1e9, pos.longitude_ndeg / 1e9);
+			} else if (gsi.next_search_s > 0) {
+				snprintf(reply, CLI_REPLY_SIZE,
+					 "on state=%s sats=%u no fix next=%us",
+					 state, gsi.satellites, gsi.next_search_s);
+			} else {
+				snprintf(reply, CLI_REPLY_SIZE,
+					 "on state=%s sats=%u no fix",
+					 state, gsi.satellites);
+			}
+		}
+	};
 
 static CompanionCLICallbacks companion_cli_cbs;
 static ClientACL companion_acl;  /* unused by CommonCLI but required by constructor */
@@ -1193,6 +1235,7 @@ int main(void)
 
 	/* Load prefs from storage */
 	data_store.loadPrefs(companion_mesh.prefs);
+	ui_set_timezone_offset_minutes(companion_mesh.prefs.ui_timezone_offset_minutes);
 
 	/* Apply saved BLE PIN (0 = use Kconfig default) */
 	if (companion_mesh.prefs.ble_pin >= 100000 && companion_mesh.prefs.ble_pin <= 999999) {

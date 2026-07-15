@@ -299,11 +299,12 @@ int SystemTimeScreen::render(JoystickDisplay &display)
 	display.setTextSize(1);
 	display.setColor(JoystickDisplay::GREEN);
 
-	char timeText[16], dateText[16];
-	formatUnixDateTime(_rtc->getCurrentTime(), timeText, sizeof(timeText), dateText, sizeof(dateText));
+	char timeText[16], dateText[16], tzText[12];
+	formatUnixDateTime(ui_local_epoch(_rtc->getCurrentTime()), timeText, sizeof(timeText), dateText, sizeof(dateText));
+	ui_timezone_format_label(tzText, sizeof(tzText));
 
 	const char *labels[4] = { "Time:", "Date:", "TZ:", "Source:" };
-	const char *values[4] = { timeText, dateText, "UTC",
+	const char *values[4] = { timeText, dateText, tzText,
 							   time_sync_display_label() };
 	int y = kContentY + 2;
 	for (int i = 0; i < 4; i++) {

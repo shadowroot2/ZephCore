@@ -12,6 +12,7 @@
 #include "../joystick_display.h"
 #include "../joystick_defs.h"
 #include <helpers/ContactInfo.h>
+#include <helpers/ui/ui_timezone.h>
 #include <zephyr/kernel.h>
 #include <stdio.h>
 #include <string.h>
@@ -186,6 +187,7 @@ static inline void formatHopCount(uint8_t path_len, char *out, size_t out_len)
 static inline void formatClockHM(uint32_t timestamp, char *out, size_t out_len)
 {
 	if (out_len == 0) return;
+	timestamp = ui_local_epoch(timestamp);
 	int hh = (int)((timestamp / 3600UL) % 24UL);
 	int mm = (int)((timestamp / 60UL) % 60UL);
 	snprintf(out, out_len, "%02dh%02d", hh, mm);

@@ -1098,7 +1098,6 @@ int CompanionMesh::appendSelfTelemetry(uint8_t *reply, uint8_t permissions)
 				reply[i++] = (temp >> 8) & 0xFF;
 				reply[i++] = temp & 0xFF;
 			} else if (env.has_mcu_temperature) {
-				// MCU die temp as fallback when no external sensor
 				reply[i++] = CH_SELF;
 				reply[i++] = LPP_TEMPERATURE;
 				int16_t temp = (int16_t)(env.mcu_temperature_c * 10);

@@ -56,6 +56,7 @@ extern "C" void bt_ctlr_assert_handle(char *file, uint32_t line)
 
 /* UI subsystem (display, buttons, buzzer) */
 #include "ui_task.h"
+#include <helpers/ui/ui_timezone.h>
 
 /* Radio + mesh includes (shared header selects LR1110 or SX126x) */
 #include <mesh/RadioIncludes.h>
@@ -584,6 +585,7 @@ int main(void)
 	 * settings: CLI readback looked correct but the hardware stayed on EU.
 	 * Mirrors the temp_prefs pattern in main_companion.cpp. */
 	data_store.loadPrefs(*room_mesh.getNodePrefs());
+	ui_set_timezone_offset_minutes(room_mesh.getNodePrefs()->ui_timezone_offset_minutes);
 	lora_radio.setPrefs(room_mesh.getNodePrefs());
 
 	/* Start mesh with data store - loads ACL, regions */

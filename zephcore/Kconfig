@@ -578,10 +578,10 @@ menu "GPS Configuration"
 config ZEPHCORE_GPS_POLL_INTERVAL_SEC
 	int "GPS poll interval in seconds"
 	default 300
-	range 10 86400
+	range 0 86400
 	help
 	  How often to wake GPS and acquire a fix.
-	  Default 300 seconds (5 minutes).
+	  Default 300 seconds (5 minutes). Set to 0 for always-on GPS.
 
 config ZEPHCORE_GPS_FIX_TIMEOUT_SEC
 	int "GPS fix acquisition timeout in seconds"
@@ -716,6 +716,15 @@ config ZEPHCORE_UI_TIME_SOURCE_FRESH_HOURS
 	  Set to 0 to keep the last external source tag indefinitely
 	  (no freshness expiry). Drift on a 50 ppm crystal is ~4 s/day,
 	  so this is a trust/freshness signal, not an accuracy limit.
+
+config ZEPHCORE_UI_TIMEZONE_OFFSET_MINUTES
+	int "UI timezone offset from UTC (minutes)"
+	default 300
+	range -1439 1439
+	help
+	  Timezone offset used only when rendering clock values in the local UI.
+	  RTC, GPS, messages, and protocol timestamps remain UTC.
+	  Examples: UTC+5 = 300, UTC-8 = -480.
 
 config ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS
 	int "Low-battery auto-shutdown threshold (mV, 0 = disabled)"

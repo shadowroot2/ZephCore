@@ -342,7 +342,8 @@ extern "C" void mesh_housekeeping_ui_refresh(void)
 		struct gps_state_info gsi;
 
 		gps_get_state_info(&gsi);
-		ui_set_gps_state(gsi.state, gsi.last_fix_age_s, gsi.next_search_s);
+		ui_set_gps_state(gsi.state, gsi.satellites,
+				 gsi.last_fix_age_s, gsi.next_search_s);
 	}
 
 	/* Update recently heard contacts from mesh advert path table.

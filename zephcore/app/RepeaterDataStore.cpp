@@ -201,6 +201,11 @@ bool RepeaterDataStore::loadPrefs(NodePrefs& prefs) {
      * read leaves the constructor defaults flood_max_unscoped=64, flood_max_advert=8). */
     fs_read(&file, &prefs.flood_max_unscoped, sizeof(prefs.flood_max_unscoped));
     fs_read(&file, &prefs.flood_max_advert, sizeof(prefs.flood_max_advert));
+    /* UI timezone offset (2-byte signed minutes), absent in older files. */
+    int16_t tz_offset = prefs.ui_timezone_offset_minutes;
+    if (fs_read(&file, &tz_offset, sizeof(tz_offset)) == (ssize_t)sizeof(tz_offset)) {
+        prefs.ui_timezone_offset_minutes = tz_offset;
+    }
 
     fs_close(&file);
 
@@ -231,6 +236,9 @@ bool RepeaterDataStore::loadPrefs(NodePrefs& prefs) {
     if (prefs.rx_duty_cycle > 1) prefs.rx_duty_cycle = 0;
     if (prefs.apc_enabled > 1) prefs.apc_enabled = 0;
     if (prefs.apc_margin < 6 || prefs.apc_margin > 30) prefs.apc_margin = 16;
+    if (prefs.ui_timezone_offset_minutes < -1439 || prefs.ui_timezone_offset_minutes > 1439) {
+        prefs.ui_timezone_offset_minutes = CONFIG_ZEPHCORE_UI_TIMEZONE_OFFSET_MINUTES;
+    }
 
     /* One-time format upgrade: old files (< 294 bytes) never saved the ZephCore
      * extension fields, and stored path_hash_mode/loop_detect as zero padding.
@@ -328,6 +336,8 @@ bool RepeaterDataStore::savePrefs(const NodePrefs& prefs) {
     /* Flood hop-ceiling extensions (extend the format past 294 bytes) */
     fs_write(&file, &prefs.flood_max_unscoped, sizeof(prefs.flood_max_unscoped));
     fs_write(&file, &prefs.flood_max_advert, sizeof(prefs.flood_max_advert));
+    /* UI timezone offset extension */
+    fs_write(&file, &prefs.ui_timezone_offset_minutes, sizeof(prefs.ui_timezone_offset_minutes));
 
     ret = fs_sync(&file);
     fs_close(&file);

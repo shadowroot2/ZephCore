@@ -4,7 +4,7 @@
  *
  * Environment: temperature, humidity, pressure
  *   Supports: SHTC3, AHT20/DHT20/AM2301B, SHT4x, SHT3x, BME280, BME680, BMP280, BMP388, LPS22HB
- *   MCU die temperature as fallback (nordic,nrf-temp)
+ *   MCU die temperature as fallback when no external sensor is present
  *
  * Power monitors: voltage, current, power
  *   Supports: INA219, INA3221, INA226, INA228, INA230, INA232, INA236, INA237

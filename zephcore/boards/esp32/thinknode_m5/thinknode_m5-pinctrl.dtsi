@@ -8,7 +8,7 @@
  *   I2C1:      SDA=GPIO48, SCL=GPIO47 (PCA9557)
  *   E-Ink SPI3: SCLK=GPIO38, MOSI=GPIO45
  *   UART0:     TX=GPIO43, RX=GPIO44 (USB-UART console)
- *   GPS UART1: TX=GPIO19, RX=GPIO20
+ *   GPS UART1: MCU TX=GPIO20, MCU RX=GPIO19
  */
 
 #include <zephyr/dt-bindings/pinctrl/esp-pinctrl-common.h>
@@ -70,11 +70,11 @@
 
 	uart1_default: uart1_default {
 		group1 {
-			pinmux = <UART1_TX_GPIO19>;
+			pinmux = <UART1_TX_GPIO20>;
 			output-high;
 		};
 		group2 {
-			pinmux = <UART1_RX_GPIO20>;
+			pinmux = <UART1_RX_GPIO19>;
 			bias-pull-up;
 		};
 	};

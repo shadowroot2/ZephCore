@@ -6,7 +6,7 @@
  *
  * Environment sensors (temp/humidity/pressure):
  *   SHTC3, AHT20/DHT20/AM2301B, SHT4x, SHT3xD, BME280, BME680, BMP280, BMP388, LPS22HB
- *   MCU die temperature as fallback (nordic,nrf-temp)
+ *   MCU die temperature as fallback when no external sensor is present
  *
  * Power monitors (voltage/current/power):
  *   INA219, INA3221, INA226, INA228, INA230, INA232, INA236, INA237
@@ -41,6 +41,13 @@ LOG_MODULE_REGISTER(zephcore_sensors, CONFIG_ZEPHCORE_SENSORS_LOG_LEVEL);
 #define HAS_T1000_ANALOG_LIGHT 1
 #else
 #define HAS_T1000_ANALOG_LIGHT 0
+#endif
+
+#if HAS_ENV_SENSORS && (IS_ENABLED(CONFIG_TEMP_NRF5) || IS_ENABLED(CONFIG_TEMP_NRFS)) && \
+	DT_NODE_EXISTS(DT_NODELABEL(temp))
+#define MCU_TEMP_NODE DT_NODELABEL(temp)
+#elif HAS_ENV_SENSORS && IS_ENABLED(CONFIG_ESP32_TEMP) && DT_NODE_EXISTS(DT_NODELABEL(coretemp))
+#define MCU_TEMP_NODE DT_NODELABEL(coretemp)
 #endif
 
 /* INA3221 channel selection attribute — defined in driver's private header
@@ -377,10 +384,9 @@ int env_sensors_read(struct env_data *data)
 		}
 	}
 
-	/* === MCU die temperature — always read when available ===
-	 * Used as fallback when no external temp sensor, and always
-	 * available via has_mcu_temperature for telemetry decisions. */
-	const struct device *mcu_temp = DEVICE_DT_GET_OR_NULL(DT_NODELABEL(temp));
+	/* === MCU die temperature — fallback when no external temp sensor exists. */
+#ifdef MCU_TEMP_NODE
+	const struct device *mcu_temp = DEVICE_DT_GET(MCU_TEMP_NODE);
 	if (mcu_temp && device_is_ready(mcu_temp)) {
 		if (sensor_sample_fetch(mcu_temp) == 0 &&
 		    sensor_channel_get(mcu_temp, SENSOR_CHAN_DIE_TEMP, &val) == 0) {
@@ -388,6 +394,7 @@ int env_sensors_read(struct env_data *data)
 			data->has_mcu_temperature = true;
 		}
 	}
+#endif
 
 #if HAS_T1000_ANALOG_LIGHT
 	t1000_read_light(data);

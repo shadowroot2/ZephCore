@@ -140,7 +140,7 @@ int RoomServerMesh::handleRequest(ClientInfo* sender, uint32_t sender_timestamp,
             lpp.addPower(CH_SELF, charge_power_w);
         }
 
-        /* Environment sensors — prefer external, fallback to MCU die temp */
+        /* Environment sensors — prefer external, fallback to MCU die temp. */
         struct env_data env;
         if (env_sensors_read(&env) == 0) {
             if (env.has_temperature) {
@@ -148,7 +148,6 @@ int RoomServerMesh::handleRequest(ClientInfo* sender, uint32_t sender_timestamp,
             } else if (env.has_mcu_temperature) {
                 lpp.addTemperature(CH_SELF, env.mcu_temperature_c);
             } else {
-                /* Last resort: MCU temp from board API */
                 float mcu_temp = _board.getMCUTemperature();
                 if (!isnan(mcu_temp)) {
                     lpp.addTemperature(CH_SELF, mcu_temp);
@@ -164,7 +163,6 @@ int RoomServerMesh::handleRequest(ClientInfo* sender, uint32_t sender_timestamp,
                 lpp.addLuminosity(CH_SELF, env.light_lux);
             }
         } else {
-            /* No env sensors at all — try MCU temp directly */
             float mcu_temp = _board.getMCUTemperature();
             if (!isnan(mcu_temp)) {
                 lpp.addTemperature(CH_SELF, mcu_temp);
