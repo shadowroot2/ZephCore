@@ -94,6 +94,7 @@ static bool gps_time_synced = false;     /* True after GPS syncs RTC. Starts fal
 static int64_t last_fix_uptime_ms = 0;  /* k_uptime when last validated fix was acquired */
 static int64_t standby_start_ms = 0;    /* k_uptime when standby started (for next-wake calc) */
 static uint64_t standby_interval_ms = 0; /* How long standby lasts (for next-wake calc) */
+static uint16_t last_gnss_satellites = 0; /* Updated on every active GNSS callback, even before fix */
 
 #define GPS_GOOD_FIX_COUNT       3       /* Need 3 consecutive good fixes */
 #define GPS_MIN_SATELLITES       4       /* Minimum satellites for valid fix */
@@ -240,6 +241,7 @@ static void gnss_data_cb(const struct device *dev, const struct gnss_data *data)
 		data->info.fix_status, data->info.satellites_cnt, gps_current_state);
 
 	k_mutex_lock(&gps_mutex, K_FOREVER);
+	last_gnss_satellites = data->info.satellites_cnt;
 
 	if (data->info.fix_status >= GNSS_FIX_STATUS_GNSS_FIX) {
 		/* Reject "Null Island" (0,0) fixes. Zephyr's NMEA parser splits
@@ -1692,7 +1694,7 @@ void gps_get_state_info(struct gps_state_info *info)
 	memset(info, 0, sizeof(*info));
 #if HAS_GNSS
 	info->state = (uint8_t)gps_current_state;
-	info->satellites = current_pos.satellites;
+	info->satellites = last_gnss_satellites;
 
 	if (last_fix_uptime_ms > 0) {
 		/* Seconds since last validated fix */

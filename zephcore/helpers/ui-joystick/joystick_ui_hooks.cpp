@@ -271,7 +271,7 @@ extern "C" void ui_clear_recent(void) {}
 extern "C" void ui_set_sensor_data(int16_t, uint32_t, uint16_t, uint16_t) {}
 extern "C" void ui_set_gps_available(bool) {}
 extern "C" void ui_set_gps_enabled(bool) {}
-extern "C" void ui_set_gps_state(uint8_t, uint32_t, uint32_t) {}
+extern "C" void ui_set_gps_state(uint8_t, uint16_t, uint32_t, uint32_t) {}
 extern "C" void ui_set_buzzer_quiet(bool) {}
 extern "C" void ui_set_offgrid_mode(bool) {}
 extern "C" void ui_set_msg_count(uint16_t count) {}

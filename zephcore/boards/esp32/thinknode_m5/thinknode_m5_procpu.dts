@@ -5,7 +5,7 @@
  * Hardware mapping is ported from official MeshCore variants/thinknode_m5:
  *   LoRa SPI2:  SCLK=16, MOSI=15, MISO=7, NSS=17
  *   LoRa ctrl:  EN=46, DIO1=4, RESET=6, BUSY=5, DIO2 RF switch, DIO3 3.3V TCXO
- *   GPS UART1:  TX=19, RX=20, EN=11, RESET=13, SWITCH=10
+ *   GPS UART1:  MCU TX=20, MCU RX=19, EN=11, RESET=13, SWITCH=10
  *   Battery:    GPIO8 ADC, 12 dB attenuation, 2.11 divider multiplier
  *   I2C0:       SDA=2, SCL=1
  *   I2C1:       SDA=48, SCL=47, PCA9557 GPIO expander @0x18
@@ -95,6 +95,8 @@
 		};
 	};
 
+	/* Physical GPS switch, same UI path as ThinkNode M1.
+	 * HIGH = GPS on, LOW = GPS off; GPIO11 remains the runtime enable line. */
 	gps_switch: gps-switch {
 		compatible = "gpio-keys";
 		gps_sw: gps_sw {
@@ -186,6 +188,10 @@
 		compatible = "luatos,air530z";
 		on-off-gpios = <&gpio0 11 GPIO_ACTIVE_HIGH>;
 	};
+};
+
+&coretemp {
+	status = "okay";
 };
 
 &spi2 {

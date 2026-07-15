@@ -578,10 +578,10 @@ menu "GPS Configuration"
 config ZEPHCORE_GPS_POLL_INTERVAL_SEC
 	int "GPS poll interval in seconds"
 	default 300
-	range 10 86400
+	range 0 86400
 	help
 	  How often to wake GPS and acquire a fix.
-	  Default 300 seconds (5 minutes).
+	  Default 300 seconds (5 minutes). Set to 0 for always-on GPS.
 
 config ZEPHCORE_GPS_FIX_TIMEOUT_SEC
 	int "GPS fix acquisition timeout in seconds"

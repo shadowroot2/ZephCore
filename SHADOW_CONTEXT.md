@@ -14,7 +14,7 @@
 
 - Основной рабочий путь: `/Users/shadow/Work/CodeX/ZephCore`.
 - Пользовательский GitHub: `https://github.com/shadowroot2/ZephCore`.
-- Рабочая ветка с нашими изменениями: `shadow`.
+- Текущая рабочая ветка checkout: `dev`.
 - `README.md` переведен на русский, добавлено упоминание автора оригинальной прошивки и нашей работы над ошибками/поддержкой новых плат.
 
 ## ThinkNode M6 Repeater
@@ -105,6 +105,15 @@
   Это нормально для этой платы/зарядного тракта. Текущая M5 OCV-кривая имеет верхнюю точку `4100 mV`, поэтому `4127 mV` должен отображаться как `100%`.
   Если при `4127 mV` процент не `100%`, проверять надо не делитель, а прошивку/линковку board-specific `battery_curve.c` или сохраненный runtime `adc_multiplier` в prefs.
 - Power Off через меню теперь подтверждается нормально.
+- GPS на M5 доведен до рабочего состояния по модели M1/M6:
+  - `luatos,air530z` + easy init;
+  - GPS power через `GPIO11`;
+  - GPS reset через `GPIO13`;
+  - физический GPS switch через `GPIO10`;
+  - UART GPS: MCU TX `GPIO20`, MCU RX `GPIO19`;
+  - временный `gps duty=0` и экранная отладка `Use/View/CB` убраны после подтверждения фикса.
+- В GPS-экране оставлено полезное отображение количества спутников во время поиска.
+- Добавлена телеметрия температуры для M5 через ESP32-S3 `coretemp`; fallback ограничен `CONFIG_ESP32_TEMP`, чтобы не ломать другие ESP32-S3 сборки без драйвера.
 
 BLE root cause:
 
@@ -120,7 +129,7 @@ BLE root cause:
 
 Последняя M5 прошивка:
 
-- `firmware/thinknode_m5-esp32s3-procpu-companion-blefix-d9f7af2-merged.bin`
+- `firmware/shadow-20260715-thinknode-m5-client-merged.bin`
 
 Проверенный итоговый BLE config:
 
@@ -160,8 +169,20 @@ M5 merged-bin:
 
 ```sh
 python3 -m esptool --chip esp32s3 merge-bin \
-  --output firmware/thinknode_m5-esp32s3-procpu-companion-blefix-d9f7af2-merged.bin \
+  --output firmware/shadow-20260715-thinknode-m5-client-merged.bin \
   --flash-mode dio --flash-freq 80m --flash-size 4MB \
   0x00000 build/mcuboot/zephyr/zephyr.bin \
   0x20000 build/zephcore/zephyr/zephyr.signed.bin
 ```
+
+## Проверочные сборки 2026-07-15
+
+Собранные и сложенные в `firmware/` образы:
+
+- `shadow-20260715-thinknode-m1-client.uf2` — ThinkNode M1 client/companion.
+- `shadow-20260715-thinknode-m5-client-merged.bin` — ThinkNode M5 client/companion, ESP32-S3 merged-bin, offset `0x0`.
+- `shadow-20260715-thinknode-m6-repeater.uf2` — ThinkNode M6 repeater с GPS fix и solar `6W`.
+- `shadow-20260715-heltec-v3-client-merged.bin` — Heltec V3 client/companion, ESP32-S3 merged-bin, offset `0x0`, с battery/sleep правками.
+- `shadow-20260715-t1000-e-client.uf2` — Seeed T1000-E client/companion с light telemetry.
+
+SHA в ответы не выводить, пользователь попросил не показывать.

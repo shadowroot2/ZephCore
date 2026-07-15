@@ -15,7 +15,7 @@ ZephCore — это порт прошивки [MeshCore](https://github.com/mesh
 - **ThinkNode M6 repeater**: исправлен старт GPS. M6 теперь использует рабочую схему `luatos,air530z`, питание GPS через `GPS_EN`, а `GPS_STANDBY` удерживается в активном состоянии. GPS на M6 снова получает спутники и фикс.
 - **ThinkNode M6 solar telemetry**: добавлен бинарный признак зарядки батареи и отображение мощности `6W` только для M6, когда реально активен сигнал зарядки.
 - **Seeed T1000-E**: добавлена поддержка аналогового датчика освещенности и передача luminosity в телеметрию.
-- **ThinkNode M5 companion**: добавлена новая ESP32-S3 плата с E-Ink, PCA9557, buzzer, backlight, кнопками, SX1262, GPS и батарейной кривой. Исправлен BLE advertising на M5: для Zephyr ESP32 connectable advertising требует `CONFIG_ESP32_BT_CTLR_LE_MASTER=y`.
+- **ThinkNode M5 companion**: добавлена новая ESP32-S3 плата с E-Ink, PCA9557, buzzer, backlight, кнопками, SX1262, GPS и батарейной кривой. Исправлены BLE advertising, старт Air530Z GPS по схеме M1/M6, UART GPS и телеметрия температуры MCU.
 - **Heltec V3 companion**: учтены фиксы отображения батареи и ухода в sleep при низком питании. Коэффициент батареи откалиброван по MeshCore/Meshtastic: `vbat-mv-multiplier=<5420>`, чтобы полный 1S LiPo не отображался как завышенные `4.45V`.
 - **Low-battery notify**: перед уходом в сон/выключение companion может отправлять сообщение в Public с напряжением батареи и uptime.
 - **Raspberry Pi Pico W + Waveshare SX1262**: добавлена поддержка новой платы в режиме repeater. Сборка идет под `rpi_picow`, пины сверены с рабочей прошивкой MeshCore `PicoW_repeater-v1.14.1`.
@@ -23,6 +23,18 @@ ZephCore — это порт прошивки [MeshCore](https://github.com/mesh
 - **Базовый LoRa-пресет**: частота `867.935 MHz`, SF8, BW 62.5 kHz, CR 4/8, duty cycle 50%.
 - **Multi ACKs**: включены по умолчанию для новых настроек узла.
 - **RP2040 RNG**: добавлен fallback RNG для платформ без аппаратного CSPRNG.
+
+## Проверочные прошивки
+
+Актуальные собранные образы этой ветки лежат в `firmware/`:
+
+| Файл | Плата | Роль | Формат |
+|------|-------|------|--------|
+| `shadow-20260715-thinknode-m1-client.uf2` | ThinkNode M1 | client/companion | UF2 |
+| `shadow-20260715-thinknode-m5-client-merged.bin` | ThinkNode M5 | client/companion | ESP32-S3 merged-bin, flash offset `0x0` |
+| `shadow-20260715-thinknode-m6-repeater.uf2` | ThinkNode M6 | repeater | UF2 |
+| `shadow-20260715-heltec-v3-client-merged.bin` | Heltec V3 | client/companion | ESP32-S3 merged-bin, flash offset `0x0` |
+| `shadow-20260715-t1000-e-client.uf2` | Seeed T1000-E | client/companion | UF2 |
 
 ## Зачем Zephyr?
 

@@ -88,10 +88,11 @@ WEAK void ui_set_gps_enabled(bool enabled)
 	ARG_UNUSED(enabled);
 }
 
-WEAK void ui_set_gps_state(uint8_t state, uint32_t last_fix_age_s,
-			    uint32_t next_search_s)
+WEAK void ui_set_gps_state(uint8_t state, uint16_t satellites,
+			    uint32_t last_fix_age_s, uint32_t next_search_s)
 {
-	ARG_UNUSED(state); ARG_UNUSED(last_fix_age_s); ARG_UNUSED(next_search_s);
+	ARG_UNUSED(state); ARG_UNUSED(satellites);
+	ARG_UNUSED(last_fix_age_s); ARG_UNUSED(next_search_s);
 }
 
 WEAK void ui_set_ble_enabled(bool enabled)

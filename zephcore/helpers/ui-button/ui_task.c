@@ -1026,11 +1026,13 @@ void ui_set_gps_enabled(bool enabled)
 	s->gps_enabled = enabled;
 }
 
-void ui_set_gps_state(uint8_t state, uint32_t last_fix_age_s, uint32_t next_search_s)
+void ui_set_gps_state(uint8_t state, uint16_t satellites,
+		      uint32_t last_fix_age_s, uint32_t next_search_s)
 {
 	struct ui_state *s = get_state();
 
 	s->gps_state = state;
+	s->gps_satellites = (satellites > UINT8_MAX) ? UINT8_MAX : (uint8_t)satellites;
 	s->gps_last_fix_age_s = last_fix_age_s;
 	s->gps_next_search_s = next_search_s;
 }

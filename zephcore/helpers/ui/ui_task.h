@@ -139,10 +139,12 @@ void ui_set_gps_enabled(bool enabled);
 /**
  * Update GPS state machine info for display.
  * @param state        0=OFF, 1=STANDBY (sleeping), 2=ACQUIRING (searching)
+ * @param satellites   Last GNSS satellite count
  * @param last_fix_age_s  Seconds since last fix (UINT32_MAX = never)
  * @param next_search_s   Seconds until next search (0 = now or off)
  */
-void ui_set_gps_state(uint8_t state, uint32_t last_fix_age_s, uint32_t next_search_s);
+void ui_set_gps_state(uint8_t state, uint16_t satellites,
+		      uint32_t last_fix_age_s, uint32_t next_search_s);
 
 /**
  * Set BLE enabled state (for display page).
