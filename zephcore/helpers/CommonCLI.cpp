@@ -5,6 +5,7 @@
 
 #include "CommonCLI.h"
 #include "battery_curve.h"
+#include <helpers/MeshTimeSync.h>
 #include <helpers/time_sync.h>
 #include <adapters/clock/ZephyrRTCDiscover.h>
 #include <helpers/TxtDataHelpers.h>
@@ -53,16 +54,11 @@ static const char *skip_spaces(const char *s)
 static bool parseTimezoneOffsetMinutes(const char *arg, int16_t *out_minutes)
 {
     arg = skip_spaces(arg);
-    if (*arg == '\0') return false;
-
     char *end = nullptr;
     long minutes = strtol(arg, &end, 10);
     if (end == arg) return false;
-
     end = (char *)skip_spaces(end);
-    if (*end != '\0') return false;
-    if (minutes < -1439 || minutes > 1439) return false;
-
+    if (*end != '\0' || minutes < -1439 || minutes > 1439) return false;
     *out_minutes = (int16_t)minutes;
     return true;
 }
@@ -81,6 +77,8 @@ static inline bool prefs_read(struct fs_file_t *f, void *dest, size_t len) {
 }
 
 void CommonCLI::loadPrefs(const char* path) {
+    struct fs_dirent entry;
+    size_t prefs_size = fs_stat(path, &entry) == 0 ? entry.size : 0;
     struct fs_file_t file;
     fs_file_t_init(&file);
 
@@ -143,9 +141,26 @@ void CommonCLI::loadPrefs(const char* path) {
     ok = ok && prefs_read(&file, &_prefs->apc_margin, sizeof(_prefs->apc_margin));           // 293
     ok = ok && prefs_read(&file, &_prefs->flood_max_unscoped, sizeof(_prefs->flood_max_unscoped)); // 294
     ok = ok && prefs_read(&file, &_prefs->flood_max_advert, sizeof(_prefs->flood_max_advert)); // 295
-    int16_t tz_offset = _prefs->ui_timezone_offset_minutes;
-    if (fs_read(&file, &tz_offset, sizeof(tz_offset)) == (ssize_t)sizeof(tz_offset)) {
-        _prefs->ui_timezone_offset_minutes = tz_offset;
+    if (prefs_size == 298) {
+        uint8_t legacy[2] = { 0, 0 };
+        ok = ok && prefs_read(&file, legacy, sizeof(legacy));
+        int16_t tz = (int16_t)((uint16_t)legacy[0] | ((uint16_t)legacy[1] << 8));
+        if (tz >= -1439 && tz <= 1439 && (legacy[0] > 1 || legacy[1] > 1)) {
+            _prefs->ui_timezone_offset_minutes = tz;
+        } else {
+            _prefs->meshtimesync = legacy[0];
+            _prefs->cad_auto = legacy[1];
+        }
+    } else {
+        ok = ok && prefs_read(&file, &_prefs->meshtimesync, sizeof(_prefs->meshtimesync));
+        ok = ok && prefs_read(&file, &_prefs->cad_auto, sizeof(_prefs->cad_auto));
+        ok = ok && prefs_read(&file, &_prefs->cad_offset, sizeof(_prefs->cad_offset));
+        ok = ok && prefs_read(&file, &_prefs->cad_probe_interval, sizeof(_prefs->cad_probe_interval));
+        ok = ok && prefs_read(&file, &_prefs->cad_busycap, sizeof(_prefs->cad_busycap));
+        if (prefs_size >= 303) {
+            ok = ok && prefs_read(&file, &_prefs->ui_timezone_offset_minutes,
+                                  sizeof(_prefs->ui_timezone_offset_minutes));
+        }
     }
 
     if (!ok) {
@@ -192,6 +207,13 @@ void CommonCLI::loadPrefs(const char* path) {
     _prefs->apc_margin = constrain(_prefs->apc_margin, (uint8_t)6, (uint8_t)30);
     _prefs->flood_max_unscoped = constrain(_prefs->flood_max_unscoped, (uint8_t)0, (uint8_t)64);
     _prefs->flood_max_advert = constrain(_prefs->flood_max_advert, (uint8_t)0, (uint8_t)64);
+    _prefs->meshtimesync = constrain(_prefs->meshtimesync, (uint8_t)0, (uint8_t)1);
+    _prefs->cad_auto = constrain(_prefs->cad_auto, (uint8_t)0, (uint8_t)1);
+    _prefs->cad_offset = constrain(_prefs->cad_offset, (int8_t)CAD_OFFSET_MIN, (int8_t)CAD_OFFSET_MAX);
+    if (_prefs->cad_probe_interval != 0 && _prefs->cad_probe_interval < 10) {
+        _prefs->cad_probe_interval = 10;
+    }
+    _prefs->cad_busycap = constrain(_prefs->cad_busycap, (uint8_t)0, (uint8_t)90);
     _prefs->ui_timezone_offset_minutes =
         constrain(_prefs->ui_timezone_offset_minutes, (int16_t)-1439, (int16_t)1439);
 
@@ -261,6 +283,11 @@ void CommonCLI::savePrefs(const char* path) {
     fs_write(&file, &_prefs->apc_margin, sizeof(_prefs->apc_margin));
     fs_write(&file, &_prefs->flood_max_unscoped, sizeof(_prefs->flood_max_unscoped));
     fs_write(&file, &_prefs->flood_max_advert, sizeof(_prefs->flood_max_advert));
+    fs_write(&file, &_prefs->meshtimesync, sizeof(_prefs->meshtimesync));
+    fs_write(&file, &_prefs->cad_auto, sizeof(_prefs->cad_auto));
+    fs_write(&file, &_prefs->cad_offset, sizeof(_prefs->cad_offset));
+    fs_write(&file, &_prefs->cad_probe_interval, sizeof(_prefs->cad_probe_interval));
+    fs_write(&file, &_prefs->cad_busycap, sizeof(_prefs->cad_busycap));
     fs_write(&file, &_prefs->ui_timezone_offset_minutes, sizeof(_prefs->ui_timezone_offset_minutes));
 
     fs_close(&file);
@@ -320,6 +347,32 @@ void CommonCLI::scheduleReboot(uint8_t type)
 }
 
 void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, char* reply) {
+    /* Case-insensitive command keywords.  Lowercase only the first two
+     * whitespace-delimited tokens (the verb and the config key) — the value
+     * (3rd token onward) is preserved verbatim, so case-sensitive arguments
+     * like passwords, node names, owner info, and keys are never mangled.
+     * Fixes e.g. "Get cad" / "SET Cad.Auto on" not being recognized. */
+    char norm[CLI_REPLY_SIZE];
+    {
+        int tok = 0;          /* completed tokens so far */
+        bool in_tok = false;
+        size_t j = 0;
+        for (size_t i = 0; command[i] != '\0' && j < sizeof(norm) - 1; i++) {
+            char c = command[i];
+            if (c == ' ' || c == '\t') {
+                if (in_tok) { in_tok = false; tok++; }
+            } else {
+                in_tok = true;
+                if (tok < 2 && c >= 'A' && c <= 'Z') {
+                    c = (char)(c - 'A' + 'a');
+                }
+            }
+            norm[j++] = c;
+        }
+        norm[j] = '\0';
+        command = norm;
+    }
+
     if (strcmp(command, "start dfu") == 0) {
         /* Reboot into UF2 bootloader for firmware update */
         strcpy(reply, "OK - rebooting to UF2 DFU");
@@ -370,6 +423,8 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
             getRTCClock()->setCurrentTime(sender_timestamp + 1);
             time_sync_report(TIME_SYNC_CLI);
             zephcore_rtc_save(sender_timestamp + 1);  /* persist to hardware RTC */
+            MeshTimeSync* ts = _callbacks->getMeshTimeSync();
+            if (ts) ts->noteManualSync((uint32_t)(k_uptime_get() / 1000));
             uint32_t now = getRTCClock()->getCurrentTime();
             time_t t = (time_t)now;
             struct tm *tm = gmtime(&t);
@@ -391,6 +446,8 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
             getRTCClock()->setCurrentTime(secs);
             time_sync_report(TIME_SYNC_CLI);
             zephcore_rtc_save(secs);  /* persist to hardware RTC */
+            MeshTimeSync* ts = _callbacks->getMeshTimeSync();
+            if (ts) ts->noteManualSync((uint32_t)(k_uptime_get() / 1000));
             time_t t = (time_t)secs;
             struct tm *tm = gmtime(&t);
             snprintf(reply, CLI_REPLY_SIZE, "OK - clock set: %02d:%02d - %d/%d/%d UTC",
@@ -413,7 +470,7 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
             strcpy(reply, "ERR: bad pubkey");
         }
     } else if (memcmp(command, "tempradio ", 10) == 0) {
-        snprintf(tmp, sizeof(tmp), "%s", &command[10]);
+        snprintf(tmp, sizeof(tmp), "%.*s", (int)(sizeof(tmp) - 1), &command[10]);
         const char* parts[5];
         int num = mesh::Utils::parseTextParts(tmp, parts, 5);
         float freq = num > 0 ? strtof(parts[0], nullptr) : 0.0f;
@@ -520,12 +577,26 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
             } else {
                 strcpy(reply, "> strict");
             }
-        } else if (memcmp(config, "tx", 2) == 0 && (config[2] == 0 || config[2] == ' ')) {
+        } else if (strcmp(config, "tx apc") == 0) {
             if (_callbacks->isAPCEnabled()) {
                 int8_t apc = _callbacks->getAPCReduction();
                 float margin = _callbacks->getAPCMargin();
                 int effective = (int)_prefs->tx_power_dbm - (int)apc;
-                snprintf(reply, CLI_REPLY_SIZE, "> %ddBm (max=%d apc=-%d margin=%.1f target=%d)",
+                snprintf(reply, CLI_REPLY_SIZE,
+                         "> apc=on effective=%ddBm max=%d reduction=%d margin=%.1f target=%d",
+                         effective, (int)_prefs->tx_power_dbm, (int)apc, (double)margin,
+                         (int)_callbacks->getAPCTargetMargin());
+            } else {
+                snprintf(reply, CLI_REPLY_SIZE, "> apc=off max=%ddBm target=%d",
+                         (int)_prefs->tx_power_dbm, (int)_callbacks->getAPCTargetMargin());
+            }
+        } else if (strcmp(config, "tx") == 0) {
+            if (_callbacks->isAPCEnabled()) {
+                int8_t apc = _callbacks->getAPCReduction();
+                float margin = _callbacks->getAPCMargin();
+                int effective = (int)_prefs->tx_power_dbm - (int)apc;
+                snprintf(reply, CLI_REPLY_SIZE,
+                         "> %ddBm (apc=on max=%d reduction=%d margin=%.1f target=%d)",
                          effective, (int)_prefs->tx_power_dbm, (int)apc, (double)margin,
                          (int)_callbacks->getAPCTargetMargin());
             } else {
@@ -566,14 +637,37 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
             uint32_t s = gps_get_poll_interval_sec();  // now-effective value
             if (s == 0) strcpy(reply, "> always on (0)");
             else snprintf(reply, CLI_REPLY_SIZE, "> %u", (unsigned)s);
-        } else if (strcmp(config, "tz") == 0) {
-            char tz[12];
-            ui_timezone_format_label(tz, sizeof(tz));
-            snprintf(reply, CLI_REPLY_SIZE, "> %s (%d min)",
-                     tz, (int)_prefs->ui_timezone_offset_minutes);
         } else if (memcmp(config, "dc.restarts", 11) == 0) {
             snprintf(reply, CLI_REPLY_SIZE, "> %u",
                      (uint32_t)_callbacks->getDutyCycleTimeoutRestarts());
+        } else if (memcmp(config, "cad", 3) == 0) {
+            /* Runtime state + per-level probe stats live in the radio.
+             * Remote replies get the truncated buffer like meshtimesync. */
+            size_t cap = (sender_timestamp == 0) ? CLI_REPLY_SIZE
+                                                 : CLI_REMOTE_REPLY_SIZE;
+            int n = snprintf(reply, cap, "> ");
+            if (_callbacks->formatCadStatus(reply + n, (int)cap - n) == 0) {
+                strcpy(reply, "not available");
+            }
+        } else if (memcmp(config, "meshtimesync", 12) == 0) {
+            MeshTimeSync* ts = _callbacks->getMeshTimeSync();
+            if (ts == nullptr) {
+                strcpy(reply, "not available");
+            } else {
+                /* Only the local USB CLI (sender_timestamp == 0) gets the
+                 * full evidence table; remote replies are truncated to the
+                 * packet buffer. */
+                size_t cap = (sender_timestamp == 0) ? CLI_REPLY_SIZE
+                                                     : CLI_REMOTE_REPLY_SIZE;
+                ts->formatStatus(reply, cap, getRTCClock()->getCurrentTime(),
+                                 (uint32_t)(k_uptime_get() / 1000),
+                                 _prefs->meshtimesync != 0);
+            }
+		} else if (strcmp(config, "tz") == 0) {
+			char tz[12];
+			ui_timezone_format_label(tz, sizeof(tz));
+			snprintf(reply, CLI_REPLY_SIZE, "> %s (%d min)", tz,
+				(int)_prefs->ui_timezone_offset_minutes);
         } else {
             snprintf(reply, CLI_REPLY_SIZE, "??: %s", config);
         }
@@ -606,6 +700,49 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
             _prefs->agc_reset_interval = atoi(&config[19]) / 4;
             savePrefs();
             snprintf(reply, CLI_REPLY_SIZE, "OK - interval rounded to %u", ((uint32_t)_prefs->agc_reset_interval) * 4);
+        } else if (memcmp(config, "cad.auto ", 9) == 0) {
+            if (memcmp(&config[9], "on", 2) == 0 || memcmp(&config[9], "off", 3) == 0) {
+                _prefs->cad_auto = (config[9] == 'o' && config[10] == 'n') ? 1 : 0;
+                _callbacks->applyCadPrefs();
+                savePrefs();
+                strcpy(reply, "OK");
+            } else {
+                strcpy(reply, "Error: must be on or off");
+            }
+        } else if (memcmp(config, "cad.offset ", 11) == 0) {
+            int val = atoi(&config[11]);
+            if (val < CAD_OFFSET_MIN || val > CAD_OFFSET_MAX) {
+                snprintf(reply, CLI_REPLY_SIZE, "Error: offset range is %d..%d",
+                         CAD_OFFSET_MIN, CAD_OFFSET_MAX);
+            } else {
+                _prefs->cad_offset = (int8_t)val;
+                _callbacks->applyCadPrefs();
+                savePrefs();
+                strcpy(reply, "OK");
+            }
+        } else if (memcmp(config, "cad.probe.interval ", 19) == 0) {
+            int val = atoi(&config[19]);
+            if (val != 0 && (val < 10 || val > 255)) {
+                strcpy(reply, "Error: interval is 0 (off) or 10-255 seconds");
+            } else {
+                _prefs->cad_probe_interval = (uint8_t)val;
+                _callbacks->applyCadPrefs();
+                savePrefs();
+                strcpy(reply, "OK");
+            }
+        } else if (memcmp(config, "cad.busycap ", 12) == 0) {
+            int val = atoi(&config[12]);
+            if (val != 0 && (val < 10 || val > 90)) {
+                strcpy(reply, "Error: busycap is 0 (off) or 10-90 percent");
+            } else {
+                _prefs->cad_busycap = (uint8_t)val;
+                _callbacks->applyCadPrefs();
+                savePrefs();
+                strcpy(reply, "OK");
+            }
+        } else if (memcmp(config, "cad.reset", 9) == 0) {
+            _callbacks->resetCadStats();
+            strcpy(reply, "OK - CAD probe stats cleared");
         } else if (memcmp(config, "multi.acks ", 11) == 0) {
             int val = atoi(&config[11]);
             if (val == 0 || val == 1) {
@@ -684,7 +821,7 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
                 strcpy(reply, "Error: must be on or off");
             }
         } else if (memcmp(config, "radio ", 6) == 0) {
-            snprintf(tmp, sizeof(tmp), "%s", &config[6]);
+            snprintf(tmp, sizeof(tmp), "%.*s", (int)(sizeof(tmp) - 1), &config[6]);
             const char* parts[4];
             int num = mesh::Utils::parseTextParts(tmp, parts, 4);
             float freq = num > 0 ? strtof(parts[0], nullptr) : 0.0f;
@@ -820,21 +957,23 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
                 strcpy(reply, "Error: range 6-30 dB");
             }
         } else if (memcmp(config, "tx ", 3) == 0) {
-            if (memcmp(&config[3], "apc", 3) == 0) {
+            if (strcmp(&config[3], "apc") == 0) {
                 _prefs->apc_enabled = 1;
                 _callbacks->setAPCEnabled(true);
                 savePrefs();
                 snprintf(reply, CLI_REPLY_SIZE, "OK - tx power=%d dBm (apc=on)",
                          (int)_prefs->tx_power_dbm);
             } else {
-                int val = atoi(&config[3]);
+                char *end = nullptr;
+                long parsed = strtol(&config[3], &end, 10);
                 int max_tx = 30;
 #ifdef CONFIG_ZEPHCORE_MAX_TX_POWER_DBM
                 max_tx = CONFIG_ZEPHCORE_MAX_TX_POWER_DBM;
 #endif
-                if (val < -9 || val > max_tx) {
+                if (end == &config[3] || *end != '\0' || parsed < -9 || parsed > max_tx) {
                     snprintf(reply, CLI_REPLY_SIZE, "Error: range -9 to %d dBm, or 'apc'", max_tx);
                 } else {
+                    int val = (int)parsed;
                     _prefs->apc_enabled = 0;
                     _prefs->tx_power_dbm = (int8_t)val;
                     savePrefs();
@@ -850,7 +989,11 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
                 float old_freq = _prefs->freq;
                 _prefs->freq = f;
                 savePrefs();
-                _prefs->freq = old_freq;
+                /* Keep _prefs->freq = f in RAM so a later savePrefs() (from any
+                 * other "set" command before reboot) can't rewrite the old freq
+                 * back; freeze the running radio on the old freq until reboot,
+                 * mirroring the "set radio" handler above. */
+                _callbacks->freezeRadioParams(old_freq, _prefs->bw, _prefs->sf, _prefs->cr);
                 strcpy(reply, "OK - reboot to apply");
             } else {
                 strcpy(reply, "Error: range 150-2500 MHz");
@@ -931,9 +1074,15 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
             else if (memcmp(arg, "off", 3) == 0) val = 0;
             else if (arg[0] == '0' || arg[0] == '1') val = atoi(arg);
             if (val == 0 || val == 1) {
+                /* Always save (upstream f3d4d8cd), then apply live and
+                 * report when the radio has no RX boost feature. */
                 _prefs->rx_boost = (uint8_t)val;
                 savePrefs();
-                snprintf(reply, CLI_REPLY_SIZE, "OK - radio.rxgain=%d (reboot to apply)", _prefs->rx_boost);
+                if (_callbacks->setRxBoostedGain(val == 1)) {
+                    snprintf(reply, CLI_REPLY_SIZE, "OK - radio.rxgain=%d", _prefs->rx_boost);
+                } else {
+                    strcpy(reply, "Error: unsupported");
+                }
             } else {
                 strcpy(reply, "Error: must be 0, 1, on, or off");
             }
@@ -978,25 +1127,38 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
                 if (val == 0) strcpy(reply, "OK - gps duty=0 (always on)");
                 else snprintf(reply, CLI_REPLY_SIZE, "OK - gps duty=%u s", (unsigned)val);
             }
-        } else if (memcmp(config, "tz ", 3) == 0) {
-            const char *arg = config + 3;
-            int16_t offset = 0;
-            if (strcmp(skip_spaces(arg), "default") == 0) {
-                offset = CONFIG_ZEPHCORE_UI_TIMEZONE_OFFSET_MINUTES;
-            } else if (!parseTimezoneOffsetMinutes(arg, &offset)) {
-                strcpy(reply, "usage: set tz <minutes|-1439..1439|default>");
-                return;
+        } else if (memcmp(config, "meshtimesync ", 13) == 0) {
+            const char* arg = &config[13];
+            if (_callbacks->getMeshTimeSync() == nullptr) {
+                strcpy(reply, "not available");
+            } else if (memcmp(arg, "on", 2) == 0) {
+                _prefs->meshtimesync = 1;
+                savePrefs();
+                strcpy(reply, "OK - meshtimesync on");
+            } else if (memcmp(arg, "off", 3) == 0) {
+                _prefs->meshtimesync = 0;
+                savePrefs();
+                strcpy(reply, "OK - meshtimesync off");
+            } else {
+                strcpy(reply, "Error: must be on or off");
             }
-
-            _prefs->ui_timezone_offset_minutes = offset;
-            ui_set_timezone_offset_minutes(offset);
-            savePrefs();
-
-            char tz[12];
-            ui_timezone_format_label(tz, sizeof(tz));
-            snprintf(reply, CLI_REPLY_SIZE, "OK - tz=%s (%d min)", tz, (int)offset);
+		} else if (memcmp(config, "tz ", 3) == 0) {
+			int16_t offset;
+			const char *arg = config + 3;
+			if (strcmp(skip_spaces(arg), "default") == 0) {
+				offset = CONFIG_ZEPHCORE_UI_TIMEZONE_OFFSET_MINUTES;
+			} else if (!parseTimezoneOffsetMinutes(arg, &offset)) {
+				strcpy(reply, "usage: set tz <minutes|-1439..1439|default>");
+				return;
+			}
+			_prefs->ui_timezone_offset_minutes = offset;
+			ui_set_timezone_offset_minutes(offset);
+			savePrefs();
+			char tz[12];
+			ui_timezone_format_label(tz, sizeof(tz));
+			snprintf(reply, CLI_REPLY_SIZE, "OK - tz=%s (%d min)", tz, (int)offset);
         } else {
-            snprintf(reply, CLI_REPLY_SIZE, "unknown config: %s", config);
+            snprintf(reply, CLI_REPLY_SIZE, "unknown config: %.230s", config);
         }
     } else if (sender_timestamp == 0 && strcmp(command, "erase") == 0) {
         bool s = _callbacks->formatFileSystem();
@@ -1022,7 +1184,7 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
             strcpy(reply, "null");
         }
     } else if (memcmp(command, "sensor set ", 11) == 0) {
-        snprintf(tmp, sizeof(tmp), "%s", &command[11]);
+        snprintf(tmp, sizeof(tmp), "%.*s", (int)(sizeof(tmp) - 1), &command[11]);
         const char* parts[2];
         int num = mesh::Utils::parseTextParts(tmp, parts, 2, ' ');
         const char* key = (num > 0) ? parts[0] : "";

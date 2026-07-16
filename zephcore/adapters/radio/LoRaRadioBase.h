@@ -78,8 +78,22 @@ public:
 	/* Power saving */
 	void enableRxDutyCycle(bool enable);
 	bool isRxDutyCycleEnabled() const { return _rx_duty_cycle_enabled; }
-	void setRxBoost(bool enable);
+	/* Returns false when the chip has no RX boost feature (SX127x). */
+	virtual bool setRxBoost(bool enable);
 	bool isRxBoostEnabled() const { return _rx_boost_enabled; }
+
+	/* Read-only view of the modem config currently used by buildModemConfig().
+	 * These honor temporary radio overrides for freq/bw/sf/cr and the same TX
+	 * clamps/APC reduction as the actual lora_config() path. */
+	uint32_t getActiveFrequencyHz() const;
+	uint16_t getActiveBandwidthKHzX10() const;
+	uint8_t getActiveSpreadingFactor() const;
+	uint8_t getActiveCodingRate() const;
+	uint16_t getActivePreambleLength() const;
+	uint8_t getActiveSyncWord() const;
+	int8_t getConfiguredTxPower() const;
+	int8_t getEffectiveTxPower() const;
+	bool isTxActive() const { return atomic_get(&_tx_active) != 0; }
 
 	/* Duty-cycle preamble false-positive counter.
 	 * Incremented by the driver whenever RX_TX_TIMEOUT fires in
@@ -94,6 +108,14 @@ public:
 	/* Adaptive Power Control */
 	void setTxPowerReduction(int8_t reduction_db) override { _tx_power_reduction_db = reduction_db; }
 	int8_t getTxPowerReduction() const override { return _tx_power_reduction_db; }
+
+	/* Adaptive CAD (LBT detPeak calibration) */
+	void setCadParams(bool auto_enabled, int8_t offset,
+			  uint16_t probe_interval_s, uint8_t busycap_pct) override;
+	void cadMaintenance() override;
+	int8_t getCadOffset() const override { return _cad_offset; }
+	void resetCadStats() override;
+	int formatCadStatus(char *buf, int cap) override;
 
 protected:
 	/* ── Hardware primitives — subclass MUST implement ─────────── */
@@ -111,6 +133,18 @@ protected:
 
 	/** GPIO-only BUSY check (no SPI). Default false for chips without duty-cycle sleep. */
 	virtual bool hwIsChipBusy() { return false; }
+
+	/* ── Adaptive-CAD primitives — defaults suit chips without hardware
+	 * CAD (SX127x): probing unsupported, offset ignored. ───────────── */
+
+	/** Blocking calibration CAD at (family base detPeak + level).
+	 *  Leaves the chip in STANDBY; caller restarts RX.
+	 *  Returns 1 = busy, 0 = free, <0 = error / unsupported. */
+	virtual int hwCadProbe(int8_t level) { (void)level; return -ENOSYS; }
+	/** Apply the operating detPeak offset for all subsequent LBT CADs. */
+	virtual void hwCadSetPeakOffset(int8_t offset) { (void)offset; }
+	/** Per-SF base detPeak for the current config (0 = unsupported). */
+	virtual uint8_t hwCadBasePeak() { return 0; }
 
 	/** Radio deaf time per duty-cycle wake transition (context restore +
 	 *  PLL lock + TCXO startup where fitted), in microseconds.  Counts
@@ -165,6 +199,26 @@ protected:
 	int _noise_floor;
 	int _calibration_threshold;
 	uint8_t _ema_unguarded;         /* tick counter for warmup + periodic bypass */
+
+	/* Adaptive CAD state */
+	struct CadLevelStats {
+		uint16_t probes;   /* probes run at this level */
+		uint16_t busy;     /* raw busy verdicts */
+		uint16_t fp;       /* busy that passed the ground-truth filter (suspected false positive) */
+		uint16_t tp;       /* busy confirmed by RX activity right after */
+	};
+	CadLevelStats _cad_stats[CAD_NUM_LEVELS];
+	bool _cad_auto;                 /* staircase acts on the stats */
+	int8_t _cad_offset;             /* operating detPeak offset (levels) */
+	uint16_t _cad_probe_interval_s; /* 0 = probing disabled */
+	uint8_t _cad_busycap_pct;       /* airtime cap: max % TX deferred (0 = off) */
+	int64_t _cad_last_probe_ms;
+	int64_t _cad_last_decay_ms;
+	uint8_t _cad_probe_rr;          /* round-robin index (sweep) / frontier mix counter */
+
+	int8_t pickCadProbeLevel();
+	void decayCadStats();
+	void cadStaircaseStep();
 
 	/* Power saving */
 	bool _rx_duty_cycle_enabled;

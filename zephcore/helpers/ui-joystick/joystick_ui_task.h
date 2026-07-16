@@ -104,6 +104,12 @@ public:
 	bool isGPSAvailable() const;
 	bool getGPSState() const;
 	void toggleGPS();
+	/* GPS duty-cycle interval, seconds (0 = always on). Steps through a fixed
+	 * preset ladder (step = +1/-1) rather than raw seconds, since the valid
+	 * range spans 0..604800 — a linear per-press delta would be unusable at
+	 * either end. Applied live + persists to prefs. */
+	uint32_t getGpsDutySec() const;
+	void adjustGpsDuty(int step);
 	bool isSerialEnabled() const { return _ble_enabled; }
 	void disableSerial();
 	void enableSerial();

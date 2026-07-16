@@ -20,6 +20,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <zephyr/devicetree.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -83,6 +85,26 @@ bool mc_display_is_on(void);
  */
 bool mc_display_is_epd(void);
 
+/* Color overlay support is compiled only when the devicetree has a raw
+ * RGB565 TFT under the `tft` nodelabel (the runtime probe still verifies
+ * pixel format and readiness).  Boards without one get constant-false /
+ * mono-fallback inlines so every color code path — including the ~3.8 KB
+ * overlay op queue in display.c — is dropped at compile time. */
+#define MC_DISPLAY_COLOR_PANEL DT_NODE_EXISTS(DT_NODELABEL(tft))
+
+/**
+ * @return true when a raw RGB565-capable color panel is available for
+ * optional color overlays. Monochrome displays return false.
+ */
+#if MC_DISPLAY_COLOR_PANEL
+bool mc_display_has_color(void);
+#else
+static inline bool mc_display_has_color(void)
+{
+	return false;
+}
+#endif
+
 /**
  * Clear the framebuffer (fill with black).
  * Call before rendering a new frame.
@@ -99,6 +121,34 @@ void mc_display_clear(void);
  */
 void mc_display_text(int x, int y, const char *text, bool invert);
 
+/* Common RGB565 colors for optional color-capable pages. */
+#define MC_COLOR_BLACK    0x0000
+#define MC_COLOR_WHITE    0xffff
+#define MC_COLOR_GREEN    0x07e0
+#define MC_COLOR_CYAN     0x07ff
+#define MC_COLOR_YELLOW   0xffe0
+#define MC_COLOR_ORANGE   0xfd20
+#define MC_COLOR_RED      0xf800
+#define MC_COLOR_BLUE     0x001f
+#define MC_COLOR_GRAY     0x8410
+
+/**
+ * Draw text using RGB565 color when supported. On non-color displays this
+ * falls back to mc_display_text(..., invert=false).
+ *
+ * Color overlays are flushed after the normal CFB frame in mc_display_finalize().
+ */
+#if MC_DISPLAY_COLOR_PANEL
+void mc_display_color_text(int x, int y, const char *text, uint16_t color);
+#else
+static inline void mc_display_color_text(int x, int y, const char *text,
+					 uint16_t color)
+{
+	(void)color;
+	mc_display_text(x, y, text, false);
+}
+#endif
+
 /**
  * Draw a filled rectangle.
  *
@@ -108,6 +158,21 @@ void mc_display_text(int x, int y, const char *text, bool invert);
  * @param h  Height
  */
 void mc_display_fill_rect(int x, int y, int w, int h);
+
+/**
+ * Draw a filled rectangle using RGB565 color when supported. On non-color
+ * displays this falls back to mc_display_fill_rect().
+ */
+#if MC_DISPLAY_COLOR_PANEL
+void mc_display_color_fill_rect(int x, int y, int w, int h, uint16_t color);
+#else
+static inline void mc_display_color_fill_rect(int x, int y, int w, int h,
+					      uint16_t color)
+{
+	(void)color;
+	mc_display_fill_rect(x, y, w, h);
+}
+#endif
 
 /**
  * Draw a horizontal line.

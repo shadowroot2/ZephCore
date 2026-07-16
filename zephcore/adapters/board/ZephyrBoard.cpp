@@ -20,6 +20,18 @@
 #define NRF52_GPREGRET 1
 #endif
 
+/* ESP32 boards whose console is the native USB-Serial-JTAG: sys_reboot() does
+ * a digital soft reset but does not detach the USB PHY, so the D+ pull-up stays
+ * asserted and the host never sees a disconnect.  On macOS the serial port then
+ * wedges after a settings reboot (GH #43).  Drop the pad before rebooting so the
+ * host gets a clean disconnect/re-enumerate.  Gated to exactly the boards that
+ * both exhibit the defect and expose the PHY knob to fix it. */
+#if defined(CONFIG_SOC_FAMILY_ESPRESSIF_ESP32) && \
+    DT_NODE_HAS_COMPAT(DT_CHOSEN(zephyr_console), espressif_esp32_usb_serial)
+#include <hal/usb_serial_jtag_ll.h>
+#define ESP32_USB_SERIAL_DETACH 1
+#endif
+
 /* LoRa TX activity LED (optional — defined per-board via DT alias) */
 #if DT_NODE_EXISTS(DT_ALIAS(lora_tx_led))
 static const struct gpio_dt_spec tx_led =
@@ -276,6 +288,12 @@ void ZephyrBoard::onAfterTransmit()
 void ZephyrBoard::reboot()
 {
 	k_msleep(50);  /* Let UART/USB flush */
+#ifdef ESP32_USB_SERIAL_DETACH
+	/* Drop the D+ pull-up so the host sees a clean USB disconnect before the
+	 * soft reset (GH #43 — wedged serial port on macOS). */
+	usb_serial_jtag_ll_phy_enable_pad(false);
+	k_msleep(100);  /* Hold SE0 long enough for host disconnect debounce */
+#endif
 	sys_reboot(SYS_REBOOT_COLD);
 }
 

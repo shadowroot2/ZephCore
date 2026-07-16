@@ -49,6 +49,31 @@ enum usb_rx_state {
 
 #define USB_TEXT_LINE_MAX 128
 
+/* ---- Backend selection --------------------------------------------------
+ * The companion byte transport is normally a native-USB CDC-ACM UART, but the
+ * same frame parser / TX ring / CLI runs unchanged over a plain UART too — for
+ * boards whose USB-C is a USB-UART bridge (e.g. Heltec V3 / CP2102) or that
+ * have no USB device controller at all.  A board selects the backend with the
+ * `zephcore,companion-uart` chosen node; absent that we fall back to the sole
+ * cdc-acm-uart, so existing native-USB and nRF builds resolve identically.
+ *
+ * COMPANION_HAS_DTR is true only for the CDC backend — a plain UART has no DTR
+ * line, so session end there is protocol-driven (CMD_APP_START), exactly like
+ * the legacy SerialCompanionTransport. */
+#if DT_HAS_CHOSEN(zephcore_companion_uart)
+#  define COMPANION_UART_DEV    DEVICE_DT_GET(DT_CHOSEN(zephcore_companion_uart))
+#  define COMPANION_HAS_DTR     DT_NODE_HAS_COMPAT(DT_CHOSEN(zephcore_companion_uart), zephyr_cdc_acm_uart)
+#  define COMPANION_HAS_BACKEND 1
+#elif DT_HAS_COMPAT_STATUS_OKAY(zephyr_cdc_acm_uart) && \
+	(IS_ENABLED(CONFIG_USB_CDC_ACM) || IS_ENABLED(CONFIG_USBD_CDC_ACM_CLASS))
+#  define COMPANION_UART_DEV    DEVICE_DT_GET_ONE(zephyr_cdc_acm_uart)
+#  define COMPANION_HAS_DTR     1
+#  define COMPANION_HAS_BACKEND 1
+#else
+#  define COMPANION_HAS_DTR     0
+#  define COMPANION_HAS_BACKEND 0
+#endif
+
 /* USB CDC state */
 static const struct device *usb_dev;
 static uint8_t usb_ring_buf_data[USB_RING_BUF_SIZE];
@@ -332,8 +357,10 @@ static void usb_rx_work_fn(struct k_work *work)
 	}
 }
 
+#if COMPANION_HAS_DTR
 /* DTR-transition callback from the shared ZephyrUSBCDC module.
- * On drop: host closed the port → reset parser, hand control back to BLE. */
+ * On drop: host closed the port → reset parser, hand control back to BLE.
+ * CDC-only — a plain-UART backend has no DTR and never registers this. */
 static void on_dtr_change(bool dtr_active)
 {
 	if (dtr_active) {
@@ -378,6 +405,7 @@ static void on_dtr_change(bool dtr_active)
 	ring_buf_reset(&usb_tx_ring_buf);
 	k_spin_unlock(&usb_tx_lock, key);
 }
+#endif /* COMPANION_HAS_DTR */
 
 /* Queue a frame for interrupt-driven TX (sync byte + LE length + payload,
  * matching the MeshCore ArduinoSerialInterface framing). The whole frame is
@@ -491,16 +519,18 @@ void zephcore_usb_companion_init(struct k_event *mesh_events,
 	s_mesh_events = mesh_events;
 	s_mesh_event_ble_rx = mesh_event_ble_rx;
 
-	/* The cdc_acm_uart DT node may be present without the class driver compiled
-	 * (shared esp32s3_usb_otg.dtsi exposes the node unconditionally; the class is
-	 * only enabled with esp32s3_usb.conf). Gate the device-get on the class too,
-	 * else DEVICE_DT_GET_ONE references an undefined device ordinal on, e.g., a
-	 * debug ESP32-S3 companion (CONFIG_LOG=y) built without esp32s3_usb.conf. */
-#if DT_HAS_COMPAT_STATUS_OKAY(zephyr_cdc_acm_uart) && \
-	(IS_ENABLED(CONFIG_USB_CDC_ACM) || IS_ENABLED(CONFIG_USBD_CDC_ACM_CLASS))
-	usb_dev = DEVICE_DT_GET_ONE(zephyr_cdc_acm_uart);
+	/* COMPANION_UART_DEV resolves to the chosen `zephcore,companion-uart` node,
+	 * or the sole cdc-acm-uart for back-compat (see the backend block above).
+	 * The cdc_acm_uart DT node may be present without the class driver compiled
+	 * (shared esp32s3_usb_otg.dtsi exposes the node unconditionally; the class
+	 * is only enabled with esp32s3_usb.conf) — the COMPANION_HAS_BACKEND gate
+	 * folds that case in, so DEVICE_DT_GET never references an undefined ordinal
+	 * on, e.g., a debug ESP32-S3 companion built without esp32s3_usb.conf. */
+#if COMPANION_HAS_BACKEND
+	usb_dev = COMPANION_UART_DEV;
 	if (device_is_ready(usb_dev)) {
-		LOG_INF("USB CDC device ready: %s", usb_dev->name);
+		LOG_INF("Companion UART ready: %s (%s)", usb_dev->name,
+			COMPANION_HAS_DTR ? "CDC" : "serial");
 		ring_buf_init(&usb_ring_buf, sizeof(usb_ring_buf_data), usb_ring_buf_data);
 		ring_buf_init(&usb_tx_ring_buf, sizeof(usb_tx_ring_buf_data), usb_tx_ring_buf_data);
 
@@ -509,11 +539,14 @@ void zephcore_usb_companion_init(struct k_event *mesh_events,
 		uart_irq_callback_set(usb_dev, usb_uart_isr);
 		uart_irq_rx_enable(usb_dev);
 
+#if COMPANION_HAS_DTR
 		/* DTR state changes (including disconnect) reach us via the
-		 * shared usbd_msg_callback — no polling work needed. */
+		 * shared usbd_msg_callback — no polling work needed.  Plain-UART
+		 * backends have no DTR; their session reset is protocol-driven. */
 		zephcore_usbd_set_dtr_cb(on_dtr_change);
+#endif
 	} else {
-		LOG_WRN("USB CDC device not ready");
+		LOG_WRN("Companion UART not ready");
 		usb_dev = NULL;
 	}
 #endif

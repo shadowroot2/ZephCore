@@ -28,6 +28,9 @@ protected:
 	bool hwIsReceiving() override;
 	void hwSetRxBoost(bool enable) override;
 	void hwResetAGC() override;
+	int hwCadProbe(int8_t level) override;
+	void hwCadSetPeakOffset(int8_t offset) override;
+	uint8_t hwCadBasePeak() override;
 };
 
 } /* namespace mesh */

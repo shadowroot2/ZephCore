@@ -23,7 +23,9 @@ Supported Boards
 | Ikoka Nano 30dBm     | `west build -b ikoka_nano_30dbm zephcore` | UF2 drag-drop                 |
 | GAT562 30S Mesh Kit  | `west build -b gat562_30s zephcore`       | UF2 drag-drop or `west flash` |
 | LilyGo T-Echo        | `west build -b lilygo_techo zephcore`     | UF2 drag-drop or `west flash` |
+| LilyGo T-Impulse Plus | `west build -b lilygo_timpulse_plus zephcore` | UF2 drag-drop or `west flash` |
 | Heltec T114          | `west build -b heltec_t114 zephcore`      | UF2 drag-drop or `west flash` |
+| Heltec Mesh Node T096 | `west build -b heltec_t096 zephcore`     | UF2 drag-drop or `west flash` |
 
 **Heltec T114 screenless:** append `boards/nrf52840/heltec_t114/no_display.conf` to `EXTRA_CONF_FILE` for units without the TFT module.
 
@@ -42,7 +44,8 @@ SWD flash: `west flash` (requires J-Link, pyocd, or nrfjprog connected).
 | Heltec V3            | `west build -b heltec_wifi_lora32_v3/esp32s3/procpu zephcore` | `west flash` |
 | Heltec V4.2 (GC1109 PA)  | `west build -b heltec_wifi_lora32_v4/esp32s3/procpu zephcore`  | `west flash` |
 | Heltec V4.3 (KCT8103L PA) | `west build -b heltec_wifi_lora32_v43/esp32s3/procpu zephcore` | `west flash` |
-| Heltec Wireless Tracker | `west build -b heltec_wireless_tracker/esp32s3/procpu zephcore` | `west flash` |
+| Heltec Wireless Tracker V1.1 | `west build -b heltec_wireless_tracker/esp32s3/procpu zephcore` | `west flash` |
+| Heltec Wireless Tracker V2 | `west build -b heltec_wireless_tracker_v2/esp32s3/procpu zephcore` | `west flash` |
 | LilyGo T-Beam v1.2     | `west build -b ttgo_tbeam/esp32/procpu zephcore`               | `west flash` |
 
 **Heltec V3 console:** ZephCore routes console/shell to `uart0` on V3. Use the UART serial port for boot logs and CLI.
@@ -51,6 +54,11 @@ SWD flash: `west flash` (requires J-Link, pyocd, or nrfjprog connected).
 unclear, check GPIO2's default pull: the V4.2 GC1109 PA has an internal pull-down
 (GPIO2 reads LOW at boot), while the V4.3 KCT8103L PA has an internal pull-up
 (GPIO2 reads HIGH). Only difference in firmware: TX control pin GPIO46→GPIO5.
+
+**Heltec Wireless Tracker V1.1 vs V2:** use `heltec_wireless_tracker` for the
+upstream Zephyr V1.1 target and `heltec_wireless_tracker_v2` for the ESP32-S3FN8
+V2 board with KCT8103L PA/FEM. The V2 pin map is documented in
+`boards/esp32/heltec_wireless_tracker_v2/README.md`.
 
 **LilyGo T-Beam v1.2:** Classic ESP32 (PICO-D4) board — several caveats apply:
 - Upstream Zephyr DTS models the SX1276 variant; `board.overlay` overrides the radio node to SX1262 on the same SPI3 wiring.
@@ -74,6 +82,15 @@ west build -b <board>/esp32s3/procpu zephcore --pristine --sysbuild -- \
   -DEXTRA_CONF_FILE="boards/common/wifi_ota.conf"
 west flash --esp-device COMX
 ```
+
+**GitHub Release downloads for S3/C-series boards are always MCUboot-based**, unlike
+the plain-build default above: `build.sh` builds those boards with `--sysbuild`
+unconditionally, so the release always has MCUboot @ `0x0` + signed app @ `0x20000`.
+Only `-merged.bin` is published for them — flash that one, at offset `0x0`, for both
+first flash and updates. It does not touch `storage_partition`/`lfs_partition`
+(identity, prefs, contacts, BLE bonds), so routine updates preserve device state.
+Classic ESP32 boards (T-Beam, PICO-D4) still publish a self-contained plain `.bin`
+for `0x1000`, since they use simple-boot in the release build too.
 
 ### SX127x Boards (loramac-node backend)
 
@@ -134,6 +151,39 @@ pyocd pack install EFR32MG24B220F1536IM48
 
 Flash with: `west flash --runner pyocd`
 
+### STM32WL (Seeed LoRa-E5)
+
+| Board          | Build string                          | Flash        |
+|----------------|---------------------------------------|--------------|
+| LoRa-E5 mini   | `west build -b lora_e5_mini zephcore` | `west flash` |
+
+The STM32WLE5JC integrates an SX1262-class sub-GHz radio (driven by the native
+SX126x driver via its STM32WL HAL over the internal `subghzspi` bus). RF
+front-end, RF switch (PA4/PA5), TCXO and the +22 dBm RFO_HP PA are described in
+upstream `zephyr/dts/arm/seeed_studio/lora-e5.dtsi`.
+
+STM32WL caveats — different from every other ZephCore platform:
+- **No Bluetooth and no USB device.** `boards/common/stm32wl_common.conf` forces
+  `CONFIG_BT=n`. The console/CLI and the companion protocol both run over
+  **USART1**, bridged to USB-C by the onboard USB-UART chip.
+- **Repeater** uses the USART CLI (add `repeater.conf`). The **companion** speaks
+  MeshCore serial framing over the same UART via `SerialCompanionTransport.c`
+  (a drop-in `zephcore_ble_*` provider, auto-selected because `CONFIG_BT=n`) —
+  no BLE pairing, the official serial client connects directly.
+- **RAM-bound, not flash-bound:** 64KB SRAM. The companion's contact/queue
+  arrays are capped hard in `board.conf` (`MAX_CONTACTS=24`, `OFFLINE_QUEUE_SIZE=8`).
+  AES tables live in ROM (`MBEDTLS_AES_ROM_TABLES`) to reclaim ~8KB SRAM.
+- **TRNG only (no HW CSPRNG):** the STM32 TRNG is enabled as the entropy source
+  and `CSPRNG_ENABLED` auto-resolves on top; `ZephyrRNG` further conditions
+  identity seeds with jitter + AES-CTR.
+- **No MCUboot / UF2:** single app partition at flash origin + a LittleFS volume
+  (see `board.overlay`). Flash over SWD/ST-Link with `west flash` (OpenOCD).
+
+Build the repeater:
+```
+west build -b lora_e5_mini zephcore -- -DEXTRA_CONF_FILE="boards/common/repeater.conf"
+```
+
 ### Building for Repeater Role
 
 Append `-- -DEXTRA_CONF_FILE="boards/common/repeater.conf"` to any build command:
@@ -150,16 +200,19 @@ Append `-- -DEXTRA_CONF_FILE="boards/common/room_server.conf"` to any build comm
 west build -b rak4631 zephcore -- -DEXTRA_CONF_FILE="boards/common/room_server.conf"
 ```
 
-### Production Build (logging disabled)
+### Production vs Debug Builds
+
+Production (no logging, no asserts, reboot-on-fatal) is the **default** — no
+extra conf needed. To enable logging, add the debug overlay:
 
 ```
-west build -b rak4631 zephcore -- -DEXTRA_CONF_FILE="boards/common/prod.conf"
+west build -b rak4631 zephcore -- -DEXTRA_CONF_FILE="boards/common/debug.conf"
 ```
 
-### Repeater + Production
+### Repeater + Debug
 
 ```
-west build -b rak4631 zephcore -- -DEXTRA_CONF_FILE="boards/common/repeater.conf;boards/common/prod.conf"
+west build -b rak4631 zephcore -- -DEXTRA_CONF_FILE="boards/common/repeater.conf;boards/common/debug.conf"
 ```
 
 All build commands should include `--pristine` when switching between roles or boards.
@@ -187,11 +240,11 @@ Directory structure:
 
 Steps:
   1. Create directory: `boards/<platform>/<board_name>/`
-     Platform folders: nrf52840, nrf54l, mg24, esp32
+     Platform folders: nrf52840, nrf54l, mg24, esp32, stm32wl
   2. Copy board.conf and board.overlay from THIS directory
   3. Uncomment the sections matching your platform
   4. Fill in YOUR pin numbers and partition layout
-  5. Add board detection to CMakeLists.txt (~line 60-75):
+  5. Add board detection to CMakeLists.txt (platform detection block, ~line 270):
      Add `BOARD MATCHES "your_board"` to the correct platform line
   6. Build and iterate!
 
@@ -347,10 +400,11 @@ Config Inheritance
     zephcore_common.conf               BLE, storage, input, LoRa, crypto, sensors
       |
     <platform>_common.conf             Platform-specific overrides only
-      |                                  nrf52_common.conf  — UF2, USB CDC, DLE, RTT
-      |                                  nrf54l_common.conf — DLE, RTT
-      |                                  mg24_common.conf   — SiLabs blob stacks, heap
-      |                                  esp32_common.conf  — Espressif blob stacks, heap
+      |                                  nrf52_common.conf   — UF2, USB CDC, DLE, RTT
+      |                                  nrf54l_common.conf  — DLE, RTT
+      |                                  mg24_common.conf    — SiLabs blob stacks, heap
+      |                                  esp32_common.conf   — Espressif blob stacks, heap
+      |                                  stm32wl_common.conf — BT off, UART companion/CLI
       |
     board.conf                         Board name, radio type, board-specific
 

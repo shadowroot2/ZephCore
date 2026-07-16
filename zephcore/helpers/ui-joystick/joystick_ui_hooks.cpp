@@ -221,6 +221,24 @@ extern "C" void ui_set_radio_params(
 	}
 }
 
+extern "C" void ui_set_radio_runtime(int8_t effective_tx_power, bool apc_enabled,
+	int8_t apc_reduction, int16_t apc_margin_x10,
+	uint8_t apc_target_margin, uint8_t sync_word,
+	uint16_t preamble_len, bool rx_duty_cycle,
+	bool radio_ready, bool in_rx, bool tx_active)
+{
+	(void)effective_tx_power; (void)apc_enabled; (void)apc_reduction;
+	(void)apc_margin_x10; (void)apc_target_margin; (void)sync_word;
+	(void)preamble_len; (void)rx_duty_cycle; (void)radio_ready;
+	(void)in_rx; (void)tx_active;
+}
+
+extern "C" void ui_set_radio_stats(uint32_t pkt_recv, uint32_t pkt_sent,
+	uint32_t pkt_errors)
+{
+	ui_notify_radio_stats(pkt_recv, pkt_sent, pkt_errors);
+}
+
 extern "C" void ui_notify_radio_stats(uint32_t pkt_recv, uint32_t pkt_sent, uint32_t pkt_errors)
 {
 	if (s_task) {
@@ -251,14 +269,6 @@ extern "C" void ui_set_ble_enabled(bool enabled)
 		s_task->setBLEEnabled(enabled);
 	}
 }
-
-extern "C" void ui_refresh_display(void)
-{
-	if (s_task) {
-		s_task->forceRefresh();
-	}
-}
-
 
 /* ===== Pull-model no-ops =====
  * The joystick UI reads all hardware state on demand at render time, so these

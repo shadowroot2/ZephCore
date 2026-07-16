@@ -723,13 +723,24 @@ int GPSSettingsScreen::render(JoystickDisplay &display)
 
 	bool gps_enabled = _task->getGPSState();
 
-	char gps_state_line[24];
+	char top_line[24];
 	char satellites_line[32];
 	char lat_lon_line[40];
 	char speed_line[32];
 
-	snprintf(gps_state_line, sizeof(gps_state_line), "GPS: %s",
-			 gps_enabled ? "ON" : "OFF");
+	/* Line 0 doubles as the GPS on/off toggle and the duty-cycle setting —
+	 * the display only has room for 4 lines total (64px OLED), so rather
+	 * than add a 5th line, _selected swaps what line 0 shows/does. */
+	if (_selected == 0) {
+		snprintf(top_line, sizeof(top_line), "GPS: %s", gps_enabled ? "ON" : "OFF");
+	} else {
+		uint32_t duty = _task->getGpsDutySec();
+		if (duty == 0) {
+			snprintf(top_line, sizeof(top_line), "Duty: Always on");
+		} else {
+			snprintf(top_line, sizeof(top_line), "Duty: %us", (unsigned)duty);
+		}
+	}
 
 	bool has_fix = false;
 
@@ -788,9 +799,9 @@ int GPSSettingsScreen::render(JoystickDisplay &display)
 		}
 	}
 
-	const char *lines[4] = { gps_state_line, satellites_line, lat_lon_line, speed_line };
+	const char *lines[4] = { top_line, satellites_line, lat_lon_line, speed_line };
 
-	renderScreenHeader(display, "GPS", 0, 1);
+	renderScreenHeader(display, "GPS", _selected, 2);
 	display.setTextSize(1);
 
 	int y = kContentY + 2;
@@ -804,9 +815,21 @@ int GPSSettingsScreen::render(JoystickDisplay &display)
 
 bool GPSSettingsScreen::handleInput(char key)
 {
+	if (handleCommonListNavigation(key, _selected, 2)) return true;
+	if (key == KEY_LEFT || key == KEY_RIGHT) {
+		if (_selected == 1) {
+			_task->adjustGpsDuty(key == KEY_RIGHT ? 1 : -1);
+			return true;
+		}
+		return false;
+	}
 	if (key == KEY_ENTER) {
-		_task->toggleGPS();
-		_task->showAlert(_task->getGPSState() ? "GPS enabled" : "GPS disabled", 1000);
+		if (_selected == 0) {
+			_task->toggleGPS();
+			_task->showAlert(_task->getGPSState() ? "GPS enabled" : "GPS disabled", 1000);
+		} else {
+			_task->adjustGpsDuty(1);
+		}
 		return true;
 	}
 	if (key == KEY_CANCEL || key == KEY_HOME) { _task->gotoHomeScreen(); return true; }

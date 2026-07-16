@@ -466,6 +466,12 @@ static void room_event_loop(void)
 		 * write here on the main thread instead. */
 		if (events & MESH_EVENT_RTC_SAVE) {
 			zephcore_rtc_save((uint32_t)atomic_get(&pending_rtc_epoch));
+#ifdef ZEPHCORE_LORA
+			/* GPS just set the clock — arm the mesh time-sync drift envelope. */
+			if (room_mesh_ptr) {
+				room_mesh_ptr->noteGPSTimeSync();
+			}
+#endif
 		}
 	}
 }
@@ -605,6 +611,8 @@ int main(void)
 	/* Apply RX boost and duty cycle from prefs */
 	lora_radio.setRxBoost(prefs->rx_boost != 0);
 	lora_radio.enableRxDutyCycle(prefs->rx_duty_cycle != 0);
+	lora_radio.setCadParams(prefs->cad_auto != 0, prefs->cad_offset,
+				prefs->cad_probe_interval, prefs->cad_busycap);
 
 	/* Feed initial UI state from loaded prefs */
 	ui_set_node_name(prefs->node_name);

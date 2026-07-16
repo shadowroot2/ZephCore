@@ -373,6 +373,32 @@ static void joystick_ui_input_cb(struct input_event *evt, void *user_data)
 	}
 #endif
 
+	/* Screen-lock combo: user button (INPUT_KEY_0) + joystick center
+	 * (INPUT_KEY_ENTER) held simultaneously. Tracked on raw press/release,
+	 * which are visible here on the global input bus before the per-key
+	 * handling below (INPUT_KEY_0 is otherwise only consumed by the
+	 * longpress/multi-tap filters). Latched so it fires once per combo
+	 * until at least one of the two is released; the stray key events the
+	 * two buttons emit afterwards land in the locked handler harmlessly. */
+	static bool s_userbtn_down;
+	static bool s_center_down;
+	static bool s_lock_combo_latched;
+	if (evt->code == INPUT_KEY_0) {
+		s_userbtn_down = (evt->value != 0);
+	} else if (evt->code == INPUT_KEY_ENTER) {
+		s_center_down = (evt->value != 0);
+	}
+	if (s_userbtn_down && s_center_down) {
+		if (!s_lock_combo_latched) {
+			s_lock_combo_latched = true;
+			if (joystick_queue_initialized) {
+				JoystickUITask::enqueueKey(KEY_LOCK);
+			}
+		}
+	} else {
+		s_lock_combo_latched = false;
+	}
+
 	/* Long press fires on RELEASE so hold duration is known */
 	if (evt->code == INPUT_KEY_ENTER) {
 		if (evt->value) {
@@ -808,6 +834,18 @@ void JoystickUITask::loop()
 			continue;
 		}
 
+		if (key == KEY_LOCK) {
+			/* Manual lock combo — engage now and stop the idle timer
+			 * (unlock reschedules it). Same locked state the idle
+			 * lockTimerCb would set. */
+			_locked = true;
+			_lock_step = 0;
+			k_timer_stop(&_lock_timer);
+			_render_immediate = true;
+			_pending_render = true;
+			continue;
+		}
+
 		scheduleLockTimer();
 		bool consumed = false;
 		if (key == KEY_BUZZ_TOGGLE) {
@@ -913,6 +951,30 @@ void JoystickUITask::toggleGPS()
 {
 	if (!gps_is_available()) return;
 	mesh_gps_set_enabled(!gps_is_enabled());
+}
+
+uint32_t JoystickUITask::getGpsDutySec() const
+{
+	return gps_get_poll_interval_sec();
+}
+
+void JoystickUITask::adjustGpsDuty(int step)
+{
+	static const uint32_t kPresets[] = {
+		0, 10, 30, 60, 120, 300, 600, 900, 1800, 3600,
+		7200, 21600, 43200, 86400, 172800, 604800
+	};
+	const int kCount = (int)(sizeof(kPresets) / sizeof(kPresets[0]));
+
+	uint32_t cur = gps_get_poll_interval_sec();
+	int idx = kCount - 1;
+	for (int i = 0; i < kCount; i++) {
+		if (kPresets[i] >= cur) { idx = i; break; }
+	}
+	idx += step;
+	if (idx < 0) idx = 0;
+	if (idx >= kCount) idx = kCount - 1;
+	mesh_save_gps_duty_sec(kPresets[idx]);
 }
 
 void JoystickUITask::playCountdownAlarm()
@@ -1417,8 +1479,6 @@ void JoystickUITask::shutdown(bool restart)
 		sys_reboot(SYS_REBOOT_COLD);
 	} else {
 #ifdef CONFIG_POWEROFF
-		ui_notify_shutdown();
-
 		/* Full peripheral teardown + SENSE config for sw0 wake.  Shared
 		 * helper turns off display, GPS, regulators, holds LoRa in reset
 		 * and arms the button SENSE so the user can actually wake the

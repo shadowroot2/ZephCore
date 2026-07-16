@@ -55,8 +55,6 @@ void ui_play_startup_chime(void)
  * led1 is also claimed as a message indicator in non-repeater companion builds
  * when both led0 and led1 are present. The heartbeat cycle turns led1 on
  * only when msg count > 0, giving a visual unread-message reminder.
- * If a board also declares ble-status-led, that LED follows the heartbeat
- * while BLE is enabled but no client is connected.
  */
 
 #if DT_NODE_HAS_PROP(DT_ALIAS(led0), gpios)
@@ -105,7 +103,7 @@ static const struct gpio_dt_spec s_led_enable =
 #endif
 
 #define LED_CYCLE_MS    4000   /* Total heartbeat period */
-#define LED_ON_MS        120   /* Normal pulse width */
+#define LED_ON_MS         20   /* Normal pulse width */
 #define LED_ON_MSG_MS    200   /* Pulse width when unread messages */
 
 #if HAS_HEARTBEAT_LED
@@ -161,27 +159,26 @@ static void led_on_work_handler(struct k_work *work)
 	uint16_t on_ms = (mc > 0) ? LED_ON_MSG_MS : LED_ON_MS;
 
 	if (!s_leds_disabled) {
-#if HAS_BLE_STATUS_LED
+		#if HAS_BLE_STATUS_LED
 		bool ble_waiting = s_ble_enabled && !s_ble_connected;
-#endif
-#if !HEARTBEAT_IS_BLE_STATUS_LED
+		#endif
+		#if !HEARTBEAT_IS_BLE_STATUS_LED
 		heartbeat_led_set(true);
-#else
+		#else
 		if (ble_waiting) {
 			heartbeat_led_set(true);
 		}
-#endif
+		#endif
 #if HAS_MSG_LED
-		bool msg_led_on = (mc > 0);
-		if (msg_led_on) {
+		if (mc > 0) {
 			gpio_pin_set_dt(&s_msg_led, 1);
 		}
 #endif
-#if HAS_BLE_STATUS_LED && !HEARTBEAT_IS_BLE_STATUS_LED
+		#if HAS_BLE_STATUS_LED && !HEARTBEAT_IS_BLE_STATUS_LED
 		if (ble_waiting) {
 			gpio_pin_set_dt(&s_ble_status_led, 1);
 		}
-#endif
+		#endif
 	}
 	k_work_reschedule(&s_led_off_work, K_MSEC(on_ms));
 }
@@ -202,7 +199,6 @@ void ui_led_heartbeat_init(void)
 #if HAS_LED_ENABLE
 		if (gpio_is_ready_dt(&s_led_enable)) {
 			gpio_pin_configure_dt(&s_led_enable, GPIO_OUTPUT_INACTIVE);
-			LOG_INF("LED enable ready");
 		}
 #endif
 		k_work_init_delayable(&s_led_on_work, led_on_work_handler);
@@ -219,7 +215,6 @@ void ui_led_heartbeat_init(void)
 #if HAS_BLE_STATUS_LED && !HEARTBEAT_IS_BLE_STATUS_LED
 	if (gpio_is_ready_dt(&s_ble_status_led)) {
 		gpio_pin_configure_dt(&s_ble_status_led, GPIO_OUTPUT_INACTIVE);
-		LOG_INF("BLE status LED ready");
 	}
 #endif
 #endif
@@ -454,8 +449,10 @@ void ui_prepare_for_system_off(void)
 
 /* ========== Low-battery auto-shutdown ==========
  * Companion only. Driven off the existing housekeeping tick — self-throttled,
- * so there is no dedicated poll. A threshold of 0 disables runtime checks but
- * keeps the code present so CLI/prefs can enable it later. */
+ * so there is no dedicated poll. Disabled entirely (compiled out) unless a
+ * board sets CONFIG_ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS > 0. */
+#if defined(CONFIG_ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS) && \
+	CONFIG_ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS > 0
 
 /* How often we actually sample the ADC for the shutdown check. The caller
  * fires every housekeeping tick (~5 s); this gate keeps the divider from
@@ -472,38 +469,36 @@ void ui_prepare_for_system_off(void)
  * overridden at boot from prefs and live via the CLI (ui_set_auto_shutdown_mv). */
 static uint16_t s_auto_shutdown_mv = CONFIG_ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS;
 static uint8_t  s_low_count;
-static ui_auto_shutdown_notify_cb_t s_auto_shutdown_notify_cb;
-static bool s_shutdown_notify_sent;
 
 void ui_set_auto_shutdown_mv(uint16_t mv)
 {
 	s_auto_shutdown_mv = mv;
 }
 
-void ui_set_auto_shutdown_notify_callback(ui_auto_shutdown_notify_cb_t cb)
+/* Pre-shutdown hook + deferred power-off.  When the hook reports an app is
+ * connected (live notice queued), the power-off is deferred by a grace period
+ * on a work item so the main loop keeps running and delivers the message. */
+static ui_shutdown_fn s_shutdown_hook;
+static bool s_shutting_down;
+
+static void shutdown_work_fn(struct k_work *work)
 {
-	s_auto_shutdown_notify_cb = cb;
+	ARG_UNUSED(work);
+#ifdef CONFIG_POWEROFF
+	ui_prepare_for_system_off();
+	sys_poweroff();
+	CODE_UNREACHABLE;
+#endif
 }
+static K_WORK_DELAYABLE_DEFINE(s_shutdown_work, shutdown_work_fn);
 
-static void notify_shutdown_with_mv(uint16_t mv, uint32_t uptime_ms)
+void ui_set_shutdown_hook(ui_shutdown_fn fn)
 {
-	if (!s_auto_shutdown_notify_cb || s_shutdown_notify_sent) {
-		return;
-	}
-
-	s_shutdown_notify_sent = true;
-	s_auto_shutdown_notify_cb(mv, uptime_ms);
-}
-
-void ui_notify_shutdown(void)
-{
-	uint16_t mv = s_batt_provider ? s_batt_provider() : 0;
-
-	notify_shutdown_with_mv(mv, k_uptime_get_32());
+	s_shutdown_hook = fn;
 }
 
 #ifdef CONFIG_ZEPHCORE_UI_DISPLAY
-static void auto_shutdown_warn_screen(void)
+static void auto_shutdown_warn_screen(bool hold)
 {
 	/* Wake the panel (OLED may be blanked by auto-off; EPD is always
 	 * visible). Centre two lines; the message persists on e-paper after
@@ -528,8 +523,12 @@ static void auto_shutdown_warn_screen(void)
 	mc_display_finalize();
 
 	/* OLED blanks the instant power drops, so hold long enough to read it.
-	 * EPD keeps the image with no power, so skip the delay. */
-	if (!mc_display_is_epd()) {
+	 * EPD keeps the image with no power, so skip the delay. The deferred-
+	 * poweroff (grace) path passes hold=false: it must NOT block the main
+	 * thread, because that thread has to service the app's message fetch
+	 * during the grace window — the grace timer provides the on-screen dwell
+	 * instead. */
+	if (hold && !mc_display_is_epd()) {
 		k_sleep(K_MSEC(3000));
 	}
 }
@@ -537,6 +536,9 @@ static void auto_shutdown_warn_screen(void)
 
 void ui_auto_shutdown_check(void)
 {
+	if (s_shutting_down) {
+		return;  /* power-off already committed (deferred grace running) */
+	}
 	if (!s_batt_provider || s_auto_shutdown_mv == 0) {
 		return;  /* no battery provider, or runtime-disabled */
 	}
@@ -571,20 +573,46 @@ void ui_auto_shutdown_check(void)
 
 	LOG_WRN("auto-shutdown: confirmed — powering off");
 
-	notify_shutdown_with_mv(mv, now);
-
-#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
-	auto_shutdown_warn_screen();
-#endif
+	/* Let the app layer report the shutdown. If it queued a live notice to a
+	 * connected app, it returns true and we defer the power-off by a short
+	 * grace so the notify→fetch→send round-trip can finish; otherwise it
+	 * persisted the reason to flash (reported on next boot) and we power off
+	 * now. */
+	bool grace = s_shutdown_hook ? s_shutdown_hook(UI_SHUTDOWN_LOW_BATTERY)
+				     : false;
+	s_shutting_down = true;
 
 #ifdef CONFIG_POWEROFF
+	if (grace) {
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
+		auto_shutdown_warn_screen(false);  /* draw, don't block the loop */
+#endif
+		k_work_schedule(&s_shutdown_work, K_MSEC(UI_SHUTDOWN_GRACE_MS));
+		return;  /* main loop keeps running → delivers the notice */
+	}
+
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
+	auto_shutdown_warn_screen(true);  /* nothing to deliver — 3 s OLED hold */
+#endif
 	ui_prepare_for_system_off();
 	sys_poweroff();
 	CODE_UNREACHABLE;
 #else
+	(void)grace;
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
+	auto_shutdown_warn_screen(true);
+#endif
 	LOG_WRN("auto-shutdown: CONFIG_POWEROFF not enabled — cannot power off");
 #endif
 }
+
+#else  /* feature disabled (non-nRF52 / threshold default 0) */
+
+void ui_set_auto_shutdown_mv(uint16_t mv) { (void)mv; }
+void ui_auto_shutdown_check(void) { }
+void ui_set_shutdown_hook(ui_shutdown_fn fn) { (void)fn; }
+
+#endif /* CONFIG_ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS > 0 */
 
 /* ========== Shared splash logo ==========
  * 128×13 ZephCore wordmark, MSB-first row-major (Adafruit XBM/drawBitmap

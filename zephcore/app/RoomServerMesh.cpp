@@ -416,7 +416,10 @@ uint32_t RoomServerMesh::getDirectRetransmitDelay(const mesh::Packet* packet) {
     return computeAdaptiveDirectDelay(packet);
 }
 
-bool RoomServerMesh::filterRecvFloodPacket(mesh::Packet* pkt) {
+mesh::DispatcherAction RoomServerMesh::onRecvPacket(mesh::Packet* pkt) {
+    // Determine the request packet's region so sendFloodReply() can echo the same
+    // scope. Runs for every packet (not just floods) so recv_pkt_region is cleared
+    // for direct packets instead of inheriting the last flood's region.
     if (pkt->getRouteType() == ROUTE_TYPE_TRANSPORT_FLOOD) {
         recv_pkt_region = region_map.findMatch(pkt, REGION_DENY_FLOOD);
     } else if (pkt->getRouteType() == ROUTE_TYPE_FLOOD) {
@@ -428,7 +431,7 @@ bool RoomServerMesh::filterRecvFloodPacket(mesh::Packet* pkt) {
     } else {
         recv_pkt_region = nullptr;
     }
-    return false;
+    return Mesh::onRecvPacket(pkt);
 }
 
 void RoomServerMesh::onAnonDataRecv(mesh::Packet* packet, const uint8_t* secret, const mesh::Identity& sender, uint8_t* data, size_t len) {
@@ -582,7 +585,7 @@ void RoomServerMesh::onPeerDataRecv(mesh::Packet* packet, uint8_t type, int send
             mesh::Utils::sha256((uint8_t*)&ack_hash, 4, data, 5 + strlen((char*)&data[5]),
                                client->id.pub_key, PUB_KEY_SIZE);
 
-            uint8_t temp[166];
+            uint8_t temp[5 + CLI_REMOTE_REPLY_SIZE];
             bool send_ack;
             if (flags == TXT_TYPE_CLI_DATA) {  // admin CLI over the air
                 if (client->isAdmin()) {
@@ -923,6 +926,10 @@ void RoomServerMesh::setTxPower(int8_t power_dbm) {
     radio_set_tx_power(power_dbm);
 }
 
+bool RoomServerMesh::setRxBoostedGain(bool enable) {
+    return getRadioDriver(_radio).setRxBoost(enable);
+}
+
 /* A room server keeps no neighbour table (it is not a repeater). */
 void RoomServerMesh::formatNeighborsReply(char* reply) {
     strcpy(reply, "not supported");
@@ -1105,9 +1112,42 @@ void RoomServerMesh::loop() {
         dirty_contacts_expiry = 0;
     }
 
+    timeSyncTick();
+
     uint32_t now = k_uptime_get();
     uptime_millis += now - last_millis;
     last_millis = now;
+}
+
+void RoomServerMesh::onAdvertRecv(mesh::Packet* packet, const mesh::Identity& id,
+                                  uint32_t timestamp, const uint8_t* app_data,
+                                  size_t app_data_len) {
+    (void)app_data; (void)app_data_len;
+    /* Signature already verified by mesh::Mesh before this hook fires.
+     * Skip share rebroadcasts (transport codes {0,0}) — they replay stale
+     * stored adverts and would churn the original sender's tenure. */
+    if (packet->hasTransportCodes() &&
+        packet->transport_codes[0] == 0 && packet->transport_codes[1] == 0) {
+        return;
+    }
+    _timesync.onAdvertHeard(id.pub_key, timestamp, packet->getPathHashCount(),
+                            (uint32_t)(k_uptime_get() / 1000));
+}
+
+void RoomServerMesh::timeSyncTick() {
+    if (!_prefs.meshtimesync) return;
+    if (!_timesync.runTick(*getRTCClock())) return;
+
+    /* Step applied (forward-only enforced in runTick) — shift wall-clock-
+     * anchored bookkeeping with it. */
+    int64_t delta = _timesync.lastStepDelta();
+    for (int i = 0; i < acl.getNumClients(); i++) {
+        ClientInfo* c = acl.getClientByIdx(i);
+        if (c->last_activity == 0) continue;
+        int64_t shifted = (int64_t)c->last_activity + delta;
+        c->last_activity = (shifted > 0) ? (uint32_t)shifted : 1;
+    }
+    login_fail_limiter.reset();
 }
 
 bool RoomServerMesh::hasPendingWork() const {

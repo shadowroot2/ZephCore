@@ -19,6 +19,7 @@
 #include <mesh/SimpleMeshTables.h>
 #include <helpers/ClientACL.h>
 #include <helpers/CommonCLI.h>
+#include <helpers/MeshTimeSync.h>
 #include <helpers/RegionMap.h>
 #include <helpers/TransportKeyStore.h>
 #include <helpers/RateLimiter.h>
@@ -94,9 +95,13 @@ class RoomServerMesh : public mesh::Mesh, public CommonCLICallbacks {
     uint8_t pending_sf;
     uint8_t pending_cr;
     int matching_peer_indexes[MAX_CLIENTS];
+    /* Forward-only: post timestamps feed client sync_since ordering, so a
+     * backward step would corrupt message sync. */
+    MeshTimeSync _timesync{FIRMWARE_BUILD_EPOCH, true};
 
     int handleRequest(ClientInfo* sender, uint32_t sender_timestamp, uint8_t* payload, size_t payload_len);
     mesh::Packet* createSelfAdvert();
+    void timeSyncTick();
 
     /* Room server: shared-post buffer + push-to-client sync */
     void addPost(ClientInfo* client, const char* postData);
@@ -143,8 +148,25 @@ protected:
         return _prefs.multi_acks;
     }
 
-    bool filterRecvFloodPacket(mesh::Packet* pkt) override;
+    /* Adaptive CAD */
+    int formatCadStatus(char* buf, int cap) override {
+        return _radio->formatCadStatus(buf, cap);
+    }
+    void applyCadPrefs() override {
+        _radio->setCadParams(_prefs.cad_auto != 0, _prefs.cad_offset,
+                             _prefs.cad_probe_interval, _prefs.cad_busycap);
+    }
+    void resetCadStats() override {
+        _radio->resetCadStats();
+    }
+    void onCadOffsetChanged(int8_t offset) override {
+        _prefs.cad_offset = offset;
+        savePrefs();
+    }
 
+    mesh::DispatcherAction onRecvPacket(mesh::Packet* pkt) override;
+
+    void onAdvertRecv(mesh::Packet* packet, const mesh::Identity& id, uint32_t timestamp, const uint8_t* app_data, size_t app_data_len) override;
     void onAnonDataRecv(mesh::Packet* packet, const uint8_t* secret, const mesh::Identity& sender, uint8_t* data, size_t len) override;
     int searchPeersByHash(const uint8_t* hash) override;
     void getPeerSharedSecret(uint8_t* dest_secret, int peer_idx) override;
@@ -182,6 +204,7 @@ public:
     void eraseLogFile() override;
     void dumpLogFile() override;
     void setTxPower(int8_t power_dbm) override;
+    bool setRxBoostedGain(bool enable) override;
     void formatNeighborsReply(char* reply) override;
     void formatStatsReply(char* reply) override;
     void formatRadioStatsReply(char* reply) override;
@@ -190,6 +213,10 @@ public:
     mesh::LocalIdentity& getSelfId() override { return self_id; }
     void saveIdentity(const mesh::LocalIdentity& new_id) override;
     void clearStats() override;
+
+    /* Mesh time sync */
+    MeshTimeSync* getMeshTimeSync() override { return &_timesync; }
+    void noteGPSTimeSync() { _timesync.noteGPSSync((uint32_t)(k_uptime_get() / 1000)); }
 
     /* Adaptive contention window callbacks */
     float getContentionEstimate() const override {

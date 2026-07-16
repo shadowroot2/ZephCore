@@ -123,6 +123,39 @@ uint32_t sx126x_get_dc_timeout_restarts(const struct device *dev);
  */
 void sx126x_reset_dc_timeout_restarts(const struct device *dev);
 
+/**
+ * @brief Set the adaptive-CAD operating detPeak offset
+ *
+ * Signed delta applied to the per-SF base cadDetPeak on every LBT CAD.
+ * Takes effect on the next CAD — no reconfigure needed.  The absolute
+ * value is clamped in-driver to a sane window for the chip family.
+ *
+ * @param dev    LoRa device
+ * @param offset Signed offset from the base table value
+ */
+void sx126x_cad_set_peak_offset(const struct device *dev, int8_t offset);
+
+/**
+ * @brief Per-SF base cadDetPeak for the currently configured SF
+ *
+ * @param dev LoRa device
+ * @return Base detPeak (SF + 13 on this family)
+ */
+uint8_t sx126x_cad_base_peak(const struct device *dev);
+
+/**
+ * @brief Run one blocking calibration CAD at base detPeak + peak_offset
+ *
+ * Uses the operating modem config (SF/BW/symbol count).  Leaves the chip
+ * in STANDBY — the caller must restart RX afterwards.  Must be called
+ * from the mesh loop thread only (same thread as the LBT CAD).
+ *
+ * @param dev         LoRa device
+ * @param peak_offset Signed offset from the base table value
+ * @return 1 = activity detected, 0 = channel free, <0 = error
+ */
+int sx126x_cad_probe(const struct device *dev, int8_t peak_offset);
+
 #ifdef __cplusplus
 }
 #endif

@@ -85,58 +85,10 @@
 };
 
 /*
- * Flash partitions — repartition default ESP32-S3 16 MB layout.
- * Delete unused partitions (lpcore, scratch, coredump) to reclaim space.
- *
- * 0x7E0000 - 0xF9C000 (~7.7MB) OTA image-1 (slot1, trimmed 16KB)
- * 0xF9C000 - 0xFA0000 (16KB)   NVS BLE bonds (storage_partition)
- * 0xFA0000 - 0x1000000 (384KB) LittleFS (identity, contacts, channels)
- *
- * Bonds live in the NVS storage_partition (isolated) instead of /lfs, so
- * settings-write churn can't corrupt identity/prefs/contacts.  The NVS
- * region is carved from the end of slot1 (unused in the default simple-boot
- * build) so lfs_partition stays byte-identical — existing user data survives.
+ * Flash partitions live in partitions.overlay (this dir) so the identical map
+ * is fed to both the app and the MCUboot image — see that file and
+ * sysbuild/CMakeLists.txt.
  */
-/delete-node/ &slot0_lpcore_partition;
-/delete-node/ &slot1_lpcore_partition;
-/delete-node/ &storage_partition;
-/delete-node/ &scratch_partition;
-/delete-node/ &coredump_partition;
-/delete-node/ &slot0_partition;
-/delete-node/ &slot1_partition;
-
-/ {
-	chosen {
-		zephyr,settings-partition = &storage_partition;
-	};
-};
-
-&flash0 {
-	partitions {
-		/* App slots — both trimmed 8KB so slot0 == slot1 (16KB total freed
-		 * for the NVS partition below), keeping MCUboot swap-mode compatible,
-		 * not just overwrite-only.  slot0 start (0x20000) unchanged. */
-		slot0_partition: partition@20000 {
-			label = "image-0";
-			reg = <0x20000 0x7BE000>;
-		};
-		slot1_partition: partition@7de000 {
-			label = "image-1";
-			reg = <0x7DE000 0x7BE000>;
-		};
-		/* BLE bond store — 16KB NVS, isolated from /lfs.  label "storage"
-		 * so the existing formatter/factory-reset paths erase it too. */
-		storage_partition: partition@f9c000 {
-			label = "storage";
-			reg = <0xF9C000 0x4000>;
-		};
-		/* LittleFS 384KB for DataStore (identity, prefs, contacts) */
-		lfs_partition: partition@fa0000 {
-			label = "lfs";
-			reg = <0xFA0000 0x60000>;
-		};
-	};
-};
 
 /* LittleFS auto-mount — standard /lfs mount point */
 #include "../../common/filesystem.dtsi"

@@ -37,12 +37,12 @@
 	leds {
 		compatible = "gpio-leds";
 
-		/* MeshCore P_LORA_TX_LED / LED_WHITE */
 		white_led: led_0 {
 			gpios = <&gpio0 15 GPIO_ACTIVE_HIGH>;
 			label = "White LED";
 		};
 
+		/* MeshCore P_LORA_TX_LED / LED_BLUE (upstream PR #2157) */
 		blue_led: led_1 {
 			gpios = <&gpio0 19 GPIO_ACTIVE_HIGH>;
 			label = "Blue LED";
@@ -97,7 +97,7 @@
 	aliases {
 		led0 = &white_led;
 		led1 = &blue_led;
-		lora-tx-led = &white_led;
+		lora-tx-led = &blue_led;
 		sw0 = &user_button;
 		lora0 = &lora;
 		watchdog0 = &wdt0;

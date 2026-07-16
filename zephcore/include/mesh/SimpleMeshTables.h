@@ -24,7 +24,7 @@ public:
 		_direct_dups = _flood_dups = 0;
 	}
 
-	bool hasSeen(const Packet *packet) override {
+	bool wasSeen(const Packet *packet) override {
 		uint8_t hash[MAX_HASH_SIZE];
 		packet->calculatePacketHash(hash);
 		const uint8_t *sp = _hashes;
@@ -38,9 +38,14 @@ public:
 				return true;
 			}
 		}
+		return false;
+	}
+
+	void markSeen(const Packet *packet) override {
+		uint8_t hash[MAX_HASH_SIZE];
+		packet->calculatePacketHash(hash);
 		memcpy(&_hashes[_next_idx * MAX_HASH_SIZE], hash, MAX_HASH_SIZE);
 		_next_idx = (_next_idx + 1) % MAX_PACKET_HASHES;
-		return false;
 	}
 
 	void clear(const Packet *packet) override {

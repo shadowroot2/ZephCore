@@ -24,6 +24,18 @@
 #define LOOP_DETECT_MODERATE  2
 #define LOOP_DETECT_STRICT    3
 
+/* Adaptive-CAD operating detPeak offset range (levels from the family base).
+ * Wide on purpose: a dense hilltop can need a much higher detPeak than a quiet
+ * valley node.  The per-family absolute clamp inside the driver (SX126x 15-40,
+ * LR11xx/LR20xx 48-90) is a firmware guardrail, NOT a chip limit — cadDetPeak
+ * is a full uint8_t (0-255).  It just keeps the staircase from wandering into
+ * "CAD never fires" (too high) or "CAD always busy" (too low) territory.  This
+ * offset range limits how far the staircase / manual offset may roam; MUST
+ * match CAD_LEVEL_MIN/MAX in adapters/radio/radio_common.h (they index the
+ * per-level stats array). */
+#define CAD_OFFSET_MIN  (-8)
+#define CAD_OFFSET_MAX  12
+
 struct NodePrefs {
 	/* ---- Common fields (both roles) ---- */
 	float airtime_factor;
@@ -64,6 +76,11 @@ struct NodePrefs {
 	uint8_t rx_duty_cycle;          // 1 = RX duty cycle, 0 = continuous RX
 	uint8_t apc_enabled;            // 1 = APC on, 0 = fixed TX power
 	uint8_t apc_margin;             // APC target link margin dB (6-30)
+	uint8_t meshtimesync;           // 1 = mesh time-sync clock correction on (default off)
+	uint8_t cad_auto;               // 1 = adaptive-CAD staircase acts on probe stats (default off = dry-run)
+	int8_t cad_offset;              // operating detPeak offset from family base (-4..4)
+	uint8_t cad_probe_interval;     // seconds between CAD probes (0 = probing off, default 60)
+	uint8_t cad_busycap;            // airtime-protection: max % of TX attempts deferred before backing off detPeak (0 = off, default 25)
 
 	/* ---- Companion-only fields ---- */
 	uint8_t manual_add_contacts;
@@ -85,13 +102,15 @@ struct NodePrefs {
 	uint8_t wake_on_msg;            // 0 = don't wake display on message, 1 = wake (default)
 	uint16_t screen_off_secs;       // 0 = default (Kconfig), else 5–300
 	uint16_t auto_shutdown_mv;      // low-batt auto-shutdown threshold; 0 = off, else 2900–4200
+	uint8_t v_contact_enabled;      // v-contact (loopback admin chat via BLE/USB); 1 = on (default)
+	uint16_t v_battery_alert_mv;    // 0 = alert off; 0xFFFF = board default (auto_shutdown+200); else mV
 	int16_t ui_timezone_offset_minutes; // UI-only timezone offset; RTC/protocol stay UTC
 };
 
 /* Default prefs -- must match LoRaConfig.h defaults for radio interop. */
 static inline void initNodePrefs(NodePrefs* prefs) {
 	memset(prefs, 0, sizeof(NodePrefs));
-	prefs->airtime_factor = 1.0f;  /* Arduino formula: duty% = 100 / (af + 1) → 50% */
+	prefs->airtime_factor = 9.0f;  /* Arduino formula: duty% = 100 / (af + 1) → 10% */
 	prefs->node_lat = 0.0;
 	prefs->node_lon = 0.0;
 #ifdef CONFIG_ZEPHCORE_ADMIN_PASSWORD
@@ -103,7 +122,7 @@ static inline void initNodePrefs(NodePrefs* prefs) {
 	strncpy(prefs->guest_password, CONFIG_ZEPHCORE_GUEST_PASSWORD, sizeof(prefs->guest_password) - 1);
 #endif
 	/* Radio params - MUST match LoRaConfig.h for interop with companion nodes */
-	prefs->freq = 867.935f;           // LoRaConfig::FREQ_HZ / 1000000.0
+	prefs->freq = 869.618f;           // LoRaConfig::FREQ_HZ / 1000000.0
 	prefs->bw = 62.5f;                // LoRaConfig::BANDWIDTH
 	prefs->sf = 8;                    // LoRaConfig::SPREADING_FACTOR
 	prefs->cr = 8;                    // CR 4/8 (MeshCore uses 5-8 for CR 4/5 through 4/8)
@@ -119,7 +138,7 @@ static inline void initNodePrefs(NodePrefs* prefs) {
 	prefs->tx_delay_factor = 0.5f;
 	prefs->direct_tx_delay_factor = 0.3f;
 	prefs->allow_read_only = 0;
-	prefs->multi_acks = 1;
+	prefs->multi_acks = 0;
 	prefs->flood_max = 64;            // max hops for flood packets (0 = blocking all!)
 	prefs->flood_max_unscoped = 64;  // un-scoped flood hop limit (defaults to flood_max)
 	prefs->flood_max_advert = 8;     // ADVERT flood hop limit (upstream default)
@@ -134,6 +153,12 @@ static inline void initNodePrefs(NodePrefs* prefs) {
 	prefs->rx_duty_cycle = 0;         // Default OFF — continuous RX for best reliability
 	prefs->apc_enabled = 0;           // Default OFF — fixed TX power
 	prefs->apc_margin = 16;           // Default 16 dB target link margin
+	prefs->cad_auto = 1;              // Default ON — adaptive staircase acts on probe stats
+	prefs->cad_offset = 0;            // Start at family base detPeak (SF+13 on SX126x)
+	prefs->cad_probe_interval = 15;   // 15 s → staircase responds to change in ~1-2 h
+	prefs->cad_busycap = 25;          // back off detPeak once >25% of TX attempts are deferred
 	prefs->wake_on_msg = 1;           // Default ON — wake display when message arrives
+	prefs->v_contact_enabled = 1;     // Default ON — v-contact loopback admin chat (companion)
+	prefs->v_battery_alert_mv = 0xFFFF; // Sentinel: derive from board auto-shutdown threshold
 	prefs->ui_timezone_offset_minutes = CONFIG_ZEPHCORE_UI_TIMEZONE_OFFSET_MINUTES;
 }

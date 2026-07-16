@@ -146,7 +146,8 @@ DispatcherAction Mesh::forwardMultipartDirect(Packet *pkt)
 		tmp.path_len = Packet::copyPath(tmp.path, pkt->path, MAX_PATH_SIZE, pkt->path_len);
 		tmp.payload_len = pkt->payload_len - 1;
 		memcpy(tmp.payload, &pkt->payload[1], tmp.payload_len);
-		if (!_tables->hasSeen(&tmp)) {
+		if (!_tables->wasSeen(&tmp)) {
+			_tables->markSeen(&tmp);
 			removeSelfFromPath(&tmp);
 			routeDirectRecvAcks(&tmp, ((uint32_t)remaining + 1) * 300);
 		}
@@ -205,7 +206,8 @@ DispatcherAction Mesh::onRecvPacket(Packet *pkt)
 			uint16_t offset = (uint16_t)pkt->path_len << path_sz;
 			if (offset >= len) {
 				onTraceRecv(pkt, trace_tag, auth_code, flags, pkt->path, &pkt->payload[i], len);
-			} else if (self_id.isHashMatch(&pkt->payload[i + offset], 1 << path_sz) && allowPacketForward(pkt) && !_tables->hasSeen(pkt)) {
+			} else if (self_id.isHashMatch(&pkt->payload[i + offset], 1 << path_sz) && allowPacketForward(pkt) && !_tables->wasSeen(pkt)) {
+				_tables->markSeen(pkt);
 				pkt->path[pkt->path_len++] = (int8_t)(pkt->getSNR() * 4);
 				uint32_t d = getDirectRetransmitDelay(pkt);
 				return ACTION_RETRANSMIT_DELAYED(5, d);
@@ -241,13 +243,15 @@ DispatcherAction Mesh::onRecvPacket(Packet *pkt)
 				return forwardMultipartDirect(pkt);
 			}
 			if (pkt->getPayloadType() == PAYLOAD_TYPE_ACK) {
-				if (!_tables->hasSeen(pkt)) {
+				if (!_tables->wasSeen(pkt)) {
+					_tables->markSeen(pkt);
 					removeSelfFromPath(pkt);
 					routeDirectRecvAcks(pkt, 0);
 				}
 				return ACTION_RELEASE;
 			}
-			if (!_tables->hasSeen(pkt)) {
+			if (!_tables->wasSeen(pkt)) {
+				_tables->markSeen(pkt);
 				removeSelfFromPath(pkt);
 				return ACTION_RETRANSMIT_DELAYED(0, getDirectRetransmitDelay(pkt));
 			}
@@ -282,7 +286,8 @@ DispatcherAction Mesh::onRecvPacket(Packet *pkt)
 		} else {
 			uint32_t ack_crc;
 			memcpy(&ack_crc, pkt->payload, 4);
-			if (!_tables->hasSeen(pkt)) {
+			if (!_tables->wasSeen(pkt)) {
+				_tables->markSeen(pkt);
 				onAckRecv(pkt, ack_crc);
 				action = routeRecvPacket(pkt);
 			}
@@ -300,7 +305,8 @@ DispatcherAction Mesh::onRecvPacket(Packet *pkt)
 		uint8_t *macAndData = &pkt->payload[i];
 		if (i + CIPHER_MAC_SIZE >= (int)pkt->payload_len) {
 			LOG_WRN("onRecvPacket: incomplete packet (i=%d, payload_len=%d)", i, pkt->payload_len);
-		} else if (!_tables->hasSeen(pkt)) {
+		} else if (!_tables->wasSeen(pkt)) {
+			_tables->markSeen(pkt);
 			if (self_id.isHashMatch(&dest_hash)) {
 				int num = searchPeersByHash(&src_hash);
 				bool found = false;
@@ -360,7 +366,8 @@ DispatcherAction Mesh::onRecvPacket(Packet *pkt)
 		uint8_t *macAndData = &pkt->payload[i];
 		if (i + 2 >= (int)pkt->payload_len) {
 			// incomplete packet
-		} else if (!_tables->hasSeen(pkt)) {
+		} else if (!_tables->wasSeen(pkt)) {
+			_tables->markSeen(pkt);
 			if (self_id.isHashMatch(&dest_hash)) {
 				Identity sender(sender_pub_key);
 				uint8_t secret[PUB_KEY_SIZE];
@@ -385,7 +392,8 @@ DispatcherAction Mesh::onRecvPacket(Packet *pkt)
 		uint8_t *macAndData = &pkt->payload[i];
 		if (i + 2 >= (int)pkt->payload_len) {
 			// incomplete packet
-		} else if (!_tables->hasSeen(pkt)) {
+		} else if (!_tables->wasSeen(pkt)) {
+			_tables->markSeen(pkt);
 			GroupChannel channels[4];
 			int num = searchChannelsByHash(&channel_hash, channels, 4);
 			for (int j = 0; j < num; j++) {
@@ -410,7 +418,8 @@ DispatcherAction Mesh::onRecvPacket(Packet *pkt)
 		i += 4;
 		const uint8_t *signature = &pkt->payload[i];
 		i += SIGNATURE_SIZE;
-		if (i <= (int)pkt->payload_len && !self_id.matches(id.pub_key) && !_tables->hasSeen(pkt)) {
+		if (i <= (int)pkt->payload_len && !self_id.matches(id.pub_key) && !_tables->wasSeen(pkt)) {
+			_tables->markSeen(pkt);
 			uint8_t *app_data = (uint8_t *)&pkt->payload[i];
 			size_t app_data_len = pkt->payload_len - (size_t)i;
 			if (app_data_len > MAX_ADVERT_DATA_SIZE) app_data_len = MAX_ADVERT_DATA_SIZE;
@@ -427,7 +436,8 @@ DispatcherAction Mesh::onRecvPacket(Packet *pkt)
 		break;
 	}
 	case PAYLOAD_TYPE_RAW_CUSTOM:
-		if (pkt->isRouteDirect() && !_tables->hasSeen(pkt)) {
+		if (pkt->isRouteDirect() && !_tables->wasSeen(pkt)) {
+			_tables->markSeen(pkt);
 			onRawDataRecv(pkt);
 		}
 		break;
@@ -444,7 +454,8 @@ DispatcherAction Mesh::onRecvPacket(Packet *pkt)
 				tmp.payload_len = pkt->payload_len - 1;
 				memcpy(tmp.payload, &pkt->payload[1], tmp.payload_len);
 
-				if (!_tables->hasSeen(&tmp)) {
+				if (!_tables->wasSeen(&tmp)) {
+					_tables->markSeen(&tmp);
 					uint32_t ack_crc;
 					memcpy(&ack_crc, tmp.payload, 4);
 					onAckRecv(&tmp, ack_crc);
@@ -538,7 +549,7 @@ void Mesh::sendFlood(Packet *packet, uint32_t delay_millis, uint8_t path_hash_si
 	packet->header &= ~PH_ROUTE_MASK;
 	packet->header |= ROUTE_TYPE_FLOOD;
 	packet->setPathHashSizeAndCount(path_hash_size, 0);
-	_tables->hasSeen(packet);
+	_tables->markSeen(packet);	/* mark as already sent in case it is rebroadcast back to us */
 #ifdef CONFIG_ZEPHCORE_APC
 	{
 		uint32_t h = ContentionTracker::computePacketHash32(packet);
@@ -573,7 +584,7 @@ void Mesh::sendFlood(Packet *packet, uint16_t *transport_codes, uint32_t delay_m
 	packet->transport_codes[0] = transport_codes[0];
 	packet->transport_codes[1] = transport_codes[1];
 	packet->setPathHashSizeAndCount(path_hash_size, 0);
-	_tables->hasSeen(packet);
+	_tables->markSeen(packet);	/* mark as already sent in case it is rebroadcast back to us */
 #ifdef CONFIG_ZEPHCORE_APC
 	{
 		uint32_t h = ContentionTracker::computePacketHash32(packet);
@@ -625,7 +636,7 @@ void Mesh::sendDirect(Packet *packet, const uint8_t *path, uint8_t path_len, uin
 		}
 	}
 
-	_tables->hasSeen(packet);
+	_tables->markSeen(packet);	/* mark as already sent in case it is rebroadcast back to us */
 	sendPacket(packet, pri, delay_millis);
 }
 
@@ -634,7 +645,7 @@ void Mesh::sendZeroHop(Packet *packet, uint32_t delay_millis)
 	packet->header &= ~PH_ROUTE_MASK;
 	packet->header |= ROUTE_TYPE_DIRECT;
 	packet->path_len = 0;
-	_tables->hasSeen(packet);
+	_tables->markSeen(packet);	/* mark as already sent in case it is rebroadcast back to us */
 	sendPacket(packet, 0, delay_millis);
 }
 
@@ -645,7 +656,7 @@ void Mesh::sendZeroHop(Packet *packet, uint16_t *transport_codes, uint32_t delay
 	packet->transport_codes[0] = transport_codes[0];
 	packet->transport_codes[1] = transport_codes[1];
 	packet->path_len = 0;
-	_tables->hasSeen(packet);
+	_tables->markSeen(packet);	/* mark as already sent in case it is rebroadcast back to us */
 	sendPacket(packet, 0, delay_millis);
 }
 

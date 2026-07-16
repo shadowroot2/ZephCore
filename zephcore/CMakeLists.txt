@@ -265,7 +265,7 @@ set(ZEPHCORE_COMMON_CONF "${CMAKE_CURRENT_SOURCE_DIR}/boards/common/zephcore_com
 # Detect platform from board name and add platform-specific common config
 # For boards with qualifiers like "wio_tracker_l1/nrf52840", check both the full BOARD
 # string and the BOARD_QUALIFIERS which contains just the qualifier (e.g., "nrf52840")
-if(BOARD MATCHES ".*nrf52.*" OR BOARD MATCHES "rak4631" OR BOARD MATCHES "rak_wismesh_tag" OR BOARD MATCHES "rak3401_1watt" OR BOARD MATCHES "wio_tracker" OR BOARD MATCHES "ikoka_nano" OR BOARD MATCHES "t1000_e" OR BOARD MATCHES "thinknode_m1" OR BOARD MATCHES "thinknode_m3" OR BOARD MATCHES "thinknode_m6" OR BOARD MATCHES "promicro_lr2021" OR BOARD MATCHES "promicro_sx1262" OR BOARD MATCHES "sensecap_solar" OR BOARD MATCHES "xiao_nrf52840" OR BOARD MATCHES "lilygo_techo" OR BOARD MATCHES "heltec_t114" OR BOARD MATCHES "gat562")
+if(BOARD MATCHES ".*nrf52.*" OR BOARD MATCHES "rak4631" OR BOARD MATCHES "rak_wismesh_tag" OR BOARD MATCHES "rak3401_1watt" OR BOARD MATCHES "wio_tracker" OR BOARD MATCHES "ikoka_nano" OR BOARD MATCHES "t1000_e" OR BOARD MATCHES "thinknode_m1" OR BOARD MATCHES "thinknode_m3" OR BOARD MATCHES "thinknode_m6" OR BOARD MATCHES "promicro_lr2021" OR BOARD MATCHES "promicro_sx1262" OR BOARD MATCHES "sensecap_solar" OR BOARD MATCHES "xiao_nrf52840" OR BOARD MATCHES "lilygo_techo" OR BOARD MATCHES "lilygo_timpulse_plus" OR BOARD MATCHES "heltec_t114" OR BOARD MATCHES "heltec_t096" OR BOARD MATCHES "gat562")
     set(ZEPHCORE_PLATFORM_CONF "${CMAKE_CURRENT_SOURCE_DIR}/boards/common/nrf52_common.conf")
     set(ZEPHCORE_PLATFORM_BLE_CONF "${CMAKE_CURRENT_SOURCE_DIR}/boards/common/nrf52_ble_common.conf")
 elseif(DEFINED BOARD_QUALIFIERS AND BOARD_QUALIFIERS MATCHES ".*nrf52.*")
@@ -292,8 +292,8 @@ elseif(DEFINED BOARD_QUALIFIERS AND BOARD_QUALIFIERS MATCHES ".*mg24.*")
 elseif(BOARD MATCHES "rpi_pico" OR BOARD MATCHES ".*rp2040.*")
     set(ZEPHCORE_PLATFORM_CONF "${CMAKE_CURRENT_SOURCE_DIR}/boards/common/rp2040_common.conf")
     set(ZEPHCORE_PLATFORM_BLE_CONF "")
-elseif(DEFINED BOARD_QUALIFIERS AND BOARD_QUALIFIERS MATCHES ".*rp2040.*")
-    set(ZEPHCORE_PLATFORM_CONF "${CMAKE_CURRENT_SOURCE_DIR}/boards/common/rp2040_common.conf")
+elseif(BOARD MATCHES "lora_e5" OR BOARD MATCHES ".*stm32wl.*")
+    set(ZEPHCORE_PLATFORM_CONF "${CMAKE_CURRENT_SOURCE_DIR}/boards/common/stm32wl_common.conf")
     set(ZEPHCORE_PLATFORM_BLE_CONF "")
 elseif(BOARD MATCHES "native_sim" OR BOARD MATCHES "native_posix")
     set(ZEPHCORE_PLATFORM_CONF "${CMAKE_CURRENT_SOURCE_DIR}/boards/linux_native/linux_common.conf")
@@ -333,10 +333,9 @@ set(ZEPHCORE_CONF_FILES "")
 set(ZEPHCORE_BLE_CONF "${CMAKE_CURRENT_SOURCE_DIR}/boards/common/ble_common.conf")
 set(ZEPHCORE_BLE_DISABLED_BUILD FALSE)
 if(EXTRA_CONF_FILE MATCHES "(^|[;/])([^;/]*)(repeater|room_server|observer)\\.conf($|[;/])"
-   OR ZEPHCORE_PLATFORM_CONF MATCHES "(linux_native|rp2040_common)")
+   OR ZEPHCORE_PLATFORM_CONF MATCHES "(linux_native|rp2040_common|stm32wl_common)")
     set(ZEPHCORE_BLE_DISABLED_BUILD TRUE)
 endif()
-
 if(EXISTS ${ZEPHCORE_COMMON_CONF})
     list(APPEND ZEPHCORE_CONF_FILES ${ZEPHCORE_COMMON_CONF})
     zephcore_auto_pair_overlay("${ZEPHCORE_COMMON_CONF}")
@@ -354,24 +353,18 @@ if(NOT ZEPHCORE_BLE_DISABLED_BUILD AND ZEPHCORE_PLATFORM_BLE_CONF AND EXISTS ${Z
     zephcore_auto_pair_overlay("${ZEPHCORE_PLATFORM_BLE_CONF}")
 endif()
 
+# Role and platform builds without BLE must not inherit board-level BT flags.
 set(ZEPHCORE_BOARD_CONF_EFFECTIVE "${ZEPHCORE_BOARD_CONF}")
 if(ZEPHCORE_BLE_DISABLED_BUILD AND ZEPHCORE_BOARD_CONF AND EXISTS ${ZEPHCORE_BOARD_CONF})
     file(READ "${ZEPHCORE_BOARD_CONF}" _zephcore_board_conf_text)
-    string(REGEX REPLACE "(^|\n)[ \t]*CONFIG_BT[^\n]*" "\\1" _zephcore_board_conf_text "${_zephcore_board_conf_text}")
-    string(REGEX REPLACE "(^|\n)[ \t]*CONFIG_ESP32_BT[^\n]*" "\\1" _zephcore_board_conf_text "${_zephcore_board_conf_text}")
+    string(REGEX REPLACE "(^|\\n)[ \\t]*CONFIG_BT[^\\n]*" "\\1" _zephcore_board_conf_text "${_zephcore_board_conf_text}")
+    string(REGEX REPLACE "(^|\\n)[ \\t]*CONFIG_ESP32_BT[^\\n]*" "\\1" _zephcore_board_conf_text "${_zephcore_board_conf_text}")
     set(ZEPHCORE_BOARD_CONF_EFFECTIVE "${CMAKE_BINARY_DIR}/zephcore_board_no_ble.conf")
     file(WRITE "${ZEPHCORE_BOARD_CONF_EFFECTIVE}" "${_zephcore_board_conf_text}")
 endif()
-
 if(ZEPHCORE_BOARD_CONF_EFFECTIVE AND EXISTS ${ZEPHCORE_BOARD_CONF_EFFECTIVE})
     list(APPEND ZEPHCORE_CONF_FILES ${ZEPHCORE_BOARD_CONF_EFFECTIVE})
     zephcore_auto_pair_overlay("${ZEPHCORE_BOARD_CONF}")
-endif()
-
-if(ZEPHCORE_BLE_DISABLED_BUILD)
-    set(ZEPHCORE_BLE_ENABLED_STATUS "false")
-else()
-    set(ZEPHCORE_BLE_ENABLED_STATUS "true")
 endif()
 
 # Production is the default. Debug logging is opt-in via debug.conf.
@@ -398,7 +391,7 @@ if(ZEPHCORE_PLATFORM_CONF MATCHES "esp32_common" AND EXTRA_CONF_FILE MATCHES "re
 endif()
 
 # Append to EXTRA_CONF_FILE — auto-generated configs first, user extras last.
-# User-specified extras (repeater.conf, prod.conf) MUST come after the auto chain
+# User-specified extras (repeater.conf, debug.conf) MUST come after the auto chain
 # so they can override settings (e.g. CONFIG_BT=n in repeater.conf).
 if(ZEPHCORE_CONF_FILES)
     if(EXTRA_CONF_FILE)
@@ -422,7 +415,7 @@ if(ZEPHCORE_PLATFORM_CONF MATCHES "esp32_common"
 endif()
 
 # Auto-pair user-supplied EXTRA_CONF_FILE entries with same-named .overlay files.
-# This allows repeater.conf + repeater.overlay, prod.conf + prod.overlay, etc.
+# This allows repeater.conf + repeater.overlay, wifi_ota.conf + wifi_ota.overlay, etc.
 if(EXTRA_CONF_FILE)
     foreach(_conf IN LISTS EXTRA_CONF_FILE)
         zephcore_auto_pair_overlay("${_conf}")
@@ -450,15 +443,33 @@ if(ZEPHCORE_BOARD_OVERLAY AND EXISTS ${ZEPHCORE_BOARD_OVERLAY})
     endif()
 endif()
 
+# Flash partition layout lives in a separate boards/<...>/<board>/partitions.overlay
+# so the SAME file can be fed to the MCUboot image too (see sysbuild/CMakeLists.txt).
+# The app and MCUboot MUST share one flash map — otherwise MCUboot stages/looks for
+# the OTA image at a different address than the app writes it to, and OTA silently
+# reverts on reboot. Keeping it in its own file is what makes that sharing possible.
+set(ZEPHCORE_BOARD_PARTITIONS "")
+file(GLOB_RECURSE BOARD_PARTITIONS_CANDIDATES "${CMAKE_CURRENT_SOURCE_DIR}/boards/*/${BOARD_BASE}/partitions.overlay")
+if(BOARD_PARTITIONS_CANDIDATES)
+    list(GET BOARD_PARTITIONS_CANDIDATES 0 ZEPHCORE_BOARD_PARTITIONS)
+endif()
+if(NOT ZEPHCORE_BOARD_PARTITIONS AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_BASE}/partitions.overlay")
+    set(ZEPHCORE_BOARD_PARTITIONS "${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_BASE}/partitions.overlay")
+endif()
+if(ZEPHCORE_BOARD_PARTITIONS AND EXISTS ${ZEPHCORE_BOARD_PARTITIONS})
+    if(EXTRA_DTC_OVERLAY_FILE)
+        set(EXTRA_DTC_OVERLAY_FILE "${EXTRA_DTC_OVERLAY_FILE};${ZEPHCORE_BOARD_PARTITIONS}" CACHE STRING "" FORCE)
+    else()
+        set(EXTRA_DTC_OVERLAY_FILE "${ZEPHCORE_BOARD_PARTITIONS}" CACHE STRING "" FORCE)
+    endif()
+endif()
+
 
 # Debug: Show what configs are being used
 message(STATUS "ZephCore config hierarchy:")
 message(STATUS "  Common: ${ZEPHCORE_COMMON_CONF}")
-message(STATUS "  BLE common: ${ZEPHCORE_BLE_CONF} (enabled=${ZEPHCORE_BLE_ENABLED_STATUS})")
 message(STATUS "  Platform: ${ZEPHCORE_PLATFORM_CONF}")
-message(STATUS "  Platform BLE: ${ZEPHCORE_PLATFORM_BLE_CONF} (enabled=${ZEPHCORE_BLE_ENABLED_STATUS})")
 message(STATUS "  Board conf: ${ZEPHCORE_BOARD_CONF}")
-message(STATUS "  Board conf effective: ${ZEPHCORE_BOARD_CONF_EFFECTIVE}")
 message(STATUS "  Board overlay: ${ZEPHCORE_BOARD_OVERLAY}")
 message(STATUS "  EXTRA_CONF_FILE: ${EXTRA_CONF_FILE}")
 message(STATUS "  EXTRA_DTC_OVERLAY_FILE: ${EXTRA_DTC_OVERLAY_FILE}")
@@ -475,12 +486,18 @@ project(zephcore)
 string(TIMESTAMP ZEPHCORE_BUILD_DATE "%Y %b %d" UTC)
 add_definitions(-DFIRMWARE_BUILD_DATE="${ZEPHCORE_BUILD_DATE}")
 
+# Build-time UNIX epoch: mesh time sync's "provably dead clock" floor (a local
+# time below this is impossible for a running build). string(TIMESTAMP) honors
+# SOURCE_DATE_EPOCH for reproducible builds.
+string(TIMESTAMP ZEPHCORE_BUILD_EPOCH "%s" UTC)
+add_definitions(-DFIRMWARE_BUILD_EPOCH=${ZEPHCORE_BUILD_EPOCH}u)
+
 # Single source of truth for the firmware version string (vMAJOR.MINOR.PATCH-zephyr).
 # Injected globally like FIRMWARE_BUILD_DATE above, so every app TU sees the same
 # value; the per-app `#ifndef FIRMWARE_VERSION` fallbacks only apply to builds that
 # bypass this injection. NOTE: the BLE DIS value in boards/common/zephcore_common.conf
 # (CONFIG_BT_DIS_FW_REV_STR) is Kconfig, not C, so it must be bumped here AND there.
-set(ZEPHCORE_FIRMWARE_VERSION "v1.16.3-zephyr")
+set(ZEPHCORE_FIRMWARE_VERSION "v1.16.5-zephyr")
 add_definitions(-DFIRMWARE_VERSION="${ZEPHCORE_FIRMWARE_VERSION}")
 
 add_subdirectory(lib/monocypher)
@@ -521,6 +538,7 @@ target_sources(app PRIVATE
   adapters/gps/ZephyrGPSManager.cpp
   adapters/sensors/ZephyrEnvSensors.cpp
   helpers/AdvertDataHelpers.cpp
+  helpers/MeshTimeSync.cpp
   helpers/ui/ui_timezone.c
   helpers/oled_power.c
   helpers/fatal_reboot.c
@@ -647,7 +665,7 @@ if(CONFIG_ZEPHCORE_ROLE_REPEATER)
       ${CMAKE_CURRENT_SOURCE_DIR}/app
     )
   elseif(CONFIG_ZEPHCORE_REPEATER_UPLINK)
-    message(WARNING "ZephCore repeater uplink requested, but MQTT is disabled (likely prod.conf). Build will exclude uplink runtime.")
+    message(WARNING "ZephCore repeater uplink requested, but MQTT is disabled in this configuration. Build will exclude uplink runtime.")
   endif()
   target_compile_definitions(app PRIVATE ZEPHCORE_REPEATER=1)
 elseif(CONFIG_ZEPHCORE_ROLE_ROOM_SERVER)
@@ -708,8 +726,14 @@ else()
     helpers/TransportKeyStore.cpp
     helpers/ui/ui_mesh_actions.cpp
     app/CompanionMesh.cpp
+    # CommonCLI backs the v-contact loopback admin chat (companion_cli_exec in
+    # main_companion.cpp), which is NOT gated on the wired-USB stack — so it
+    # must be compiled unconditionally. Builds without CONFIG_LOG/COMPANION_USB/
+    # COMPANION_SERIAL (e.g. plain ESP32/S3 companions) failed to link otherwise.
+    helpers/CommonCLI.cpp
   )
-  # Companion transport: TCP socket on native Linux, BLE NUS on MCU builds.
+  # Companion transport: TCP socket on native Linux, serial (UART) on boards
+  # with no Bluetooth controller (e.g. STM32WL), BLE NUS everywhere else.
   if(CONFIG_ZEPHCORE_TRANSPORT_TCP)
     message(STATUS "ZephCore Companion Transport: TCP (Linux)")
     target_sources(app PRIVATE adapters/transport/LinuxTCPTransport.c)
@@ -720,6 +744,12 @@ else()
     target_include_directories(app PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}/helpers/ui
     )
+  elseif(NOT CONFIG_BT)
+    # No BLE controller (STM32WL) — companion speaks MeshCore serial framing
+    # over the chosen console UART. SerialCompanionTransport.c is a full
+    # drop-in zephcore_ble_* provider, just like LinuxTCPTransport.c.
+    message(STATUS "ZephCore Companion Transport: Serial (UART)")
+    target_sources(app PRIVATE adapters/transport/SerialCompanionTransport.c)
   else()
     message(STATUS "ZephCore Companion Transport: BLE NUS")
     target_sources(app PRIVATE adapters/ble/ZephyrBLE.cpp)
@@ -727,26 +757,24 @@ else()
   target_include_directories(app PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/adapters/transport
   )
-  # USB CDC companion transport.  Compiled whenever logging is on (USB can
-  # double as the log backend) OR the standalone companion-over-USB feature is
-  # enabled — this MUST match the ZEPHCORE_USB_STACK guard in main_companion.cpp
-  # (CONFIG_LOG || CONFIG_ZEPHCORE_COMPANION_USB), otherwise the call sites
-  # compile but the implementation is never linked (undefined references).
-  # Pulls in the shared ZephyrUSBCDC module too (USBD lifecycle + DTR callback).
-  if(CONFIG_LOG OR CONFIG_ZEPHCORE_COMPANION_USB)
+  # Wired-companion transport.  Compiled whenever logging is on (USB can
+  # double as the log backend), the native-USB companion is enabled, OR the
+  # plain-UART companion is enabled — this MUST match the ZEPHCORE_USB_STACK
+  # guard in main_companion.cpp (CONFIG_LOG || CONFIG_ZEPHCORE_COMPANION_USB ||
+  # CONFIG_ZEPHCORE_COMPANION_SERIAL), otherwise the call sites compile but the
+  # implementation is never linked (undefined references).  The shared
+  # ZephyrUSBCDC module (USBD lifecycle + DTR) is pulled in only for the native
+  # USB CDC backend — the plain-UART backend has no USBD stack.
+  if(CONFIG_LOG OR CONFIG_ZEPHCORE_COMPANION_USB OR CONFIG_ZEPHCORE_COMPANION_SERIAL)
     target_sources(app PRIVATE
       adapters/usb/ZephyrCompanionUSB.cpp
-      helpers/CommonCLI.cpp  # backs the USB text CLI dispatch
+      helpers/CommonCLI.cpp
     )
     if(NOT CONFIG_CDC_ACM_SERIAL_INITIALIZE_AT_BOOT AND (CONFIG_USB_CDC_ACM OR CONFIG_USBD_CDC_ACM_CLASS))
       target_sources(app PRIVATE
         adapters/usb/ZephyrUSBCDC.cpp
       )
     endif()
-  elseif(CONFIG_UART_INTERRUPT_DRIVEN)
-    target_sources(app PRIVATE
-      helpers/CommonCLI.cpp  # backs the UART text CLI dispatch
-    )
   endif()
   target_include_directories(app PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/adapters/usb

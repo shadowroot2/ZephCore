@@ -114,7 +114,7 @@ bool RegionMap::save(const char* path) {
     }
     fs_close(&file);
     LOG_INF("Saved %d regions to %s", num_regions, filepath);
-    return true;
+    return success;
 }
 
 RegionEntry* RegionMap::putRegion(const char* name, uint16_t parent_id, uint16_t id) {

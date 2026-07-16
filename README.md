@@ -64,6 +64,8 @@ ZephCore — это порт прошивки [MeshCore](https://github.com/mesh
 | **ThinkNode M3** | LR1110 | GPS, buzzer, two buttons, RGB LEDs |
 | **ThinkNode M6** | SX1262 | GPS L76K/Air530Z-compatible, QSPI flash, RGB LEDs, solar charge flag, 6W panel telemetry |
 | **LilyGo T-Echo** | SX1262 TCXO 1.8V | GPS L76K, 1.54" e-paper SSD1681, BME280, QSPI flash |
+| **Heltec T114** | SX1262 | 1.14" TFT ST7789V; screenless build через `no_display.conf` |
+| **Heltec Mesh Node T096** | SX1262 + KCT8103L PA/FEM | UC6580 GNSS, ST7735S 160×80 TFT, button, LED, battery ADC |
 | **Ikoka Nano 30dBm** | SX1262 E22-900M30S | 30 dBm PA, RGB LEDs |
 | **GAT562 30S Mesh Kit** | SX1262 30 dBm / 1 W PA | RAK4631 core, OLED SSD1306, joystick, buzzer, GPS, BME280 pad, 2x18650 + solar |
 | **SenseCAP Solar** | SX1262 | GPS L76K, QSPI flash, battery monitor |
@@ -83,8 +85,10 @@ ZephCore — это порт прошивки [MeshCore](https://github.com/mesh
 | **Heltec V4.2** | ESP32-S3 | SX1262 + GC1109 PA | OLED SSD1306, 16 MB flash, 2 MB PSRAM |
 | **Heltec V4.3** | ESP32-S3 | SX1262 + KCT8103L PA | OLED SSD1306, 16 MB flash, 2 MB PSRAM |
 | **Heltec Wireless Tracker** | ESP32-S3 | SX1262 | ST7735R 160x80 TFT, UC6580 GPS |
+| **Heltec Wireless Tracker V2** | ESP32-S3FN8 | SX1262 + KCT8103L PA/FEM | ST7735R 160x80 TFT, UC6580 GNSS, battery ADC |
 | **ThinkNode M5** | ESP32-S3 | SX1262 | E-Ink SSD1681, PCA9557, GPS, buzzer, backlight, battery ADC, BLE companion |
 | **LilyGo T-Beam v1.2** | ESP32 PICO-D4 | SX1262 | AXP2101 PMU, GNSS, USB-UART CLI |
+| **TTGO LoRa32** | ESP32 PICO-D4 | SX1276 | Reference board, USB-UART CLI |
 
 ### RP2040
 
@@ -98,6 +102,9 @@ ZephCore — это порт прошивки [MeshCore](https://github.com/mesh
 |-------|-----|-------|-------------|
 | **XIAO nRF54L15 + Wio-SX1262** | nRF54L15 | SX1262 | FLPR multicore, RRAM storage |
 | **XIAO MG24 + Wio-SX1262** | EFR32MG24 | SX1262 | BLE через Silicon Labs blob |
+| **Seeed LoRa-E5 mini** | STM32WLE5JC | Встроенное sub-GHz | Нет BLE/USB; companion и CLI через USART1 |
+
+ZephCore также работает как **native Linux process** на SBC (Femtofox / Luckfox Pico Mini, Raspberry Pi + RAK6421 HAT) с физическим SX1262 по SPI/GPIO и подключением companion-приложения по TCP; см. [LINUX_NATIVE.md](zephcore/LINUX_NATIVE.md).
 
 Точные строки `west build -b`, способы прошивки и особенности плат описаны в [списке поддерживаемых плат](zephcore/boards/supported_boards.md) и [Board Porting Guide](zephcore/boards/example_board/README.md).
 
@@ -155,6 +162,10 @@ west build -b xiao_esp32c3 zephcore --pristine -- \
 
 # Factory reset / formatter
 west build -b wio_tracker_l1 zephcore/tools/formatter --pristine
+
+# BLE debug logging
+west build -b rak4631 zephcore --pristine -- \
+  -DEXTRA_CONF_FILE="boards/common/debug.conf" -DCONFIG_ZEPHCORE_BLE_LOG_LEVEL_DBG=y
 ```
 
 ### Быстрая сборка Pico W + Waveshare SX1262
@@ -178,7 +189,7 @@ firmware/waveshare_rp2040_lora-repeater.uf2
 - ESP32 production-сборки используют `CONFIG_ESP_SIMPLE_BOOT`; `wifi_ota.conf` требует MCUboot и `--sysbuild`.
 - MG24 требует `west blobs fetch hal_silabs` и `pyocd`.
 - nRF54L15 пока собирается без MCUboot.
-- Heltec V3 выводит console/shell на `uart0`.
+- Для Heltec V3 serial-companion использует `uart0` как единый бинарный companion transport и текстовый CLI; console/shell в этом режиме отключаются.
 - При смене платы или роли используйте `--pristine`.
 
 ## Архитектура
@@ -294,6 +305,7 @@ zephcore/
     radio/          LoRa radio drivers
     rng/            Random number generator
     sensors/        Sensor discovery and telemetry
+    transport/      TCP companion (Linux) и serial companion (STM32WL)
     usb/            USB serial transport
     wifi/           WiFi station client
   boards/
@@ -302,6 +314,8 @@ zephcore/
     rp2040/         Raspberry Pi Pico / RP2040 overlays and configs
     nrf54l/         nRF54L15 overlays and configs
     mg24/           EFR32MG24 overlays and configs
+    stm32wl/        Seeed LoRa-E5 overlays and configs
+    linux_native/   native_sim presets для Femtofox и RAK6421
     common/         Shared Kconfig fragments and devicetree includes
   lib/              ED25519 crypto library
   patches/          Auto-applied patches to the Zephyr tree

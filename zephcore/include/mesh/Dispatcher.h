@@ -59,6 +59,8 @@ class Dispatcher {
 	uint32_t radio_nonrx_start;
 	uint32_t next_agc_reset_time;
 	bool prev_isrecv_mode;
+	int8_t cad_offset_shadow;
+	bool cad_offset_shadow_valid;
 	uint32_t n_sent_flood, n_sent_direct;
 	uint32_t n_recv_flood, n_recv_direct;
 	tx_queued_callback_t _tx_queued_cb;
@@ -89,6 +91,9 @@ protected:
 	virtual int getInterferenceThreshold() const { return 0; }
 	virtual int getAGCResetInterval() const { return 0; }
 	virtual uint32_t getDutyCycleWindowMs() const { return 3600000UL; } /* 1h default */
+	/* Adaptive CAD: called when the auto staircase moved the operating
+	 * detPeak offset — subclasses persist it to prefs. */
+	virtual void onCadOffsetChanged(int8_t offset) { (void)offset; }
 
 public:
 	void begin();

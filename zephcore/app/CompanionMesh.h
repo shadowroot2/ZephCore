@@ -6,9 +6,11 @@
 #pragma once
 
 #include <helpers/BaseChatMesh.h>
+#include <helpers/MeshTimeSync.h>
 #include <helpers/TransportKeyStore.h>
 #include <ZephyrDataStore.h>
 #include <NodePrefs.h>
+#include <zephyr/kernel.h>
 
 /* BLE push notification codes */
 #define PUSH_CODE_ADVERT              0x80
@@ -89,6 +91,12 @@ typedef void (*RadioReconfigureCallback)(void);
 /* BLE PIN change callback */
 typedef void (*PinChangeCallback)(uint32_t new_pin);
 
+/* V-contact CLI execution callback — runs a text-CLI line and fills `reply`
+ * (buffer is VCONTACT_CLI_REPLY_SIZE). Registered by main_companion so the
+ * v-contact chat reuses the same CommonCLI instance as the USB text CLI. */
+#define VCONTACT_CLI_REPLY_SIZE 256
+typedef void (*VContactCLICallback)(const char *line, char *reply);
+
 /**
  * CompanionMesh: Application layer for ZephCore Companion device
  *
@@ -151,6 +159,54 @@ public:
 	 * Set callback for BLE PIN change.
 	 */
 	void setPinChangeCallback(PinChangeCallback cb) { _pin_change_cb = cb; }
+
+	/* ---- V-contact: loopback admin contact ("v<node_name>") ----
+	 * A synthesized CHAT contact visible only to the connected BLE/USB app.
+	 * Messages to it are short-circuited into the CLI before any packet is
+	 * created — nothing ever reaches the dispatcher or the radio. Its pubkey
+	 * is SHA256("zc-vcontact" || self pubkey); no private key exists and it
+	 * is never registered in the RF RX matching path, so over-the-air
+	 * traffic addressed to it is inert. */
+	void setVContactCLICallback(VContactCLICallback cb) { _vcontact_cli_cb = cb; }
+	bool isVContactEnabled() const { return prefs.v_contact_enabled != 0; }
+	/** Queue an unsolicited v-contact message (battery alert, restart reason).
+	 *  Goes through the offline queue — delivered on next app connect/sync. */
+	void vcontactNotify(const char *text);
+	/** Push the v-contact to a connected app as a NEW_ADVERT (call after
+	 *  runtime enable or rename). No-op push when nothing is connected. */
+	void vcontactPushAdvert();
+	/** Push CONTACT_DELETED for the v-contact (call after runtime disable). */
+	void vcontactPushDeleted();
+	/** Clock became (or may have become) valid — activate the v-contact if it
+	 *  was deferred (no more 1970 adverts) and flush buffered notices so they
+	 *  carry sane timestamps. Self-gating; safe to call speculatively. Hooked
+	 *  at CMD_APP_START, CMD_SET_DEVICE_TIME, and GPS time sync. */
+	void vcontactClockSynced();
+
+#ifdef CONFIG_ZEPHCORE_APC
+	/* Adaptive Power Control hooks used by the USB text CLI. */
+	int8_t getAPCReduction() const {
+		return getPowerController().getPowerReduction();
+	}
+	float getAPCMargin() const {
+		return getPowerController().getMarginEstimate();
+	}
+	bool isAPCEnabled() const {
+		return getPowerController().isEnabled();
+	}
+	void setAPCEnabled(bool en) {
+		getPowerController().setEnabled(en);
+		if (!en) {
+			_radio->setTxPowerReduction(0);
+		}
+	}
+	uint8_t getAPCTargetMargin() const {
+		return getPowerController().getTargetMargin();
+	}
+	void setAPCTargetMargin(uint8_t margin_db) {
+		getPowerController().setTargetMargin(margin_db);
+	}
+#endif
 
 	/**
 	 * Continue contact iteration (call each main loop iteration).
@@ -231,6 +287,13 @@ public:
 	bool onChannelLoaded(uint8_t idx, const ChannelDetails &ch) override;
 	bool getChannelForSave(uint8_t idx, ChannelDetails &ch) override;
 
+	/* Mesh time sync */
+	MeshTimeSync *getMeshTimeSync() { return &_timesync; }
+	void noteGPSTimeSync() { _timesync.noteGPSSync((uint32_t)(k_uptime_get() / 1000)); }
+	/* Paced evaluation — called from the housekeeping event (loop() only runs
+	 * on packet-driven events). */
+	void timeSyncTick();
+
 	/* Prefs (includes node_lat/lon) */
 	NodePrefs prefs;
 
@@ -289,6 +352,14 @@ protected:
 
 	uint8_t getDutyCyclePercent() const override;
 	uint8_t getExtraAckTransmitCount() const override;
+
+	/* Adaptive CAD: persist the staircase's learned offset */
+	void onCadOffsetChanged(int8_t offset) override {
+		prefs.cad_offset = offset;
+		if (_store) {
+			_store->savePrefs(prefs);
+		}
+	}
 
 	/* Auto-add filtering overrides */
 	bool isAutoAddEnabled() const override;
@@ -369,6 +440,12 @@ private:
 	void flushDirtyContacts();
 	void flushDirtyChannels();
 
+	/* Mesh time sync (forward-only: our clock stamps outgoing DMs and peers
+	 * hold per-sender replay high-water marks) */
+	MeshTimeSync _timesync{FIRMWARE_BUILD_EPOCH, true};
+	void onAdvertTimeSample(const mesh::Identity &id, uint32_t timestamp,
+		uint8_t hops) override;
+
 	/* Protocol version negotiation */
 	uint8_t _app_target_ver;
 
@@ -425,6 +502,42 @@ private:
 
 	void queueContactMessage(const ContactInfo &contact, mesh::Packet *pkt,
 		uint8_t txt_type, uint32_t sender_timestamp, const uint8_t *extra, int extra_len, const char *text);
+
+	/* V-contact internals. _vcontact_lastmod == 0 means "not yet activated":
+	 * the clock was invalid (pre-1970s epoch) when we would have stamped it,
+	 * so the contact is withheld from sync/adverts until a time source
+	 * arrives — otherwise the app shows a 1970 last-heard timestamp. */
+	VContactCLICallback _vcontact_cli_cb;
+	uint8_t _vcontact_pubkey[PUB_KEY_SIZE];
+	uint32_t _vcontact_lastmod;
+	/* Dedupe app resends: a retry reuses the message timestamp (only the
+	 * attempt byte changes). The retry lands several seconds later, after other
+	 * messages, so a single last-seen slot misses it — track a ring of recent
+	 * timestamps instead. */
+	static const uint8_t VCONTACT_DEDUP_SLOTS = 16;
+	uint32_t _vcontact_recent_ts[VCONTACT_DEDUP_SLOTS];
+	uint8_t _vcontact_recent_head;
+	char _vcontact_pending[2][64];   /* notices buffered while the clock is invalid */
+	uint8_t _vcontact_pending_count;
+	/* Suppress a v-contact notice's MSG_WAITING push during the app's initial
+	 * sync. Sent before/mid sync (e.g. the reboot-cause notice flushed at
+	 * CMD_SET_DEVICE_TIME) it makes the app interleave message-sync into the
+	 * contact stream, which trips the "reset iterator on any other command"
+	 * guard and truncates the sync. Held from CMD_APP_START until the first
+	 * PACKET_NO_MORE_MSGS (end of the contacts+messages initial sync). */
+	bool _vcontact_hold_msgwait;
+	bool vcontactClockValid();
+	bool vcontactReady() { return isVContactEnabled() && _vcontact_lastmod != 0; }
+	void buildVContact(ContactInfo &c) const;
+	bool isVContactKey(const uint8_t *key, int prefix_len) const;
+	/** (Re)derive _vcontact_pubkey from the current identity. Call on boot and
+	 *  whenever the identity changes (CMD_IMPORT_PRIVATE_KEY). */
+	void deriveVContactKey();
+	/** Intercept protocol frames addressed to the v-contact. Returns true when
+	 *  the frame was fully handled (response already written). */
+	bool vcontactHandleFrame(const uint8_t *data, size_t len);
+	/** Chunk `text` into offline-queue contact messages from the v-contact. */
+	void vcontactQueueText(const char *text);
 
 	void addPendingAck(uint32_t expected, int contact_idx);
 	int findAndRemoveAck(uint32_t ack, uint32_t *out_sent_time = nullptr);

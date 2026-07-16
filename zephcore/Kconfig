@@ -126,6 +126,25 @@ config ZEPHCORE_COMPANION_USB
 	  For ESP32-S3 boards, USB_DEVICE_STACK_NEXT must be enabled first via
 	  boards/common/esp32s3_usb.conf before this becomes active.
 
+config ZEPHCORE_COMPANION_SERIAL
+	bool "Enable plain-UART companion transport"
+	depends on ZEPHCORE_ROLE_COMPANION && !ZEPHCORE_COMPANION_USB
+	help
+	  Run the same wired-companion stack (ZephyrCompanionUSB: frame parser,
+	  TX ring, text CLI, BLE-arbitrated interface) over a plain UART instead
+	  of a native-USB CDC-ACM endpoint.  For boards whose USB-C is wired to a
+	  USB-UART bridge rather than the SoC's native USB (e.g. Heltec V3 /
+	  CP2102), or that have no USB device controller at all.
+
+	  The board points the transport at its UART with the
+	  `zephcore,companion-uart` chosen node (e.g. = &uart0); that UART must be
+	  dedicated to the companion (console/shell moved off or disabled), since
+	  the protocol stream and a text console cannot share one line.  Coexists
+	  with BLE exactly like the USB backend — same first-come arbitration.
+
+	  Distinct from the legacy SerialCompanionTransport (no-BLE STM32WL path):
+	  this one keeps BLE and adds the text CLI.
+
 if ZEPHCORE_ROLE_REPEATER || ZEPHCORE_ROLE_ROOM_SERVER
 
 config ZEPHCORE_REPEATER_UPLINK
@@ -182,6 +201,31 @@ config ZEPHCORE_MAX_UNSYNCED_POSTS
 
 endif # ZEPHCORE_ROLE_REPEATER || ZEPHCORE_ROLE_ROOM_SERVER
 
+config ZEPHCORE_TIMESYNC_QUORUM
+	int "Mesh time sync: consensus quorum"
+	default 6
+	range 3 32
+	help
+	  Minimum eligible advert senders required before a mesh time-sync
+	  consensus may step the clock (a strict majority of them must also
+	  agree). Each quorum unit costs a local attacker one more physical
+	  radio sustained for tenure-hours, so lowering this trades eclipse
+	  resistance for coverage on small meshes (e.g. 7 repeaters = exactly
+	  6 potential voters). Floor 3 matches the bootstrap quorum — below
+	  that the interval intersection degenerates. Deliberately a build-time
+	  knob, not a runtime pref: this is a security parameter.
+
+config ZEPHCORE_TIMESYNC_TABLE_SIZE
+	int "Mesh time sync: sample table slots"
+	default 16 if ZEPHCORE_ROLE_COMPANION
+	default 32
+	range 8 64
+	help
+	  Per-sender advert sample slots (24 bytes each) for the mesh
+	  time-sync consensus. 32 fits dense neighborhoods; companions
+	  default to 16 (RAM-bound role). Must be at least the quorum for
+	  normal-mode stepping to be reachable.
+
 endmenu # Device Role
 
 if ZEPHCORE_ROLE_COMPANION
@@ -234,11 +278,14 @@ config ZEPHCORE_BLE_PASSKEY
 
 config ZEPHCORE_BLE_QUEUE_SIZE
 	int "BLE TX/RX message queue depth"
-	default 12
+	default 24
 	range 4 64
 	help
 	  Number of frames that can be queued for BLE TX/RX.
 	  Larger = better buffering for bursty traffic, more RAM.
+	  24 absorbs the app's bursty CMD_GET_CHANNEL pipelining during
+	  channel sync (it fires up to MAX_CHANNELS requests back-to-back);
+	  at 12 the recv queue overran and dropped requests, stalling sync.
 
 config ZEPHCORE_BLE_CONN_MIN_INTERVAL
 	int "BLE minimum connection interval (units: 1.25ms)"

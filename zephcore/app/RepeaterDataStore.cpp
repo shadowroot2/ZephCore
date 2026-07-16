@@ -201,10 +201,28 @@ bool RepeaterDataStore::loadPrefs(NodePrefs& prefs) {
      * read leaves the constructor defaults flood_max_unscoped=64, flood_max_advert=8). */
     fs_read(&file, &prefs.flood_max_unscoped, sizeof(prefs.flood_max_unscoped));
     fs_read(&file, &prefs.flood_max_advert, sizeof(prefs.flood_max_advert));
-    /* UI timezone offset (2-byte signed minutes), absent in older files. */
-    int16_t tz_offset = prefs.ui_timezone_offset_minutes;
-    if (fs_read(&file, &tz_offset, sizeof(tz_offset)) == (ssize_t)sizeof(tz_offset)) {
-        prefs.ui_timezone_offset_minutes = tz_offset;
+    if (entry.size == 298) {
+        /* Local timezone layout. A non-boolean byte identifies it without
+         * misreading an early SmartCAD development blob. */
+        uint8_t legacy[2] = { 0, 0 };
+        fs_read(&file, legacy, sizeof(legacy));
+        int16_t tz = (int16_t)((uint16_t)legacy[0] | ((uint16_t)legacy[1] << 8));
+        if (tz >= -1439 && tz <= 1439 && (legacy[0] > 1 || legacy[1] > 1)) {
+            prefs.ui_timezone_offset_minutes = tz;
+        } else {
+            prefs.meshtimesync = legacy[0];
+            prefs.cad_auto = legacy[1];
+        }
+    } else {
+        fs_read(&file, &prefs.meshtimesync, sizeof(prefs.meshtimesync));
+        fs_read(&file, &prefs.cad_auto, sizeof(prefs.cad_auto));
+        fs_read(&file, &prefs.cad_offset, sizeof(prefs.cad_offset));
+        fs_read(&file, &prefs.cad_probe_interval, sizeof(prefs.cad_probe_interval));
+        fs_read(&file, &prefs.cad_busycap, sizeof(prefs.cad_busycap));
+        int16_t tz = prefs.ui_timezone_offset_minutes;
+        if (fs_read(&file, &tz, sizeof(tz)) == (ssize_t)sizeof(tz)) {
+            prefs.ui_timezone_offset_minutes = tz;
+        }
     }
 
     fs_close(&file);
@@ -224,7 +242,7 @@ bool RepeaterDataStore::loadPrefs(NodePrefs& prefs) {
         prefs.bw < 7.0f || prefs.bw > 500.0f) {
         LOG_WRN("Invalid radio params in prefs, using defaults: freq=%.3f sf=%u bw=%.1f",
                 (double)prefs.freq, prefs.sf, (double)prefs.bw);
-        prefs.freq = 867.935f;
+        prefs.freq = 869.618f;
         prefs.bw = 62.5f;
         prefs.sf = 8;
         prefs.cr = 8;
@@ -236,6 +254,11 @@ bool RepeaterDataStore::loadPrefs(NodePrefs& prefs) {
     if (prefs.rx_duty_cycle > 1) prefs.rx_duty_cycle = 0;
     if (prefs.apc_enabled > 1) prefs.apc_enabled = 0;
     if (prefs.apc_margin < 6 || prefs.apc_margin > 30) prefs.apc_margin = 16;
+    if (prefs.meshtimesync > 1) prefs.meshtimesync = 0;
+    if (prefs.cad_auto > 1) prefs.cad_auto = 0;
+    if (prefs.cad_offset < CAD_OFFSET_MIN || prefs.cad_offset > CAD_OFFSET_MAX) prefs.cad_offset = 0;
+    if (prefs.cad_probe_interval != 0 && prefs.cad_probe_interval < 10) prefs.cad_probe_interval = 10;
+    if (prefs.cad_busycap > 90) prefs.cad_busycap = 90;
     if (prefs.ui_timezone_offset_minutes < -1439 || prefs.ui_timezone_offset_minutes > 1439) {
         prefs.ui_timezone_offset_minutes = CONFIG_ZEPHCORE_UI_TIMEZONE_OFFSET_MINUTES;
     }
@@ -248,7 +271,7 @@ bool RepeaterDataStore::loadPrefs(NodePrefs& prefs) {
         prefs.path_hash_mode = 1;
         prefs.loop_detect = LOOP_DETECT_MODERATE;
         savePrefs(prefs);
-        LOG_INF("loadPrefs: upgraded prefs format (%d -> 296 bytes)", (int)entry.size);
+        LOG_INF("loadPrefs: upgraded prefs format (%d -> 297 bytes)", (int)entry.size);
     }
 
     /* Repeater GPS-interval unification migration: before this firmware the
@@ -336,7 +359,13 @@ bool RepeaterDataStore::savePrefs(const NodePrefs& prefs) {
     /* Flood hop-ceiling extensions (extend the format past 294 bytes) */
     fs_write(&file, &prefs.flood_max_unscoped, sizeof(prefs.flood_max_unscoped));
     fs_write(&file, &prefs.flood_max_advert, sizeof(prefs.flood_max_advert));
-    /* UI timezone offset extension */
+    /* Mesh time sync on/off (offset 296) */
+    fs_write(&file, &prefs.meshtimesync, sizeof(prefs.meshtimesync));
+    /* Adaptive CAD (offsets 297-300) */
+    fs_write(&file, &prefs.cad_auto, sizeof(prefs.cad_auto));
+    fs_write(&file, &prefs.cad_offset, sizeof(prefs.cad_offset));
+    fs_write(&file, &prefs.cad_probe_interval, sizeof(prefs.cad_probe_interval));
+    fs_write(&file, &prefs.cad_busycap, sizeof(prefs.cad_busycap));
     fs_write(&file, &prefs.ui_timezone_offset_minutes, sizeof(prefs.ui_timezone_offset_minutes));
 
     ret = fs_sync(&file);
