@@ -220,16 +220,16 @@ public:
 	bool continueContactIteration();
 
 	/**
-	 * Reset contact iterator (call when new command received).
-	 * Sends PACKET_CONTACT_END if iteration was in progress.
-	 */
-	void resetContactIterator();
-
-	/**
 	 * Cancel contact iteration silently (no frame sent).
 	 * Call on BLE disconnect — there's nobody to send CONTACT_END to.
 	 */
 	void cancelContactIterator() { _contact_iter_active = false; }
+
+	/** True while a contact dump is in progress (drives the stall watchdog). */
+	bool isContactIterActive() const { return _contact_iter_active; }
+
+	/** Dump progress cursor — the watchdog re-kicks only if this stops moving. */
+	int getContactIterIdx() const { return _contact_iter_idx; }
 
 	/**
 	 * Cancel pending message sync. Un-ACKed message stays in queue.
@@ -389,6 +389,12 @@ private:
 	/* Contact iteration state */
 	bool _contact_iter_active;
 	int _contact_iter_idx;
+	/* Table bound and v-contact inclusion are snapshotted at PACKET_CONTACT_START
+	 * so the dump can never stream more entries than the total it promised: the
+	 * table grows from inbound adverts mid-dump, and vcontactReady() flips false
+	 * ->true the moment a cold-booted clock goes valid (CMD_SET_DEVICE_TIME). */
+	int _contact_iter_num;
+	bool _contact_iter_vc;
 	uint32_t _contact_iter_lastmod;
 	uint32_t _contact_iter_since;  /* Filter: only send contacts with lastmod > this */
 

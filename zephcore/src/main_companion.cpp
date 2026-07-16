@@ -387,10 +387,10 @@ static void process_companion_rx(void)
 	/* Process all queued frames */
 	while (k_msgq_get(zephcore_ble_get_recv_queue(), &f, K_NO_WAIT) == 0) {
 #ifdef ZEPHCORE_LORA
-		/* handleProtocolFrame() resets the contact iterator internally
-		 * (line 1229) for any non-CMD_GET_CONTACTS command — no need
-		 * to call resetContactIterator() here.  Doing so sent a stale
-		 * PACKET_CONTACT_END before the command was even processed. */
+		/* An in-flight contact dump deliberately survives commands parsed
+		 * here — it is only cancelled by CMD_APP_START (new session) or by
+		 * disconnect.  Do not abort it on inbound traffic: the app talks to
+		 * us mid-sync, and truncating the dump left it waiting forever. */
 		if (!companion_mesh_ptr->handleProtocolFrame(f.buf, f.len)) {
 			LOG_DBG("rx_process: unknown cmd 0x%02x len=%u", f.buf[0], (unsigned)f.len);
 			uint8_t err_rsp[] = { 0x01, 0x01 };  /* PACKET_ERROR, ERR_UNSUPPORTED */
@@ -533,6 +533,24 @@ static void mesh_event_loop(void)
 			 * on packet-driven events. */
 			if (companion_mesh_ptr) {
 				companion_mesh_ptr->maintenanceLoop();
+			}
+
+			/* Contact-dump watchdog — the dump is pumped solely by the
+			 * BLE/USB tx-idle callback, so a single lost kick strands it
+			 * silently and the app waits for contacts that never arrive.
+			 * Only re-kick when the cursor has not moved across a whole
+			 * tick: a large dump legitimately spans several ticks, and
+			 * back-pressure resolves itself. */
+			static int wd_last_iter_idx = -1;
+			if (companion_mesh_ptr && companion_mesh_ptr->isContactIterActive()) {
+				int idx = companion_mesh_ptr->getContactIterIdx();
+				if (idx == wd_last_iter_idx) {
+					LOG_WRN("contact dump watchdog: no progress at %d, resuming", idx);
+					k_event_post(&mesh_events, MESH_EVENT_CONTACT_ITER);
+				}
+				wd_last_iter_idx = idx;
+			} else {
+				wd_last_iter_idx = -1;
 			}
 
 			/* BLE advertising watchdog — if bt_le_adv_start failed

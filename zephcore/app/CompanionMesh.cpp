@@ -178,6 +178,8 @@ CompanionMesh::CompanionMesh(mesh::Radio &radio, mesh::MillisecondClock &ms, mes
 	_pin_change_cb = nullptr;
 	_contact_iter_active = false;
 	_contact_iter_idx = 0;
+	_contact_iter_num = 0;
+	_contact_iter_vc = false;
 	_contact_iter_lastmod = 0;
 	_contact_iter_since = 0;
 	_offline_queue_head = 0;
@@ -589,24 +591,14 @@ void CompanionMesh::confirmOfflineMessage()
 	_offline_queue_count--;
 }
 
-void CompanionMesh::resetContactIterator()
-{
-	if (_contact_iter_active) {
-		// Send contact end if interrupted
-		uint8_t rsp[5];
-		rsp[0] = PACKET_CONTACT_END;
-		put_le32(&rsp[1], _contact_iter_lastmod);
-		writeFrame(rsp, sizeof(rsp));
-	}
-	_contact_iter_active = false;
-}
-
 bool CompanionMesh::continueContactIteration()
 {
 	if (!_contact_iter_active) return false;
 
-	if (_contact_iter_idx < getNumContacts()) {
+	if (_contact_iter_idx < _contact_iter_num) {
 		ContactInfo c;
+		/* getContactByIdx bounds-checks against the live table, so a slot that
+		 * disappeared under us is skipped rather than read stale. */
 		if (getContactByIdx(_contact_iter_idx, c)) {
 			// Skip transient/anon contacts (ADV_TYPE_NONE) — never synced to the app.
 			// Apply 'since' filter - only send contacts modified after the timestamp
@@ -623,11 +615,11 @@ bool CompanionMesh::continueContactIteration()
 		}
 		_contact_iter_idx++;
 		return true;
-	} else if (_contact_iter_idx == getNumContacts()) {
+	} else if (_contact_iter_idx == _contact_iter_num) {
 		// Virtual tail entry: the v-contact (never in the real table).
-		// vcontactReady() implies lastmod != 0 — deferred (clock-invalid)
+		// _contact_iter_vc implies lastmod != 0 — deferred (clock-invalid)
 		// state is excluded so the app never sees a 1970 timestamp.
-		if (vcontactReady() && _vcontact_lastmod > _contact_iter_since) {
+		if (_contact_iter_vc && _vcontact_lastmod > _contact_iter_since) {
 			if (_vcontact_lastmod > _contact_iter_lastmod) {
 				_contact_iter_lastmod = _vcontact_lastmod;
 			}
@@ -2068,10 +2060,12 @@ bool CompanionMesh::handleProtocolFrame(const uint8_t *data, size_t len)
 	/* Debug: log all incoming commands */
 	LOG_DBG("CMD: 0x%02x len=%u", data[0], (unsigned)len);
 
-	// Reset contact iterator when any new command is received (except during iteration)
-	if (data[0] != CMD_GET_CONTACTS && _contact_iter_active) {
-		resetContactIterator();
-	}
+	/* An active contact dump survives interleaved commands — the app is free to
+	 * talk to us mid-sync and does (it sets the clock on a cold boot, and
+	 * pipelines CMD_GET_CHANNEL bursts).  Aborting the iterator here truncated
+	 * the dump with a premature PACKET_CONTACT_END after whatever had streamed,
+	 * so the app waited forever for the rest.  Upstream interleaves the same way
+	 * (MyMesh::checkSerialInterface); CMD_APP_START remains the only reset. */
 
 	/* V-contact interception — must run before any contact lookup so a frame
 	 * addressed to the loopback contact can never create a radio packet. */
@@ -2146,12 +2140,14 @@ bool CompanionMesh::handleProtocolFrame(const uint8_t *data, size_t len)
 
 			// Send PACKET_CONTACT_START with total count (unfiltered, but excluding
 			// transient anon slots -- continueContactIteration() never streams those)
+			_contact_iter_num = getNumContacts();
+			_contact_iter_vc = vcontactReady();  /* virtual tail entry (post time sync) */
 			uint32_t total = 0;
-			for (int i = 0; i < getNumContacts(); i++) {
+			for (int i = 0; i < _contact_iter_num; i++) {
 				ContactInfo c;
 				if (getContactByIdx(i, c) && c.type != ADV_TYPE_NONE) total++;
 			}
-			if (vcontactReady()) total++;  /* virtual tail entry (post time sync) */
+			if (_contact_iter_vc) total++;
 			uint8_t rsp[5];
 			rsp[0] = PACKET_CONTACT_START;
 			put_le32(&rsp[1], total);
