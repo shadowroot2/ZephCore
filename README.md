@@ -28,12 +28,12 @@ ZephCore — это порт прошивки [MeshCore](https://github.com/mesh
 
 ## Проверочный релиз
 
-Проверенные образы для commit `3ed0b86` и их SHA-256 приведены в [release-заметке от 2026-07-16](firmware/RELEASE_shadow-v20260716.1.md).
+Полный набор образов для commit `3ed0b86` и их SHA-256 приведены в [release-заметке v20260716.1](firmware/RELEASE_shadow-v20260716.1.md). Для ThinkNode M5 используйте исправленный образ из [hotfix v20260716.2](firmware/RELEASE_shadow-v20260716.2.md): его приложение размещено в slot0 по адресу `0x20000`.
 
 | Файл | Плата | Роль | Формат |
 |------|-------|------|--------|
 | `thinknode_m6-repeater-3ed0b86.uf2` | ThinkNode M6 | repeater | UF2 |
-| `thinknode_m5-esp32s3-procpu-companion-3ed0b86-merged.bin` | ThinkNode M5 | companion | ESP32-S3 полный образ, flash offset `0x0` |
+| `thinknode_m5-esp32s3-procpu-companion-3ed0b86-merged.bin` | ThinkNode M5 | companion | ESP32-S3 полный hotfix-образ, flash offset `0x0` |
 | `heltec_v3-companion-serial-3ed0b86-merged.bin` | Heltec V3 | serial companion | ESP32-S3 полный образ, flash offset `0x0` |
 | `t1000_e-companion-3ed0b86.uf2` | Seeed T1000-E | companion | UF2 |
 | `thinknode_m1-companion-3ed0b86.uf2` | ThinkNode M1 | companion | UF2 |
