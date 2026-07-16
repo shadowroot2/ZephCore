@@ -86,14 +86,14 @@ static inline int ui_content_y(void)
 #define UI_COLOR_BG         MC_COLOR_BLACK
 #define UI_COLOR_HEADER_BG  0x2104  /* dark neutral panel */
 #define UI_COLOR_TITLE      0xffde  /* warm white */
-#define UI_COLOR_LABEL      0x8410  /* muted gray */
+#define UI_COLOR_LABEL      MC_COLOR_WHITE  /* small-TFT gamma renders mid-gray near-black */
 #define UI_COLOR_VALUE      MC_COLOR_WHITE
 #define UI_COLOR_OK         0x07e0
 #define UI_COLOR_ACTIVE     UI_COLOR_OK
 #define UI_COLOR_WARN       0xffa0
 #define UI_COLOR_ERROR      MC_COLOR_RED
 #define UI_COLOR_DIM        0x4208
-#define UI_COLOR_DISABLED   MC_COLOR_GRAY
+#define UI_COLOR_DISABLED   UI_COLOR_DIM  /* off/disabled states stay as faint as possible */
 #define UI_COLOR_TX         MC_COLOR_ORANGE
 #define UI_COLOR_RX         UI_COLOR_OK
 
