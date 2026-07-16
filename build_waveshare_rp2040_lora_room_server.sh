@@ -11,12 +11,12 @@ export ZEPHYR_SDK_INSTALL_DIR="${ZEPHYR_SDK_INSTALL_DIR:-$ROOT_DIR/zephyr-sdk-1.
 export CCACHE_DIR="${CCACHE_DIR:-$ROOT_DIR/.ccache}"
 
 WEST="${WEST:-$ROOT_DIR/.venv/bin/west}"
-BUILD_DIR="$ROOT_DIR/build_rpi_picow_repeater"
-OUT_FILE="$ROOT_DIR/firmware/picow-repeater.uf2"
-LEGACY_OUT_FILE="$ROOT_DIR/firmware/waveshare_rp2040_lora-repeater.uf2"
+BUILD_DIR="$ROOT_DIR/build_rpi_picow_room_server"
+OUT_FILE="$ROOT_DIR/firmware/picow-room-server.uf2"
+LEGACY_OUT_FILE="$ROOT_DIR/firmware/waveshare_rp2040_lora-room-server.uf2"
 
 "$WEST" build -b rpi_pico zephcore -d "$BUILD_DIR" --pristine -- \
-	-DEXTRA_CONF_FILE=boards/common/repeater.conf
+	-DEXTRA_CONF_FILE=boards/common/room_server.conf
 
 cp "$BUILD_DIR/zephyr/zephyr.uf2" "$OUT_FILE"
 cp "$BUILD_DIR/zephyr/zephyr.uf2" "$LEGACY_OUT_FILE"
