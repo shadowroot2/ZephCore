@@ -13,10 +13,15 @@
  * Vext:            GPIO36 (active-LOW, powers OLED) — regulator + vin-supply in overlay
  * Button:          GPIO0
  * LED:             GPIO35
+ * GPS UART1:       TX=GPIO48, RX=GPIO47, 9600 baud (optional external module)
+ * GPS enable:      GPIO26 (active-HIGH)
  */
 
 #include <zephyr/dt-bindings/input/input-event-codes.h>
 #include <zephyr/dt-bindings/adc/adc.h>
+#include <zephyr/dt-bindings/pinctrl/esp-pinctrl-common.h>
+#include <zephyr/dt-bindings/pinctrl/esp32s3-pinctrl.h>
+#include <zephyr/dt-bindings/pinctrl/esp32s3-gpio-sigmap.h>
 
 / {
 	chosen {
@@ -77,6 +82,26 @@
 		regulator-always-on;
 	};
 
+	/* GPS enable — GPIO26, active-HIGH (Arduino MeshCore PIN_GPS_EN=26; its
+	 * PIN_GPS_EN_ACTIVE defaults to HIGH and this variant does not override it).
+	 * ZephCore's simple-board GPS manager drives this via the gps-enable alias.
+	 *
+	 * GPIO26 is SPICS1 on the ESP32-S3 — a flash/PSRAM-range pad. It is free
+	 * here because the V3 carries an ESP32-S3FN8 (in-package flash, no PSRAM),
+	 * so nothing claims the PSRAM chip select. Do not reuse this pin on a V3
+	 * respin that adds PSRAM. */
+	gps_en: gps-enable {
+		compatible = "gpio-leds";
+		gps_enable_pin: gps_enable {
+			gpios = <&gpio0 26 GPIO_ACTIVE_HIGH>;
+			label = "GPS Enable";
+		};
+	};
+
+	aliases {
+		gps-enable = &gps_enable_pin;
+	};
+
 	/* Button chain — same mapping as RAK4631 / WisMesh Pocket (rak4631/board.overlay). */
 	user_btn_longpress {
 		compatible = "zephyr,input-longpress";
@@ -105,6 +130,39 @@
 &lora0 {
 	dio1-gpios = <&gpio0 14 (GPIO_PULL_DOWN | GPIO_ACTIVE_HIGH)>;
 	rx-boosted;
+};
+
+/* GPS on UART1 — optional external NMEA module on the pin header, wired to the
+ * same pins Arduino MeshCore uses for this board (PIN_GPS_RX=47, PIN_GPS_TX=48).
+ * Upstream leaves uart1 disabled and gives it no pinctrl, so both are set here.
+ * GPIO47/48 are otherwise unclaimed on the V3; the console stays on uart0
+ * (GPIO43/44). 9600 baud matches Arduino's default for this variant.
+ *
+ * The node is unconditional, like the RAK4631's gnss node for the optional
+ * RAK1910: with no module fitted the driver simply never sees a fix. */
+&pinctrl {
+	uart1_default: uart1_default {
+		group1 {
+			pinmux = <UART1_TX_GPIO48>;
+			output-high;
+		};
+
+		group2 {
+			pinmux = <UART1_RX_GPIO47>;
+			bias-pull-up;
+		};
+	};
+};
+
+&uart1 {
+	status = "okay";
+	current-speed = <9600>;
+	pinctrl-0 = <&uart1_default>;
+	pinctrl-names = "default";
+
+	gnss: gnss-nmea-generic {
+		compatible = "gnss-nmea-generic";
+	};
 };
 
 /* Reduce CPU clock from 240 MHz to 160 MHz — saves power, HAL minimum */
