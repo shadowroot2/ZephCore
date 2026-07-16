@@ -175,6 +175,21 @@ BOARDS = [
 
 DEVICE_TYPE = {"nrf": "nrf52", "esp32": "esp32", "linux": "noflash"}
 
+# nRF52 erase package (spec §4a). ZephCore's LittleFS layout differs from MeshCore's,
+# so the official erase would wipe the wrong region — we point `erase` at ZephCore's
+# own formatter tool instead. The formatter is SoftDevice-specific (partition map
+# differs between SD v6 and v7), so each board maps to its SD's formatter .zip.
+# Files are published to firmware-dist by build.sh (stable names, no hash).
+SOFTDEVICE = {
+    "rak4631": 6, "rak3401_1watt": 6, "thinknode_m1": 6, "thinknode_m3": 6,
+    "thinknode_m6": 6, "rak_wismesh_tag": 6, "lilygo_techo": 6,
+    "lilygo_timpulse_plus": 6, "promicro_sx1262": 6, "heltec_t114": 6,
+    "heltec_t096": 6, "gat562_30s": 6,
+    "wio_tracker_l1": 7, "t1000_e": 7, "ikoka_nano_30dbm": 7,
+    "sensecap_solar": 7, "xiao_nrf52840": 7,
+}
+FORMATTER_FILE = {6: "SoftDevice_v6_formatter.zip", 7: "SoftDevice_v7_formatter.zip"}
+
 # Companion firmware is a single image that serves both transports (and, on
 # Linux, TCP). Expose it under each applicable role, all pointing at one file.
 COMPANION_ROLES = {
@@ -241,10 +256,12 @@ def build(assets, url_base, version):
             for (t, name, title) in triples
         ]
 
-    def add_option(dev, role, subtitle, version, triples):
+    def add_option(dev, role, subtitle, version, triples, erase=None):
         opt = {"role": role, "version": {version: {"notes": "", "files": spec_files(triples)}}}
         if subtitle:
             opt["subTitle"] = subtitle
+        if erase:
+            opt["erase"] = erase   # spec §4a: on the firmware option, not the device
         dev["firmware"].append(opt)
         used_roles.add(role)
 
@@ -275,11 +292,16 @@ def build(assets, url_base, version):
             stats["new" if board.get("new") else "fold"] += 1
         dev = devices[name]
 
+        # nRF52 boards get ZephCore's own SoftDevice-specific formatter as `erase`.
+        erase = None
+        if board["kind"] == "nrf":
+            erase = f"{base}/{FORMATTER_FILE[SOFTDEVICE[board['stem']]]}"
+
         if comp:
             for role in COMPANION_ROLES[board["kind"]]:
-                add_option(dev, role, subtitle, version, comp)
+                add_option(dev, role, subtitle, version, comp, erase)
         if repe:
-            add_option(dev, "repeater", subtitle, version, repe)
+            add_option(dev, "repeater", subtitle, version, repe, erase)
 
     catalog = {
         "description": DESCRIPTION,

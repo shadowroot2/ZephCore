@@ -48,6 +48,11 @@ rtt_*.log
 *.a
 *.zip
 
+# ...except the prebuilt formatter DFU packages. These are shipped artifacts, not
+# build output: build.sh publishes them as the Mesh America configurator's `erase`
+# packages (see formatter/README.md, PROVIDER_CATALOG.md), so they must be tracked.
+!formatter/*.zip
+
 # OS junk
 .DS_Store
 Thumbs.db

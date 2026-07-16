@@ -83,6 +83,26 @@ if [[ $1 == "nrf" ]]; then
             mv build/zephyr/zephyr.zip firmware/"$board"-repeater-noscreen-"$COMMIT_HASH".zip
         fi
     done
+
+    # ZephCore's storage formatter — published as the `erase` package for the
+    # Mesh America configurator (spec §4a). MeshCore's official erase targets a
+    # different flash layout and only partially wipes a ZephCore node, so each
+    # nRF52 board points `erase` at the formatter for its SoftDevice (v6/v7 have
+    # different partition maps; see SOFTDEVICE in gen_provider_catalog.py).
+    # Copied under stable, un-hashed names so the catalog's erase URLs stay
+    # stable. The .zip drives the configurator's automated DFU erase flow; the
+    # .uf2 is the manual drag-and-drop fallback. Skipped if not built yet.
+    for sd in 6 7; do
+        for ext in zip uf2; do
+            f="formatter/SoftDevice_v${sd}_formatter.${ext}"
+            if [[ -f "$f" ]]; then
+                cp "$f" firmware/
+                echo "Published formatter: $f"
+            else
+                echo "NOTE: $f not present — erase package for SoftDevice v${sd} will 404"
+            fi
+        done
+    done
 fi
 
 if [[ $1 == "linux" ]]; then
