@@ -19,24 +19,26 @@ ZephCore — это порт прошивки [MeshCore](https://github.com/mesh
 - **ESP32 companion power tuning**: для ThinkNode M5 и Heltec V3 отключен Wi-Fi, BLE TX power снижен до более холодного режима, чтобы уменьшить нагрев и расход батареи.
 - **Heltec V3 companion**: учтены фиксы отображения батареи и ухода в sleep при низком питании. Коэффициент батареи откалиброван по MeshCore/Meshtastic: `vbat-mv-multiplier=<5420>`, чтобы полный 1S LiPo не отображался как завышенные `4.45V`.
 - **Low-battery shutdown/notify**: companion-сборки по умолчанию используют порог `3250 mV` на nRF52; перед уходом в сон/выключение может отправляться сообщение в Public с напряжением батареи и uptime.
-- **Локальное время UI**: добавлен runtime offset часового пояса через CLI `get tz` / `set tz <minutes>`. Глобальный дефолт этой ветки — `300` минут (GMT+5); RTC, GPS и протокольные timestamps остаются UTC.
-- **Raspberry Pi Pico W + Waveshare SX1262**: добавлена поддержка новой платы в режиме repeater. Сборка идет под `rpi_picow`, пины сверены с рабочей прошивкой MeshCore `PicoW_repeater-v1.14.1`.
+- **Локальное время UI**: добавлен runtime offset часового пояса через CLI `get tz` / `set tz <minutes>`. Значение хранится в конце структуры настроек; при первом запуске старые файлы мигрируются без сдвига остальных предпочтений. RTC, GPS и протокольные timestamps остаются UTC.
+- **Raspberry Pi Pico W + Waveshare SX1262**: добавлена поддержка платы в режимах repeater и room server. Сборка идет под `rpi_picow`, пины сверены с рабочей прошивкой MeshCore `PicoW_repeater-v1.14.1`.
 - **BLE в repeater/room/observer**: Bluetooth полностью отключается для repeater, room-server и observer сборок. BLE-конфиги вынесены отдельно и подключаются только для client/companion.
 - **Базовый LoRa-пресет**: частота `867.935 MHz`, SF8, BW 62.5 kHz, CR 4/8, duty cycle 50%.
 - **Multi ACKs**: включены по умолчанию для новых настроек узла.
 - **RP2040 RNG**: добавлен fallback RNG для платформ без аппаратного CSPRNG.
 
-## Проверочные прошивки
+## Проверочный релиз
 
-Актуальные собранные образы этой ветки лежат в `firmware/`:
+Проверенные образы для commit `3ed0b86` и их SHA-256 приведены в [release-заметке от 2026-07-16](firmware/RELEASE_shadow-v20260716.1.md).
 
 | Файл | Плата | Роль | Формат |
 |------|-------|------|--------|
-| `shadow-20260715-thinknode-m1-client-tz300.uf2` | ThinkNode M1 | client/companion | UF2, UI timezone default GMT+5 |
-| `shadow-20260715-thinknode-m5-client-tz300-merged.bin` | ThinkNode M5 | client/companion | ESP32-S3 merged-bin, flash offset `0x0`, UI timezone default GMT+5 |
-| `shadow-20260715-thinknode-m6-repeater.uf2` | ThinkNode M6 | repeater | UF2 |
-| `shadow-20260715-heltec-v3-client-ble6-wifi-off-tzcli-merged.bin` | Heltec V3 | client/companion | ESP32-S3 merged-bin, flash offset `0x0`, BLE 6 dBm, Wi-Fi off |
-| `shadow-20260715-t1000-e-client-tz300.uf2` | Seeed T1000-E | client/companion | UF2, light telemetry, battery/autoshutdown fixes |
+| `thinknode_m6-repeater-3ed0b86.uf2` | ThinkNode M6 | repeater | UF2 |
+| `thinknode_m5-esp32s3-procpu-companion-3ed0b86-merged.bin` | ThinkNode M5 | companion | ESP32-S3 полный образ, flash offset `0x0` |
+| `heltec_v3-companion-serial-3ed0b86-merged.bin` | Heltec V3 | serial companion | ESP32-S3 полный образ, flash offset `0x0` |
+| `t1000_e-companion-3ed0b86.uf2` | Seeed T1000-E | companion | UF2 |
+| `thinknode_m1-companion-3ed0b86.uf2` | ThinkNode M1 | companion | UF2 |
+| `picow-repeater.uf2` / `waveshare_rp2040_lora-repeater.uf2` | Pico W / Waveshare RP2040 LoRa | repeater | UF2 |
+| `picow-room-server.uf2` / `waveshare_rp2040_lora-room-server.uf2` | Pico W / Waveshare RP2040 LoRa | room server | UF2 |
 
 ## Зачем Zephyr?
 
@@ -94,7 +96,7 @@ ZephCore — это порт прошивки [MeshCore](https://github.com/mesh
 
 | Плата | MCU | Радио | Особенности |
 |-------|-----|-------|-------------|
-| **Raspberry Pi Pico W + Waveshare SX1262** | RP2040 | SX1262 | Repeater-only, USB CDC CLI, LittleFS settings, UF2 output |
+| **Raspberry Pi Pico W + Waveshare SX1262** | RP2040 | SX1262 | Repeater или room server, USB CDC CLI, LittleFS settings, UF2 output |
 
 ### Другие платформы
 
@@ -170,10 +172,11 @@ west build -b rak4631 zephcore --pristine -- \
 
 ### Быстрая сборка Pico W + Waveshare SX1262
 
-Для Pico W repeater добавлен готовый скрипт:
+Для Pico W и Waveshare SX1262 добавлены готовые скрипты для repeater и room server:
 
 ```bash
 ./build_waveshare_rp2040_lora_repeater.sh
+./build_waveshare_rp2040_lora_room_server.sh
 ```
 
 Результат будет записан в:
@@ -181,6 +184,8 @@ west build -b rak4631 zephcore --pristine -- \
 ```text
 firmware/picow-repeater.uf2
 firmware/waveshare_rp2040_lora-repeater.uf2
+firmware/picow-room-server.uf2
+firmware/waveshare_rp2040_lora-room-server.uf2
 ```
 
 ## Примечания по платформам
