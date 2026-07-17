@@ -170,3 +170,10 @@
 &adc1 {
 	status = "disabled";
 };
+
+/* The ESP32-S3 die-temperature sensor is used as the local temperature
+ * source for telemetry and the low-battery Public notice.  It is disabled
+ * in the upstream SoC DTS by default, so enable it explicitly for V3. */
+&coretemp {
+	status = "okay";
+};

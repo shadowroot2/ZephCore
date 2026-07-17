@@ -325,8 +325,9 @@ int RepeaterMesh::handleRequest(ClientInfo* sender, uint32_t sender_timestamp, u
         uint16_t batt_mv = _board.getBattMilliVolts();
         lpp.addVoltage(CH_SELF, batt_mv / 1000.0f);
         float charge_power_w = _board.getChargePowerWatts();
-        if (_board.isBatteryCharging() && charge_power_w > 0.0f) {
-            lpp.addPower(CH_SELF, charge_power_w);
+        if (charge_power_w > 0.0f) {
+            lpp.addPower(CH_SELF,
+                _board.isBatteryCharging() ? charge_power_w : 0.0f);
         }
 
         /* Environment sensors — prefer external, fallback to MCU die temp. */
