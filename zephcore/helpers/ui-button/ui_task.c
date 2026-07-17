@@ -411,7 +411,9 @@ static void action_flood_advert(void)
 static void action_buzzer_toggle(void)
 {
 #ifdef CONFIG_ZEPHCORE_UI_BUZZER
-	bool was_quiet = buzzer_is_quiet();
+	/* Use the persisted preference here. A low-battery safety mute must not
+	 * make a tap overwrite the user's intended setting. */
+	bool was_quiet = buzzer_is_user_quiet();
 
 	if (was_quiet) {
 		/* Unmuting: enable first, then play ascending confirmation */
@@ -426,7 +428,11 @@ static void action_buzzer_toggle(void)
 	}
 	/* Persist mute state across reboots */
 	mesh_set_buzzer_quiet(!was_quiet);
-	get_state()->buzzer_quiet = !was_quiet;
+	/* The low-battery override may still keep the effective state muted. */
+	get_state()->buzzer_quiet = buzzer_is_quiet();
+#if defined(CONFIG_BOARD_T1000_E)
+	ui_led_confirm_state(was_quiet);  /* quiet → enabled, otherwise disabled */
+#endif
 	LOG_INF("buzzer %s", buzzer_is_quiet() ? "muted" : "unmuted");
 #endif
 	schedule_render();
@@ -439,6 +445,9 @@ static void action_leds_toggle(void)
 
 	ui_set_leds_disabled(new_disabled);
 	mesh_set_leds_disabled(new_disabled);
+#if defined(CONFIG_BOARD_T1000_E)
+	ui_led_confirm_state(!new_disabled);
+#endif
 #ifdef CONFIG_ZEPHCORE_UI_BUZZER
 	buzzer_play(new_disabled ? MELODY_LED_OFF : MELODY_LED_ON);
 #endif
@@ -461,6 +470,9 @@ static void action_gps_toggle(void)
 #endif
 	/* Use persistent wrapper — same path as BLE CMD_SET_CUSTOM_VAR "gps" */
 	mesh_gps_set_enabled(now_enabled);
+#if defined(CONFIG_BOARD_T1000_E)
+	ui_led_confirm_state(now_enabled);
+#endif
 	schedule_render();
 }
 
@@ -516,6 +528,26 @@ static void action_deep_sleep(void)
 
 	if (buzzer_is_quiet()) {
 		ui_led_flash_shutdown();
+	}
+#endif
+
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
+	/* This is a user-initiated menu action, not the low-battery path. Keep its
+	 * final screen distinct from the automatic shutdown warning. E-paper keeps
+	 * the completed frame after power-off; give OLED users a short dwell too. */
+	mc_display_on();
+	mc_display_clear();
+	const char *power_off = "Power OFF";
+	uint8_t fw = mc_display_font_width();
+	uint8_t fh = mc_display_font_height();
+	int x = (fw && mc_display_width())
+		? ((int)mc_display_width() - (int)strlen(power_off) * fw) / 2 : 0;
+	int y = (fh && mc_display_height())
+		? ((int)mc_display_height() - fh) / 2 : 0;
+	mc_display_text(x < 0 ? 0 : x, y < 0 ? 0 : y, power_off, false);
+	mc_display_finalize();
+	if (!mc_display_is_epd()) {
+		k_sleep(K_MSEC(1000));
 	}
 #endif
 
@@ -575,6 +607,9 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 		LOG_INF("GPS switch → %s", gps_on ? "on" : "off");
 		if (gps_is_available()) {
 			mesh_gps_set_enabled(gps_on);
+#if defined(CONFIG_BOARD_T1000_E)
+			ui_led_confirm_state(gps_on);
+#endif
 #ifdef CONFIG_ZEPHCORE_UI_BUZZER
 			buzzer_play(gps_on ? MELODY_GPS_ON : MELODY_GPS_OFF);
 #endif

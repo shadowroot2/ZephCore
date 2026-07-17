@@ -925,7 +925,8 @@ bool JoystickUITask::isBuzzerQuiet() const
 void JoystickUITask::toggleBuzzer()
 {
 #ifdef CONFIG_ZEPHCORE_UI_BUZZER
-	bool was_quiet = buzzer_is_quiet();
+	/* Keep the user's preference distinct from the temporary low-battery mute. */
+	bool was_quiet = buzzer_is_user_quiet();
 	if (was_quiet) {
 		buzzer_set_quiet(false);
 		buzzer_play("bon:d=16,o=7,b=200:c,p,c,p,c,p,p,8e");
@@ -1479,6 +1480,18 @@ void JoystickUITask::shutdown(bool restart)
 		sys_reboot(SYS_REBOOT_COLD);
 	} else {
 #ifdef CONFIG_POWEROFF
+		/* Manual menu shutdown: replace the current screen with a final state.
+		 * E-paper retains this frame after power-off; OLED needs a short dwell
+		 * before ui_prepare_for_system_off() turns it off. */
+		_display.turnOn();
+		_display.startFrame();
+		_display.drawTextCentered(_display.width() / 2, _display.height() / 2,
+						  "Power OFF");
+		_display.endFrame();
+		if (!mc_display_is_epd()) {
+			k_sleep(K_MSEC(1000));
+		}
+
 		/* Full peripheral teardown + SENSE config for sw0 wake.  Shared
 		 * helper turns off display, GPS, regulators, holds LoRa in reset
 		 * and arms the button SENSE so the user can actually wake the

@@ -53,6 +53,7 @@ extern "C" void bt_ctlr_assert_handle(char *file, uint32_t line)
 #include <adapters/clock/ZephyrRTCClock.h>
 #include <adapters/clock/ZephyrRTCDiscover.h>
 #include <ZephyrSensorManager.h>
+#include <helpers/LocalCLIHelp.h>
 
 /* UI subsystem (display, buttons, buzzer) */
 #include "ui_task.h"
@@ -233,12 +234,18 @@ static void process_cli_commands(void)
 {
 	struct cli_cmd_line c;
 	while (repeater_mesh_ptr && k_msgq_get(&cli_cmd_queue, &c, K_NO_WAIT) == 0) {
-		cli_reply_buf[0] = '\0';
-		repeater_mesh_ptr->handleCommand(0, c.buf, cli_reply_buf);
-		refresh_repeater_ui_radio_state();
-		if (cli_reply_buf[0] != '\0') {
+		const char *help = local_cli_help(LocalCLIHelpRole::Repeater, c.buf);
+		if (help != nullptr) {
 			cli_print("\r\n  -> ");
-			cli_print(cli_reply_buf);
+			cli_print(help);
+		} else {
+			cli_reply_buf[0] = '\0';
+			repeater_mesh_ptr->handleCommand(0, c.buf, cli_reply_buf);
+			refresh_repeater_ui_radio_state();
+			if (cli_reply_buf[0] != '\0') {
+				cli_print("\r\n  -> ");
+				cli_print(cli_reply_buf);
+			}
 		}
 		cli_print("\r\n");
 	}

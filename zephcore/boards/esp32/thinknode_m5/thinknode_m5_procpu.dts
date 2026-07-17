@@ -33,6 +33,10 @@
 		zephyr,sram = &sram1;
 		zephyr,console = &uart0;
 		zephyr,shell-uart = &uart0;
+		/* USB-C uses the UART0 bridge (GPIO43/44).  Serial-companion
+		 * builds take ownership of it and provide the MeshCore transport
+		 * plus text CLI; their config disables console and shell first. */
+		zephcore,companion-uart = &uart0;
 		zephyr,flash = &flash0;
 		zephyr,code-partition = &slot0_partition;
 		zephyr,bt-hci = &esp32_bt_hci;

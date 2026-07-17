@@ -348,7 +348,13 @@ int RepeaterMesh::handleRequest(ClientInfo* sender, uint32_t sender_timestamp, u
             if (env.has_pressure) {
                 lpp.addBarometricPressure(CH_SELF, env.pressure_hpa);
             }
+#if defined(CONFIG_BOARD_T1000_E)
+            /* T1000-E has a physical light sensor; preserve its lux value. */
             if (env.has_light) {
+#else
+            /* Boards without GPS keep their physical light telemetry. */
+            if (env.has_light && !gps_is_available()) {
+#endif
                 lpp.addLuminosity(CH_SELF, env.light_lux);
             }
         } else {
@@ -373,6 +379,19 @@ int RepeaterMesh::handleRequest(ClientInfo* sender, uint32_t sender_timestamp, u
                 }
             }
         }
+
+        /* Cayenne LPP has no satellite-count type.  Reuse the luminosity
+         * field on the self channel so existing client UIs show a value.
+         * T1000-E is excluded: its physical light sensor reports real lux. */
+#if !defined(CONFIG_BOARD_T1000_E)
+        if (gps_is_available()) {
+            struct gps_state_info gsi;
+            gps_get_state_info(&gsi);
+            uint16_t sats_in_view = gsi.visible_satellites ?
+                gsi.visible_satellites : gsi.satellites;
+            lpp.addLuminosity(CH_SELF, sats_in_view);
+        }
+#endif
 
         /* GPS precise position — only shared via telemetry, not adverts */
         struct gps_position gpos;
@@ -1078,20 +1097,22 @@ void RepeaterMesh::formatGpsStatsReply(char* reply) {
 
     struct gps_position pos;
     bool has_pos = gps_get_last_known_position(&pos);
+    uint16_t sats_in_view = gsi.visible_satellites ?
+        gsi.visible_satellites : gsi.satellites;
 
     if (has_pos) {
         snprintf(reply, CLI_REPLY_SIZE,
-            "on state=%s sats=%u fix=%us ago lat=%.6f lon=%.6f",
-            state, gsi.satellites, gsi.last_fix_age_s,
+            "on state=%s sats-in-view=%u fix=%us ago lat=%.6f lon=%.6f",
+            state, sats_in_view, gsi.last_fix_age_s,
             pos.latitude_ndeg / 1e9, pos.longitude_ndeg / 1e9);
     } else if (gsi.next_search_s > 0) {
         snprintf(reply, CLI_REPLY_SIZE,
-            "on state=%s sats=%u no fix next=%us",
-            state, gsi.satellites, gsi.next_search_s);
+            "on state=%s sats-in-view=%u no fix next=%us",
+            state, sats_in_view, gsi.next_search_s);
     } else {
         snprintf(reply, CLI_REPLY_SIZE,
-            "on state=%s sats=%u no fix",
-            state, gsi.satellites);
+            "on state=%s sats-in-view=%u no fix",
+            state, sats_in_view);
     }
 }
 

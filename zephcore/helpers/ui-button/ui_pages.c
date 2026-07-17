@@ -18,6 +18,7 @@
 #include "ui_task.h"
 #include "display.h"
 #include <helpers/ui/ui_timezone.h>
+#include <helpers/battery_curve.h>
 
 #include <time_sync.h>
 #include <ZephyrSensorManager.h>
@@ -161,7 +162,11 @@ static const enum ui_page active_pages[] = {
 	UI_PAGE_TRAFFIC,
 	UI_PAGE_BLUETOOTH,
 	UI_PAGE_ADVERT,
+	/* Heltec V3 has no GNSS hardware.  Do not make the user cycle through
+	 * a permanently empty "No GPS" screen on this single-button board. */
+#if !defined(CONFIG_BOARD_HELTEC_WIFI_LORA32_V3)
 	UI_PAGE_GPS,
+#endif
 #ifdef CONFIG_ZEPHCORE_UI_BUZZER
 	UI_PAGE_BUZZER,
 #endif
@@ -182,13 +187,10 @@ static int current_page_idx;
 
 static uint8_t calc_battery_pct(uint16_t mv)
 {
-	if (mv >= 4200) {
-		return 100;
-	}
-	if (mv <= 3000) {
-		return 0;
-	}
-	return (uint8_t)((mv - 3000) * 100 / 1200);
+	/* Voltage is not a linear state-of-charge indicator for a LiPo. Use the
+	 * selected board curve instead: M5's 3368 mV is ~15%, not the misleading
+	 * 30% produced by the former 3.0–4.2 V linear scale. */
+	return battery_curve_lookup(&battery_curve_default, mv);
 }
 
 /* ========== Helper: Top Bar (Node Name + Battery) ========== */
@@ -1209,8 +1211,16 @@ static void render_gps(void)
 	/* State-dependent display */
 	if (state.gps_state == 2) {
 		/* ACQUIRING — actively searching for satellites */
-		snprintf(buf, sizeof(buf), "Searching... sat:%u",
-			 state.gps_satellites);
+		strcpy(buf, "Searching...");
+		if (color) {
+			mc_display_color_text(0, y, buf, UI_COLOR_WARN);
+		} else {
+			mc_display_text(0, y, buf, false);
+		}
+		y += LINE_H;
+
+		/* Keep the satellite count on its own line before Last fix. */
+		snprintf(buf, sizeof(buf), "Sats in view: %u", state.gps_satellites);
 		if (color) {
 			draw_color_segments(y, "SAT ", buf, UI_COLOR_WARN);
 		} else {
@@ -1238,6 +1248,14 @@ static void render_gps(void)
 		}
 	} else if (state.gps_state == 1) {
 		/* STANDBY — sleeping between fix cycles */
+		snprintf(buf, sizeof(buf), "Sats in view: %u", state.gps_satellites);
+		if (color) {
+			draw_color_segments(y, "SAT ", buf, UI_COLOR_LABEL);
+		} else {
+			mc_display_text(0, y, buf, false);
+		}
+		y += LINE_H;
+
 		if (state.gps_last_fix_age_s != UINT32_MAX) {
 			char tbuf[12];
 
@@ -1744,12 +1762,18 @@ void ui_pages_render_splash(void)
 
 	/* "MeshCore on Zephyr" centered below logo */
 	draw_centered(y, "MeshCore on Zephyr");
-	y += LINE_H * 2;
+	/* Keep the build version/date one row closer to the product name. */
+	y += LINE_H;
 
 	/* Build date centered below (format: "2026 Feb 15") */
 #ifdef FIRMWARE_BUILD_DATE
 	draw_centered(y, FIRMWARE_BUILD_DATE);
 #endif
+
+	/* Custom build signature: keep it anchored to the physical bottom rather
+	 * than the content below the logo, so it remains centered on every panel. */
+	int signature_y = (int)DISP_H - FONT_H - 2;
+	draw_centered(signature_y < 0 ? 0 : signature_y, "Tuned by ShadoW");
 
 	mc_display_finalize();
 }

@@ -250,29 +250,33 @@ static void usb_rx_work_fn(struct k_work *work)
 				usb_rx_st = USB_RX_LEN_LO;
 				usb_frame_start_time = k_uptime_get_32();
 			} else if (byte >= 0x20 && byte <= 0x7E) {
-				/* Printable ASCII. Enter text CLI mode only when the
-				 * interface is idle, or we're already in a text session
-				 * (subsequent command lines). Never during a BLE session,
-				 * nor a binary USB companion session — an official client's
-				 * bytes must not be parsed as CLI. The iface read is
-				 * side-effect-free; the claim happens later, on Enter. */
+				/* Printable ASCII. A physical USB session may switch from the
+				 * binary companion protocol to the local text CLI without
+				 * closing its CDC port (Web Serial clients commonly keep it
+				 * open). BLE remains exclusive: USB text never steals an active
+				 * BLE session. The claim/switch happens only on Enter, so a
+				 * stray printable byte in a binary session produces no output. */
 				enum zephcore_iface ifc = zephcore_ble_get_active_iface();
-				if (ifc == ZEPHCORE_IFACE_NONE ||
-				    (ifc == ZEPHCORE_IFACE_USB && usb_session_is_text)) {
+				if (ifc == ZEPHCORE_IFACE_NONE || ifc == ZEPHCORE_IFACE_USB) {
+					const bool echo_text = ifc == ZEPHCORE_IFACE_NONE ||
+						usb_session_is_text;
 					/* Arm the inactivity watchdog so a stray byte resyncs
 					 * to IDLE on its own. */
 					usb_text_len = 0;
 					usb_text_line[usb_text_len++] = (char)byte;
 					usb_frame_start_time = k_uptime_get_32();
 					usb_rx_st = USB_RX_TEXT;
-					/* Banner once per session, then echo. */
-					if (!usb_text_banner_sent) {
-						usb_text_banner_sent = true;
-						usb_cli_echo(USB_CLI_BANNER, sizeof(USB_CLI_BANNER) - 1);
+					/* Do not write into an active binary session until Enter
+					 * confirms that this is an intentional CLI command. */
+					if (echo_text) {
+						if (!usb_text_banner_sent) {
+							usb_text_banner_sent = true;
+							usb_cli_echo(USB_CLI_BANNER, sizeof(USB_CLI_BANNER) - 1);
+						}
+						usb_cli_echo((const char *)&byte, 1);
 					}
-					usb_cli_echo((const char *)&byte, 1);
 				}
-				/* else: printable but iface busy/binary — ignore */
+				/* else: printable while BLE owns the interface — ignore */
 			}
 			/* else: ignore control bytes / noise */
 			break;
@@ -289,6 +293,17 @@ static void usb_rx_work_fn(struct k_work *work)
 				if (usb_text_len > 0) {
 					usb_text_line[usb_text_len] = '\0';
 					if (usb_claim_active((uint8_t)usb_text_line[0], true) && s_cli_line_cb) {
+						/* usb_claim_active sets the mode on a new NONE→USB
+						 * claim. Also support taking an existing binary USB
+						 * session over for text CLI without a DTR drop. */
+						if (!usb_session_is_text) {
+							usb_session_is_text = true;
+							if (!usb_text_banner_sent) {
+								usb_text_banner_sent = true;
+								usb_cli_echo(USB_CLI_BANNER,
+									     sizeof(USB_CLI_BANNER) - 1);
+							}
+						}
 						s_cli_line_cb(usb_text_line);
 					}
 				}

@@ -230,11 +230,21 @@ endmenu # Device Role
 
 if ZEPHCORE_ROLE_COMPANION
 
+config ZEPHCORE_GPS_SATELLITES
+	bool "Report GNSS satellites in view"
+	default y if GNSS
+	select GNSS_SATELLITES
+	help
+	  Enable GSV decoding for companion boards with a GNSS device. This lets
+	  the local CLI and v-contact report satellites visible to the receiver,
+	  rather than only the subset used for a navigation fix.
+
 config ZEPHCORE_MAX_CONTACTS
 	int "Maximum number of contacts"
-	default 350
+	default 200
 	help
-	  Maximum number of contacts that can be stored.
+	  Maximum number of contacts that can be stored. The companion default is
+	  capped at 200 to leave sufficient RAM for BLE and mesh buffers.
 
 config ZEPHCORE_MAX_CHANNELS
 	int "Maximum number of channels"
@@ -244,10 +254,10 @@ config ZEPHCORE_MAX_CHANNELS
 
 config ZEPHCORE_OFFLINE_QUEUE_SIZE
 	int "Offline message queue size"
-	default 256
+	default 100
 	help
-	  Size of the offline message queue for incoming messages.
-	  Arduino MeshCore uses 256 for both T1000-E and Wio Tracker.
+	  Size of the offline message queue for incoming messages. The companion
+	  default is capped at 100 frames to preserve RAM on MCU targets.
 
 config ZEPHCORE_ACK_TABLE_SIZE
 	int "ACK tracking table size"

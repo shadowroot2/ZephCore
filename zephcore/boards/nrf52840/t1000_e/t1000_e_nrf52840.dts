@@ -73,10 +73,10 @@
 	};
 
 	/* Input filter: user button multi-tap detection
-	 * 1 tap  (400ms wait) → KEY_1 = page next (no-op without display)
-	 * 2 taps (400ms wait) → KEY_B = flood advert
-	 * 3 taps (400ms wait) → KEY_D = buzzer mute toggle
-	 * 4 taps (400ms wait) → KEY_C = GPS on/off
+	 * 1 tap  (500ms wait) → KEY_1 = page next (no-op without display)
+	 * 2 taps (500ms wait) → KEY_B = flood advert
+	 * 3 taps (500ms wait) → KEY_D = buzzer mute toggle
+	 * 4 taps (500ms wait) → KEY_C = GPS on/off
 	 * 5 taps (immediate)  → KEY_E = LED heartbeat toggle */
 	user_btn_multitap {
 		compatible = "zephcore,input-multi-tap";
@@ -85,7 +85,7 @@
 		 * not by &buttons, so we must not filter by device. */
 		input-codes = <INPUT_KEY_A>;
 		tap-codes = <INPUT_KEY_1 INPUT_KEY_B INPUT_KEY_D INPUT_KEY_C INPUT_KEY_E>;
-		tap-delay-ms = <400>;
+		tap-delay-ms = <500>;
 	};
 
 	/* Sensor power enable - P1.06 (PIN_3V3_EN in Arduino)

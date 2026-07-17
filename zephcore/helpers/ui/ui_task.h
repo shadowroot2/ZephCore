@@ -189,10 +189,22 @@ void ui_led_set_ble_connected(bool connected);
 void ui_led_set_ble_enabled(bool enabled);
 
 /**
- * Flash the heartbeat LED immediately on message receipt.
- * Cancels the current cycle, pulses, then resumes normal heartbeat.
+ * Flash the heartbeat LED on message receipt.
+ * Cancels the current cycle, then resumes normal heartbeat.
  */
 void ui_led_flash_msg(void);
+
+/**
+ * Force the T-1000E LED on briefly after a user-originated message or advert.
+ * Other boards implement this as a no-op.
+ */
+void ui_led_force_tx(void);
+
+/**
+ * Confirm a local on/off setting change: one flash for on, two for off.
+ * T-1000E implements this even when heartbeat LEDs are disabled.
+ */
+void ui_led_confirm_state(bool enabled);
 
 /**
  * Flash the heartbeat LED 3 times as a visual shutdown indicator.
@@ -246,22 +258,22 @@ void ui_set_auto_shutdown_mv(uint16_t mv);
 /* Reason codes passed to the shutdown hook. */
 #define UI_SHUTDOWN_LOW_BATTERY  1
 
-/* Grace period (ms) the poweroff is deferred by when the hook asks for it
- * (an app is connected and a live notice was queued), so the notify→fetch→
- * send round-trip can complete before power is cut. */
-#define UI_SHUTDOWN_GRACE_MS     1000
+/* Grace period (ms) the poweroff is deferred by when the hook asks for it.
+ * This leaves enough time for a queued LoRa Public-channel shutdown message
+ * to be transmitted before power is cut. */
+#define UI_SHUTDOWN_GRACE_MS     8000
 
 /**
  * Register a pre-shutdown hook, called from ui_auto_shutdown_check() just
- * before power-off. The companion uses it to report the shutdown to the
- * connected app (v-contact). Return value:
- *   true  = an app is connected and a live notice was queued — defer the
- *           poweroff by UI_SHUTDOWN_GRACE_MS so the app can fetch it.
- *   false = nothing to deliver live (persist to flash instead) — power off
- *           immediately.
+ * before power-off. The companion uses it to report the shutdown. battery_mv
+ * and uptime_ms are the measurement that confirmed the automatic shutdown.
+ * Return value:
+ *   true  = a live notice was queued — defer poweroff by
+ *           UI_SHUTDOWN_GRACE_MS so its delivery can finish.
+ *   false = nothing was queued — power off immediately.
  * The hook runs on the main thread and must not block.
  */
-typedef bool (*ui_shutdown_fn)(int reason);
+typedef bool (*ui_shutdown_fn)(int reason, uint16_t battery_mv, uint32_t uptime_ms);
 void ui_set_shutdown_hook(ui_shutdown_fn fn);
 
 /**

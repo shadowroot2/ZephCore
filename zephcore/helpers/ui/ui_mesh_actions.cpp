@@ -391,7 +391,11 @@ extern "C" void mesh_housekeeping_ui_refresh(void)
 		struct gps_state_info gsi;
 
 		gps_get_state_info(&gsi);
-		ui_set_gps_state(gsi.state, gsi.satellites,
+		/* GSV provides the number of satellites visible to the receiver.
+		 * Boards without GSV support retain the GGA count used for the fix. */
+		uint16_t display_satellites = gsi.visible_satellites ?
+			gsi.visible_satellites : gsi.satellites;
+		ui_set_gps_state(gsi.state, display_satellites,
 				 gsi.last_fix_age_s, gsi.next_search_s);
 	}
 

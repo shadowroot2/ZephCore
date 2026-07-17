@@ -1510,7 +1510,13 @@ int CompanionMesh::appendSelfTelemetry(uint8_t *reply, uint8_t permissions)
 				reply[i++] = (press >> 8) & 0xFF;
 				reply[i++] = press & 0xFF;
 			}
+#if defined(CONFIG_BOARD_T1000_E)
+			/* T1000-E has a physical light sensor; preserve its lux value. */
 			if (env.has_light) {
+#else
+			/* Boards without GPS keep their physical light telemetry. */
+			if (env.has_light && !gps_is_available()) {
+#endif
 				reply[i++] = CH_SELF;
 				reply[i++] = LPP_LUMINOSITY;
 				uint16_t light = (uint16_t)env.light_lux;
@@ -1550,6 +1556,23 @@ int CompanionMesh::appendSelfTelemetry(uint8_t *reply, uint8_t permissions)
 			}
 		}
 	}
+
+/* Cayenne LPP has no satellite-count type.  Reuse the luminosity field
+ * on the self channel so existing client UIs show the value rather than
+ * an anonymous secondary Analog Input channel.  T1000-E is excluded: its
+ * physical light sensor keeps reporting real lux. */
+#if !defined(CONFIG_BOARD_T1000_E)
+	if ((permissions & TELEM_PERM_LOCATION) && gps_is_available()) {
+		struct gps_state_info gsi;
+		gps_get_state_info(&gsi);
+		uint16_t sats_in_view = gsi.visible_satellites ?
+			gsi.visible_satellites : gsi.satellites;
+		reply[i++] = CH_SELF;
+		reply[i++] = LPP_LUMINOSITY;
+		reply[i++] = (sats_in_view >> 8) & 0xFF;
+		reply[i++] = sats_in_view & 0xFF;
+	}
+#endif
 
 	// Trigger GPS wake for fresh fix on next request
 	if (gps_is_available() && gps_is_enabled()) {
@@ -1610,9 +1633,21 @@ uint8_t CompanionMesh::onContactRequest(const ContactInfo &contact, uint32_t sen
 	return 0;  // Unknown request or denied
 }
 
-void CompanionMesh::logTx(mesh::Packet *, int)
+void CompanionMesh::logTx(mesh::Packet *pkt, int)
 {
 #if ZEPHCORE_HAS_UI_TASK
+	/* Dispatcher invokes logTx only after radio->onSendFinished(), so the
+	 * T-1000E TX LED begins after the packet has physically left the radio.
+	 * Exclude ACKs, telemetry, and forwarding housekeeping. */
+#if defined(CONFIG_BOARD_T1000_E)
+	if (pkt != nullptr) {
+		uint8_t type = pkt->getPayloadType();
+		if (type == PAYLOAD_TYPE_TXT_MSG || type == PAYLOAD_TYPE_GRP_TXT ||
+		    type == PAYLOAD_TYPE_ADVERT) {
+			ui_led_force_tx();
+		}
+	}
+#endif
 	ui_notify_packet_sent();
 #endif
 }

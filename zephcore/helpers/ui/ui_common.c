@@ -19,6 +19,7 @@
 
 #include <ZephyrSensorManager.h>   /* gps_power_off_for_shutdown */
 #include "ui_mesh_actions.h"        /* mesh_disable_power_regulators (weak) */
+#include <helpers/battery_curve.h>
 
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/kernel.h>
@@ -35,11 +36,25 @@
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(ui_led, CONFIG_ZEPHCORE_BOARD_LOG_LEVEL);
 
+static uint16_t (*s_batt_provider)(void);
+
+/* Low-charge power-saving threshold shared by the buzzer and heartbeat. */
+#define BUZZER_LOW_BATT_THRESHOLD_PCT  25
+
 /* ========== Startup Chime ========== */
 
 void ui_play_startup_chime(void)
 {
 #ifdef CONFIG_ZEPHCORE_UI_BUZZER
+	/* The startup melody comes before the periodic heartbeat sample. Check the
+	 * cell now so a weak battery never spends energy on a boot chime. */
+	if (s_batt_provider) {
+		uint16_t mv = s_batt_provider();
+		bool low = mv != 0 && battery_curve_lookup(&battery_curve_default, mv) <
+			BUZZER_LOW_BATT_THRESHOLD_PCT;
+		buzzer_set_low_battery_quiet(low);
+		ui_set_buzzer_quiet(buzzer_is_quiet());
+	}
 	if (!buzzer_is_quiet()) {
 		buzzer_play(MELODY_STARTUP);
 	}
@@ -102,13 +117,30 @@ static const struct gpio_dt_spec s_led_enable =
 #define HEARTBEAT_IS_BLE_STATUS_LED 0
 #endif
 
-#define LED_CYCLE_MS    4000   /* Total heartbeat period */
-#define LED_ON_MS         20   /* Normal pulse width */
-#define LED_ON_MSG_MS    200   /* Pulse width when unread messages */
+#define LED_CYCLE_MS                 5000  /* Heartbeat period */
+#define LED_ON_MS                      20  /* Normal pulse width */
+#define LED_ON_MSG_MS                 200  /* Pulse width when unread messages */
+#define LED_LOW_BATT_THRESHOLD_PCT     25
+#define LED_LOW_BATT_BLINK_MS           80
+#define LED_LOW_BATT_BLINKS              3
+#if defined(CONFIG_BOARD_T1000_E)
+#define LED_MSG_BLINK_MS   80  /* Fast incoming-message flash phase */
+#define LED_MSG_BLINKS      3  /* Number of flashes for one incoming message */
+#endif
 
 #if HAS_HEARTBEAT_LED
 static struct k_work_delayable s_led_on_work;
 static struct k_work_delayable s_led_off_work;
+static uint8_t s_heartbeat_blinks_left;
+static uint16_t s_heartbeat_on_ms;
+static bool s_heartbeat_low_batt_cycle;
+#if defined(CONFIG_BOARD_T1000_E)
+static struct k_work_delayable s_msg_blink_work;
+static struct k_work_delayable s_tx_led_off_work;
+static uint8_t s_msg_blink_phase;
+static uint8_t s_msg_blink_count;
+static bool s_tx_led_active;
+#endif
 static bool s_leds_disabled;
 #if HAS_BLE_STATUS_LED
 static bool s_ble_enabled = true;
@@ -121,6 +153,42 @@ static bool s_ble_connected;
  * Joystick UI leaves this at 0 — it drives its own message display.
  */
 __attribute__((weak)) uint16_t ui_led_get_msg_count(void) { return 0; }
+
+/* The heartbeat is not a precise fuel gauge; it only needs a stable visual
+ * low-charge indication. Refresh its voltage estimate at the same cadence as
+ * the UI, rather than waking the ADC on every LED pulse. */
+static bool heartbeat_low_battery(void)
+{
+	static uint32_t last_sample_ms;
+	static bool sampled;
+	static bool low;
+	uint32_t now = k_uptime_get_32();
+
+	if (!s_batt_provider) {
+		return false;
+	}
+	if (!sampled || (now - last_sample_ms) >= 30000U) {
+		uint16_t mv = s_batt_provider();
+		uint8_t pct = battery_curve_lookup(&battery_curve_default, mv);
+		low = mv != 0 && pct < LED_LOW_BATT_THRESHOLD_PCT;
+#ifdef CONFIG_ZEPHCORE_UI_BUZZER
+		/* Keep the user's buzzer preference intact: this is a temporary
+		 * low-charge override and is lifted automatically on recovery. */
+		buzzer_set_low_battery_quiet(mv != 0 && pct < BUZZER_LOW_BATT_THRESHOLD_PCT);
+		ui_set_buzzer_quiet(buzzer_is_quiet());
+#endif
+		last_sample_ms = now;
+		sampled = true;
+	}
+	return low;
+}
+
+static void heartbeat_sequence_reset(void)
+{
+	s_heartbeat_blinks_left = 0;
+	s_heartbeat_on_ms = 0;
+	s_heartbeat_low_batt_cycle = false;
+}
 
 static void heartbeat_led_set(bool on)
 {
@@ -147,16 +215,41 @@ static void led_off_work_handler(struct k_work *work)
 #if HAS_BLE_STATUS_LED
 	gpio_pin_set_dt(&s_ble_status_led, 0);
 #endif
-	uint16_t on_ms = (ui_led_get_msg_count() > 0) ? LED_ON_MSG_MS : LED_ON_MS;
 
-	k_work_reschedule(&s_led_on_work, K_MSEC(LED_CYCLE_MS - on_ms));
+	if (s_heartbeat_blinks_left > 0) {
+		s_heartbeat_blinks_left--;
+	}
+	if (s_heartbeat_blinks_left > 0) {
+		/* Continue the low-battery burst after a short dark gap. */
+		k_work_reschedule(&s_led_on_work, K_MSEC(LED_LOW_BATT_BLINK_MS));
+		return;
+	}
+
+	uint32_t delay_ms;
+	if (s_heartbeat_low_batt_cycle) {
+		/* Three 80 ms flashes, separated by two 80 ms gaps, start once
+		 * every five seconds. */
+		delay_ms = LED_CYCLE_MS -
+			(LED_LOW_BATT_BLINKS * LED_LOW_BATT_BLINK_MS +
+			 (LED_LOW_BATT_BLINKS - 1U) * LED_LOW_BATT_BLINK_MS);
+	} else {
+		delay_ms = LED_CYCLE_MS - s_heartbeat_on_ms;
+	}
+	heartbeat_sequence_reset();
+	k_work_reschedule(&s_led_on_work, K_MSEC(delay_ms));
 }
 
 static void led_on_work_handler(struct k_work *work)
 {
 	ARG_UNUSED(work);
 	uint16_t mc = ui_led_get_msg_count();
-	uint16_t on_ms = (mc > 0) ? LED_ON_MSG_MS : LED_ON_MS;
+	if (s_heartbeat_blinks_left == 0) {
+		s_heartbeat_low_batt_cycle = heartbeat_low_battery();
+		s_heartbeat_blinks_left = s_heartbeat_low_batt_cycle ?
+			LED_LOW_BATT_BLINKS : 1;
+		s_heartbeat_on_ms = s_heartbeat_low_batt_cycle ?
+			LED_LOW_BATT_BLINK_MS : (mc > 0 ? LED_ON_MSG_MS : LED_ON_MS);
+	}
 
 	if (!s_leds_disabled) {
 		#if HAS_BLE_STATUS_LED
@@ -180,8 +273,46 @@ static void led_on_work_handler(struct k_work *work)
 		}
 		#endif
 	}
-	k_work_reschedule(&s_led_off_work, K_MSEC(on_ms));
+	k_work_reschedule(&s_led_off_work, K_MSEC(s_heartbeat_on_ms));
 }
+
+/* Complete a non-blocking LED flash sequence. Keeping this in the
+ * work queue avoids delaying LoRa/BLE processing, unlike a k_sleep loop. */
+#if defined(CONFIG_BOARD_T1000_E)
+static void msg_blink_work_handler(struct k_work *work)
+{
+	ARG_UNUSED(work);
+
+	if ((s_msg_blink_phase & 1U) == 0U) {
+		/* End one of the requested ON phases. */
+		heartbeat_led_set(false);
+		s_msg_blink_phase++;
+		if (s_msg_blink_phase >= s_msg_blink_count * 2U - 1U) {
+			/* The requested flash sequence is done; resume heartbeat later. */
+			k_work_reschedule(&s_led_on_work, K_MSEC(LED_CYCLE_MS));
+			return;
+		}
+	} else {
+		/* Start the next flash after the short OFF gap. */
+		heartbeat_led_set(true);
+		s_msg_blink_phase++;
+	}
+
+	k_work_reschedule(&s_msg_blink_work, K_MSEC(LED_MSG_BLINK_MS));
+}
+
+/* A user-originated message or advert gets a solid two-second TX signal.
+ * It intentionally ignores the persisted LEDs-off preference and BLE state. */
+static void tx_led_off_work_handler(struct k_work *work)
+{
+	ARG_UNUSED(work);
+	s_tx_led_active = false;
+	heartbeat_led_set(false);
+	if (!s_leds_disabled) {
+		k_work_reschedule(&s_led_on_work, K_MSEC(LED_CYCLE_MS));
+	}
+}
+#endif
 #endif /* HAS_HEARTBEAT_LED */
 
 /*
@@ -203,6 +334,10 @@ void ui_led_heartbeat_init(void)
 #endif
 		k_work_init_delayable(&s_led_on_work, led_on_work_handler);
 		k_work_init_delayable(&s_led_off_work, led_off_work_handler);
+#if defined(CONFIG_BOARD_T1000_E)
+		k_work_init_delayable(&s_msg_blink_work, msg_blink_work_handler);
+		k_work_init_delayable(&s_tx_led_off_work, tx_led_off_work_handler);
+#endif
 		k_work_reschedule(&s_led_on_work, K_NO_WAIT);
 		LOG_INF("LED heartbeat started");
 	}
@@ -230,6 +365,12 @@ void ui_set_heartbeat_led(bool enabled)
 	} else {
 		k_work_cancel_delayable(&s_led_on_work);
 		k_work_cancel_delayable(&s_led_off_work);
+		heartbeat_sequence_reset();
+#if defined(CONFIG_BOARD_T1000_E)
+		k_work_cancel_delayable(&s_msg_blink_work);
+		k_work_cancel_delayable(&s_tx_led_off_work);
+		s_tx_led_active = false;
+#endif
 		heartbeat_led_set(false);
 #if HAS_MSG_LED
 		gpio_pin_set_dt(&s_msg_led, 0);
@@ -268,7 +409,19 @@ void ui_set_leds_disabled(bool disabled)
 	if (disabled) {
 		k_work_cancel_delayable(&s_led_on_work);
 		k_work_cancel_delayable(&s_led_off_work);
+		heartbeat_sequence_reset();
+#if defined(CONFIG_BOARD_T1000_E)
+		k_work_cancel_delayable(&s_msg_blink_work);
+#endif
+		/* A TX indication remains visible for its complete two seconds even
+		 * if the user switches LEDs off while it is in progress. */
+#if !defined(CONFIG_BOARD_T1000_E)
 		heartbeat_led_set(false);
+#else
+		if (!s_tx_led_active) {
+			heartbeat_led_set(false);
+		}
+#endif
 #if HAS_MSG_LED
 		gpio_pin_set_dt(&s_msg_led, 0);
 #endif
@@ -278,9 +431,15 @@ void ui_set_leds_disabled(bool disabled)
 	} else if (!k_work_delayable_is_pending(&s_led_on_work) &&
 		   !k_work_delayable_is_pending(&s_led_off_work)) {
 		/* Restart heartbeat only if it was stopped (avoids spurious pulse) */
+	#if !defined(CONFIG_BOARD_T1000_E)
 		if (gpio_is_ready_dt(&s_heartbeat_led)) {
 			k_work_reschedule(&s_led_on_work, K_NO_WAIT);
 		}
+	#else
+		if (!s_tx_led_active && gpio_is_ready_dt(&s_heartbeat_led)) {
+			k_work_reschedule(&s_led_on_work, K_NO_WAIT);
+		}
+	#endif
 	}
 #else
 	(void)disabled;
@@ -288,18 +447,78 @@ void ui_set_leds_disabled(bool disabled)
 	ui_led_on_disabled_changed(disabled);
 }
 
-/* Flash the heartbeat LED immediately on message receipt.
- * Cancels the current cycle, pulses at LED_ON_MSG_MS width, then the
- * work chain resumes the normal heartbeat automatically.
- * No-op when LEDs are disabled or hardware is absent. */
+/* Start a short forced flash pattern on T-1000E. */
+#if HAS_HEARTBEAT_LED && defined(CONFIG_BOARD_T1000_E)
+static void t1000_led_flash_pattern(uint8_t count)
+{
+	if (count == 0 || !gpio_is_ready_dt(&s_heartbeat_led)) {
+		return;
+	}
+	k_work_cancel_delayable(&s_led_on_work);
+	k_work_cancel_delayable(&s_led_off_work);
+	k_work_cancel_delayable(&s_msg_blink_work);
+	k_work_cancel_delayable(&s_tx_led_off_work);
+	s_tx_led_active = false;
+	s_msg_blink_count = count;
+	s_msg_blink_phase = 0;
+	heartbeat_led_set(true);
+	k_work_reschedule(&s_msg_blink_work, K_MSEC(LED_MSG_BLINK_MS));
+}
+#endif
+
+/* Flash the heartbeat LED on message receipt. T-1000E always uses three fast,
+ * non-blocking flashes when no phone is connected, including with LEDs off;
+ * other boards retain the existing single pulse and LEDs-off behaviour. */
 void ui_led_flash_msg(void)
 {
 #if HAS_HEARTBEAT_LED
+	#if defined(CONFIG_BOARD_T1000_E)
+	if (s_tx_led_active) {
+		return;
+	}
+	#endif
+	#if defined(CONFIG_BOARD_T1000_E)
+	if (gpio_is_ready_dt(&s_heartbeat_led)) {
+	#else
 	if (!s_leds_disabled && gpio_is_ready_dt(&s_heartbeat_led)) {
+	#endif
 		k_work_cancel_delayable(&s_led_on_work);
 		k_work_cancel_delayable(&s_led_off_work);
+		heartbeat_sequence_reset();
+#if defined(CONFIG_BOARD_T1000_E)
+		t1000_led_flash_pattern(LED_MSG_BLINKS);
+#else
 		heartbeat_led_set(true);
 		k_work_reschedule(&s_led_off_work, K_MSEC(LED_ON_MSG_MS));
+#endif
+	}
+#endif
+}
+
+/* Confirm a local on/off state change: one short flash for on, two for off.
+ * T-1000E performs this even when its heartbeat is disabled. */
+void ui_led_confirm_state(bool enabled)
+{
+#if HAS_HEARTBEAT_LED && defined(CONFIG_BOARD_T1000_E)
+	t1000_led_flash_pattern(enabled ? 1 : 2);
+#else
+	ARG_UNUSED(enabled);
+#endif
+}
+
+/* Force the T-1000E LED on for two seconds after a user message or advert.
+ * Other boards deliberately keep their existing LED behaviour. */
+void ui_led_force_tx(void)
+{
+#if HAS_HEARTBEAT_LED && defined(CONFIG_BOARD_T1000_E)
+	if (gpio_is_ready_dt(&s_heartbeat_led)) {
+		k_work_cancel_delayable(&s_led_on_work);
+		k_work_cancel_delayable(&s_led_off_work);
+		heartbeat_sequence_reset();
+		k_work_cancel_delayable(&s_msg_blink_work);
+		s_tx_led_active = true;
+		heartbeat_led_set(true);
+		k_work_reschedule(&s_tx_led_off_work, K_SECONDS(2));
 	}
 #endif
 }
@@ -329,7 +548,6 @@ void ui_led_flash_shutdown(void)
  * local display. */
 #define UI_BATT_REFRESH_MS  30000
 
-static uint16_t (*s_batt_provider)(void);
 static uint32_t s_batt_last_read_ms;
 static bool s_batt_ever_read;
 static bool (*s_power_source_provider)(void);
@@ -475,9 +693,9 @@ void ui_set_auto_shutdown_mv(uint16_t mv)
 	s_auto_shutdown_mv = mv;
 }
 
-/* Pre-shutdown hook + deferred power-off.  When the hook reports an app is
- * connected (live notice queued), the power-off is deferred by a grace period
- * on a work item so the main loop keeps running and delivers the message. */
+/* Pre-shutdown hook + deferred power-off. When the hook queues a shutdown
+ * message, power-off is deferred on a work item so the main loop keeps
+ * running and can deliver it. */
 static ui_shutdown_fn s_shutdown_hook;
 static bool s_shutting_down;
 
@@ -573,12 +791,10 @@ void ui_auto_shutdown_check(void)
 
 	LOG_WRN("auto-shutdown: confirmed — powering off");
 
-	/* Let the app layer report the shutdown. If it queued a live notice to a
-	 * connected app, it returns true and we defer the power-off by a short
-	 * grace so the notify→fetch→send round-trip can finish; otherwise it
-	 * persisted the reason to flash (reported on next boot) and we power off
-	 * now. */
-	bool grace = s_shutdown_hook ? s_shutdown_hook(UI_SHUTDOWN_LOW_BATTERY)
+	/* Let the app layer report this automatic shutdown. A queued message asks
+	 * for a grace period while the main loop delivers it; otherwise power off
+	 * immediately. */
+	bool grace = s_shutdown_hook ? s_shutdown_hook(UI_SHUTDOWN_LOW_BATTERY, mv, now)
 				     : false;
 	s_shutting_down = true;
 

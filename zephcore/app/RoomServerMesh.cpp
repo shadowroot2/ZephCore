@@ -159,7 +159,13 @@ int RoomServerMesh::handleRequest(ClientInfo* sender, uint32_t sender_timestamp,
             if (env.has_pressure) {
                 lpp.addBarometricPressure(CH_SELF, env.pressure_hpa);
             }
+#if defined(CONFIG_BOARD_T1000_E)
+            /* T1000-E has a physical light sensor; preserve its lux value. */
             if (env.has_light) {
+#else
+            /* Boards without GPS keep their physical light telemetry. */
+            if (env.has_light && !gps_is_available()) {
+#endif
                 lpp.addLuminosity(CH_SELF, env.light_lux);
             }
         } else {
@@ -184,6 +190,17 @@ int RoomServerMesh::handleRequest(ClientInfo* sender, uint32_t sender_timestamp,
                 }
             }
         }
+
+        /* Cayenne LPP has no satellite-count type.  Reuse the luminosity
+         * field on the self channel so existing client UIs show a value.
+         * T1000-E is excluded: its physical light sensor reports real lux. */
+#if !defined(CONFIG_BOARD_T1000_E)
+        if (gps_is_available()) {
+            struct gps_state_info gsi;
+            gps_get_state_info(&gsi);
+            lpp.addLuminosity(CH_SELF, gsi.satellites);
+        }
+#endif
 
         /* GPS precise position — only shared via telemetry, not adverts */
         struct gps_position gpos;

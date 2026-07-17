@@ -147,6 +147,11 @@ extern "C" void ui_notify_contact_msg(uint8_t path_len, const char *from_name,
 	const char *text, uint16_t msg_count)
 {
 	if (s_task) {
+	#if defined(CONFIG_BOARD_T1000_E)
+		if (!s_task->isBLEConnected()) {
+		ui_led_flash_msg();
+		}
+	#endif
 		s_task->newMsg(path_len, from_name, text, (int)msg_count);
 	}
 }
@@ -156,6 +161,11 @@ extern "C" void ui_notify_channel_msg(const char *channel_name, const char *text
 {
 	(void)msg_count;
 	if (s_task) {
+	#if defined(CONFIG_BOARD_T1000_E)
+		if (!s_task->isBLEConnected()) {
+		ui_led_flash_msg();
+		}
+	#endif
 		s_task->newChannelMsg(channel_name, text, ts, path_len);
 	}
 }

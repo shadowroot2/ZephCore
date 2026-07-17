@@ -134,6 +134,9 @@ WEAK void ui_set_heartbeat_led(bool enabled)
 	ARG_UNUSED(enabled);
 }
 
+WEAK void ui_led_force_tx(void) { }
+WEAK void ui_led_confirm_state(bool enabled) { ARG_UNUSED(enabled); }
+
 WEAK void ui_set_offgrid_mode(bool enabled)
 {
 	ARG_UNUSED(enabled);

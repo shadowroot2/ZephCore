@@ -27,6 +27,7 @@ LOG_MODULE_REGISTER(zephcore_main, CONFIG_ZEPHCORE_MAIN_LOG_LEVEL);
 #include <zephyr/sys/reboot.h>
 #include <ZephyrSensorManager.h>
 #include <helpers/time_sync.h>
+#include <helpers/LocalCLIHelp.h>
 #include "ui_task.h"
 #include "ui_mesh_actions.h"
 #include <helpers/ui/ui_timezone.h>
@@ -671,6 +672,106 @@ static void save_prefs_to_flash(void)
 	data_store.savePrefs(companion_mesh_ptr->prefs);
 }
 
+static void format_uptime(uint32_t uptime_ms, char *out, size_t out_len)
+{
+	uint32_t mins = uptime_ms / 60000U;
+	uint32_t days = mins / (24U * 60U);
+	uint32_t hours = (mins / 60U) % 24U;
+	uint32_t rem_mins = mins % 60U;
+
+	snprintf(out, out_len, "%ud %uh %um", days, hours, rem_mins);
+}
+
+/* Queue the legacy low-battery notice in the actual Public group. This is
+ * deliberately called only by companion_shutdown_hook(), which is invoked by
+ * ui_auto_shutdown_check() after its low-voltage confirmation — never by a
+ * manual shutdown action. */
+static bool companion_send_auto_shutdown_public(uint16_t battery_mv,
+							 uint32_t uptime_ms)
+{
+	if (!companion_mesh_ptr || companion_mesh_ptr->getNumChannels() <= 0) {
+		return false;
+	}
+
+	ChannelDetails public_channel;
+	bool found = false;
+	for (int i = 0; i < companion_mesh_ptr->getNumChannels(); i++) {
+		ChannelDetails channel;
+		if (companion_mesh_ptr->getChannel(i, channel) &&
+		    strcmp(channel.name, "Public") == 0) {
+			public_channel = channel;
+			found = true;
+			break;
+		}
+	}
+	if (!found) {
+		LOG_WRN("auto-shutdown: Public channel not found, skip shutdown message");
+		return false;
+	}
+
+	char uptime[24];
+	char text[160];
+	char temperature[16] = "n/a";
+	char gps[72];
+	bool has_gps = gps_is_available();
+	struct env_data env;
+	if (env_sensors_read(&env) == 0) {
+		if (env.has_temperature) {
+			snprintf(temperature, sizeof(temperature), "%.1fC", env.temperature_c);
+		} else if (env.has_mcu_temperature) {
+			snprintf(temperature, sizeof(temperature), "%.1fC", env.mcu_temperature_c);
+		}
+	}
+	if (has_gps) {
+		strcpy(gps, "GPS: off");
+	}
+	if (has_gps && gps_is_enabled()) {
+		struct gps_state_info gsi;
+		struct gps_position pos = {};
+		gps_get_state_info(&gsi);
+		/* Prefer the GSV count (all satellites visible to the receiver); fall
+		 * back to the GGA count used by the last/current navigation solution. */
+		uint16_t sats_in_view = gsi.visible_satellites ?
+			gsi.visible_satellites : gsi.satellites;
+		bool has_fix = gps_get_last_known_position(&pos);
+		bool has_coordinates = pos.latitude_ndeg != 0 && pos.longitude_ndeg != 0;
+
+		if (has_fix && has_coordinates) {
+			snprintf(gps, sizeof(gps),
+				 "GPS: fix, sat %u https://maps.google.com/?q=%.5f,%.5f",
+				 sats_in_view, pos.latitude_ndeg / 1e9,
+				 pos.longitude_ndeg / 1e9);
+		} else if (has_fix) {
+			snprintf(gps, sizeof(gps), "GPS: fix, sat %u", sats_in_view);
+		} else {
+			snprintf(gps, sizeof(gps), "GPS: no fix, sat %u", sats_in_view);
+		}
+	}
+	format_uptime(uptime_ms, uptime, sizeof(uptime));
+	if (has_gps) {
+		snprintf(text, sizeof(text),
+			 "Shutting down: low %u.%02uV, temp %s, uptime %s; %s",
+			 battery_mv / 1000U, (battery_mv % 1000U) / 10U,
+			 temperature, uptime, gps);
+	} else {
+		snprintf(text, sizeof(text),
+			 "Shutting down: low batt %u.%02uV, temp %s, uptime %s",
+			 battery_mv / 1000U, (battery_mv % 1000U) / 10U,
+			 temperature, uptime);
+	}
+
+	if (!companion_mesh_ptr->sendGroupMessage(rtc_clock.getCurrentTimeUnique(),
+							  public_channel.channel,
+							  companion_mesh_ptr->prefs.node_name,
+							  text, (int)strlen(text))) {
+		LOG_WRN("auto-shutdown: unable to queue Public shutdown message");
+		return false;
+	}
+
+	LOG_INF("auto-shutdown: queued Public message: %s", text);
+	return true;
+}
+
 /* ========== Companion text CLI ==========
  * One CommonCLI instance shared by two front-ends: the USB CDC text sideband
  * (its '<' sync byte separates binary V3 frames from text; BLE NUS has no
@@ -792,19 +893,23 @@ public:
 		const char* state = gsi.state < 3 ? state_str[gsi.state] : "unknown";
 		struct gps_position pos;
 		bool has_pos = gps_get_last_known_position(&pos);
+		/* GSV reports all satellites the receiver can see. Boards whose
+		 * driver cannot provide GSV retain the GGA fix count as a fallback. */
+		uint16_t sats_in_view = gsi.visible_satellites ?
+			gsi.visible_satellites : gsi.satellites;
 		if (has_pos) {
 			snprintf(reply, CLI_REPLY_SIZE,
-				"on state=%s sats=%u fix=%us ago lat=%.6f lon=%.6f",
-				state, gsi.satellites, gsi.last_fix_age_s,
+				"on state=%s sats-in-view=%u fix=%us ago lat=%.6f lon=%.6f",
+				state, sats_in_view, gsi.last_fix_age_s,
 				pos.latitude_ndeg / 1e9, pos.longitude_ndeg / 1e9);
 		} else if (gsi.next_search_s > 0) {
 			snprintf(reply, CLI_REPLY_SIZE,
-				"on state=%s sats=%u no fix next=%us",
-				state, gsi.satellites, gsi.next_search_s);
+				"on state=%s sats-in-view=%u no fix next=%us",
+				state, sats_in_view, gsi.next_search_s);
 		} else {
 			snprintf(reply, CLI_REPLY_SIZE,
-				"on state=%s sats=%u no fix",
-				state, gsi.satellites);
+				"on state=%s sats-in-view=%u no fix",
+				state, sats_in_view);
 		}
 	}
 
@@ -908,25 +1013,13 @@ static uint16_t vcontact_battery_alert_threshold_mv(void)
 	return cutoff ? (uint16_t)(cutoff + 200) : 3500;
 }
 
-/* Companion-only `v.*` commands (v-contact settings) + the shared help text.
- * Runs on the main thread for both front-ends (USB lines are drained from
- * companion_cli_queue in the event loop; v-contact lines arrive via
- * handleProtocolFrame). PREFS_DIRTY keeps the flash write on the main loop
- * regardless. Returns true if the line was recognised. */
+static const char *companion_cli_help(const char *line)
+{
+	return local_cli_help(LocalCLIHelpRole::Companion, line);
+}
+
 static bool handle_vcontact_cli(const char *line, char *reply)
 {
-	if (strcmp(line, "help") == 0 || strcmp(line, "?") == 0) {
-		/* No global CLI help exists; list only the companion-specific extras
-		 * and make clear the standard set/get radio+mesh commands also work. */
-		strcpy(reply,
-		       "Companion extras (standard set/get commands also work):\r\n"
-#if ZEPHCORE_HAS_AUTO_SHUTDOWN
-		       "  get|set autoshutdown <mV>     - low-batt cutoff, 0 = off\r\n"
-#endif
-		       "  get|set v.contact on|off      - loopback admin contact\r\n"
-		       "  get|set v.batteryalert <mV>   - 0 = off, or default");
-		return true;
-	}
 	if (strcmp(line, "get v.contact") == 0) {
 		snprintf(reply, CLI_REPLY_SIZE, "v.contact: %s",
 			 companion_mesh.prefs.v_contact_enabled ? "on" : "off");
@@ -1003,18 +1096,17 @@ static bool handle_vcontact_cli(const char *line, char *reply)
 	return false;
 }
 
-/* Pre-shutdown hook, registered with the UI layer and called on the main
- * thread just before a low-battery power-off.  If an app is connected, queue a
- * live v-contact notice and return true so the UI defers the power-off by a
- * short grace (letting the notify→fetch→send round-trip finish).  If nobody is
- * connected, persist the reason to flash and return false (power off now) — the
- * offline queue doesn't survive System OFF, so the flash marker is the only way
- * the shutdown gets reported, which it does on the next boot. */
-static bool companion_shutdown_hook(int reason)
+/* Pre-shutdown hook called only from ui_auto_shutdown_check() after its
+ * low-battery confirmation. It queues the Public notice first, then retains
+ * the existing v-contact/flash fallback behaviour. */
+static bool companion_shutdown_hook(int reason, uint16_t battery_mv,
+					    uint32_t uptime_ms)
 {
 	const char *msg = (reason == UI_SHUTDOWN_LOW_BATTERY)
 			  ? "Powering off: low battery"
 			  : "Powering off";
+	bool public_queued = reason == UI_SHUTDOWN_LOW_BATTERY &&
+		companion_send_auto_shutdown_public(battery_mv, uptime_ms);
 
 	bool connected = zephcore_ble_is_connected();
 #if ZEPHCORE_USB_STACK
@@ -1028,8 +1120,10 @@ static bool companion_shutdown_hook(int reason)
 		return true;   /* deliver live — ask the UI for the grace delay */
 	}
 
-	data_store.saveShutdownReason((uint8_t)reason);
-	return false;      /* nobody listening — flash marker, power off now */
+	if (!public_queued) {
+		data_store.saveShutdownReason((uint8_t)reason);
+	}
+	return public_queued; /* grace lets queued LoRa transmission complete */
 }
 
 /* Transport-neutral CLI line execution — runs on the MAIN thread only
@@ -1121,6 +1215,13 @@ static void vcontact_battery_alert_check(void)
  * loop). */
 static void companion_cli_run(const char *line)
 {
+	const char *help = companion_cli_help(line);
+	if (help != nullptr) {
+		zephcore_usb_companion_write_text("\r\n  -> ", 7);
+		zephcore_usb_companion_write_text(help, strlen(help));
+		zephcore_usb_companion_write_text("\r\n", 2);
+		return;
+	}
 	char reply[CLI_REPLY_SIZE];
 	companion_cli_exec(line, reply);
 	if (reply[0] != '\0') {

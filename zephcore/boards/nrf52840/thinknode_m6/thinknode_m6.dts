@@ -9,8 +9,7 @@
  * - SX1262 LoRa radio on SPI1 (DIO2 RF switch, DIO3 TCXO 3.3V, 22dBm)
  *   NSS=P1.12, DIO1=P1.06, RESET=P1.10, BUSY=P1.11
  * - GPS L76K on UART0 (9600 baud, CASIC/Air530Z — luatos,air530z driver)
- *   Control: GPS_EN=P0.06 (active-HIGH), GPS_RESET=P0.29 (active-LOW),
- *            GPS_STANDBY=P0.30, GPS_PPS=P0.31
+ *   Control: GPS_EN=P0.06 (active-HIGH), GPS_STANDBY=P0.30, GPS_PPS=P0.31
  * - Battery ADC on AIN4 (P0.28), 1.75:1 voltage divider
  *   ADC_CTRL enable pin: P0.11 (gpio-hog, always HIGH)
  * - LEDs: RED=P0.12, BLUE=P0.07 (both active-HIGH, LED_STATE_ON=HIGH)
@@ -149,10 +148,6 @@
 		};
 	};
 
-	/* GPS_RESET (P0.29) is driven statically HIGH (de-asserted) by a gpio-hog
-	 * in &gpio0 below — see the note there. Arduino MeshCore does the same
-	 * (variant.cpp: digitalWrite(PIN_GPS_RESET, HIGH), never pulsed). */
-
 	aliases {
 		led0 = &led_red;
 		led1 = &led_blue;
@@ -165,8 +160,8 @@
 		 * L76K (CASIC/Air530Z) is driven by the luatos,air530z driver via
 		 * on-off-gpios, and exposing those aliases would push M6 down the
 		 * T1000-E GPS sequence in ZephyrGPSManager (HAS_GPS_SLEEP/RESET).
-		 * GPS_RESET (P0.29) and GPS_STANDBY (P0.30) are hogged HIGH in
-		 * &gpio0 instead — static drive, matching Arduino MeshCore. */
+		 * GPS_STANDBY (P0.30) is held HIGH by a gpio-hog so the receiver
+		 * remains awake; RESET is deliberately left untouched. */
 		gps-enable = &gps_enable_pin;
 		charge-detect = &charge_detect;
 	};
@@ -211,10 +206,9 @@
 	 * (see the / node) — not hogged HIGH — so the VBAT divider only draws
 	 * current during a battery sample, matching Arduino MeshCore. */
 
-	/* GPS control lines held static, mirroring Arduino MeshCore variant.cpp
+	/* GPS standby held static, mirroring the working board configuration
 	 * (GPS_EN is driven separately by the luatos,air530z on-off-gpios):
 	 *   GPS_STANDBY (P0.30) HIGH — L76K runs, never parked in standby.
-	 *   GPS_RESET   (P0.29) HIGH — reset de-asserted (active-LOW line).
 	 * M6 has no physical GPS switch; runtime on/off is via GPS_EN
 	 * (gps-enable alias) under software/CLI control. Hogs are used so the
 	 * pins are actively driven at boot without needing a consumer — the
@@ -226,12 +220,6 @@
 		line-name = "GPS Standby";
 	};
 
-	gps-reset-hog {
-		gpio-hog;
-		gpios = <29 GPIO_ACTIVE_HIGH>;
-		output-high;
-		line-name = "GPS Reset";
-	};
 };
 
 &gpio1 {
@@ -245,7 +233,7 @@
  * via on-off-gpios (P0.06 = GPS_EN, shared with the gps-enable alias used for
  * runtime power control in ZephyrGPSManager). No zephyr,deferred-init: the
  * driver powers the module on-off-gpios HIGH at init before opening the pipe.
- * GPS_RESET (P0.29) and GPS_STANDBY (P0.30) are hogged HIGH in &gpio0. */
+ * GPS_STANDBY (P0.30) is hogged HIGH in &gpio0; RESET is left untouched. */
 &uart0 {
 	compatible = "nordic,nrf-uarte";
 	status = "okay";

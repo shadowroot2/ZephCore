@@ -94,6 +94,14 @@ static int64_t last_fix_uptime_ms = 0;  /* k_uptime when last validated fix was 
 static int64_t standby_start_ms = 0;    /* k_uptime when standby started (for next-wake calc) */
 static uint64_t standby_interval_ms = 0; /* How long standby lasts (for next-wake calc) */
 static uint16_t last_gnss_satellites = 0; /* Updated on every active GNSS callback, even before fix */
+static uint16_t last_gnss_visible_satellites = 0; /* Updated from GSV when GNSS_SATELLITES is enabled */
+#if IS_ENABLED(CONFIG_GNSS_SATELLITES)
+/* GNSS system bits currently span bit 0 (GPS) through bit 13 (QZSS L1S).
+ * GSV is published separately for each constellation, so retain the most
+ * recent count for every system and present their sum to the UI. */
+#define GNSS_VISIBLE_SYSTEM_COUNT 14
+static uint16_t gnss_visible_by_system[GNSS_VISIBLE_SYSTEM_COUNT];
+#endif
 
 #define GPS_GOOD_FIX_COUNT       3       /* Need 3 consecutive good fixes */
 #define GPS_MIN_SATELLITES       4       /* Minimum satellites for valid fix */
@@ -331,6 +339,50 @@ static void gnss_data_cb(const struct device *dev, const struct gnss_data *data)
 
 /* Register GNSS callback for all GNSS devices */
 GNSS_DATA_CALLBACK_DEFINE(NULL, gnss_data_cb);
+
+#if IS_ENABLED(CONFIG_GNSS_SATELLITES)
+/* GSV is independent of the GGA/RMC fix stream. It is published separately
+ * for each constellation, so aggregate the current counts across systems. */
+static void gnss_satellites_cb(const struct device *dev,
+			       const struct gnss_satellite *satellites, uint16_t size)
+{
+	ARG_UNUSED(dev);
+	uint16_t callback_counts[GNSS_VISIBLE_SYSTEM_COUNT] = { 0 };
+	uint32_t updated_systems = 0;
+
+	if (!gps_enabled || gps_current_state == GPS_STATE_STANDBY) {
+		return;
+	}
+
+	for (uint16_t i = 0; i < size; i++) {
+		uint32_t system = (uint32_t)satellites[i].system;
+
+		if (system != 0U && (system & (system - 1U)) == 0U) {
+			uint32_t index = (uint32_t)__builtin_ctz(system);
+
+			if (index < GNSS_VISIBLE_SYSTEM_COUNT) {
+				callback_counts[index]++;
+				updated_systems |= BIT(index);
+			}
+		}
+	}
+
+	k_mutex_lock(&gps_mutex, K_FOREVER);
+	for (uint32_t i = 0; i < GNSS_VISIBLE_SYSTEM_COUNT; i++) {
+		if ((updated_systems & BIT(i)) != 0U) {
+			gnss_visible_by_system[i] = callback_counts[i];
+		}
+	}
+
+	last_gnss_visible_satellites = 0;
+	for (uint32_t i = 0; i < GNSS_VISIBLE_SYSTEM_COUNT; i++) {
+		last_gnss_visible_satellites += gnss_visible_by_system[i];
+	}
+	k_mutex_unlock(&gps_mutex);
+}
+
+GNSS_SATELLITES_CALLBACK_DEFINE(NULL, gnss_satellites_cb);
+#endif
 
 /* Find and initialize GNSS device */
 static const struct device *gnss_dev = NULL;
@@ -1437,6 +1489,11 @@ void gps_enable(bool enable)
 		 * toggle; only the live fix-quality indicator resets. */
 		k_mutex_lock(&gps_mutex, K_FOREVER);
 		current_pos.satellites = 0;
+		last_gnss_satellites = 0;
+		last_gnss_visible_satellites = 0;
+#if IS_ENABLED(CONFIG_GNSS_SATELLITES)
+		memset(gnss_visible_by_system, 0, sizeof(gnss_visible_by_system));
+#endif
 		k_mutex_unlock(&gps_mutex);
 
 		/* Clear first-fix flags so the next enable gets a fresh long
@@ -1641,6 +1698,7 @@ void gps_get_state_info(struct gps_state_info *info)
 #if HAS_GNSS
 	info->state = (uint8_t)gps_current_state;
 	info->satellites = last_gnss_satellites;
+	info->visible_satellites = last_gnss_visible_satellites;
 
 	if (last_fix_uptime_ms > 0) {
 		/* Seconds since last validated fix */
