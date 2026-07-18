@@ -1,11 +1,14 @@
 # SPDX-License-Identifier: MIT
 # ZephCore LR1110 Firmware Updater — updates LR1110 radio firmware to 0x0401.
 #
-# Board-specific: only builds for boards with an LR1110 radio (e.g., t1000_e).
+# Board-specific: only builds for boards with an LR1110 radio
+# (t1000_e, thinknode_m9).
 #
 # Build:  west build -b t1000_e/nrf52840 zephcore/tools/lr1110_updater --pristine
-# Flash:  drag-drop build/zephyr/zephyr.uf2 onto UF2 drive
+#         west build -b thinknode_m9/esp32s3/procpu zephcore/tools/lr1110_updater --pristine
+# Flash:  nRF52: drag-drop build/zephyr/zephyr.uf2 onto UF2 drive
 #         (or: nrfjprog --program build/zephyr/zephyr.hex --sectorerase -r)
+#         ESP32: west flash --esp-device COMX
 #
 # After the updater finishes, flash ZephCore main firmware.
 

@@ -64,16 +64,26 @@ static void led_toggle(void) {}
 
 /* ── Helpers ──────────────────────────────────────────────────── */
 
-static void reboot_to_uf2(void)
+static void updater_done(void)
 {
+#if defined(CONFIG_SOC_SERIES_NRF52)
 	printk("\nRebooting into UF2 DFU mode...\n");
 	printk("You can now drag-drop ZephCore firmware UF2.\n");
 	k_msleep(500);
 
-#if defined(CONFIG_SOC_SERIES_NRF52)
 	nrf_power_gpregret_set(NRF_POWER, 0, BOOTLOADER_DFU_UF2_MAGIC);
-#endif
 	sys_reboot(SYS_REBOOT_COLD);
+#else
+	/* ESP32: no persistent DFU mode to reboot into, and a plain reboot
+	 * would just re-run the updater. Idle here — west flash / esptool
+	 * resets the chip itself when writing the main firmware. */
+	printk("\nFlash ZephCore main firmware over USB now:\n");
+	printk("  west flash --esp-device <COMx>\n");
+	while (1) {
+		led_toggle();
+		k_msleep(1000);
+	}
+#endif
 }
 
 static void fatal_error(const char *msg)
@@ -149,7 +159,7 @@ int main(void)
 		printk("\nAlready running target firmware 0x%04X — no update needed!\n",
 		       TARGET_FW_VERSION);
 		led_off();
-		reboot_to_uf2();
+		updater_done();
 		return 0;
 	}
 
@@ -306,9 +316,9 @@ int main(void)
 		led_off();
 	}
 
-	/* ── Reboot to UF2 DFU ── */
-	printk("\n[10/10] Done! Rebooting to UF2 DFU mode...\n");
-	reboot_to_uf2();
+	/* ── Hand off to main-firmware flashing ── */
+	printk("\n[10/10] Done!\n");
+	updater_done();
 
 	return 0; /* never reached */
 }

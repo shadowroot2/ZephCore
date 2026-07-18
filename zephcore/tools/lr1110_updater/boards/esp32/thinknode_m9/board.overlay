@@ -1,0 +1,21 @@
+/*
+ * ThinkNode M9 LR1110 Updater overlay
+ * SPDX-License-Identifier: MIT
+ *
+ * Minimal overlay — the LR1110 lives in the base board DTS (SPI2), and the
+ * base chosen console is the native USB Serial/JTAG, which is exactly what
+ * the updater wants (the main firmware's uart0 reroute lives in the main
+ * board.overlay, which this file replaces).
+ *
+ * Disables peripherals not needed for the update.
+ */
+
+/* Disable UART1 (GPS) — not needed */
+&uart1 {
+	status = "disabled";
+};
+
+/* Disable I2C0 (RTC/sensors) — not needed */
+&i2c0 {
+	status = "disabled";
+};
