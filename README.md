@@ -24,7 +24,7 @@ ZephCore — это порт прошивки [MeshCore](https://github.com/mesh
 - **Battery behavior**: M1 использует такую же LiPo-кривую, что и M5. При заряде ниже 25% отключаются buzzer и стартовая мелодия, а heartbeat заменяется на три коротких вспышки каждые пять секунд.
 - **Seeed T1000-E LEDs**: без BLE входящее сообщение вызывает три вспышки даже при `LEDs off`; после завершенной физической отправки сообщения или advert LED загорается на две секунды. Изменение LEDs, GPS и buzzer подтверждается миганием.
 - **Локальное время UI**: добавлен runtime offset часового пояса через CLI `get tz` / `set tz <minutes>`. Значение хранится в конце структуры настроек; при первом запуске старые файлы мигрируются без сдвига остальных предпочтений. RTC, GPS и протокольные timestamps остаются UTC.
-- **Raspberry Pi Pico W + Waveshare SX1262**: добавлена поддержка платы в режимах repeater и room server. Сборка идет под `rpi_picow`, пины сверены с рабочей прошивкой MeshCore `PicoW_repeater-v1.14.1`.
+- **Raspberry Pi Pico W + Waveshare SX1262**: Room Server собирается для `rpi_pico/rp2040/w`; пины SX1262 сверены с рабочей прошивкой MeshCore `PicoW_repeater-v1.14.1`. Wi-Fi/CYW43 и встроенный зелёный LED намеренно отключены: Room Server использует только LoRa и USB CDC CLI.
 - **BLE в repeater/room/observer**: Bluetooth полностью отключается для repeater, room-server и observer сборок. BLE-конфиги вынесены отдельно и подключаются только для client/companion.
 - **Базовый LoRa-пресет**: частота `867.935 MHz`, SF8, BW 62.5 kHz, CR 4/8, duty cycle 50%.
 - **Multi ACKs**: включены по умолчанию для новых настроек узла.
@@ -42,7 +42,7 @@ ZephCore — это порт прошивки [MeshCore](https://github.com/mesh
 | `t1000_e-companion-3ed0b86.uf2` | Seeed T1000-E | companion | UF2 |
 | `thinknode_m1-companion-3ed0b86.uf2` | ThinkNode M1 | companion | UF2 |
 | `picow-repeater.uf2` / `waveshare_rp2040_lora-repeater.uf2` | Pico W / Waveshare RP2040 LoRa | repeater | UF2 |
-| `picow-room-server.uf2` / `waveshare_rp2040_lora-room-server.uf2` | Pico W / Waveshare RP2040 LoRa | room server | UF2 |
+| `picow-room-server.uf2` | Pico W / Waveshare RP2040 LoRa | room server | UF2 |
 
 ## Зачем Zephyr?
 
@@ -100,7 +100,7 @@ ZephCore — это порт прошивки [MeshCore](https://github.com/mesh
 
 | Плата | MCU | Радио | Особенности |
 |-------|-----|-------|-------------|
-| **Raspberry Pi Pico W + Waveshare SX1262** | RP2040 | SX1262 | Repeater или room server, USB CDC CLI, LittleFS settings, UF2 output |
+| **Raspberry Pi Pico W + Waveshare SX1262** | RP2040 | SX1262 | Room Server: USB CDC CLI, LittleFS settings, UF2; Wi-Fi и встроенный LED отключены |
 
 ### Другие платформы
 
@@ -193,8 +193,11 @@ west build -b rak4631 zephcore --pristine -- \
 firmware/picow-repeater.uf2
 firmware/waveshare_rp2040_lora-repeater.uf2
 firmware/picow-room-server.uf2
-firmware/waveshare_rp2040_lora-room-server.uf2
 ```
+
+Room Server собирается для `rpi_pico/rp2040/w` и создаёт только
+`firmware/picow-room-server.uf2`. Wi-Fi/CYW43 и штатный зелёный LED Pico W в
+этом образе выключены.
 
 ## Примечания по платформам
 
