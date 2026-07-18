@@ -145,6 +145,16 @@ config ZEPHCORE_COMPANION_SERIAL
 	  Distinct from the legacy SerialCompanionTransport (no-BLE STM32WL path):
 	  this one keeps BLE and adds the text CLI.
 
+config ZEPHCORE_COMPANION_SERIAL_POLLING
+	bool "Poll the plain-UART companion transport"
+	depends on ZEPHCORE_COMPANION_SERIAL
+	default n
+	help
+	  Receive and transmit the plain-UART companion transport with uart_poll_in()
+	  and uart_poll_out(), rather than UART interrupts. Use this only on boards
+	  whose USB-UART bridge does not deliver RX interrupts reliably. Native USB
+	  CDC transports are unaffected.
+
 if ZEPHCORE_ROLE_REPEATER || ZEPHCORE_ROLE_ROOM_SERVER
 
 config ZEPHCORE_REPEATER_UPLINK

@@ -49,6 +49,13 @@ enum usb_rx_state {
 
 #define USB_TEXT_LINE_MAX 128
 
+/* Board-selected fallback for USB-UART bridges which expose a working UART
+ * data path but fail to raise the RX IRQ expected by the normal backend. */
+#define COMPANION_SERIAL_POLLING \
+	(IS_ENABLED(CONFIG_ZEPHCORE_COMPANION_SERIAL_POLLING) && \
+	 IS_ENABLED(CONFIG_ZEPHCORE_COMPANION_SERIAL))
+#define COMPANION_SERIAL_POLL_INTERVAL_MS 5
+
 /* ---- Backend selection --------------------------------------------------
  * The companion byte transport is normally a native-USB CDC-ACM UART, but the
  * same frame parser / TX ring / CLI runs unchanged over a plain UART too — for
@@ -91,6 +98,12 @@ static uint32_t usb_frame_start_time;  /* Timestamp of sync byte for current fra
 static uint8_t usb_tx_ring_buf_data[USB_TX_RING_BUF_SIZE];
 static struct ring_buf usb_tx_ring_buf;
 static struct k_spinlock usb_tx_lock;
+
+#if COMPANION_SERIAL_POLLING
+static struct k_work_delayable usb_uart_poll_work;
+static struct k_work usb_poll_tx_drain_work;
+static struct k_mutex usb_poll_tx_mutex;
+#endif
 
 /* Main-thread wake for assembled binary frames (set by init).  The byte
  * assembly below runs on sysworkq, but V3-protocol parsing must happen on the
@@ -138,6 +151,48 @@ static inline void usb_cli_echo(const char *s, size_t n)
 static void usb_rx_work_fn(struct k_work *work);
 
 K_WORK_DEFINE(usb_rx_work, usb_rx_work_fn);
+
+#if COMPANION_SERIAL_POLLING
+static void usb_uart_poll_work_fn(struct k_work *work)
+{
+	ARG_UNUSED(work);
+
+	bool received = false;
+	uint8_t byte;
+
+	/* Drain the hardware FIFO even when the ESP32 driver did not notify us
+	 * through uart_irq_callback_set(). Bound one pass to preserve sysworkq
+	 * fairness during a binary transfer. */
+	for (int i = 0; i < 64 && uart_poll_in(usb_dev, &byte) == 0; ++i) {
+		ring_buf_put(&usb_ring_buf, &byte, 1);
+		received = true;
+	}
+	if (received) {
+		k_work_submit(&usb_rx_work);
+	}
+	k_work_schedule(&usb_uart_poll_work,
+			K_MSEC(COMPANION_SERIAL_POLL_INTERVAL_MS));
+}
+
+static void usb_poll_tx_drain_work_fn(struct k_work *work)
+{
+	ARG_UNUSED(work);
+	if (s_tx_drain_cb) {
+		s_tx_drain_cb();
+	}
+}
+
+static void usb_poll_write(const uint8_t *data, size_t len)
+{
+	/* The main mesh loop and the local CLI worker can both write. Keep complete
+	 * output chunks contiguous, so replies cannot interleave on the wire. */
+	k_mutex_lock(&usb_poll_tx_mutex, K_FOREVER);
+	for (size_t i = 0; i < len; ++i) {
+		uart_poll_out(usb_dev, data[i]);
+	}
+	k_mutex_unlock(&usb_poll_tx_mutex);
+}
+#endif
 
 /* USB CDC UART interrupt callback - puts bytes in ring buffer */
 static void usb_uart_isr(const struct device *dev, void *user_data)
@@ -441,6 +496,16 @@ size_t zephcore_usb_companion_write_frame(const uint8_t *src, size_t len)
 	};
 	size_t total = sizeof(hdr) + len;
 
+#if COMPANION_SERIAL_POLLING
+	usb_poll_write(hdr, sizeof(hdr));
+	usb_poll_write(src, len);
+	/* Preserve the contact pump's drained notification without recursively
+	 * re-entering it from the write call. */
+	k_work_submit(&usb_poll_tx_drain_work);
+	LOG_DBG("usb_write_frame: polled len=%u hdr=0x%02x", (unsigned)len, src[0]);
+	return len;
+#else
+
 	k_spinlock_key_t key = k_spin_lock(&usb_tx_lock);
 	if (ring_buf_space_get(&usb_tx_ring_buf) < total) {
 		k_spin_unlock(&usb_tx_lock, key);
@@ -455,6 +520,7 @@ size_t zephcore_usb_companion_write_frame(const uint8_t *src, size_t len)
 
 	LOG_DBG("usb_write_frame: queued len=%u hdr=0x%02x", (unsigned)len, src[0]);
 	return len;
+#endif
 }
 
 /* True if the TX ring can hold one more frame of `payload_len` (+3 framing).
@@ -464,10 +530,15 @@ bool zephcore_usb_companion_tx_has_space(size_t payload_len)
 	if (!usb_dev) {
 		return false;
 	}
+#if COMPANION_SERIAL_POLLING
+	ARG_UNUSED(payload_len);
+	return true;
+#else
 	k_spinlock_key_t key = k_spin_lock(&usb_tx_lock);
 	bool ok = ring_buf_space_get(&usb_tx_ring_buf) >= payload_len + 3;
 	k_spin_unlock(&usb_tx_lock, key);
 	return ok;
+#endif
 }
 
 void zephcore_usb_companion_reset_rx(void)
@@ -481,7 +552,7 @@ void zephcore_usb_companion_reset_rx(void)
 	usb_session_is_text = false;
 
 	/* Drop any half-sent TX too — the session it belonged to is gone. */
-	if (usb_dev) {
+	if (usb_dev && !COMPANION_SERIAL_POLLING) {
 		uart_irq_tx_disable(usb_dev);
 	}
 	k_spinlock_key_t key = k_spin_lock(&usb_tx_lock);
@@ -519,10 +590,14 @@ void zephcore_usb_companion_write_text(const char *text, size_t len)
 	if (!usb_dev || !text || len == 0) {
 		return;
 	}
+#if COMPANION_SERIAL_POLLING
+	usb_poll_write((const uint8_t *)text, len);
+#else
 	k_spinlock_key_t key = k_spin_lock(&usb_tx_lock);
 	ring_buf_put(&usb_tx_ring_buf, (const uint8_t *)text, len);
 	k_spin_unlock(&usb_tx_lock, key);
 	uart_irq_tx_enable(usb_dev);
+#endif
 }
 
 void zephcore_usb_companion_init(struct k_event *mesh_events,
@@ -549,10 +624,18 @@ void zephcore_usb_companion_init(struct k_event *mesh_events,
 		ring_buf_init(&usb_ring_buf, sizeof(usb_ring_buf_data), usb_ring_buf_data);
 		ring_buf_init(&usb_tx_ring_buf, sizeof(usb_tx_ring_buf_data), usb_tx_ring_buf_data);
 
-		/* Set up UART interrupt callback (RX enabled now, TX enabled on demand
-		 * by write_frame and disabled by the ISR when the TX ring drains). */
+		/* M5 selects polling because its bridge has no reliable RX IRQ. Other
+		 * plain-UART boards keep the normal interrupt-driven transport. */
+#if COMPANION_SERIAL_POLLING
+		k_work_init_delayable(&usb_uart_poll_work, usb_uart_poll_work_fn);
+		k_work_init(&usb_poll_tx_drain_work, usb_poll_tx_drain_work_fn);
+		k_mutex_init(&usb_poll_tx_mutex);
+		k_work_schedule(&usb_uart_poll_work, K_NO_WAIT);
+#else
+		/* RX is enabled now; TX is enabled on demand and disabled on drain. */
 		uart_irq_callback_set(usb_dev, usb_uart_isr);
 		uart_irq_rx_enable(usb_dev);
+#endif
 
 #if COMPANION_HAS_DTR
 		/* DTR state changes (including disconnect) reach us via the

@@ -114,6 +114,17 @@
 
 ## ThinkNode M5 Companion
 
+- USB-C is a UART0 bridge. The Companion transport and text CLI own UART0;
+  `CONFIG_CONSOLE`, `CONFIG_UART_CONSOLE` and `CONFIG_SHELL` must remain off,
+  otherwise the UART callbacks conflict and CLI input is not delivered.
+- M5 selects `ZEPHCORE_COMPANION_SERIAL_POLLING`: if the UART0 bridge fails
+  to deliver RX interrupts, the transport drains its hardware FIFO every 5 ms
+  with `uart_poll_in()` and sends replies with `uart_poll_out()`. This is
+  M5-only; all other serial-companion boards retain interrupt-driven I/O.
+  Verified on hardware: local USB CLI (`help`, `gps`) responds correctly with
+  polling enabled; the previous interrupt-driven path accepted no command
+  bytes despite the host opening the serial port.
+
 Плата:
 
 - ESP32-S3, E-Ink, PCA9557 GPIO expander.
