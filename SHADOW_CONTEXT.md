@@ -257,3 +257,15 @@ python3 -m esptool --chip esp32s3 merge-bin \
 - `shadow-20260715-t1000-e-client.uf2` — Seeed T1000-E client/companion с light telemetry.
 
 SHA в ответы не выводить, пользователь попросил не показывать.
+
+## Pico W Room Server
+
+- Собирать только `firmware/picow-room-server.uf2`. Образ
+  `waveshare_rp2040_lora-room-server.uf2` не создавать и не включать в
+  результаты без отдельного запроса пользователя.
+- Для Pico W полностью отключены `WIFI_AIROC`, `WIFI`, `NETWORKING` и
+  CYW43 GPIO. Wi-Fi и штатный зелёный LED не используются: LED подключён к
+  `WL_GPIO0` CYW43439 и без его драйвера недоступен. Не добавлять их снова без
+  явного запроса пользователя.
+- Последняя сборка без Wi-Fi: `firmware/picow-room-server.uf2`, Flash 12.39%
+  (194860 / 1572608 B), RAM 31.82% (85692 / 263 KB), UF2 390656 B.

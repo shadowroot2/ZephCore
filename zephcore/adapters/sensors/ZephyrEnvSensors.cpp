@@ -48,6 +48,9 @@ LOG_MODULE_REGISTER(zephcore_sensors, CONFIG_ZEPHCORE_SENSORS_LOG_LEVEL);
 #define MCU_TEMP_NODE DT_NODELABEL(temp)
 #elif HAS_ENV_SENSORS && IS_ENABLED(CONFIG_ESP32_TEMP) && DT_NODE_EXISTS(DT_NODELABEL(coretemp))
 #define MCU_TEMP_NODE DT_NODELABEL(coretemp)
+#elif HAS_ENV_SENSORS && IS_ENABLED(CONFIG_RPI_PICO_TEMP) && \
+	DT_NODE_EXISTS(DT_NODELABEL(die_temp))
+#define MCU_TEMP_NODE DT_NODELABEL(die_temp)
 #endif
 
 /* INA3221 channel selection attribute — defined in driver's private header

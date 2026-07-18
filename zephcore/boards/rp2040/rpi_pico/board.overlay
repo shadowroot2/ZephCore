@@ -1,3 +1,4 @@
+#include <vendor/raspberrypi/rp2040-boot-mode-retention.dtsi>
 #include <zephyr/dt-bindings/gpio/gpio.h>
 #include <zephyr/dt-bindings/adc/adc.h>
 #include <zephyr/dt-bindings/lora/sx126x.h>
@@ -10,8 +11,6 @@
 	};
 
 	aliases {
-		/delete-property/ led0;
-		lora-tx-led = &led0;
 		lora0 = &lora;
 	};
 
@@ -77,6 +76,11 @@
 		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
 		zephyr,resolution = <12>;
 	};
+};
+
+/* RP2040's internal diode sensor uses ADC channel 4. */
+&die_temp {
+	status = "okay";
 };
 
 &zephyr_udc0 {

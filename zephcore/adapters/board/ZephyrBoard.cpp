@@ -11,6 +11,11 @@
 #include <stdio.h>
 #include <string.h>
 
+#if defined(CONFIG_SOC_RP2040) && \
+	defined(CONFIG_RETENTION_BOOT_MODE)
+#include <zephyr/retention/bootmode.h>
+#endif
+
 #if defined(CONFIG_SOC_SERIES_NRF52)
 #include <hal/nrf_power.h>
 /* Adafruit bootloader GPREGRET magic values */
@@ -93,6 +98,12 @@ static const struct device *vbat_enable_dev = NULL;
 #define VBAT_MV_MULTIPLIER CONFIG_ZEPHCORE_VBAT_MV_MULTIPLIER
 #endif
 #define VBAT_ADC_SAMPLES   8
+#endif
+
+#if DT_NODE_HAS_STATUS_OKAY(DT_NODELABEL(temp))
+#define MCU_TEMP_NODE DT_NODELABEL(temp)
+#elif DT_NODE_HAS_STATUS_OKAY(DT_NODELABEL(die_temp))
+#define MCU_TEMP_NODE DT_NODELABEL(die_temp)
 #endif
 
 /* Battery fuel gauge (AXP2101 PMU etc.) — preferred over the ADC divider when
@@ -252,9 +263,9 @@ float ZephyrBoard::getAdcMultiplier() const
 
 float ZephyrBoard::getMCUTemperature()
 {
-	/* nRF52840 die temperature sensor - "nordic,nrf-temp" at 0x4000c000
-	 * Nodelabel "temp" is defined in nrf52840.dtsi, status="okay" by default */
-	const struct device *dev = DEVICE_DT_GET_OR_NULL(DT_NODELABEL(temp));
+	/* nRF uses `temp`; RP2040 exposes the ADC-backed sensor as `die_temp`. */
+#ifdef MCU_TEMP_NODE
+	const struct device *dev = DEVICE_DT_GET_OR_NULL(MCU_TEMP_NODE);
 	if (!dev || !device_is_ready(dev)) {
 		return NAN;
 	}
@@ -263,6 +274,7 @@ float ZephyrBoard::getMCUTemperature()
 	    sensor_channel_get(dev, SENSOR_CHAN_DIE_TEMP, &val) == 0) {
 		return sensor_value_to_float(&val);
 	}
+	#endif
 	return NAN;
 }
 
@@ -303,6 +315,14 @@ void ZephyrBoard::rebootToBootloader()
 	/* Write magic value to GPREGRET0 - enter UF2 bootloader mode.
 	 * UF2 supports both drag-and-drop (.uf2) and serial DFU (nrfutil). */
 	nrf_power_gpregret_set(NRF_POWER, 0, BOOTLOADER_DFU_UF2_MAGIC);
+#endif
+#if defined(CONFIG_RPI_PICO_ROM_BOOTLOADER) && \
+	defined(CONFIG_RETENTION_BOOT_MODE)
+	/* The RP2040 ROM checks this retained byte early after reset and enters
+	 * its USB mass-storage bootloader. */
+	if (bootmode_set(BOOT_MODE_TYPE_BOOTLOADER) != 0) {
+		LOG_ERR("Cannot request RP2040 ROM bootloader");
+	}
 #endif
 	k_msleep(50);  /* Let UART/USB flush */
 	sys_reboot(SYS_REBOOT_COLD);

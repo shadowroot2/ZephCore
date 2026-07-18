@@ -132,33 +132,44 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"region def|get|put|remove|list|load|save\r\n"
 		"region allowf|denyf|home|default\r\n"
 		"ver\r\nboard\r\nadvert\r\nadvert.zerohop\r\n"
-		"clock [sync]\r\ntime <epoch>\r\ngps [on|off|setloc|advert]\r\n"
+		"clock [sync]\r\ntime <epoch>\r\n"
+#if !defined(CONFIG_BOARD_RPI_PICO)
+		"gps [on|off|setloc|advert]\r\n"
 		"neighbors\r\nneighbor.remove <pubkey>\r\n"
+#endif
 		"tempradio <freq> <bw> <sf> <cr> <minutes>\r\n"
 		"password <value>\r\nclear stats\r\n"
-		"log [start|stop|erase]\r\nstats-packets\r\nstats-radio\r\nstats-core\r\n"
+		"stats-packets\r\nstats-radio\r\nstats-core\r\n"
 		"get/set dutycycle\r\nget/set af\r\nget/set int.thresh\r\n"
 		"get/set agc.reset.interval\r\nget/set multi.acks\r\n"
 		"get/set allow.read.only\r\nget/set flood.advert.interval\r\n"
 		"get/set advert.interval\r\nget/set guest.password\r\n"
 		"get/set prv.key\r\nget/set name\r\nget/set repeat\r\n"
 		"get/set lat\r\nget/set lon\r\nget/set radio\r\n"
-		"get/set radio.rxgain\r\nget/set rxdelay\r\nget/set txdelay\r\n"
+		"get/set radio.rxgain\r\n"
 		"get/set apc.margin\r\nget/set flood.max.advert\r\n"
 		"get/set flood.max.unscoped\r\nget/set flood.max\r\n"
-		"get/set direct.txdelay\r\nget/set backoff.multiplier\r\n"
+		"get/set backoff.multiplier\r\n"
 		"get/set owner.info\r\nget/set path.hash.mode\r\n"
 		"get/set loop.detect\r\nget/set tx\r\nget/set freq\r\n"
 		"get/set adc.multiplier\r\nget/set rxduty\r\n"
-		"get/set gps duty\r\nget/set meshtimesync\r\nget/set tz\r\n"
-		"get public.key\r\nget role\r\nget bootloader.ver\r\n"
+#if !defined(CONFIG_BOARD_RPI_PICO)
+		"get/set gps duty\r\n"
+#endif
+		"get/set meshtimesync\r\nget/set tz\r\n"
+		"get public.key\r\nget role\r\n"
 		"get dc.restarts\r\nget tx apc\r\nget cad\r\n"
 		"set cad.auto\r\nset cad.offset\r\nset cad.probe.interval\r\n"
 		"set cad.busycap\r\nset cad.reset\r\n"
+#if !defined(CONFIG_BOARD_RPI_PICO)
 		"sensor get <key>\r\nsensor set <key> <value>\r\n"
-		"sensor list [start]\r\nstart dfu\r\nstart ota\r\n"
-#if !defined(CONFIG_SOC_FAMILY_NORDIC_NRF)
-		"stop ota\r\n"
+		"sensor list [start]\r\n"
+#endif
+#if defined(CONFIG_SOC_SERIES_NRF52) || defined(CONFIG_SOC_RP2040)
+		"start dfu\r\n"
+#endif
+#if IS_ENABLED(CONFIG_ZEPHCORE_WIFI_OTA)
+		"start ota\r\nstop ota\r\n"
 #endif
 		"reboot\r\nclkreboot\r\nerase\r\nhelp";
 
