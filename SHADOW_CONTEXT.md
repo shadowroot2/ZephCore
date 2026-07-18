@@ -104,9 +104,12 @@
 
 - Дубль прошивки больше не собирать.
 - GPS-страница UI намеренно убрана.
-- Нативная USB Serial-JTAG консоль должна работать и без подключенного BLE.
+- USB-C Heltec V3 — это мост CP2102 к `uart0`, не native USB Serial-JTAG.
+  Для CLI без BLE обязателен `CONFIG_ZEPHCORE_COMPANION_SERIAL=y`; console/shell
+  на `uart0` должны быть выключены, иначе их UART IRQ callbacks конфликтуют с
+  Companion transport и команды не доходят до обработчика.
 - В overlay включен `&coretemp { status = "okay"; };`: это восстанавливает
-  температуру в телеметрии и в low-battery Public сообщении. Это температура
+  температуру в телеметрии и в low-battery emergency-сообщении. Это температура
   кристалла ESP32-S3, не окружающего воздуха.
 
 ## ThinkNode M5 Companion
@@ -187,6 +190,9 @@ LED note:
   Выводить одну команду на строку, только доступные текущей роли/плате команды;
   сервисные команды находятся внизу. `gps [on|off|setloc|advert]` идет сразу
   после `time` на платах с GPS.
+- Для Companion `help` также доступен через loopback vContact: полный список
+  разбивается на несколько локальных chat-сообщений из-за лимита пакета. По
+  LoRa он по-прежнему никогда не отправляется.
 - Из Companion help исключены `guest.password`, `allow.read.only`, `rxduty`;
   `stop ota` не показывается на NRF companion/repeater.
 - Для M1/M5/M6 показывать и передавать `Sats in view`, а не только спутники,
@@ -198,10 +204,16 @@ LED note:
   25% отключать buzzer и стартовую мелодию; heartbeat — три быстрых blink раз
   в пять секунд.
 - Low-battery auto-shutdown (не ручное выключение) перед отключением отправляет
-  в Public voltage, temperature и uptime. На GPS-платах добавляет `GPS: off`,
+  в `#zephcore` voltage, temperature и uptime. Если публичного канала нет,
+  он создается автоматически как `#zephcore`, с ключом public-channel от полного имени. На GPS-платах добавляет `GPS: off`,
   либо `Sats in view` и Google Maps ссылку только при ненулевых координатах.
   Префикс: `Low batt - Shutting down`. При выключении из меню очищать экран и
   показывать `Power OFF`.
+- Отправка этого emergency-сообщения в `#zephcore` при автоотключении — отдельная
+  сохраняемая настройка `get/set autoshutdown.emergency on|off` (по умолчанию `on`). При
+  `off` автоотключение и vContact/flash fallback остаются активными; меняется
+  только отправка emergency-сообщения. Поле добавлено в конец prefs blob, поэтому старые
+  пользовательские файлы без него мигрируют безопасно с дефолтом `on`.
 
 ## Полезные команды
 

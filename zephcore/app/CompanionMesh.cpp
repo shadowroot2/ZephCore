@@ -210,6 +210,7 @@ CompanionMesh::CompanionMesh(mesh::Radio &radio, mesh::MillisecondClock &ms, mes
 	memset(_send_scope.key, 0, sizeof(_send_scope.key));
 	_send_scope_force_unscoped = false;
 	_vcontact_cli_cb = nullptr;
+	_vcontact_help_cb = nullptr;
 	memset(_vcontact_pubkey, 0, sizeof(_vcontact_pubkey));
 	_vcontact_lastmod = 0;
 	memset(_vcontact_recent_ts, 0, sizeof(_vcontact_recent_ts));
@@ -1085,15 +1086,23 @@ bool CompanionMesh::vcontactHandleFrame(const uint8_t *data, size_t len)
 
 			if (!dup) {
 				LOG_INF("vcontact CLI: '%s'", line);
-				char reply[VCONTACT_CLI_REPLY_SIZE];
-				reply[0] = '\0';
-				if (_vcontact_cli_cb) {
-					_vcontact_cli_cb(line, reply);
+				const char *help = _vcontact_help_cb ? _vcontact_help_cb(line) : nullptr;
+				if (help != nullptr) {
+					/* Help is intentionally handled outside the fixed reply buffer;
+					 * vcontactQueueText() splits the full local-only catalogue into
+					 * transport-safe chat messages. */
+					vcontactQueueText(help);
 				} else {
-					strcpy(reply, "CLI not available");
-				}
-				if (reply[0] != '\0') {
-					vcontactQueueText(reply);
+					char reply[VCONTACT_CLI_REPLY_SIZE];
+					reply[0] = '\0';
+					if (_vcontact_cli_cb) {
+						_vcontact_cli_cb(line, reply);
+					} else {
+						strcpy(reply, "CLI not available");
+					}
+					if (reply[0] != '\0') {
+						vcontactQueueText(reply);
+					}
 				}
 			} else {
 				LOG_DBG("vcontact CLI: dup ts=%u, re-ack only", msg_timestamp);

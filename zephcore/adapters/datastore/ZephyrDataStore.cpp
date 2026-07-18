@@ -747,6 +747,8 @@ void ZephyrDataStore::loadPrefs(NodePrefs &prefs)
 			prefs.ui_timezone_offset_minutes > 1439) {
 			prefs.ui_timezone_offset_minutes = CONFIG_ZEPHCORE_UI_TIMEZONE_OFFSET_MINUTES;
 		}
+		/* This legacy timezone-only layout predates the opt-out flag. */
+		prefs.auto_shutdown_emergency = 1;
 		return;
 	}
 
@@ -815,10 +817,20 @@ void ZephyrDataStore::loadPrefs(NodePrefs &prefs)
 	if (off + 2 <= len) {
 		prefs.ui_timezone_offset_minutes = (int16_t)((uint16_t)buf[off] |
 			((uint16_t)buf[off + 1] << 8));
+		off += 2;
 		if (prefs.ui_timezone_offset_minutes < -1439 ||
 			prefs.ui_timezone_offset_minutes > 1439) {
 			prefs.ui_timezone_offset_minutes = CONFIG_ZEPHCORE_UI_TIMEZONE_OFFSET_MINUTES;
 		}
+	}
+
+	/* Offset 161: send the low-battery emergency notice before automatic shutdown.
+	 * Older prefs blobs stop at the timezone field; preserve the previous
+	 * behavior for them by defaulting this new extension to enabled. */
+	if (off < len) {
+		prefs.auto_shutdown_emergency = buf[off++] ? 1 : 0;
+	} else {
+		prefs.auto_shutdown_emergency = 1;
 	}
 }
 
@@ -912,7 +924,9 @@ void ZephyrDataStore::savePrefs(const NodePrefs &prefs)
 	/* Offset 159: UI timezone in signed minutes (2 bytes LE) */
 	buf[off++] = (uint16_t)prefs.ui_timezone_offset_minutes & 0xFF;
 	buf[off++] = ((uint16_t)prefs.ui_timezone_offset_minutes >> 8) & 0xFF;
-	/* Total: 161 bytes */
+	/* Offset 161: auto-shutdown emergency notice enabled */
+	buf[off++] = prefs.auto_shutdown_emergency ? 1 : 0;
+	/* Total: 162 bytes */
 
 	bool ok = atomicReplaceFile(PREFS_FILE, buf, off);
 	LOG_DBG("savePrefs: wrote %s, ok=%d (%d bytes), name='%.16s'",

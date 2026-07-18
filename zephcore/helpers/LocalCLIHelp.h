@@ -1,8 +1,9 @@
 /*
  * SPDX-License-Identifier: MIT
  * Local serial CLI help.  These strings are deliberately emitted only by
- * local UART/USB entry points: CLI replies travelling through LoRa retain
- * their bounded packet buffers and never expose the command catalogue.
+ * local UART/USB entry points and the loopback vContact: replies travelling
+ * through LoRa retain their bounded packet buffers and never expose the
+ * command catalogue.
  */
 #pragma once
 
@@ -75,7 +76,12 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"set cad.auto\r\nset cad.offset\r\nset cad.probe.interval\r\n"
 		"set cad.busycap\r\nset cad.reset\r\n"
 		"get/set v.contact\r\nget/set v.batteryalert\r\n"
-		"get/set autoshutdown\r\nstart dfu\r\nstart ota\r\n"
+
+#if defined(CONFIG_ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS) && \
+	CONFIG_ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS > 0
+		"get/set autoshutdown\r\nget/set autoshutdown.emergency\r\n"
+#endif
+		"start dfu\r\nstart ota\r\n"
 #if !defined(CONFIG_SOC_FAMILY_NORDIC_NRF)
 		"stop ota\r\n"
 #endif

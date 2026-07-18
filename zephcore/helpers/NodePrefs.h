@@ -105,6 +105,7 @@ struct NodePrefs {
 	uint8_t v_contact_enabled;      // v-contact (loopback admin chat via BLE/USB); 1 = on (default)
 	uint16_t v_battery_alert_mv;    // 0 = alert off; 0xFFFF = board default (auto_shutdown+200); else mV
 	int16_t ui_timezone_offset_minutes; // UI-only timezone offset; RTC/protocol stay UTC
+	uint8_t auto_shutdown_emergency; // 1 = send #zephcore emergency notice before automatic low-battery shutdown
 };
 
 /* Default prefs -- must match LoRaConfig.h defaults for radio interop. */
@@ -161,4 +162,5 @@ static inline void initNodePrefs(NodePrefs* prefs) {
 	prefs->v_contact_enabled = 1;     // Default ON — v-contact loopback admin chat (companion)
 	prefs->v_battery_alert_mv = 0xFFFF; // Sentinel: derive from board auto-shutdown threshold
 	prefs->ui_timezone_offset_minutes = CONFIG_ZEPHCORE_UI_TIMEZONE_OFFSET_MINUTES;
+	prefs->auto_shutdown_emergency = 1; // Default ON — send the low-battery emergency notice
 }

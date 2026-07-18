@@ -60,6 +60,7 @@ LOG_MODULE_REGISTER(zephcore_main, CONFIG_ZEPHCORE_MAIN_LOG_LEVEL);
 
 /* Radio + mesh includes (shared header selects LR1110 or SX126x) */
 #include <mesh/RadioIncludes.h>
+#include <mesh/Utils.h>
 #ifdef ZEPHCORE_LORA
 #include <app/CompanionMesh.h>
 #include <helpers/CommonCLI.h>
@@ -682,30 +683,54 @@ static void format_uptime(uint32_t uptime_ms, char *out, size_t out_len)
 	snprintf(out, out_len, "%ud %uh %um", days, hours, rem_mins);
 }
 
-/* Queue the legacy low-battery notice in the actual Public group. This is
- * deliberately called only by companion_shutdown_hook(), which is invoked by
- * ui_auto_shutdown_check() after its low-voltage confirmation — never by a
- * manual shutdown action. */
-static bool companion_send_auto_shutdown_public(uint16_t battery_mv,
-							 uint32_t uptime_ms)
+/* Find the #zephcore group; create its normal public-channel key when the
+ * user has not added it yet. This helper is called only from the automatic
+ * low-battery shutdown path, never by a manual shutdown action. */
+static bool companion_get_emergency_channel(ChannelDetails &emergency_channel)
 {
-	if (!companion_mesh_ptr || companion_mesh_ptr->getNumChannels() <= 0) {
+	static const char emergency_channel_name[] = "#zephcore";
+	if (!companion_mesh_ptr) {
 		return false;
 	}
 
-	ChannelDetails public_channel;
-	bool found = false;
 	for (int i = 0; i < companion_mesh_ptr->getNumChannels(); i++) {
 		ChannelDetails channel;
 		if (companion_mesh_ptr->getChannel(i, channel) &&
-		    strcmp(channel.name, "Public") == 0) {
-			public_channel = channel;
-			found = true;
-			break;
+		    strcmp(channel.name, emergency_channel_name) == 0) {
+			emergency_channel = channel;
+			return true;
 		}
 	}
-	if (!found) {
-		LOG_WRN("auto-shutdown: Public channel not found, skip shutdown message");
+
+	/* Public #channels use SHA-256(channel name)[0..15] as their PSK. */
+	uint8_t psk[16];
+	mesh::Utils::sha256(psk, sizeof(psk),
+		(const uint8_t *)emergency_channel_name,
+		(int)strlen(emergency_channel_name));
+	ChannelDetails *created = companion_mesh_ptr->addChannel(
+		emergency_channel_name, psk, sizeof(psk));
+	if (!created) {
+		LOG_WRN("auto-shutdown: unable to create #zephcore channel");
+		return false;
+	}
+
+	emergency_channel = *created;
+	/* Shutdown can follow immediately, so do not rely on the normal lazy
+	 * channel flush; retain the created channel across the power cycle. */
+	data_store.saveChannels(companion_mesh_ptr);
+	LOG_INF("auto-shutdown: created #zephcore emergency channel");
+	return true;
+}
+
+/* Queue the low-battery notice in the #zephcore group. This is
+ * deliberately called only by companion_shutdown_hook(), which is invoked by
+ * ui_auto_shutdown_check() after its low-voltage confirmation — never by a
+ * manual shutdown action. */
+static bool companion_send_auto_shutdown_emergency(uint16_t battery_mv,
+								uint32_t uptime_ms)
+{
+	ChannelDetails emergency_channel;
+	if (!companion_get_emergency_channel(emergency_channel)) {
 		return false;
 	}
 
@@ -761,14 +786,14 @@ static bool companion_send_auto_shutdown_public(uint16_t battery_mv,
 	}
 
 	if (!companion_mesh_ptr->sendGroupMessage(rtc_clock.getCurrentTimeUnique(),
-							  public_channel.channel,
+							  emergency_channel.channel,
 							  companion_mesh_ptr->prefs.node_name,
 							  text, (int)strlen(text))) {
-		LOG_WRN("auto-shutdown: unable to queue Public shutdown message");
+		LOG_WRN("auto-shutdown: unable to queue #zephcore emergency message");
 		return false;
 	}
 
-	LOG_INF("auto-shutdown: queued Public message: %s", text);
+	LOG_INF("auto-shutdown: queued #zephcore emergency message: %s", text);
 	return true;
 }
 
@@ -950,6 +975,31 @@ static CommonCLI companion_cli(zephyr_board, rtc_clock, companion_acl,
  * Returns true if the line was a recognised autoshutdown command. */
 static bool handle_autoshutdown_cli(const char *line, char *reply)
 {
+	if (strcmp(line, "get autoshutdown.emergency") == 0) {
+		snprintf(reply, CLI_REPLY_SIZE, "autoshutdown.emergency: %s",
+			 companion_mesh.prefs.auto_shutdown_emergency ? "on" : "off");
+		return true;
+	}
+	if (strncmp(line, "set autoshutdown.emergency ", 27) == 0) {
+		const char *arg = line + 27;
+		while (*arg == ' ') {
+			arg++;
+		}
+		bool enabled;
+		if (strcmp(arg, "on") == 0) {
+			enabled = true;
+		} else if (strcmp(arg, "off") == 0) {
+			enabled = false;
+		} else {
+			strcpy(reply, "ERROR: use on|off");
+			return true;
+		}
+		companion_mesh.prefs.auto_shutdown_emergency = enabled ? 1 : 0;
+		k_event_post(&mesh_events, MESH_EVENT_PREFS_DIRTY);
+		snprintf(reply, CLI_REPLY_SIZE, "OK - autoshutdown.emergency %s",
+			 enabled ? "on" : "off");
+		return true;
+	}
 	if (strcmp(line, "get autoshutdown") == 0) {
 		uint16_t mv = companion_mesh.prefs.auto_shutdown_mv;
 		if (mv == 0) {
@@ -1097,16 +1147,17 @@ static bool handle_vcontact_cli(const char *line, char *reply)
 }
 
 /* Pre-shutdown hook called only from ui_auto_shutdown_check() after its
- * low-battery confirmation. It queues the Public notice first, then retains
- * the existing v-contact/flash fallback behaviour. */
+ * low-battery confirmation. It conditionally queues the #zephcore emergency
+ * notice, then retains the existing v-contact/flash fallback behaviour. */
 static bool companion_shutdown_hook(int reason, uint16_t battery_mv,
 					    uint32_t uptime_ms)
 {
 	const char *msg = (reason == UI_SHUTDOWN_LOW_BATTERY)
 			  ? "Powering off: low battery"
 			  : "Powering off";
-	bool public_queued = reason == UI_SHUTDOWN_LOW_BATTERY &&
-		companion_send_auto_shutdown_public(battery_mv, uptime_ms);
+	bool emergency_queued = reason == UI_SHUTDOWN_LOW_BATTERY &&
+		companion_mesh.prefs.auto_shutdown_emergency != 0 &&
+		companion_send_auto_shutdown_emergency(battery_mv, uptime_ms);
 
 	bool connected = zephcore_ble_is_connected();
 #if ZEPHCORE_USB_STACK
@@ -1120,10 +1171,10 @@ static bool companion_shutdown_hook(int reason, uint16_t battery_mv,
 		return true;   /* deliver live — ask the UI for the grace delay */
 	}
 
-	if (!public_queued) {
+	if (!emergency_queued) {
 		data_store.saveShutdownReason((uint8_t)reason);
 	}
-	return public_queued; /* grace lets queued LoRa transmission complete */
+	return emergency_queued; /* grace lets queued LoRa transmission complete */
 }
 
 /* Transport-neutral CLI line execution — runs on the MAIN thread only
@@ -1559,6 +1610,7 @@ int main(void)
 	});
 	/* V-contact chat lines run the same CLI as the USB text sideband. */
 	companion_mesh.setVContactCLICallback(companion_cli_exec);
+	companion_mesh.setVContactCLIHelpCallback(companion_cli_help);
 	companion_mesh_ptr = &companion_mesh;
 
 	/* Set LoRa callbacks for event-driven packet processing */
