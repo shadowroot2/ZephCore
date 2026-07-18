@@ -42,6 +42,7 @@ heltec_wifi_lora32_v4/esp32s3/procpu
 heltec_wifi_lora32_v43/esp32s3/procpu
 heltec_wireless_tracker/esp32s3/procpu
 heltec_wireless_tracker_v2/esp32s3/procpu
+thinknode_m9/esp32s3/procpu
 ttgo_tbeam/esp32/procpu
 ttgo_lora32/esp32/procpu
 ```
@@ -56,6 +57,13 @@ ttgo_lora32/esp32/procpu
 > **Heltec Wireless Tracker V2** (`heltec_wireless_tracker_v2/esp32s3/procpu`):
 > ESP32-S3FN8 companion with SX1262 + KCT8103L PA/FEM, ST7735R 160x80 TFT,
 > UC6580 GNSS, battery ADC, and USB-C native serial/JTAG.
+>
+> **ThinkNode M9** (`thinknode_m9/esp32s3/procpu`): ESP32-S3 (16MB flash, 8MB
+> PSRAM) handheld with LR1110, ST7789 320x240 TFT, CC1167Q GPS, PCF8563 RTC,
+> and buzzer. Not yet validated on hardware — see the board README for the
+> bring-up list. The onboard STC8H I2C keyboard, IMU/magnetometer, and SD slot
+> are not ported. The LR1110 radio-firmware updater supports this board
+> (`west build -b thinknode_m9/esp32s3/procpu zephcore/tools/lr1110_updater`).
 >
 > **LilyGo T-Beam** (`ttgo_tbeam/esp32/procpu`): classic ESP32 (PICO-D4) with
 > SX1262, AXP2101 PMU, and GNSS. Use this for the **v1.2 SX1262** variant — the

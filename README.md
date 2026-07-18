@@ -92,6 +92,7 @@ ZephCore — это порт прошивки [MeshCore](https://github.com/mesh
 | **Heltec Wireless Tracker** | ESP32-S3 | SX1262 | ST7735R 160x80 TFT, UC6580 GPS |
 | **Heltec Wireless Tracker V2** | ESP32-S3FN8 | SX1262 + KCT8103L PA/FEM | ST7735R 160x80 TFT, UC6580 GNSS, battery ADC |
 | **ThinkNode M5** | ESP32-S3 | SX1262 | E-Ink SSD1681, PCA9557, GPS, buzzer, backlight, battery ADC, BLE companion |
+| **ThinkNode M9** | ESP32-S3 | LR1110 | ST7789 320x240 TFT, CC1167Q GPS, PCF8563 RTC, buzzer, 16MB flash, 8MB PSRAM |
 | **LilyGo T-Beam v1.2** | ESP32 PICO-D4 | SX1262 | AXP2101 PMU, GNSS, USB-UART CLI |
 | **TTGO LoRa32** | ESP32 PICO-D4 | SX1276 | Reference board, USB-UART CLI |
 

@@ -159,6 +159,7 @@ BOARDS = [
     dict(stem="heltec_wifi_lora32_v4-esp32s3-procpu", kind="esp32", device="Heltec v4"),
     dict(stem="heltec_wireless_tracker-esp32s3-procpu",    kind="esp32", device="Heltec Wireless Tracker"),
     dict(stem="heltec_wireless_tracker_v2-esp32s3-procpu", kind="esp32", device="Heltec Wireless Tracker v2"),
+    dict(stem="thinknode_m9-esp32s3-procpu",               kind="esp32", device="Elecrow ThinkNode M9"),
     # Classic ESP32 T-Beam: ships -merged.bin (full-flash, 0x0) too.
     dict(stem="ttgo_tbeam-esp32-procpu",           kind="esp32", device="LilyGo T-Beam (SX1262)"),
 
