@@ -11,6 +11,8 @@
  * - Direct GPIO toggle via gps-enable alias (all boards)
  * - T1000-E warm standby: VRTC stays powered during standby, preserving
  *   ephemeris/almanac/RTC in backup RAM for fast re-acquisition (3-8s vs 15-45s)
+ * - GNSS UARTE suspended (device PM) while GPS is off/standby — releases
+ *   HFCLK on nRF52840 (~0.5-1 mA), resumed before every wake
  * - Full power-off only on user-disable or System OFF
  */
 
@@ -24,6 +26,7 @@
 #include <zephyr/drivers/uart.h>
 #include <zephyr/drivers/regulator.h>
 #include <zephyr/drivers/i2c.h>
+#include <zephyr/pm/device.h>
 #include <string.h>
 #if defined(CONFIG_SOC_NRF52840)
 #include <nrfx.h>
@@ -44,17 +47,25 @@ LOG_MODULE_REGISTER(zephcore_gps, CONFIG_ZEPHCORE_GPS_LOG_LEVEL);
 #define HAS_GNSS 0
 #endif
 
-/* ========== GPS Module Capability Flags ==========
- * GPS power management uses GPIO only (no PM_DEVICE):
+/* ========== GPS Power Strategy ==========
+ * Module power is GPIO/regulator controlled — GNSS driver PM is not used
+ * for the module itself:
  * - Wio Tracker L1 (L76K): FORCE_ON pin LOW = hardware standby (~360µA,
  *   Vcc stays on, ephemeris/almanac/RTC preserved, hot-start 1-2s)
  * - T1000-E (AG3335): GPS_EN LOW + VRTC HIGH = warm standby (ephemeris
  *   preserved via backup RAM, ~1-2µA VRTC current)
  * - All boards: gps-enable alias → GPIO power control
  *
- * PM_DEVICE is intentionally NOT used — the system-managed PM subsystem
- * auto-suspends devices during idle, calling modem_chat_run_script() from
- * an unexpected context which can deadlock the system. */
+ * CONFIG_PM_DEVICE is on globally, but nothing suspends automatically —
+ * system-managed suspend is compiled only under CONFIG_PM (off everywhere).
+ * This manager makes exactly two kinds of PM calls, both main-thread only:
+ * - a one-time RESUME of the GNSS device at boot (gnss-nmea-generic inits
+ *   suspended under CONFIG_PM_DEVICE and never opens its pipe otherwise);
+ * - suspend/resume of the GNSS UARTE around standby/off (an armed UARTE RX
+ *   holds HFCLK ≈0.5-1 mA on nRF52840 even with the module powered off).
+ * The old "PM broke GPS" deadlock was modem_chat_run_script() being reached
+ * from the system workqueue via driver PM hooks — the air530z driver is
+ * PM-less now and every PM call here stays on the main thread. */
 
 /* ========== GPS State - Power Management ========== */
 #if HAS_GNSS
@@ -917,11 +928,58 @@ void gps_power_off_for_shutdown(void)
 #if DT_NODE_HAS_STATUS(DT_NODELABEL(gnss), okay) && \
     DT_NODE_HAS_STATUS(DT_BUS(DT_NODELABEL(gnss)), okay)
 #define HAS_GPS_UART 1
-#if !HAS_GPS_POWER_CONTROL && !HAS_GPS_POWER_REGULATOR
-static const struct device *gps_uart_dev = DEVICE_DT_GET(DT_BUS(DT_NODELABEL(gnss)));
-#endif
 #else
 #define HAS_GPS_UART 0
+#endif
+
+/* ========== GNSS UART Suspend/Resume (device PM) ==========
+ * nRF UARTE only. An armed UARTE RX holds HFCLK (~0.5-1 mA on nRF52840)
+ * even when the GPS module is powered off or silent, so standby/off
+ * suspends the UART device and every wake resumes it first.
+ *
+ * Verified symmetric in uart_nrfx_uarte.c under the still-open modem pipe:
+ * suspend saves the RX-interrupt state, STOPRXes, disables the peripheral
+ * and applies the sleep pinctrl; resume restores all of it. Other UART
+ * drivers (legacy nordic,nrf-uart on RAK4631, ESP32) are deliberately not
+ * gated in — their suspend/resume round-trip is unverified and the HFCLK
+ * cost is UARTE-specific.
+ *
+ * Every GPS UART node must carry a sleep pinctrl state (all boards do):
+ * without one, suspend fails *after* disabling RX while the PM state stays
+ * ACTIVE, so the next resume no-ops with -EALREADY — a dead GPS. */
+#if HAS_GPS_UART && defined(CONFIG_PM_DEVICE) && \
+    DT_NODE_HAS_COMPAT(DT_BUS(DT_NODELABEL(gnss)), nordic_nrf_uarte)
+#define HAS_GPS_UART_PM 1
+#else
+#define HAS_GPS_UART_PM 0
+#endif
+
+#if HAS_GPS_UART && \
+    (HAS_GPS_UART_PM || (!HAS_GPS_POWER_CONTROL && !HAS_GPS_POWER_REGULATOR))
+static const struct device *gps_uart_dev = DEVICE_DT_GET(DT_BUS(DT_NODELABEL(gnss)));
+#endif
+
+/* Suspend/resume the GNSS UART. Main thread only (like all GPS power
+ * paths — pm_device_action_run() calls the driver synchronously).
+ * Ordering: resume BEFORE powering the module / sending the wake byte;
+ * suspend AFTER the module is off / sleep commands were sent. */
+#if HAS_GPS_UART_PM
+static void gps_uart_set_power(bool on)
+{
+	if (!device_is_ready(gps_uart_dev)) {
+		return;
+	}
+	int ret = pm_device_action_run(gps_uart_dev,
+				       on ? PM_DEVICE_ACTION_RESUME
+					  : PM_DEVICE_ACTION_SUSPEND);
+	if (ret == 0) {
+		LOG_INF("GPS UART %s", on ? "resumed" : "suspended");
+	} else if (ret != -EALREADY) {
+		LOG_WRN("GPS UART %s failed: %d", on ? "resume" : "suspend", ret);
+	}
+}
+#else
+static inline void gps_uart_set_power(bool on) { ARG_UNUSED(on); }
 #endif
 
 #if HAS_GPS_UART && !HAS_GPS_POWER_CONTROL && !HAS_GPS_POWER_REGULATOR
@@ -1053,6 +1111,10 @@ static void gps_go_to_standby(void)
 	gps_software_sleep();
 #endif
 
+	/* Module is off/asleep — release the UART until the next wake
+	 * (nRF: drops the HFCLK request held by the armed RX). */
+	gps_uart_set_power(false);
+
 	/* NOTE: gnss_configured stays true — L76K retains PCAS settings in
 	 * flash across power cycles. Re-running gnss_configure() after GPIO
 	 * wake would call modem_chat_run_script() before the chip has booted,
@@ -1076,6 +1138,10 @@ static void gps_start_acquiring(void)
 	gps_current_state = GPS_STATE_ACQUIRING;
 	consecutive_good_fixes = 0;
 	gnss_activity_seen_this_cycle = false;
+
+	/* Bring the UART back before the module powers up / the wake byte
+	 * goes out, so the first NMEA sentences aren't lost. */
+	gps_uart_set_power(true);
 
 #if HAS_GPS_POWER_CONTROL || HAS_GPS_POWER_REGULATOR
 	gps_power_control(true);
@@ -1337,6 +1403,27 @@ static int gnss_init(void)
 		}
 	}
 
+#ifdef CONFIG_PM_DEVICE
+	/* Some upstream GNSS drivers (gnss-nmea-generic) start suspended under
+	 * CONFIG_PM_DEVICE and never open their modem pipe until resumed — no
+	 * NMEA would ever flow (the old "PM broke GPS" trap). Resume once
+	 * here: main thread at boot, the one safe context for the modem_chat
+	 * scripts a resume may run. PM-less drivers (luatos,air530z) return
+	 * -ENOSYS. Retried like device_init above — opening the pipe while
+	 * the module is mid-sentence can fail transiently. */
+	int pm_ret = pm_device_action_run(gnss_dev, PM_DEVICE_ACTION_RESUME);
+	for (int attempt = 1; pm_ret != 0 && pm_ret != -EALREADY &&
+	     pm_ret != -ENOSYS && attempt < 3; attempt++) {
+		LOG_WRN("GNSS PM resume failed (%d), retrying", pm_ret);
+		k_msleep(100);
+		pm_ret = pm_device_action_run(gnss_dev, PM_DEVICE_ACTION_RESUME);
+	}
+	if (pm_ret != 0 && pm_ret != -EALREADY && pm_ret != -ENOSYS) {
+		LOG_ERR("GNSS PM resume failed: %d", pm_ret);
+		return -ENODEV;
+	}
+#endif
+
 	LOG_INF("GNSS device %s initialized", gnss_dev->name);
 	gps_available = true;
 	return 0;
@@ -1391,6 +1478,10 @@ void gps_ensure_power_state(bool should_be_enabled)
 	if (!should_be_enabled) {
 		LOG_INF("GPS: Powering off at boot (disabled in prefs)");
 		gps_power_control(false);
+		/* GPS stays off — release the UART too. Without this, the RX
+		 * armed at driver init would hold HFCLK for the entire uptime
+		 * of every GPS-disabled node. */
+		gps_uart_set_power(false);
 		gps_current_state = GPS_STATE_OFF;
 	}
 #else
@@ -1445,6 +1536,11 @@ void gps_enable(bool enable)
 		gps_current_state = GPS_STATE_ACQUIRING;
 		consecutive_good_fixes = 0;
 
+		/* Resume the GNSS UART first so no NMEA is lost at power-on
+		 * (it may be suspended from a boot-with-GPS-off or a prior
+		 * disable). */
+		gps_uart_set_power(true);
+
 		/* Power on GPS - uses lazy GPIO init */
 		gps_power_control(true);
 
@@ -1478,6 +1574,10 @@ void gps_enable(bool enable)
 #else
 		gps_power_control(false);        /* No VRTC — full power off */
 #endif
+
+		/* GPS is off until re-enabled — release the UART. */
+		gps_uart_set_power(false);
+
 		gps_current_state = GPS_STATE_OFF;
 		consecutive_good_fixes = 0;
 
