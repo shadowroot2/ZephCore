@@ -1072,6 +1072,24 @@ bool CompanionMesh::vcontactHandleFrame(const uint8_t *data, size_t len)
 			}
 
 			if (!dup) {
+				/* Phone keyboards autocapitalize the first letter of a
+				 * chat line, so a v-contact command arrives as "Get cad".
+				 * Fold character 0 only.
+				 *
+				 * Safe by construction: character 0 is always inside the
+				 * command verb -- no CLI command takes an argument at
+				 * position 0 -- so this cannot alter a value.  Deliberately
+				 * NOT generalized beyond one character: the previous attempt
+				 * folded the first two whitespace-delimited tokens and
+				 * silently lowercased admin passwords (see the comment above
+				 * CommonCLI::handleCommand in helpers/CommonCLI.cpp).
+				 *
+				 * Must stay after the delivery-ack hash above, which covers
+				 * the original text the app will match against. */
+				if (line[0] >= 'A' && line[0] <= 'Z') {
+					line[0] = (char)(line[0] - 'A' + 'a');
+				}
+
 				LOG_INF("vcontact CLI: '%s'", line);
 				const char *help = _vcontact_help_cb ? _vcontact_help_cb(line) : nullptr;
 				if (help != nullptr) {

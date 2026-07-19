@@ -332,33 +332,22 @@ void CommonCLI::scheduleReboot(uint8_t type)
     k_work_schedule(&_reboot_work, K_SECONDS(2));
 }
 
+/* CLI commands are case-sensitive, matching upstream Arduino MeshCore.
+ *
+ * A case-insensitive normalizer lived here from 2026-07-12 until 2026-07-19.
+ * It lowercased the first two whitespace-delimited tokens before matching, on
+ * the assumption that a value never appears before the third token.  That is
+ * false for "password <value>", whose value IS token 1 -- so any admin
+ * password containing uppercase was silently stored folded to lowercase and
+ * could never be used to log in again.  ("set guest.password <value>" was
+ * unaffected: three tokens.)
+ *
+ * Do not reintroduce input folding here.  Any scheme that rewrites the buffer
+ * before dispatch has to guess where keywords end and arguments begin, and
+ * that guess is what broke.  If case-insensitivity is wanted again, do it at
+ * the comparison sites so argument bytes are never touched.
+ */
 void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, char* reply) {
-    /* Case-insensitive command keywords.  Lowercase only the first two
-     * whitespace-delimited tokens (the verb and the config key) — the value
-     * (3rd token onward) is preserved verbatim, so case-sensitive arguments
-     * like passwords, node names, owner info, and keys are never mangled.
-     * Fixes e.g. "Get cad" / "SET Cad.Auto on" not being recognized. */
-    char norm[CLI_REPLY_SIZE];
-    {
-        int tok = 0;          /* completed tokens so far */
-        bool in_tok = false;
-        size_t j = 0;
-        for (size_t i = 0; command[i] != '\0' && j < sizeof(norm) - 1; i++) {
-            char c = command[i];
-            if (c == ' ' || c == '\t') {
-                if (in_tok) { in_tok = false; tok++; }
-            } else {
-                in_tok = true;
-                if (tok < 2 && c >= 'A' && c <= 'Z') {
-                    c = (char)(c - 'A' + 'a');
-                }
-            }
-            norm[j++] = c;
-        }
-        norm[j] = '\0';
-        command = norm;
-    }
-
     if (strcmp(_callbacks->getRole(), "companion") == 0 &&
         (strcmp(command, "get int.thresh") == 0 ||
          strncmp(command, "set int.thresh ", 15) == 0 ||
@@ -371,7 +360,6 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
         strcpy(reply, "Error: not supported on companion");
         return;
     }
-
     if (strcmp(command, "start dfu") == 0) {
         /* Reboot into UF2 bootloader for firmware update */
         strcpy(reply, "OK - rebooting to UF2 DFU");
