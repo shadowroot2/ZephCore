@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-# ZephCore LR1110 Firmware Updater — updates LR1110 radio firmware to 0x0401.
+# ZephCore LR1110 Firmware Updater — updates LR1110 radio firmware to 0x0402.
 #
 # Board-specific: only builds for boards with an LR1110 radio
 # (t1000_e, thinknode_m9).
@@ -66,6 +66,7 @@ target_sources(app PRIVATE
     src/main.c
     src/lr11xx_hal_updater.c
     src/lr1110_bootloader.c
+    src/lr1110_bl_updater.c
 )
 
 # Include paths for Semtech driver headers and firmware image

@@ -1,8 +1,8 @@
-Semtech's software made available with this lr1110_transceiver_0401_license.txt
+Semtech's software made available with this lr1110_loader_6500_license.txt
 file includes or is provided with certain third-party components that are
 subject to separate terms and conditions specified by applicable third-party
 licenses (“Third-Party Components”). These Third-Party Components and applicable
-licenses are set forth in this lr1110_transceiver_0401_license.txt file.
+licenses are set forth in this lr1110_loader_6500_license.txt file.
 
 Your access and use of all Third-Party Components are at all times governed by
 the applicable third-party licenses.
@@ -10,7 +10,7 @@ the applicable third-party licenses.
 _______________________________________________________________________________
 
 
-LR1110 transceiver firmware 0x0401
+LR1110 loader firmware 0x6500
 
 _______________________________________________________________________________
 
@@ -19,7 +19,7 @@ Semtech Corporation
 -------------------
 
 The Clear BSD License
-Copyright Semtech Corporation 2021. All rights reserved.
+Copyright Semtech Corporation 2026. All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted (subject to the limitations in the disclaimer

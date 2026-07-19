@@ -38,8 +38,9 @@ static const struct gpio_dt_spec pin_busy  = GPIO_DT_SPEC_GET(LR1110_NODE, busy_
 /* BUSY timeout — 3 seconds (flash erase can take ~2.5s) */
 #define BUSY_TIMEOUT_MS 3000
 
-/* Extended BUSY timeout for flash erase */
-#define ERASE_BUSY_TIMEOUT_MS 5000
+/* Extended BUSY timeout for flash erase (0x8000) and for the loader's
+ * bootloader rewrite (0x8100) — both keep BUSY high for seconds. */
+#define LONG_BUSY_TIMEOUT_MS 10000
 
 /* ── Context (opaque pointer for Semtech driver) ──────────── */
 
@@ -201,12 +202,14 @@ lr11xx_hal_status_t lr11xx_hal_write(const void *context, const uint8_t *command
 		return LR11XX_HAL_STATUS_ERROR;
 	}
 
-	/* For flash erase command (0x8000), BUSY can stay high for ~2.5 seconds */
+	/* Flash erase (0x8000) holds BUSY for ~2.5s; the loader's bootloader
+	 * rewrite (0x8100) also runs for seconds — give both the long timeout. */
 	uint16_t opcode = 0;
 	if (command_length >= 2) {
 		opcode = ((uint16_t)command[0] << 8) | command[1];
 	}
-	uint32_t timeout = (opcode == 0x8000) ? ERASE_BUSY_TIMEOUT_MS : BUSY_TIMEOUT_MS;
+	uint32_t timeout = (opcode == 0x8000 || opcode == 0x8100)
+		? LONG_BUSY_TIMEOUT_MS : BUSY_TIMEOUT_MS;
 
 	if (wait_on_busy(timeout)) {
 		return LR11XX_HAL_STATUS_ERROR;
