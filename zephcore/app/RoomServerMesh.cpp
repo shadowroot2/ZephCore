@@ -789,11 +789,6 @@ void RoomServerMesh::begin(RepeaterDataStore* store) {
      * Mesh::begin() → Dispatcher::begin() → Radio::begin(). */
     mesh::Mesh::begin();
     _contention.setBackoffMultiplier(_prefs.backoff_multiplier);
-#ifdef CONFIG_ZEPHCORE_APC
-    _power_ctrl.setSF(_prefs.sf);
-    _power_ctrl.setTargetMargin(_prefs.apc_margin);
-    _power_ctrl.setEnabled(_prefs.apc_enabled != 0);
-#endif
     acl.load(_store->getAclPath(), self_id);
     region_map.load(_store->getRegionsPath());
 

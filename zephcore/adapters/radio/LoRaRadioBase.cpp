@@ -52,7 +52,6 @@ LoRaRadioBase::LoRaRadioBase(const struct device *lora_dev, MainBoard &board,
 	  _cad_last_probe_ms(0), _cad_last_decay_ms(0), _cad_probe_rr(0),
 	  _rx_duty_cycle_enabled(IS_ENABLED(CONFIG_ZEPHCORE_LORA_RX_DUTY_CYCLE)),
 	  _rx_boost_enabled(true),
-	  _tx_power_reduction_db(0),
 	  _dc_last_rx_us(0), _dc_last_sleep_us(0),
 	  _config_cached(false),
 	  _has_radio_override(false),
@@ -236,8 +235,6 @@ void LoRaRadioBase::buildModemConfig(struct lora_modem_config &cfg, bool tx)
 		cfg.tx_power = CONFIG_ZEPHCORE_MAX_TX_POWER_DBM;
 	}
 #endif
-	/* APC reduction (applied after all clamps) */
-	cfg.tx_power -= _tx_power_reduction_db;
 	if (cfg.tx_power < -9) cfg.tx_power = -9;
 
 	cfg.tx = tx;
@@ -310,16 +307,6 @@ int8_t LoRaRadioBase::getConfiguredTxPower() const
 		power = CONFIG_ZEPHCORE_MAX_TX_POWER_DBM;
 	}
 #endif
-	if (power < -9) {
-		power = -9;
-	}
-	return (int8_t)power;
-}
-
-int8_t LoRaRadioBase::getEffectiveTxPower() const
-{
-	int power = (int)getConfiguredTxPower() - (int)_tx_power_reduction_db;
-
 	if (power < -9) {
 		power = -9;
 	}

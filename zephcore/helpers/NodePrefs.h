@@ -74,8 +74,16 @@ struct NodePrefs {
 	char owner_info[120];
 	uint8_t rx_boost;               // 1 = boosted RX gain (+3dB), 0 = power save
 	uint8_t rx_duty_cycle;          // 1 = RX duty cycle, 0 = continuous RX
-	uint8_t apc_enabled;            // 1 = APC on, 0 = fixed TX power
-	uint8_t apc_margin;             // APC target link margin dB (6-30)
+	/* RESERVED — formerly apc_enabled / apc_margin (Adaptive Power Control,
+	 * removed in 1.16.6). These two bytes are still read and written at their
+	 * original offsets in all three prefs serializers (companion new_prefs 94/95,
+	 * repeater prefs 292/293, RepeaterDataStore) because every field after them
+	 * is positional: dropping them would shift the rest of the layout and make
+	 * every already-deployed node misparse its saved prefs on upgrade.
+	 * Do not reuse for a new setting — an upgraded node still has the old APC
+	 * values sitting in these bytes. */
+	uint8_t _reserved_apc_enabled;
+	uint8_t _reserved_apc_margin;
 	uint8_t meshtimesync;           // 1 = mesh time-sync clock correction on (default off)
 	uint8_t cad_auto;               // 1 = adaptive-CAD staircase acts on probe stats (default off = dry-run)
 	int8_t cad_offset;              // operating detPeak offset from family base (-4..4)
@@ -152,8 +160,8 @@ static inline void initNodePrefs(NodePrefs* prefs) {
 	prefs->adc_multiplier = 0.0f;
 	prefs->rx_boost = 1;              // Default to boosted RX for better sensitivity
 	prefs->rx_duty_cycle = 0;         // Default OFF — continuous RX for best reliability
-	prefs->apc_enabled = 0;           // Default OFF — fixed TX power
-	prefs->apc_margin = 16;           // Default 16 dB target link margin
+	prefs->_reserved_apc_enabled = 0; // reserved (was APC), see NodePrefs
+	prefs->_reserved_apc_margin = 0;  // reserved (was APC), see NodePrefs
 	prefs->cad_auto = 1;              // Default ON — adaptive staircase acts on probe stats
 	prefs->cad_offset = 0;            // Start at family base detPeak (SF+13 on SX126x)
 	prefs->cad_probe_interval = 15;   // 15 s → staircase responds to change in ~1-2 h

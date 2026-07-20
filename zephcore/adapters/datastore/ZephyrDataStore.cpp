@@ -659,17 +659,14 @@ void ZephyrDataStore::loadPrefs(NodePrefs &prefs)
 		prefs.leds_disabled = 0;  /* Default: LEDs on */
 	}
 
-	/* Offset 94: apc_enabled (ZephCore extension) */
+	/* Offsets 94-95: RESERVED — formerly apc_enabled / apc_margin (APC,
+	 * removed in 1.16.6). Still consumed so offset 96 onward keeps landing
+	 * where already-deployed nodes wrote it. Values are ignored. */
 	if (off < len) {
-		prefs.apc_enabled = buf[off++];
+		prefs._reserved_apc_enabled = buf[off++];
 	}
-
-	/* Offset 95: apc_margin (ZephCore extension) */
 	if (off < len) {
-		prefs.apc_margin = buf[off++];
-		if (prefs.apc_margin < 6 || prefs.apc_margin > 30) {
-			prefs.apc_margin = 20;  /* companion default */
-		}
+		prefs._reserved_apc_margin = buf[off++];
 	}
 
 	/* Offset 96: default_scope_name (31 bytes) — v11 FIRMWARE_VER_CODE */
@@ -895,10 +892,10 @@ void ZephyrDataStore::savePrefs(const NodePrefs &prefs)
 	buf[off++] = prefs.rx_boost;
 	/* Offset 93: leds_disabled (ZephCore extension) */
 	buf[off++] = prefs.leds_disabled;
-	/* Offset 94: apc_enabled (ZephCore extension) */
-	buf[off++] = prefs.apc_enabled;
-	/* Offset 95: apc_margin (ZephCore extension) */
-	buf[off++] = prefs.apc_margin;
+	/* Offsets 94-95: RESERVED — formerly apc_enabled / apc_margin (removed
+	 * in 1.16.6). Written back unchanged to hold the layout. */
+	buf[off++] = prefs._reserved_apc_enabled;
+	buf[off++] = prefs._reserved_apc_margin;
 	/* Offset 96: default_scope_name (31 bytes) — v11 FIRMWARE_VER_CODE */
 	memcpy(&buf[off], prefs.default_scope_name, 31);
 	off += 31;

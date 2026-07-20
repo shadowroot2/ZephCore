@@ -188,31 +188,6 @@ public:
 	 *  at CMD_APP_START, CMD_SET_DEVICE_TIME, and GPS time sync. */
 	void vcontactClockSynced();
 
-#ifdef CONFIG_ZEPHCORE_APC
-	/* Adaptive Power Control hooks used by the USB text CLI. */
-	int8_t getAPCReduction() const {
-		return getPowerController().getPowerReduction();
-	}
-	float getAPCMargin() const {
-		return getPowerController().getMarginEstimate();
-	}
-	bool isAPCEnabled() const {
-		return getPowerController().isEnabled();
-	}
-	void setAPCEnabled(bool en) {
-		getPowerController().setEnabled(en);
-		if (!en) {
-			_radio->setTxPowerReduction(0);
-		}
-	}
-	uint8_t getAPCTargetMargin() const {
-		return getPowerController().getTargetMargin();
-	}
-	void setAPCTargetMargin(uint8_t margin_db) {
-		getPowerController().setTargetMargin(margin_db);
-	}
-#endif
-
 	/**
 	 * Continue contact iteration (call each main loop iteration).
 	 * Returns true if contacts are still being sent.

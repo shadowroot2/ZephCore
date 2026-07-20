@@ -137,8 +137,11 @@ void CommonCLI::loadPrefs(const char* path) {
     ok = ok && prefs_read(&file, _prefs->owner_info, sizeof(_prefs->owner_info));            // 170
     ok = ok && prefs_read(&file, &_prefs->rx_boost, sizeof(_prefs->rx_boost));               // 290
     ok = ok && prefs_read(&file, &_prefs->rx_duty_cycle, sizeof(_prefs->rx_duty_cycle));     // 291
-    ok = ok && prefs_read(&file, &_prefs->apc_enabled, sizeof(_prefs->apc_enabled));         // 292
-    ok = ok && prefs_read(&file, &_prefs->apc_margin, sizeof(_prefs->apc_margin));           // 293
+    /* 292-293: RESERVED — formerly apc_enabled / apc_margin (APC, removed in
+     * 1.16.6). Still read so offset 294 onward stays where deployed nodes
+     * wrote it; the values are ignored. */
+    ok = ok && prefs_read(&file, &_prefs->_reserved_apc_enabled, sizeof(_prefs->_reserved_apc_enabled)); // 292
+    ok = ok && prefs_read(&file, &_prefs->_reserved_apc_margin, sizeof(_prefs->_reserved_apc_margin));   // 293
     ok = ok && prefs_read(&file, &_prefs->flood_max_unscoped, sizeof(_prefs->flood_max_unscoped)); // 294
     ok = ok && prefs_read(&file, &_prefs->flood_max_advert, sizeof(_prefs->flood_max_advert)); // 295
     if (prefs_size == 298) {
@@ -203,8 +206,6 @@ void CommonCLI::loadPrefs(const char* path) {
     _prefs->advert_loc_policy = constrain(_prefs->advert_loc_policy, (uint8_t)0, (uint8_t)2);
     _prefs->rx_boost = constrain(_prefs->rx_boost, (uint8_t)0, (uint8_t)1);
     _prefs->rx_duty_cycle = constrain(_prefs->rx_duty_cycle, (uint8_t)0, (uint8_t)1);
-    _prefs->apc_enabled = constrain(_prefs->apc_enabled, (uint8_t)0, (uint8_t)1);
-    _prefs->apc_margin = constrain(_prefs->apc_margin, (uint8_t)6, (uint8_t)30);
     _prefs->flood_max_unscoped = constrain(_prefs->flood_max_unscoped, (uint8_t)0, (uint8_t)64);
     _prefs->flood_max_advert = constrain(_prefs->flood_max_advert, (uint8_t)0, (uint8_t)64);
     _prefs->meshtimesync = constrain(_prefs->meshtimesync, (uint8_t)0, (uint8_t)1);
@@ -279,8 +280,9 @@ void CommonCLI::savePrefs(const char* path) {
     fs_write(&file, _prefs->owner_info, sizeof(_prefs->owner_info));
     fs_write(&file, &_prefs->rx_boost, sizeof(_prefs->rx_boost));
     fs_write(&file, &_prefs->rx_duty_cycle, sizeof(_prefs->rx_duty_cycle));
-    fs_write(&file, &_prefs->apc_enabled, sizeof(_prefs->apc_enabled));
-    fs_write(&file, &_prefs->apc_margin, sizeof(_prefs->apc_margin));
+    /* 292-293: RESERVED — formerly APC, written back unchanged. */
+    fs_write(&file, &_prefs->_reserved_apc_enabled, sizeof(_prefs->_reserved_apc_enabled));
+    fs_write(&file, &_prefs->_reserved_apc_margin, sizeof(_prefs->_reserved_apc_margin));
     fs_write(&file, &_prefs->flood_max_unscoped, sizeof(_prefs->flood_max_unscoped));
     fs_write(&file, &_prefs->flood_max_advert, sizeof(_prefs->flood_max_advert));
     fs_write(&file, &_prefs->meshtimesync, sizeof(_prefs->meshtimesync));
@@ -557,8 +559,6 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
             float ff = _callbacks->getFloodDelayFactor();
             snprintf(reply, CLI_REPLY_SIZE, "> adaptive (est=%.1f flood=%.2f)",
                      (double)est, (double)ff);
-        } else if (memcmp(config, "apc.margin", 10) == 0) {
-            snprintf(reply, CLI_REPLY_SIZE, "> %d dB", (int)_callbacks->getAPCTargetMargin());
         } else if (memcmp(config, "flood.max.advert", 16) == 0) {
             snprintf(reply, CLI_REPLY_SIZE, "> %u", (uint32_t)_prefs->flood_max_advert);
         } else if (memcmp(config, "flood.max.unscoped", 18) == 0) {
@@ -590,32 +590,9 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
             } else {
                 strcpy(reply, "> strict");
             }
-        } else if (strcmp(config, "tx apc") == 0) {
-            if (_callbacks->isAPCEnabled()) {
-                int8_t apc = _callbacks->getAPCReduction();
-                float margin = _callbacks->getAPCMargin();
-                int effective = (int)_prefs->tx_power_dbm - (int)apc;
-                snprintf(reply, CLI_REPLY_SIZE,
-                         "> apc=on effective=%ddBm max=%d reduction=%d margin=%.1f target=%d",
-                         effective, (int)_prefs->tx_power_dbm, (int)apc, (double)margin,
-                         (int)_callbacks->getAPCTargetMargin());
-            } else {
-                snprintf(reply, CLI_REPLY_SIZE, "> apc=off max=%ddBm target=%d",
-                         (int)_prefs->tx_power_dbm, (int)_callbacks->getAPCTargetMargin());
-            }
         } else if (strcmp(config, "tx") == 0) {
-            if (_callbacks->isAPCEnabled()) {
-                int8_t apc = _callbacks->getAPCReduction();
-                float margin = _callbacks->getAPCMargin();
-                int effective = (int)_prefs->tx_power_dbm - (int)apc;
-                snprintf(reply, CLI_REPLY_SIZE,
-                         "> %ddBm (apc=on max=%d reduction=%d margin=%.1f target=%d)",
-                         effective, (int)_prefs->tx_power_dbm, (int)apc, (double)margin,
-                         (int)_callbacks->getAPCTargetMargin());
-            } else {
-                snprintf(reply, CLI_REPLY_SIZE, "> %ddBm (apc=off)",
-                         (int)_prefs->tx_power_dbm);
-            }
+            /* Plain number, matching upstream Arduino MeshCore's "> %d". */
+            snprintf(reply, CLI_REPLY_SIZE, "> %d", (int)_prefs->tx_power_dbm);
         } else if (memcmp(config, "freq", 4) == 0) {
             snprintf(reply, CLI_REPLY_SIZE, "> %.3f", (double)_prefs->freq);
         } else if (memcmp(config, "public.key", 10) == 0) {
@@ -959,42 +936,21 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
                 savePrefs();
                 strcpy(reply, "OK");
             }
-        } else if (memcmp(config, "apc.margin ", 11) == 0) {
-            int val = atoi(&config[11]);
-            if (val >= 6 && val <= 30) {
-                _prefs->apc_margin = (uint8_t)val;
-                _callbacks->setAPCTargetMargin((uint8_t)val);
-                savePrefs();
-                snprintf(reply, CLI_REPLY_SIZE, "OK - APC target margin=%d dB", val);
-            } else {
-                strcpy(reply, "Error: range 6-30 dB");
-            }
         } else if (memcmp(config, "tx ", 3) == 0) {
-            if (strcmp(&config[3], "apc") == 0) {
-                _prefs->apc_enabled = 1;
-                _callbacks->setAPCEnabled(true);
-                savePrefs();
-                snprintf(reply, CLI_REPLY_SIZE, "OK - tx power=%d dBm (apc=on)",
-                         (int)_prefs->tx_power_dbm);
-            } else {
-                char *end = nullptr;
-                long parsed = strtol(&config[3], &end, 10);
-                int max_tx = 30;
+            char *end = nullptr;
+            long parsed = strtol(&config[3], &end, 10);
+            int max_tx = 30;
 #ifdef CONFIG_ZEPHCORE_MAX_TX_POWER_DBM
-                max_tx = CONFIG_ZEPHCORE_MAX_TX_POWER_DBM;
+            max_tx = CONFIG_ZEPHCORE_MAX_TX_POWER_DBM;
 #endif
-                if (end == &config[3] || *end != '\0' || parsed < -9 || parsed > max_tx) {
-                    snprintf(reply, CLI_REPLY_SIZE, "Error: range -9 to %d dBm, or 'apc'", max_tx);
-                } else {
-                    int val = (int)parsed;
-                    _prefs->apc_enabled = 0;
-                    _prefs->tx_power_dbm = (int8_t)val;
-                    savePrefs();
-                    _callbacks->setAPCEnabled(false);
-                    _callbacks->setTxPower(_prefs->tx_power_dbm);
-                    snprintf(reply, CLI_REPLY_SIZE, "OK - tx power=%d dBm (apc=off)",
-                             (int)_prefs->tx_power_dbm);
-                }
+            if (end == &config[3] || *end != '\0' || parsed < -9 || parsed > max_tx) {
+                snprintf(reply, CLI_REPLY_SIZE, "Error: range -9 to %d dBm", max_tx);
+            } else {
+                _prefs->tx_power_dbm = (int8_t)parsed;
+                savePrefs();
+                _callbacks->setTxPower(_prefs->tx_power_dbm);
+                snprintf(reply, CLI_REPLY_SIZE, "OK - tx power=%d dBm",
+                         (int)_prefs->tx_power_dbm);
             }
         } else if (sender_timestamp == 0 && memcmp(config, "freq ", 5) == 0) {
             float f = atof(&config[5]);

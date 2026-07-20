@@ -8,7 +8,28 @@
 
 #pragma once
 
-/* ===== Key codes ===== */
+/* ===== Key codes =====
+ *
+ * These are the UI's INTERNAL codes, carried as a single char through
+ * JoystickUITask::enqueueKey().  They are deliberately NOT the Zephyr
+ * INPUT_KEY_* codes — joystick_ui_input_cb() translates between the two — and
+ * they are never persisted or transmitted, so they can be renumbered freely.
+ *
+ * Key-space contract (keep this true):
+ *   0x01-0x1F  control keys (navigation, enter, cancel)
+ *   0x20-0x7E  RESERVED for printable characters typed on a keyboard
+ *   0xF1-0xFF  long-press and global action keys
+ *
+ * The printable range is reserved so a keyboard board (ThinkNode M9's STC8H
+ * matrix MCU at I2C 0x6C) can enqueue characters directly without colliding
+ * with a control code.  The multi-tap action keys below used to sit at
+ * 0x42-0x45 — i.e. on 'B'..'E' — which would have made typing "BCDE" fire a
+ * flood advert, toggle GPS, mute the buzzer and kill the LED.
+ *
+ * Note KEY_ENTER and KEY_CANCEL are already ASCII CR and ESC, so a keyboard
+ * that reports plain ASCII (the convention for this class of I2C matrix MCU)
+ * produces correct enter/cancel with no translation at all.
+ */
 #define KEY_ENTER       0x0D   /* center/OK button click */
 #define KEY_LEFT        0x01   /* joystick left */
 #define KEY_RIGHT       0x02   /* joystick right */
@@ -24,11 +45,13 @@
 #define KEY_TO_BOTTOM   0xF3   /* long press down → page down */
 #define KEY_LOCK        0xF4   /* user button + joystick center held together → screen lock */
 
-/* Global action keys emitted by multi tap filter, handled in loop() */
-#define KEY_FLOOD_ADVERT  0x42   /* INPUT_KEY_B: 2 taps → flood advert */
-#define KEY_BUZZ_TOGGLE   0x44   /* INPUT_KEY_D: 3 taps → buzzer mute toggle */
-#define KEY_GPS_TOGGLE    0x43   /* INPUT_KEY_C: 4 taps → GPS on/off */
-#define KEY_LED_TOGGLE    0x45   /* INPUT_KEY_E: 5 taps → LED heartbeat toggle */
+/* Global action keys emitted by multi tap filter, handled in loop().
+ * Kept above 0xF0 so they stay clear of the printable range — see the
+ * key-space contract above. */
+#define KEY_FLOOD_ADVERT  0xF5   /* INPUT_KEY_B: 2 taps → flood advert (unused) */
+#define KEY_BUZZ_TOGGLE   0xF6   /* INPUT_KEY_D: 3 taps → buzzer mute toggle */
+#define KEY_GPS_TOGGLE    0xF7   /* INPUT_KEY_C: 4 taps → GPS on/off */
+#define KEY_LED_TOGGLE    0xF8   /* INPUT_KEY_E: 5 taps → LED heartbeat toggle */
 
 /* ===== Layout constants (calibrated for 128x64 OLED, 6x8 font) ===== */
 /* All hard-coded offsets from old Arduino code are preserved here.

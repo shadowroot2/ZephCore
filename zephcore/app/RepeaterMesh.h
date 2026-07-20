@@ -285,31 +285,6 @@ public:
     uint32_t getDutyCycleTimeoutRestarts() const override;
     void resetDutyCycleTimeoutRestarts() override;
 
-#ifdef CONFIG_ZEPHCORE_APC
-    /* Adaptive Power Control callbacks */
-    int8_t getAPCReduction() const override {
-        return getPowerController().getPowerReduction();
-    }
-    float getAPCMargin() const override {
-        return getPowerController().getMarginEstimate();
-    }
-    bool isAPCEnabled() const override {
-        return getPowerController().isEnabled();
-    }
-    void setAPCEnabled(bool en) override {
-        getPowerController().setEnabled(en);
-        if (!en) {
-            _radio->setTxPowerReduction(0);
-        }
-    }
-    uint8_t getAPCTargetMargin() const override {
-        return getPowerController().getTargetMargin();
-    }
-    void setAPCTargetMargin(uint8_t margin_db) override {
-        getPowerController().setTargetMargin(margin_db);
-    }
-#endif
-
     void handleCommand(uint32_t sender_timestamp, char* command, char* reply);
     void loop();
 

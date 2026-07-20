@@ -611,21 +611,6 @@ config ZEPHCORE_LORA_DC_MIN_SYMBOLS
 	  for extra detection margin on very noisy sites.  SF5/6 adds +4
 	  internally.  Lowering below 8 risks missed packets at low SNR.
 
-config ZEPHCORE_APC
-	bool "Adaptive Power Control (APC)"
-	default y
-	help
-	  Automatically reduce TX power when echo packets from neighbors
-	  indicate excess SNR margin. Saves battery and reduces channel
-	  congestion. Ramps back to full power within 2 minutes if no
-	  echoes are heard.
-
-	  Uses rogue-filtering: clusters echo SNRs to avoid one badly
-	  placed high-SNR neighbor from over-reducing power.
-
-	  Compiled in by default; disabled at runtime (enable per-node
-	  via CLI "set tx apc" — persisted in prefs).
-
 endmenu
 
 config ZEPHCORE_RTC_AUTODISCOVER
@@ -899,6 +884,22 @@ config ZEPHCORE_UI_JOYSTICK
 	  D-pad. Not user-selectable; set by the board configuration.
 	  Follows the same pattern as ZEPHCORE_UI_BUTTONS and ZEPHCORE_UI_DISPLAY.
 
+config ZEPHCORE_UI_KEYBOARD
+	bool
+	help
+	  Set by board-level Kconfig when the hardware has a full keyboard
+	  (e.g. ThinkNode M9's STC8H matrix MCU on I2C). Not user-selectable.
+
+	  A keyboard is a superset of a joystick — it supplies arrows, enter
+	  and escape — so it drives the same full companion UI rather than a
+	  separate one. Selecting this makes ZEPHCORE_UI_DESIGN_JOYSTICK
+	  available on a board that has no 5-way stick.
+
+	  No board selects this yet: the STC8H driver and the keyboard text
+	  entry screen are not written, and the M9 is unverified on hardware.
+	  The key-space reservation in helpers/ui-joystick/joystick_defs.h is
+	  the groundwork that makes them droppable in later.
+
 config ZEPHCORE_UI_DESIGN_BUTTON
 	bool "Button-based page UI"
 	default y if (ZEPHCORE_UI_BUTTONS || ZEPHCORE_UI_DISPLAY || ZEPHCORE_UI_BUZZER) && !ZEPHCORE_UI_DESIGN_JOYSTICK
@@ -910,14 +911,18 @@ config ZEPHCORE_UI_DESIGN_BUTTON
 	  implementation without touching this Kconfig.
 
 config ZEPHCORE_UI_DESIGN_JOYSTICK
-	bool "Joystick-based companion UI"
-	default y if ZEPHCORE_ROLE_COMPANION && ZEPHCORE_UI_DISPLAY && ZEPHCORE_UI_BUTTONS && ZEPHCORE_UI_JOYSTICK
-	depends on ZEPHCORE_ROLE_COMPANION && ZEPHCORE_UI_DISPLAY && ZEPHCORE_UI_BUTTONS && ZEPHCORE_UI_JOYSTICK
+	bool "Full companion UI (joystick or keyboard driven)"
+	default y if ZEPHCORE_ROLE_COMPANION && ZEPHCORE_UI_DISPLAY && ZEPHCORE_UI_BUTTONS && (ZEPHCORE_UI_JOYSTICK || ZEPHCORE_UI_KEYBOARD)
+	depends on ZEPHCORE_ROLE_COMPANION && ZEPHCORE_UI_DISPLAY && ZEPHCORE_UI_BUTTONS && (ZEPHCORE_UI_JOYSTICK || ZEPHCORE_UI_KEYBOARD)
 	help
-	  Full joystick-driven companion UI (helpers/ui-joystick/). Provides GPS,
-	  contacts, channels, snake game, repeater admin, and all other companion
-	  screens via a 5-way joystick or D-pad. Replaces ZEPHCORE_UI_DESIGN_BUTTON
-	  for companion builds on boards with joystick hardware.
+	  Full companion UI (helpers/ui-joystick/). Provides GPS, contacts,
+	  channels, snake game, repeater admin, and all other companion screens.
+	  Replaces ZEPHCORE_UI_DESIGN_BUTTON for companion builds on boards with
+	  joystick or keyboard hardware.
+
+	  Named "joystick" for the hardware that first drove it; the screens
+	  themselves only consume the abstract key codes in joystick_defs.h, so
+	  any input device supplying arrows/enter/escape can drive them.
 
 endmenu
 

@@ -239,11 +239,6 @@ void CompanionMesh::begin()
 	if (vcontactClockValid()) {
 		_vcontact_lastmod = (uint32_t)getRTCClock()->getCurrentTime();
 	}
-#ifdef CONFIG_ZEPHCORE_APC
-	_power_ctrl.setSF(prefs.sf);
-	_power_ctrl.setTargetMargin(prefs.apc_margin);
-	_power_ctrl.setEnabled(prefs.apc_enabled != 0);
-#endif
 }
 
 bool CompanionMesh::allowPacketForward(const mesh::Packet *packet)
@@ -2623,9 +2618,6 @@ bool CompanionMesh::handleProtocolFrame(const uint8_t *data, size_t len)
 				prefs.cr = cr;
 				prefs.client_repeat = repeat;
 				_store->savePrefs(prefs);
-#ifdef CONFIG_ZEPHCORE_APC
-				_power_ctrl.setSF(sf);
-#endif
 				if (_radio_reconfig_cb) _radio_reconfig_cb();
 				LOG_INF("SET_RADIO_PARAMS: client_repeat=%d", repeat);
 				sendPacketOk();

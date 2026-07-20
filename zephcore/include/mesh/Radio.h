@@ -38,8 +38,6 @@ public:
 	virtual float getLastSNR() const { return 0; }
 
 	/* Adaptive Power Control */
-	virtual void setTxPowerReduction(int8_t reduction_db) { (void)reduction_db; }
-	virtual int8_t getTxPowerReduction() const { return 0; }
 
 	/* Adaptive CAD (LBT detPeak calibration).  Default no-ops for radios
 	 * without hardware CAD (SX127x). */

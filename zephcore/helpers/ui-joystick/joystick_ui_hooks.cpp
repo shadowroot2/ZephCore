@@ -238,14 +238,11 @@ extern "C" void ui_set_radio_params(
 	}
 }
 
-extern "C" void ui_set_radio_runtime(int8_t effective_tx_power, bool apc_enabled,
-	int8_t apc_reduction, int16_t apc_margin_x10,
-	uint8_t apc_target_margin, uint8_t sync_word,
+extern "C" void ui_set_radio_runtime(uint8_t sync_word,
 	uint16_t preamble_len, bool rx_duty_cycle,
 	bool radio_ready, bool in_rx, bool tx_active)
 {
-	(void)effective_tx_power; (void)apc_enabled; (void)apc_reduction;
-	(void)apc_margin_x10; (void)apc_target_margin; (void)sync_word;
+	(void)sync_word;
 	(void)preamble_len; (void)rx_duty_cycle; (void)radio_ready;
 	(void)in_rx; (void)tx_active;
 }

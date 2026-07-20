@@ -51,7 +51,6 @@ zephcore/
 │   ├── Identity.cpp        # Ed25519 key management, ECDH shared secrets
 │   ├── Utils.cpp           # AES-ECB encrypt, HMAC-SHA256, MAC
 │   ├── ContentionTracker.cpp        # Adaptive contention window (EMA, backoff)
-│   ├── PowerController.cpp          # Adaptive Power Control (APC)
 │   ├── StaticPoolPacketManager.cpp  # Fixed-size packet pool (32 slots)
 │   ├── main_companion.cpp  # Companion mode entry point + event loop
 │   ├── main_repeater.cpp   # Repeater mode entry point + event loop
@@ -63,7 +62,6 @@ zephcore/
 │   ├── Radio.h             # Abstract radio interface
 │   ├── Board.h, Clock.h, RNG.h, RTC.h  # HAL interfaces
 │   ├── ContentionTracker.h # Adaptive contention window state
-│   ├── PowerController.h   # APC state machine
 │   ├── LoRaConfig.h        # Default radio parameters
 │   ├── RadioIncludes.h     # Compile-time radio driver selection
 │   ├── SimpleMeshTables.h  # Hash-based packet deduplication
@@ -984,7 +982,7 @@ in their shared base fields:
 **Companion `/lfs/new_prefs` (152 bytes)** — `adapters/datastore/ZephyrDataStore.cpp`
 `loadPrefs()`/`savePrefs()` (offset comments inline). Arduino companion layout (name, lat/lon,
 radio params, telemetry modes, BLE pin, GPS, autoadd) plus ZephCore extensions from offset 92:
-rx_boost(92), leds_disabled(93), apc(94-95), default flood scope name/key(96-142),
+rx_boost(92), leds_disabled(93), reserved(94-95, was APC), default flood scope name/key(96-142),
 ble_disabled(143), display/wake/screen-off/auto-shutdown(144-149), rx_duty_cycle(150),
 meshtimesync(151).
 
@@ -992,7 +990,7 @@ meshtimesync(151).
 `loadPrefs()`/`savePrefs()` (same field order as `helpers/CommonCLI.cpp`; offset comments inline).
 Key ranges: name(4-36), radio(72-119), adaptive-delay(80-111, ignored at runtime),
 Arduino-bridge(127-151, read+discarded), GPS(156-161), owner_info(170-290), rx_boost/duty(290-291),
-apc(292-293), flood_max_unscoped/advert(294-295), meshtimesync(296). Older shorter files
+reserved(292-293, was APC), flood_max_unscoped/advert(294-295), meshtimesync(296). Older shorter files
 load cleanly — reads past EOF are no-ops, so newer fields keep their defaults and a one-time
 upgrade block migrates them.
 

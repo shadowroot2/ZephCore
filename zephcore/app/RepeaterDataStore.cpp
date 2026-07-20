@@ -191,12 +191,14 @@ bool RepeaterDataStore::loadPrefs(NodePrefs& prefs) {
     fs_read(&file, prefs.owner_info, sizeof(prefs.owner_info));
     /* ZephCore extensions — absent in old 290-byte files; fs_read past EOF is a
      * no-op so these fields keep the initNodePrefs() defaults the caller passed
-     * in (rx_boost=1, rx_duty_cycle=0, apc_enabled=0, apc_margin=16). The
-     * upgrade block below forces repeater-specific values for old files. */
+     * in (rx_boost=1, rx_duty_cycle=0). The upgrade block below forces
+     * repeater-specific values for old files. */
     fs_read(&file, &prefs.rx_boost, sizeof(prefs.rx_boost));
     fs_read(&file, &prefs.rx_duty_cycle, sizeof(prefs.rx_duty_cycle));
-    fs_read(&file, &prefs.apc_enabled, sizeof(prefs.apc_enabled));
-    fs_read(&file, &prefs.apc_margin, sizeof(prefs.apc_margin));
+    /* RESERVED — formerly apc_enabled / apc_margin (APC, removed in 1.16.6).
+     * Still consumed so the fields after them stay at their stored offsets. */
+    fs_read(&file, &prefs._reserved_apc_enabled, sizeof(prefs._reserved_apc_enabled));
+    fs_read(&file, &prefs._reserved_apc_margin, sizeof(prefs._reserved_apc_margin));
     /* Flood hop-ceiling extensions (absent in <296-byte files; the no-op EOF
      * read leaves the constructor defaults flood_max_unscoped=64, flood_max_advert=8). */
     fs_read(&file, &prefs.flood_max_unscoped, sizeof(prefs.flood_max_unscoped));
@@ -252,8 +254,6 @@ bool RepeaterDataStore::loadPrefs(NodePrefs& prefs) {
     if (prefs.loop_detect > LOOP_DETECT_STRICT) prefs.loop_detect = LOOP_DETECT_MINIMAL;
     if (prefs.rx_boost > 1) prefs.rx_boost = 0;
     if (prefs.rx_duty_cycle > 1) prefs.rx_duty_cycle = 0;
-    if (prefs.apc_enabled > 1) prefs.apc_enabled = 0;
-    if (prefs.apc_margin < 6 || prefs.apc_margin > 30) prefs.apc_margin = 16;
     if (prefs.meshtimesync > 1) prefs.meshtimesync = 0;
     if (prefs.cad_auto > 1) prefs.cad_auto = 0;
     if (prefs.cad_offset < CAD_OFFSET_MIN || prefs.cad_offset > CAD_OFFSET_MAX) prefs.cad_offset = 0;
@@ -354,8 +354,10 @@ bool RepeaterDataStore::savePrefs(const NodePrefs& prefs) {
     /* ZephCore extensions */
     fs_write(&file, &prefs.rx_boost, sizeof(prefs.rx_boost));
     fs_write(&file, &prefs.rx_duty_cycle, sizeof(prefs.rx_duty_cycle));
-    fs_write(&file, &prefs.apc_enabled, sizeof(prefs.apc_enabled));
-    fs_write(&file, &prefs.apc_margin, sizeof(prefs.apc_margin));
+    /* RESERVED — formerly apc_enabled / apc_margin (removed in 1.16.6).
+     * Written back unchanged to hold the layout. */
+    fs_write(&file, &prefs._reserved_apc_enabled, sizeof(prefs._reserved_apc_enabled));
+    fs_write(&file, &prefs._reserved_apc_margin, sizeof(prefs._reserved_apc_margin));
     /* Flood hop-ceiling extensions (extend the format past 294 bytes) */
     fs_write(&file, &prefs.flood_max_unscoped, sizeof(prefs.flood_max_unscoped));
     fs_write(&file, &prefs.flood_max_advert, sizeof(prefs.flood_max_advert));

@@ -383,24 +383,7 @@ static void refresh_repeater_ui_radio_state(void)
 		lora_radio.getConfiguredTxPower(),
 		lora_radio.getNoiseFloor());
 
-	bool apc_enabled = false;
-	int8_t apc_reduction = 0;
-	int16_t apc_margin_x10 = 0;
-	uint8_t apc_target = repeater_mesh_ptr->getNodePrefs()->apc_margin;
-
-#ifdef CONFIG_ZEPHCORE_APC
-	apc_enabled = repeater_mesh_ptr->isAPCEnabled();
-	apc_reduction = repeater_mesh_ptr->getAPCReduction();
-	apc_margin_x10 = (int16_t)(repeater_mesh_ptr->getAPCMargin() * 10.0f);
-	apc_target = repeater_mesh_ptr->getAPCTargetMargin();
-#endif
-
 	ui_set_radio_runtime(
-		lora_radio.getEffectiveTxPower(),
-		apc_enabled,
-		apc_reduction,
-		apc_margin_x10,
-		apc_target,
 		lora_radio.getActiveSyncWord(),
 		lora_radio.getActivePreambleLength(),
 		lora_radio.isRxDutyCycleEnabled(),
@@ -480,7 +463,7 @@ static void repeater_event_loop(void)
 			ui_set_clock(rtc_clock.getCurrentTime());
 
 #ifdef ZEPHCORE_LORA
-			/* Refresh live radio/APC state (noise floor, TX power
+			/* Refresh live radio state (noise floor, TX power
 			 * reduction, RX/TX mode, packet counters). */
 			refresh_repeater_ui_radio_state();
 

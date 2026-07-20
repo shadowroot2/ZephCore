@@ -180,7 +180,7 @@ All `set uplink.*` changes are saved immediately and only applied after reboot.
 | `get repeat` | Forwarding enabled: `on` or `off` |
 | `get radio` | Radio params: `freq,bw,sf,cr` |
 | `get freq` | Frequency in MHz |
-| `get tx` | TX power: fixed dBm or APC status |
+| `get tx` | TX power in dBm |
 | `get lat` | Stored latitude |
 | `get lon` | Stored longitude |
 | `get dutycycle` | Duty cycle as percentage (e.g. "50.0%") |
@@ -194,7 +194,6 @@ All `set uplink.*` changes are saved immediately and only applied after reboot.
 | `get flood.max.advert` | Max retransmit hops for ADVERT floods |
 | `get flood.advert.interval` | Flood advertisement interval in hours |
 | `get advert.interval` | Local advertisement interval in minutes |
-| `get apc.margin` | Adaptive Power Control target RSSI margin in dB |
 | `get allow.read.only` | Whether read-only clients are allowed |
 | `get guest.password` | Guest access password |
 | `get owner.info` | Owner/contact info (pipes `\|` display as newlines) |
@@ -226,7 +225,7 @@ Changes are persisted immediately unless noted. Some require a reboot.
 | `set repeat <on\|off>` | | Enable or disable packet forwarding |
 | `set radio <freq> <bw> <sf> <cr>` | freq 150–2500, bw 7–500, sf 5–12, cr 5–8 | Set radio params *(reboot required)* |
 | `set freq <mhz>` | 150–2500 *(USB only)* | Set frequency alone *(reboot required)* |
-| `set tx <dbm\|apc>` | −9 to board max (default 30), or `apc` | Set TX power fixed or enable Adaptive Power Control |
+| `set tx <dbm>` | −9 to board max (default 30) | Set TX power |
 | `set lat <latitude>` | | Set stored latitude |
 | `set lon <longitude>` | | Set stored longitude |
 | `set dutycycle <pct>` | 1–100 | Set duty cycle percentage (converted to airtime factor internally) |
@@ -240,7 +239,6 @@ Changes are persisted immediately unless noted. Some require a reboot.
 | `set flood.max.advert <count>` | 0–64 | Hop limit for ADVERT floods only (default 8); curbs advert churn independent of flood.max |
 | `set flood.advert.interval <hours>` | 3–168 | How often the repeater floods its own advertisement |
 | `set advert.interval <mins>` | min–240 | How often the repeater sends local advertisements |
-| `set apc.margin <db>` | 6–30 | Target RSSI margin for Adaptive Power Control |
 | `set allow.read.only <on\|off>` | | Allow or deny read-only client connections |
 | `set guest.password <pwd>` | | Set guest access password |
 | `set owner.info <text>` | Use `\|` for newlines | Owner/contact information |

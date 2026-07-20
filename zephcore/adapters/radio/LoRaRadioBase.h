@@ -84,7 +84,7 @@ public:
 
 	/* Read-only view of the modem config currently used by buildModemConfig().
 	 * These honor temporary radio overrides for freq/bw/sf/cr and the same TX
-	 * clamps/APC reduction as the actual lora_config() path. */
+	 * clamps as the actual lora_config() path. */
 	uint32_t getActiveFrequencyHz() const;
 	uint16_t getActiveBandwidthKHzX10() const;
 	uint8_t getActiveSpreadingFactor() const;
@@ -92,7 +92,6 @@ public:
 	uint16_t getActivePreambleLength() const;
 	uint8_t getActiveSyncWord() const;
 	int8_t getConfiguredTxPower() const;
-	int8_t getEffectiveTxPower() const;
 	bool isTxActive() const { return atomic_get(&_tx_active) != 0; }
 
 	/* Duty-cycle preamble false-positive counter.
@@ -104,10 +103,6 @@ public:
 	 * Default returns 0 on radios that don't support the stat. */
 	virtual uint32_t getDutyCycleTimeoutRestarts() const { return 0; }
 	virtual void resetDutyCycleTimeoutRestarts() {}
-
-	/* Adaptive Power Control */
-	void setTxPowerReduction(int8_t reduction_db) override { _tx_power_reduction_db = reduction_db; }
-	int8_t getTxPowerReduction() const override { return _tx_power_reduction_db; }
 
 	/* Adaptive CAD (LBT detPeak calibration) */
 	void setCadParams(bool auto_enabled, int8_t offset,
@@ -223,7 +218,6 @@ protected:
 	/* Power saving */
 	bool _rx_duty_cycle_enabled;
 	bool _rx_boost_enabled;
-	int8_t _tx_power_reduction_db;
 
 	/* Last duty-cycle timing handed to the driver — used to log timing
 	 * changes once at INF instead of on every RX restart.  0/0 = never
@@ -237,7 +231,7 @@ protected:
 
 	/* Radio param override — when set, buildModemConfig() uses these
 	 * for freq/bw/sf/cr instead of _prefs.  Everything else (tx_power,
-	 * preamble, APC reduction) still comes from _prefs. */
+	 * preamble) still comes from _prefs. */
 	bool _has_radio_override;
 	float _override_freq;
 	float _override_bw;

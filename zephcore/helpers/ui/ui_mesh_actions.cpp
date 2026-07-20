@@ -353,31 +353,13 @@ extern "C" void mesh_housekeeping_ui_refresh(void)
 		s_lora_radio->getActiveCodingRate(),
 		s_lora_radio->getConfiguredTxPower(),
 		s_lora_radio->getNoiseFloor());
-	{
-		bool apc_enabled = false;
-		int8_t apc_reduction = 0;
-		int16_t apc_margin_x10 = 0;
-		uint8_t apc_target = s_mesh->prefs.apc_margin;
-
-#ifdef CONFIG_ZEPHCORE_APC
-		apc_enabled = s_mesh->isAPCEnabled();
-		apc_reduction = s_mesh->getAPCReduction();
-		apc_margin_x10 = (int16_t)(s_mesh->getAPCMargin() * 10.0f);
-		apc_target = s_mesh->getAPCTargetMargin();
-#endif
-		ui_set_radio_runtime(
-			s_lora_radio->getEffectiveTxPower(),
-			apc_enabled,
-			apc_reduction,
-			apc_margin_x10,
-			apc_target,
-			s_lora_radio->getActiveSyncWord(),
-			s_lora_radio->getActivePreambleLength(),
-			s_lora_radio->isRxDutyCycleEnabled(),
-			s_lora_radio->isRadioReady(),
-			s_lora_radio->isInRecvMode(),
-			s_lora_radio->isTxActive());
-	}
+	ui_set_radio_runtime(
+		s_lora_radio->getActiveSyncWord(),
+		s_lora_radio->getActivePreambleLength(),
+		s_lora_radio->isRxDutyCycleEnabled(),
+		s_lora_radio->isRadioReady(),
+		s_lora_radio->isInRecvMode(),
+		s_lora_radio->isTxActive());
 	ui_set_radio_stats(
 		s_lora_radio->getPacketsRecv(),
 		s_lora_radio->getPacketsSent(),

@@ -1088,27 +1088,6 @@ public:
 		lora_radio.resetCadStats();
 	}
 
-#ifdef CONFIG_ZEPHCORE_APC
-	int8_t getAPCReduction() const override {
-		return companion_mesh.getAPCReduction();
-	}
-	float getAPCMargin() const override {
-		return companion_mesh.getAPCMargin();
-	}
-	bool isAPCEnabled() const override {
-		return companion_mesh.isAPCEnabled();
-	}
-	void setAPCEnabled(bool en) override {
-		companion_mesh.setAPCEnabled(en);
-	}
-	uint8_t getAPCTargetMargin() const override {
-		return companion_mesh.getAPCTargetMargin();
-	}
-	void setAPCTargetMargin(uint8_t margin_db) override {
-		companion_mesh.setAPCTargetMargin(margin_db);
-	}
-#endif
-
 	mesh::LocalIdentity& getSelfId() override { return companion_mesh.self_id; }
 
 	void saveIdentity(const mesh::LocalIdentity& new_id) override {
@@ -1924,7 +1903,6 @@ int main(void)
 	 * zeroed cad_probe_interval / cad_auto and, earlier, the GPS settings). */
 	initNodePrefs(&companion_mesh.prefs);
 	/* Companion-specific overrides vs. initNodePrefs defaults: */
-	companion_mesh.prefs.apc_margin = 20;       /* mobile: more conservative than the 16 default */
 	companion_mesh.prefs.auto_shutdown_mv = CONFIG_ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS; /* low-batt cutoff (0=off) */
 	companion_mesh.prefs.gps_interval = CONFIG_ZEPHCORE_GPS_POLL_INTERVAL_SEC; /* 5-min duty cycle (0=always-on) */
 
@@ -2024,30 +2002,13 @@ int main(void)
 		lora_radio.getActiveCodingRate(),
 		lora_radio.getConfiguredTxPower(),
 		lora_radio.getNoiseFloor());
-#ifdef CONFIG_ZEPHCORE_APC
 	ui_set_radio_runtime(
-		lora_radio.getEffectiveTxPower(),
-		companion_mesh.isAPCEnabled(),
-		companion_mesh.getAPCReduction(),
-		(int16_t)(companion_mesh.getAPCMargin() * 10.0f),
-		companion_mesh.getAPCTargetMargin(),
 		lora_radio.getActiveSyncWord(),
 		lora_radio.getActivePreambleLength(),
 		lora_radio.isRxDutyCycleEnabled(),
 		lora_radio.isRadioReady(),
 		lora_radio.isInRecvMode(),
 		lora_radio.isTxActive());
-#else
-	ui_set_radio_runtime(
-		lora_radio.getEffectiveTxPower(),
-		false, 0, 0, companion_mesh.prefs.apc_margin,
-		lora_radio.getActiveSyncWord(),
-		lora_radio.getActivePreambleLength(),
-		lora_radio.isRxDutyCycleEnabled(),
-		lora_radio.isRadioReady(),
-		lora_radio.isInRecvMode(),
-		lora_radio.isTxActive());
-#endif
 	ui_set_radio_stats(lora_radio.getPacketsRecv(),
 			   lora_radio.getPacketsSent(),
 			   lora_radio.getPacketsRecvErrors());
@@ -2105,30 +2066,13 @@ int main(void)
 				companion_mesh.prefs.cad_offset,
 				companion_mesh.prefs.cad_probe_interval,
 				companion_mesh.prefs.cad_busycap);
-#ifdef CONFIG_ZEPHCORE_APC
 	ui_set_radio_runtime(
-		lora_radio.getEffectiveTxPower(),
-		companion_mesh.isAPCEnabled(),
-		companion_mesh.getAPCReduction(),
-		(int16_t)(companion_mesh.getAPCMargin() * 10.0f),
-		companion_mesh.getAPCTargetMargin(),
 		lora_radio.getActiveSyncWord(),
 		lora_radio.getActivePreambleLength(),
 		lora_radio.isRxDutyCycleEnabled(),
 		lora_radio.isRadioReady(),
 		lora_radio.isInRecvMode(),
 		lora_radio.isTxActive());
-#else
-	ui_set_radio_runtime(
-		lora_radio.getEffectiveTxPower(),
-		false, 0, 0, companion_mesh.prefs.apc_margin,
-		lora_radio.getActiveSyncWord(),
-		lora_radio.getActivePreambleLength(),
-		lora_radio.isRxDutyCycleEnabled(),
-		lora_radio.isRadioReady(),
-		lora_radio.isInRecvMode(),
-		lora_radio.isTxActive());
-#endif
 
 	/* Restore runtime ADC multiplier override (0 = keep DT default) */
 	zephyr_board.setAdcMultiplier(companion_mesh.prefs.adc_multiplier);

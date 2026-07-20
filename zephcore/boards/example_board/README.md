@@ -335,9 +335,6 @@ should ONLY contain settings that can't be inferred from hardware:
     CONFIG_FUEL_GAUGE=y                 Boards with AXP2101 or other I2C fuel gauge
     CONFIG_ZEPHCORE_DEFAULT_TX_POWER_DBM  Boards with external PA
     CONFIG_ZEPHCORE_MAX_TX_POWER_DBM      Boards with external PA
-    CONFIG_ZEPHCORE_APC                   Adaptive Power Control — OFF by default.
-                                          Reduces TX power when echo SNR shows excess margin.
-                                          See apc.md for details on target margin tuning.
 
   AUTO-DETECTED (do NOT set in board.conf):
     CONFIG_PWM                          Auto from DT buzzer nodelabel

@@ -66,11 +66,6 @@ struct ui_state {
 	uint8_t  lora_cr;
 	int8_t   lora_tx_power;
 	int16_t  lora_noise_floor;
-	int8_t   lora_effective_tx_power;
-	bool     lora_apc_enabled;
-	int8_t   lora_apc_reduction;
-	int16_t  lora_apc_margin_x10;
-	uint8_t  lora_apc_target_margin;
 	uint8_t  lora_sync_word;
 	uint16_t lora_preamble_len;
 	bool     lora_rx_duty_cycle;

@@ -985,30 +985,18 @@ void ui_set_radio_params(uint32_t freq_hz, uint8_t sf, uint16_t bw_khz_x10,
 	}
 }
 
-void ui_set_radio_runtime(int8_t effective_tx_power, bool apc_enabled,
-			  int8_t apc_reduction, int16_t apc_margin_x10,
-			  uint8_t apc_target_margin, uint8_t sync_word,
+void ui_set_radio_runtime(uint8_t sync_word,
 			  uint16_t preamble_len, bool rx_duty_cycle,
 			  bool radio_ready, bool in_rx, bool tx_active)
 {
 	struct ui_state *s = get_state();
-	bool changed = s->lora_effective_tx_power != effective_tx_power ||
-		       s->lora_apc_enabled != apc_enabled ||
-		       s->lora_apc_reduction != apc_reduction ||
-		       s->lora_apc_margin_x10 != apc_margin_x10 ||
-		       s->lora_apc_target_margin != apc_target_margin ||
-		       s->lora_sync_word != sync_word ||
+	bool changed = s->lora_sync_word != sync_word ||
 		       s->lora_preamble_len != preamble_len ||
 		       s->lora_rx_duty_cycle != rx_duty_cycle ||
 		       s->lora_radio_ready != radio_ready ||
 		       s->lora_in_rx != in_rx ||
 		       s->lora_tx_active != tx_active;
 
-	s->lora_effective_tx_power = effective_tx_power;
-	s->lora_apc_enabled = apc_enabled;
-	s->lora_apc_reduction = apc_reduction;
-	s->lora_apc_margin_x10 = apc_margin_x10;
-	s->lora_apc_target_margin = apc_target_margin;
 	s->lora_sync_word = sync_word;
 	s->lora_preamble_len = preamble_len;
 	s->lora_rx_duty_cycle = rx_duty_cycle;

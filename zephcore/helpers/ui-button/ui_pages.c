@@ -794,14 +794,11 @@ static void render_radio_mono(void)
 	const char *rx_mode = state.lora_rx_duty_cycle ? "DC" : "CONT";
 
 	if (ui_tiny()) {
-		int tx = state.lora_effective_tx_power > 0
-			 ? state.lora_effective_tx_power : state.lora_tx_power;
-
 		snprintf(buf, sizeof(buf), "%u.%uM", freq_mhz, freq_frac / 100);
 		draw_centered(centered_row(0, 3), buf);
 		snprintf(buf, sizeof(buf), "SF%u BW%u", state.lora_sf, bw_int);
 		draw_centered(centered_row(1, 3), buf);
-		snprintf(buf, sizeof(buf), "P%d %s", tx, rx_mode);
+		snprintf(buf, sizeof(buf), "P%d %s", state.lora_tx_power, rx_mode);
 		draw_centered(centered_row(2, 3), buf);
 		return;
 	}
@@ -822,20 +819,8 @@ static void render_radio_mono(void)
 	mc_display_text(0, y, buf, false);
 	y += LINE_H;
 
-	if (state.lora_apc_enabled) {
-		snprintf(buf, sizeof(buf), "TX:%d/%ddBm APC:on",
-			 state.lora_effective_tx_power, state.lora_tx_power);
-	} else {
-		snprintf(buf, sizeof(buf), "TX:%ddBm APC:off", state.lora_tx_power);
-	}
-	mc_display_text(0, y, buf, false);
-	y += LINE_H;
-
-	snprintf(buf, sizeof(buf), "R%d M%d.%d T%u %s/%s",
-		 state.lora_apc_reduction,
-		 state.lora_apc_margin_x10 / 10,
-		 abs(state.lora_apc_margin_x10 % 10),
-		 state.lora_apc_target_margin, packet_state, rx_mode);
+	snprintf(buf, sizeof(buf), "TX:%ddBm %s/%s",
+		 state.lora_tx_power, packet_state, rx_mode);
 	mc_display_text(0, y, buf, false);
 	y += LINE_H;
 
@@ -858,20 +843,14 @@ static void render_radio_color(void)
 	uint16_t bw_frac = state.lora_bw_khz_x10 % 10;
 	const char *packet_state = radio_state_label();
 	const char *rx_mode = state.lora_rx_duty_cycle ? "DC" : "CONT";
-	uint16_t warn_color = (state.lora_apc_enabled && state.lora_apc_reduction > 0)
-			      ? UI_COLOR_WARN : UI_COLOR_OK;
 
 	{
 		uint16_t state_color = state.lora_tx_active ? UI_COLOR_WARN :
 				       state.lora_in_rx ? UI_COLOR_ACTIVE :
 				       state.lora_radio_ready ? UI_COLOR_OK
 							      : UI_COLOR_DISABLED;
-		uint16_t tx_color = (state.lora_apc_enabled &&
-				     state.lora_apc_reduction > 0)
-				    ? UI_COLOR_WARN : UI_COLOR_OK;
+		uint16_t tx_color = UI_COLOR_OK;
 		int max_tx = state.lora_tx_power > 0 ? state.lora_tx_power : 22;
-		int eff_tx = state.lora_effective_tx_power > 0
-			     ? state.lora_effective_tx_power : state.lora_tx_power;
 		int badge_x;
 
 		mc_display_color_fill_rect(0, y - 1, DISP_W, COLOR_FONT_H + 2,
@@ -900,25 +879,10 @@ static void render_radio_color(void)
 		draw_color_segments(y, "LoRa ", buf, UI_COLOR_VALUE);
 		y += LINE_H;
 
-		if (state.lora_apc_enabled) {
-			snprintf(buf, sizeof(buf), "%d/%ddBm",
-				 state.lora_effective_tx_power, state.lora_tx_power);
-		} else {
-			snprintf(buf, sizeof(buf), "%ddBm", state.lora_tx_power);
-		}
+		snprintf(buf, sizeof(buf), "%ddBm", state.lora_tx_power);
 		draw_color_segments(y, "TX ", buf, tx_color);
-		draw_metric_bar(DISP_W - 50, y + 2, 48, 5, eff_tx, max_tx, tx_color);
-		y += LINE_H;
-
-		snprintf(buf, sizeof(buf), "red %d M%d.%d T%u",
-			 state.lora_apc_reduction,
-			 state.lora_apc_margin_x10 / 10,
-			 abs(state.lora_apc_margin_x10 % 10),
-			 state.lora_apc_target_margin);
-		draw_color_segments(y, "APC ", buf, warn_color);
-		draw_badge(DISP_W - color_text_width("APC") - 4, y, "APC",
-			   !state.lora_apc_enabled ? UI_COLOR_DISABLED :
-			   state.lora_apc_reduction > 0 ? UI_COLOR_WARN : UI_COLOR_OK);
+		draw_metric_bar(DISP_W - 50, y + 2, 48, 5, state.lora_tx_power,
+				max_tx, tx_color);
 		y += LINE_H;
 
 		char rx_count[6];
