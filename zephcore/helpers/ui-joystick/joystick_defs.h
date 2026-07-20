@@ -40,18 +40,25 @@
 #define KEY_PREV        0x06   /* single button prev page */
 #define KEY_HOME        0x07   /* go to home screen */
 #define KEY_SELECT      0x08   /* triple click / special */
-#define KEY_ENTER_LONG  0xF1   /* long press enter */
-#define KEY_TO_TOP      0xF2   /* long press up   → page up   */
-#define KEY_TO_BOTTOM   0xF3   /* long press down → page down */
-#define KEY_LOCK        0xF4   /* user button + joystick center held together → screen lock */
+/* Keys above 0x7F MUST be cast to char here.  They travel through the UI as a
+ * plain `char` (enqueueKey / handleInput), and plain char is SIGNED on Xtensa
+ * and RISC-V (ESP32-S3, ESP32-C6) while it is UNSIGNED on ARM.  Without the
+ * cast, `char c = KEY_LED_TOGGLE` stores -8 but the bare constant promotes to
+ * int 248, so every `c == KEY_LED_TOGGLE` compares -8 == 248 and silently
+ * never matches on the ESP32 boards.  Casting makes both sides the same char
+ * type, so the comparison holds under either signedness. */
+#define KEY_ENTER_LONG  ((char)0xF1)   /* long press enter */
+#define KEY_TO_TOP      ((char)0xF2)   /* long press up   → page up   */
+#define KEY_TO_BOTTOM   ((char)0xF3)   /* long press down → page down */
+#define KEY_LOCK        ((char)0xF4)   /* user button + joystick center held together → screen lock */
 
 /* Global action keys emitted by multi tap filter, handled in loop().
  * Kept above 0xF0 so they stay clear of the printable range — see the
  * key-space contract above. */
-#define KEY_FLOOD_ADVERT  0xF5   /* INPUT_KEY_B: 2 taps → flood advert (unused) */
-#define KEY_BUZZ_TOGGLE   0xF6   /* INPUT_KEY_D: 3 taps → buzzer mute toggle */
-#define KEY_GPS_TOGGLE    0xF7   /* INPUT_KEY_C: 4 taps → GPS on/off */
-#define KEY_LED_TOGGLE    0xF8   /* INPUT_KEY_E: 5 taps → LED heartbeat toggle */
+#define KEY_FLOOD_ADVERT  ((char)0xF5)   /* INPUT_KEY_B: 2 taps → flood advert (unused) */
+#define KEY_BUZZ_TOGGLE   ((char)0xF6)   /* INPUT_KEY_D: 3 taps → buzzer mute toggle */
+#define KEY_GPS_TOGGLE    ((char)0xF7)   /* INPUT_KEY_C: 4 taps → GPS on/off */
+#define KEY_LED_TOGGLE    ((char)0xF8)   /* INPUT_KEY_E: 5 taps → LED heartbeat toggle */
 
 /* ===== Layout constants (calibrated for 128x64 OLED, 6x8 font) ===== */
 /* All hard-coded offsets from old Arduino code are preserved here.

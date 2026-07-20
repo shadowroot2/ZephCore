@@ -38,7 +38,45 @@
 #include "lr11xx_hal_updater.h"
 #include "lr1110_bootloader.h"
 #include "lr1110_bl_updater.h"
+/*
+ * Which transceiver image to flash. 0x0402 is the current release (and the
+ * only one Semtech's own tool will attempt on bootloader 0x1001).
+ *
+ * 0x0401 is selectable to TEST whether the downgrade block is enforced by
+ * the CHIP or merely by the host tool: the compatibility table that pairs
+ * 0x0401 with bootloader 0x6500 lives in Semtech's reference *application*
+ * (lr11xx_update_utils.c), not in the silicon. Since 0x0402 is a CVE fix,
+ * anti-rollback in the new bootloader is plausible — but unverified, and a
+ * chip that runs 0x0401 is fully usable by ZephCore (T1000-E ships it).
+ *
+ *   west build ... -- -DUPDATER_TARGET_FW=0x0401
+ */
+#ifndef UPDATER_TARGET_FW
+#define UPDATER_TARGET_FW 0x0402
+#endif
+
+/*
+ * The 0x6500 -> 0x1001 chip-bootloader update is ONE-WAY and, on every chip
+ * we have observed take it, leaves the radio unable to boot ANY transceiver
+ * image (0x0402, 0x0401 and 0x0303 all write without error and never run,
+ * across two independent flashers). Chips still on bootloader 0x6500 flash
+ * and run normally. So it must be opted into explicitly, never performed as
+ * a side effect of asking for firmware 0x0402.
+ */
+#ifndef UPDATER_ALLOW_BOOTLOADER_UPDATE
+#define UPDATER_ALLOW_BOOTLOADER_UPDATE 1
+#endif
+
+#if UPDATER_TARGET_FW == 0x0401
+#include "lr1110_transceiver_0401.h"
+#elif UPDATER_TARGET_FW == 0x0303
+/* 0x0303 is the version another M9/LR1110 in this exact broken state was
+ * recovered with (reported running as "Base FW 3.3" under RadioLib), which
+ * also demonstrates the bootloader does NOT enforce anti-rollback. */
+#include "lr1110_transceiver_0303.h"
+#else
 #include "lr1110_transceiver_0402.h"
+#endif
 
 #if defined(CONFIG_SOC_SERIES_NRF52)
 #include <hal/nrf_power.h>
@@ -115,6 +153,152 @@ static void fatal_error(const char *msg)
 	}
 }
 
+/* Map a millivolt value from devicetree to the chip's TCXO supply code. */
+static uint8_t tcxo_code_from_mv(uint16_t mv)
+{
+	if (mv >= 3300) return LR1110_TCXO_CTRL_3_3V;
+	if (mv >= 3000) return LR1110_TCXO_CTRL_3_0V;
+	if (mv >= 2700) return LR1110_TCXO_CTRL_2_7V;
+	if (mv >= 2400) return LR1110_TCXO_CTRL_2_4V;
+	if (mv >= 2200) return LR1110_TCXO_CTRL_2_2V;
+	if (mv >= 1800) return LR1110_TCXO_CTRL_1_8V;
+	if (mv >= 1700) return LR1110_TCXO_CTRL_1_7V;
+	return LR1110_TCXO_CTRL_1_6V;
+}
+
+/* Power the TCXO and switch the chip onto it before touching flash.
+ *
+ * On a crystal board the chip can start its 32 MHz XOSC by itself. On a
+ * TCXO board the oscillator is powered from DIO3, which stays OFF until
+ * SetTcxoMode is issued — so the chip would otherwise run the ENTIRE
+ * update on its internal RC oscillator, which is both slower and far less
+ * accurate. Flash program/erase pulse timing and the charge-pump sequencing
+ * derive from that clock, so a marginal clock can produce writes that
+ * report OK but do not survive the image integrity check at boot.
+ *
+ * Not in Semtech's update documentation (their reference hardware does not
+ * need it), but field-reported to make LR1110 flashing succeed on boards
+ * where it otherwise fails. Best-effort: a chip that rejects the command
+ * simply stays on RC, exactly as before. */
+/*
+ * Off by default. Neither Semtech's SWTL001 nor RadioLib touches the TCXO
+ * while flashing, and SetTcxoMode (0x0117) / Calibrate (0x010F) are *system*
+ * opcodes that the bootloader command set does not include — so issuing them
+ * here is unverified behaviour on a bootloader we need to keep in a
+ * well-defined state. The field report that TCXO helps was not reproducible
+ * on this board (the failure predates and survives it). Set to 1 to re-test.
+ */
+#define UPDATER_ENABLE_TCXO 0
+
+static void configure_tcxo(void *ctx)
+{
+	const uint16_t mv = lr1110_updater_tcxo_voltage_mv();
+
+	if (mv == 0) {
+		printk("  No TCXO in devicetree — chip uses its own crystal\n");
+		return;
+	}
+
+	const uint8_t code = tcxo_code_from_mv(mv);
+	/* SetTcxoMode timeout is in 32.768 kHz ticks (1 tick = 30.52 us).
+	 * Use a generous window — at least 10 ms — so a slow-starting TCXO
+	 * is never declared failed. */
+	uint32_t delay_ms = lr1110_updater_tcxo_startup_delay_ms();
+
+	if (delay_ms < 10) {
+		delay_ms = 10;
+	}
+	const uint32_t ticks = delay_ms * 32768U / 1000U;
+
+	printk("  Powering TCXO: %u mV (code 0x%02X), startup %u ms\n",
+	       mv, code, delay_ms);
+
+	if (lr1110_bootloader_set_tcxo_mode(ctx, code, ticks) != LR1110_STATUS_OK) {
+		printk("  WARNING: SetTcxoMode rejected — continuing on RC clock\n");
+		return;
+	}
+	k_msleep(delay_ms + 10);
+
+	/* Changing the clock source invalidates the factory calibration —
+	 * recalibrate every block before using the chip. */
+	if (lr1110_bootloader_calibrate(ctx, LR1110_CALIB_ALL) != LR1110_STATUS_OK) {
+		printk("  WARNING: Calibrate rejected after TCXO enable\n");
+		return;
+	}
+	k_msleep(50);
+
+	printk("  TCXO active, chip recalibrated\n");
+}
+
+/* Dump the chip's flash digest at a labelled point in the sequence.
+ *
+ * Sampled before erase, after erase and after write, these three values
+ * answer the question no other command can: does anything we do actually
+ * change the flash? If all three match, the writes are not landing at all
+ * (or GetHash is inert on this bootloader). If erase changes it but the
+ * write does not, the payload is being discarded. */
+static void dump_flash_hash(void *ctx, const char *when)
+{
+	lr1110_bootloader_hash_t hash = { 0 };
+
+	if (lr1110_bootloader_get_hash(ctx, hash) != LR1110_STATUS_OK) {
+		printk("  Flash hash (%s): READ FAILED\n", when);
+		return;
+	}
+
+	printk("  Flash hash (%-12s): ", when);
+	for (int i = 0; i < LR1110_BL_HASH_LENGTH; i++) {
+		printk("%02X", hash[i]);
+	}
+	printk("\n");
+}
+
+/* Ask the chip how the last command went.
+ *
+ * WriteFlashEncrypted is fire-and-forget — the HAL only knows the SPI
+ * transfer happened, not that the chip accepted it. Sampling the command
+ * status during the transfer turns a silent corruption into a located one.
+ * Returns false only for a definite chip-reported failure. */
+static const char *cmd_status_name(uint8_t s)
+{
+	switch (s) {
+	case LR1110_BOOTLOADER_CMD_STATUS_FAIL: return "FAIL";
+	case LR1110_BOOTLOADER_CMD_STATUS_PERR: return "PERR";
+	case LR1110_BOOTLOADER_CMD_STATUS_OK:   return "OK";
+	case LR1110_BOOTLOADER_CMD_STATUS_DATA: return "DATA";
+	default:                                return "?";
+	}
+}
+
+static bool command_status_ok(void *ctx, uint32_t chunk_idx, uint8_t *status_out)
+{
+	lr1110_bootloader_stat1_t stat1 = { 0 };
+	lr1110_bootloader_stat2_t stat2 = { 0 };
+	lr1110_bootloader_irq_mask_t irq = 0;
+
+	if (status_out) {
+		*status_out = 0xFF; /* unknown until GetStatus succeeds */
+	}
+
+	if (lr1110_bootloader_get_status(ctx, &stat1, &stat2, &irq) != LR1110_STATUS_OK) {
+		printk("  WARNING: GetStatus failed near chunk %u\n", chunk_idx);
+		return true; /* inconclusive — do not abort the flash */
+	}
+
+	if (status_out) {
+		*status_out = (uint8_t)stat1.command_status;
+	}
+
+	if (stat1.command_status == LR1110_BOOTLOADER_CMD_STATUS_FAIL ||
+	    stat1.command_status == LR1110_BOOTLOADER_CMD_STATUS_PERR) {
+		printk("  ERROR: chip rejected a write near chunk %u (cmd_status=%u)\n",
+		       chunk_idx, (unsigned)stat1.command_status);
+		return false;
+	}
+
+	return true;
+}
+
 /* Erase the chip flash, then write `total` words in 64-word chunks with
  * progress output. Used for both the loader and the transceiver image. */
 static void erase_and_flash_image(void *ctx, const char *what,
@@ -122,17 +306,50 @@ static void erase_and_flash_image(void *ctx, const char *what,
 {
 	lr1110_status_t rc;
 
+	/* Bring the TCXO up here rather than once at startup: every reset —
+	 * including the forced bootloader entries in Stage A — drops the chip
+	 * back onto its RC oscillator, so the clock must be re-established
+	 * immediately before each erase/write pass. */
+	if (UPDATER_ENABLE_TCXO) {
+		configure_tcxo(ctx);
+	}
+
+	dump_flash_hash(ctx, "before erase");
+
 	printk("  Erasing LR1110 flash (~2.5 seconds)...\n");
 	led_toggle();
+	const int64_t erase_start = k_uptime_get();
 	rc = lr1110_bootloader_erase_flash(ctx);
 	if (rc != LR1110_STATUS_OK) {
 		fatal_error("Flash erase failed");
 	}
+	/* A full-flash erase genuinely takes ~2.5 s. If this reports a few
+	 * milliseconds then BUSY was never observed and we are about to write
+	 * into flash that is still erasing — which would corrupt everything
+	 * while every write still reports OK. */
+	printk("  Erase returned after %lld ms\n", k_uptime_get() - erase_start);
+
+	/* Let the flash controller settle before the first program cycle —
+	 * the erase leaves the charge pump loaded and neither reference tool
+	 * writes this promptly after a 2.5 s full-array erase. */
+	k_msleep(100);
+	dump_flash_hash(ctx, "after erase");
 
 	printk("  Writing %s (%u words = %u KB)...\n",
 	       what, total, (total * 4) / 1024);
 
-	const uint32_t chunk_size = 64; /* 64 uint32_t words per write */
+	const int64_t write_start = k_uptime_get();
+
+	/* MUST be 64 words (256 bytes = one flash page). A 14-word write is
+	 * rejected outright with PERR at chunk 0 — the chip validates the byte
+	 * count and only accepts whole pages (a short final chunk is fine).
+	 *
+	 * NOTE: that PERR result does NOT clear the SPI path, though it was
+	 * once read that way. A 14-word write is a 62-byte frame — one hardware
+	 * transaction on the ESP32-S3 — so it says nothing about whether a
+	 * 262-byte frame survives being split across five. Matches Semtech's
+	 * LR11XX_FLASH_DATA_MAX_LENGTH_UINT32 = 64 regardless. */
+	const uint32_t chunk_size = 64;
 	uint32_t num_chunks = (total + chunk_size - 1) / chunk_size;
 	uint32_t progress_step = num_chunks / 10; /* Print every 10% */
 	if (progress_step == 0) progress_step = 1;
@@ -157,9 +374,41 @@ static void erase_and_flash_image(void *ctx, const char *what,
 			fatal_error("Firmware write failed");
 		}
 
+		/* Check EVERY chunk, not just the progress points. Sampling at
+		 * 10% intervals leaves ~95 unexamined writes between samples,
+		 * and cmd_status only reflects the most recent command — so a
+		 * rejection in between is invisible. This is the diagnostic
+		 * that pins down the exact chunk (and flash offset) where the
+		 * chip first refuses data, if it refuses at all. */
+		/* Capture BUSY timing for THIS write before GetStatus below
+		 * overwrites it with its own command's timing. */
+		const uint32_t busy_rise_us = lr1110_updater_last_busy_rise_us();
+		const uint32_t busy_hold_us = lr1110_updater_last_busy_hold_us();
+		const bool     busy_seen    = lr1110_updater_last_busy_seen();
+		const int      spi_ret      = lr1110_updater_last_spi_ret();
+
+		uint8_t cmd_status = 0xFF;
+		const bool accepted = command_status_ok(ctx, chunk_idx, &cmd_status);
+
+		/* Full per-chunk trace. The two columns that matter most are
+		 * busy=... (a chunk that never asserted BUSY did no flash
+		 * programming, however cleanly it "succeeded") and hold=...
+		 * (a page program is ~3.8 ms; a near-zero hold is a write that
+		 * did not happen). */
+		printk("  [%4u/%4u] off=0x%06X len=%2u spi=%d busy=%s rise=%uus hold=%uus stat=%s\n",
+		       chunk_idx, num_chunks, offset, this_chunk, spi_ret,
+		       busy_seen ? "yes" : "NO ", busy_rise_us, busy_hold_us,
+		       cmd_status == 0xFF ? "??" : cmd_status_name(cmd_status));
+
+		if (!accepted) {
+			printk("  First rejection at chunk %u of %u, flash offset 0x%08X\n",
+			       chunk_idx, num_chunks, offset);
+			fatal_error("Chip rejected firmware data mid-flash");
+		}
+
 		if ((chunk_idx % progress_step) == 0) {
 			uint32_t pct = (chunk_idx * 100) / num_chunks;
-			printk("  %3u%%  (%u / %u words)\n",
+			printk("  ---- %3u%%  (%u / %u words) ----\n",
 			       pct, total - remaining + this_chunk, total);
 			led_toggle();
 		}
@@ -170,7 +419,9 @@ static void erase_and_flash_image(void *ctx, const char *what,
 	}
 
 	printk("  100%%  (%u / %u words)\n", total, total);
-	printk("  %s write complete!\n", what);
+	printk("  %s write complete in %lld ms\n", what, k_uptime_get() - write_start);
+
+	dump_flash_hash(ctx, "after write");
 }
 
 /* The loader is RUNNING (TYPE 0xDE) — command the bootloader rewrite,
@@ -183,6 +434,29 @@ static void loader_rewrite_and_verify(void *ctx)
 	lr1110_bootloader_version_t version = { 0 };
 	lr1110_bl_updater_report_t report = { 0 };
 	lr1110_status_t rc;
+
+	/* No configure_tcxo() here, deliberately.  The 0x8100 rewrite below is a
+	 * flash write and the chip is back on its RC oscillator after the reboot
+	 * into the loader, so this looks like a hole in the TCXO workaround that
+	 * erase_and_flash_image() applies — it is not:
+	 *
+	 * - SWTL001 configures no TCXO at ANY point of the update (its
+	 *   lr11xx_update_firmware() is just erase + write; the driver's
+	 *   set_tcxo_mode is never called by the update application). Our
+	 *   configure_tcxo() is a ZephCore-only field workaround with no
+	 *   counterpart in the reference flow.
+	 * - The loader image's documented command set is only 0x8100/01/02 plus
+	 *   GetVersion/GetStatus. It exposes no system commands, so SetTcxoMode
+	 *   (0x0117) is undocumented against a RUNNING loader — sending it is a
+	 *   guess, not a fix.
+	 * - The failure modes are not symmetric. A bad transceiver flash leaves
+	 *   the chip falling back to the bootloader, which is retryable. A bad
+	 *   bootloader rewrite may not be recoverable at all. That asymmetry is
+	 *   what decides it: do not fire an undocumented opcode at the chip in
+	 *   the seconds before the one irreversible operation in this tool.
+	 *
+	 * If M9 bring-up ever shows the rewrite failing on a TCXO board, revisit
+	 * with the GetStatus output below as evidence — do not add it blind. */
 
 	/* Ask the loader to rewrite the bootloader — BUSY is held for the
 	 * duration; the HAL grants opcode 0x8100 the long timeout. */
@@ -352,6 +626,28 @@ int main(void)
 	}
 	printk("  FW   = 0x%04X\n", version.fw);
 
+	/* Seeing "bootloader mode" here does NOT prove the flash is empty: the
+	 * hardware reset above releases NRESET while BUSY reads LOW, which is
+	 * itself the bootloader-entry condition on this wiring. So ask the
+	 * bootloader to run whatever is in flash and look again — otherwise a
+	 * chip that is already up to date gets pointlessly reflashed. */
+	if (version.type == LR1110_TYPE_BOOTLOADER) {
+		lr1110_bootloader_version_t booted = { 0 };
+
+		printk("  Probing for firmware in flash...\n");
+		lr1110_bootloader_reboot(ctx, false);
+		k_msleep(500);
+
+		if (lr1110_bootloader_get_version(ctx, &booted) == LR1110_STATUS_OK &&
+		    booted.type == LR1110_TYPE_TRANSCEIVER) {
+			printk("  Flash holds bootable firmware: TYPE=0x%02X FW=0x%04X\n",
+			       booted.type, booted.fw);
+			version = booted;
+		} else {
+			printk("  No bootable firmware in flash\n");
+		}
+	}
+
 	if (version.type == LR1110_TYPE_TRANSCEIVER && version.fw == TARGET_FW_VERSION) {
 		printk("\nAlready running target firmware 0x%04X — no update needed!\n",
 		       TARGET_FW_VERSION);
@@ -383,16 +679,27 @@ int main(void)
 			fatal_error("Unknown chip type — cannot proceed");
 		}
 
-		/* ALWAYS force bootloader entry via hardware reset with BUSY held LOW —
-		 * even when the chip already reports bootloader mode. With an erased or
-		 * invalid flash the chip only FELL BACK into the bootloader, and that
-		 * fallback state is not equivalent to a deliberate BUSY-held entry
-		 * (field-confirmed on LR1110: flashing from the fallback state produces
-		 * images that never boot). Semtech's SWTL001 reference likewise resets
-		 * to bootloader unconditionally before every update attempt. */
-		printk("[4/8] Forcing LR1110 into bootloader mode (even if already there)...\n");
-		if (lr1110_updater_reset_to_bootloader() != 0) {
-			fatal_error("Failed to enter bootloader mode");
+		/* Enter the bootloader the way RadioLib does: the SOFTWARE reboot
+		 * command with stay_in_bootloader=true.
+		 *
+		 * We previously used the BUSY-held hardware reset (what SWTL001
+		 * does). Both are documented, but RadioLib is the reference that
+		 * demonstrably flashes this chip family from an ESP32 host, and the
+		 * entry method is the last structural difference left between its
+		 * flow and ours — opcodes, offsets, byte order and 64-word pages are
+		 * all now verified identical. The BUSY-held reset stays as the
+		 * fallback for a chip that will not answer commands at all. */
+		printk("[4/8] Entering bootloader (software reboot, stay=true)...\n");
+		lr1110_bootloader_reboot(ctx, true);
+		k_msleep(500);
+
+		rc = lr1110_bootloader_get_version(ctx, &version);
+		if (rc != LR1110_STATUS_OK || version.type != LR1110_TYPE_BOOTLOADER) {
+			printk("  Software entry did not land in bootloader —"
+			       " falling back to BUSY-held hardware reset\n");
+			if (lr1110_updater_reset_to_bootloader() != 0) {
+				fatal_error("Failed to enter bootloader mode");
+			}
 		}
 
 		rc = lr1110_bootloader_get_version(ctx, &version);
@@ -428,13 +735,44 @@ int main(void)
 
 		/* ── Step 6: Chip bootloader — update if legacy ── */
 		printk("[6/8] Checking chip bootloader version...\n");
-		if (version.fw == LR1110_BL_VERSION_UPDATED) {
-			printk("  Bootloader 0x%04X — already up to date\n", version.fw);
-		} else if (version.fw == LR1110_BL_VERSION_LEGACY) {
-			run_bootloader_update(ctx);
-		} else {
+		if (version.fw != LR1110_BL_VERSION_UPDATED &&
+		    version.fw != LR1110_BL_VERSION_LEGACY) {
 			printk("  Unexpected bootloader version 0x%04X\n", version.fw);
 			fatal_error("Unsupported chip bootloader — refusing to flash");
+		}
+
+		if (TARGET_FW_VERSION == 0x0402) {
+			if (version.fw == LR1110_BL_VERSION_UPDATED) {
+				printk("  Bootloader 0x%04X — already up to date\n", version.fw);
+			} else if (!UPDATER_ALLOW_BOOTLOADER_UPDATE) {
+				printk("\n");
+				printk("  Bootloader update DISABLED for this build.\n");
+				printk("\n");
+				printk("  Flash an image that runs on bootloader 0x6500:\n");
+				printk("    west build ... -- -DUPDATER_TARGET_FW=0x0401\n");
+				printk("\n");
+				printk("  Rebuild without -DUPDATER_ALLOW_BOOTLOADER_UPDATE=0\n");
+				printk("  to perform the bootloader update.\n");
+				fatal_error("Bootloader update disabled by build option");
+			} else {
+				printk("\n");
+				printk("  Performing the ONE-WAY bootloader update 0x%04X -> 0x%04X.\n",
+				       version.fw, LR1110_BL_VERSION_UPDATED);
+				printk("  Semtech ships no reverse loader: this is permanent.\n");
+				printk("  (Build with -DUPDATER_ALLOW_BOOTLOADER_UPDATE=0 to\n");
+				printk("   flash firmware only and leave the bootloader alone.)\n");
+				printk("\n");
+				run_bootloader_update(ctx);
+			}
+		} else {
+			/* Older target image — never touch the bootloader. */
+			printk("  Bootloader 0x%04X, target FW 0x%04X\n",
+			       version.fw, TARGET_FW_VERSION);
+			if (version.fw == LR1110_BL_VERSION_UPDATED) {
+				printk("  NOTE: Semtech's host-side table pairs FW 0x0401 with\n");
+				printk("  bootloader 0x6500 only. Trying anyway, to find out\n");
+				printk("  whether the chip itself enforces anti-rollback.\n");
+			}
 		}
 	}
 
@@ -443,13 +781,37 @@ int main(void)
 	erase_and_flash_image(ctx, "transceiver firmware",
 			      lr11xx_firmware_image, LR11XX_FIRMWARE_IMAGE_SIZE);
 
-	/* Reboot into firmware (273ms typical boot), then re-reset for a
-	 * clean state before verification. */
+	/* Boot the freshly written firmware with the bootloader's own reboot
+	 * command (0x8005, stay=false) — and then DO NOT TOUCH NRESET.
+	 *
+	 * The LR1110 samples BUSY as NRESET is released and enters the
+	 * bootloader whenever it reads LOW. Nothing holds that line high while
+	 * the chip is in reset, so a hardware reset here lands back in the
+	 * bootloader every time — which is precisely what the old "re-reset for
+	 * a clean state" did, making this step report "firmware not running"
+	 * no matter how good the flash was. Stage A reboots the very same way
+	 * *without* a trailing hardware reset, and its image always came up
+	 * running: that asymmetry is what exposed this.
+	 *
+	 * Firmware boot takes ~273 ms (datasheet); 500 ms is comfortable. */
 	printk("  Rebooting LR1110 into new firmware...\n");
 	lr1110_bootloader_reboot(ctx, false);
 	k_msleep(500);
-	if (lr1110_updater_hw_reset() != 0) {
-		fatal_error("Reset after firmware flash failed");
+
+	/* The chip's own view of what it is executing. is_running_from_flash
+	 * distinguishes "the image is bad" from "the image never got a chance
+	 * to run", which the version read alone cannot. */
+	{
+		lr1110_bootloader_stat1_t stat1 = { 0 };
+		lr1110_bootloader_stat2_t stat2 = { 0 };
+		lr1110_bootloader_irq_mask_t irq = 0;
+
+		if (lr1110_bootloader_get_status(ctx, &stat1, &stat2, &irq) == LR1110_STATUS_OK) {
+			printk("  Post-reboot status: running_from_flash=%d chip_mode=%u "
+			       "reset_status=%u cmd_status=%u\n",
+			       stat2.is_running_from_flash, (unsigned)stat2.chip_mode,
+			       (unsigned)stat2.reset_status, (unsigned)stat1.command_status);
+		}
 	}
 
 	/* ── Step 8: Verify ── */

@@ -15,6 +15,24 @@
 
 #include "../../../../../boards/common/esp32s3_console_uart0.dtsi"
 
+/*
+ * Park the ST7789 chip-select (GPIO16) HIGH = deselected.
+ *
+ * SPI2 is shared by the LR1110, the TFT and the SD slot. This build has no
+ * display driver, so nothing would ever configure the TFT's CS and the pin
+ * would float across the whole firmware transfer — leaving the panel free
+ * to select itself on noise and drive MISO against the radio. (The SD
+ * slot's CS is parked by a hog in the base board DTS, which this overlay
+ * does not replace.)
+ */
+&gpio0 {
+	tft_cs_park {
+		gpio-hog;
+		gpios = <16 GPIO_ACTIVE_HIGH>;
+		output-high;
+	};
+};
+
 /* Disable UART1 (GPS) — not needed */
 &uart1 {
 	status = "disabled";

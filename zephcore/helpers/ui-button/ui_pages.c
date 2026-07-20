@@ -47,6 +47,15 @@ LOG_MODULE_REGISTER(ui_pages, CONFIG_ZEPHCORE_BOARD_LOG_LEVEL);
  *   DOTS_Y..SEP_Y:    Page indicator dots + separator line
  *   CONTENT_Y..end:    Page-specific content
  */
+/* Full-scale end of the radio page's TX power bar.  The board's configured
+ * ceiling when it has one (same symbol CommonCLI clamps "set tx" against),
+ * else the common SX126x/LR11xx maximum. */
+#ifdef CONFIG_ZEPHCORE_MAX_TX_POWER_DBM
+#define TX_POWER_BAR_MAX_DBM  CONFIG_ZEPHCORE_MAX_TX_POWER_DBM
+#else
+#define TX_POWER_BAR_MAX_DBM  22
+#endif
+
 #define FONT_W       mc_display_font_width()
 #define FONT_H       mc_display_font_height()
 #define DISP_W       mc_display_width()
@@ -850,7 +859,11 @@ static void render_radio_color(void)
 				       state.lora_radio_ready ? UI_COLOR_OK
 							      : UI_COLOR_DISABLED;
 		uint16_t tx_color = UI_COLOR_OK;
-		int max_tx = state.lora_tx_power > 0 ? state.lora_tx_power : 22;
+		/* Scale the TX bar against the board's hardware ceiling, not
+		 * against the current setting — the old max came from APC
+		 * (effective vs. configured power) and with APC gone both ends
+		 * would be lora_tx_power, pinning the bar permanently full. */
+		int max_tx = TX_POWER_BAR_MAX_DBM;
 		int badge_x;
 
 		mc_display_color_fill_rect(0, y - 1, DISP_W, COLOR_FONT_H + 2,

@@ -10,6 +10,8 @@
 #include "lr11xx_hal_updater.h"
 #include "lr11xx_hal.h"
 
+#include <string.h>
+
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(lr1110_hal, LOG_LEVEL_INF);
 
@@ -24,11 +26,34 @@ LOG_MODULE_REGISTER(lr1110_hal, LOG_LEVEL_INF);
 /* SPI bus device */
 static const struct device *spi_dev = DEVICE_DT_GET(DT_BUS(LR1110_NODE));
 
+/* Flashing SPI clock cap.
+ *
+ * In bootloader mode the chip runs off its internal RC oscillator (the XOSC
+ * needs either a crystal or a powered TCXO), so it has far less timing
+ * margin than during normal operation. Flashing pushes ~1000 back-to-back
+ * 256-byte writes, and the images are encrypted+signed: a SINGLE corrupted
+ * byte anywhere makes the whole image fail its integrity check at boot,
+ * with every write still reporting OK (the bootloader never reads back).
+ * Cap the operational 8-16 MHz down to a conservative rate — the entire
+ * 239 KB image still takes ~1 s of SPI time at 2 MHz. */
+#define UPDATER_SPI_MAX_HZ 2000000
+
 /* SPI config — manual CS (we toggle NSS via GPIO) */
 static struct spi_config spi_cfg = {
-	.frequency = DT_PROP(LR1110_NODE, spi_max_frequency),
+	.frequency = MIN(DT_PROP(LR1110_NODE, spi_max_frequency), UPDATER_SPI_MAX_HZ),
 	.operation = SPI_WORD_SET(8) | SPI_TRANSFER_MSB,
 };
+
+/* TCXO configuration from devicetree (0 mV = crystal board, no TCXO) */
+uint16_t lr1110_updater_tcxo_voltage_mv(void)
+{
+	return DT_PROP_OR(LR1110_NODE, tcxo_voltage_mv, 0);
+}
+
+uint32_t lr1110_updater_tcxo_startup_delay_ms(void)
+{
+	return DT_PROP_OR(LR1110_NODE, tcxo_startup_delay_ms, 5);
+}
 
 /* GPIO pins */
 static const struct gpio_dt_spec pin_nss   = GPIO_DT_SPEC_GET(DT_BUS(LR1110_NODE), cs_gpios);
@@ -41,6 +66,13 @@ static const struct gpio_dt_spec pin_busy  = GPIO_DT_SPEC_GET(LR1110_NODE, busy_
 /* Extended BUSY timeout for flash erase (0x8000) and for the loader's
  * bootloader rewrite (0x8100) — both keep BUSY high for seconds. */
 #define LONG_BUSY_TIMEOUT_MS 10000
+
+/* How long to watch for BUSY to RISE after a command before assuming the
+ * chip finished it too quickly to observe. See wait_command_complete(). */
+#define BUSY_RISE_TIMEOUT_MS 2
+
+/* Largest command+payload frame we ever put on the wire. */
+#define LR11XX_HAL_MAX_FRAME 272
 
 /* ── Context (opaque pointer for Semtech driver) ──────────── */
 
@@ -67,6 +99,70 @@ static int wait_on_busy(uint32_t timeout_ms)
 		k_busy_wait(100); /* 100us */
 	}
 	return 0;
+}
+
+/*
+ * Wait for a command the chip has just been given to actually COMPLETE.
+ *
+ * The chip does not raise BUSY the instant NSS deasserts — it needs a few
+ * microseconds. Polling only for "BUSY is low" therefore has a race: on a
+ * fast host (ESP32-S3 at 240 MHz drives GPIO in nanoseconds) the poll can
+ * observe the *stale* pre-command LOW and conclude the command is already
+ * finished. The next transaction then starts clocking while the chip is
+ * still writing flash, and because WriteFlashEncrypted is fire-and-forget
+ * — no read-back, no status check — the resulting corruption is silent.
+ * One bad chunk anywhere invalidates the whole signed image, so the odds
+ * of a clean flash fall off a cliff as the image grows: a 19 KB loader is
+ * 77 transactions, a 239 KB firmware is 959.
+ *
+ * So: first watch for the rising edge (bounded — a command that finishes
+ * faster than we can look is fine and simply never appears busy), then
+ * wait for the fall.
+ */
+/* ── Per-command instrumentation ───────────────────────────
+ *
+ * Captured for the most recent command so the caller can trace every chunk:
+ * how long the chip took to ASSERT busy (rise latency) and how long it then
+ * held it (the real flash-program time). A chunk that never asserts busy at
+ * all is the signature of the race this HAL exists to avoid — worth seeing
+ * per chunk rather than inferring from a summary. */
+static uint32_t last_busy_rise_us;
+static uint32_t last_busy_hold_us;
+static bool     last_busy_seen;
+static int      last_spi_ret;
+
+uint32_t lr1110_updater_last_busy_rise_us(void) { return last_busy_rise_us; }
+uint32_t lr1110_updater_last_busy_hold_us(void) { return last_busy_hold_us; }
+bool     lr1110_updater_last_busy_seen(void)    { return last_busy_seen; }
+int      lr1110_updater_last_spi_ret(void)      { return last_spi_ret; }
+
+static int wait_command_complete(uint32_t timeout_ms)
+{
+	const uint32_t cyc_entry = k_cycle_get_32();
+	int64_t start = k_uptime_get();
+
+	last_busy_seen    = false;
+	last_busy_rise_us = 0;
+	last_busy_hold_us = 0;
+
+	while (!gpio_pin_get_dt(&pin_busy)) {
+		if ((k_uptime_get() - start) > BUSY_RISE_TIMEOUT_MS) {
+			break; /* never went busy — nothing to wait for */
+		}
+		k_busy_wait(1);
+	}
+
+	if (gpio_pin_get_dt(&pin_busy)) {
+		last_busy_seen = true;
+		last_busy_rise_us =
+			k_cyc_to_us_floor32(k_cycle_get_32() - cyc_entry);
+	}
+
+	const uint32_t cyc_high = k_cycle_get_32();
+	int ret = wait_on_busy(timeout_ms);
+	last_busy_hold_us = k_cyc_to_us_floor32(k_cycle_get_32() - cyc_high);
+
+	return ret;
 }
 
 /* ── Public init/reset ────────────────────────────────────── */
@@ -184,18 +280,45 @@ lr11xx_hal_status_t lr11xx_hal_write(const void *context, const uint8_t *command
 		return LR11XX_HAL_STATUS_ERROR;
 	}
 
-	const struct spi_buf tx_bufs[] = {
-		{ .buf = (uint8_t *)command, .len = command_length },
-		{ .buf = (uint8_t *)data, .len = data_length },
+	/* Send the command and its payload as ONE contiguous buffer.
+	 *
+	 * Passing them as two spi_bufs makes Zephyr's ESP32 SPI driver walk
+	 * the set buffer-by-buffer (spi_context_max_continuous_chunk() never
+	 * spans a buffer boundary), so a 6-byte command and a 256-byte payload
+	 * become separate hardware transactions — and each is further split at
+	 * SOC_SPI_MAXIMUM_BUFFER_SIZE (64 bytes on the S3, no DMA).
+	 *
+	 * That matters here because WriteFlashEncrypted is the ONLY command
+	 * this tool issues with a payload: every command known to work
+	 * (GetVersion, GetStatus, EraseFlash, the EUI reads) is a single
+	 * sub-64-byte frame. Keeping the frame contiguous — together with a
+	 * flash chunk size chosen so command+payload stays under 64 bytes —
+	 * makes the write path look exactly like the paths already proven
+	 * good on this hardware. */
+	static uint8_t txbuf[LR11XX_HAL_MAX_FRAME];
+
+	if ((size_t)command_length + (size_t)data_length > sizeof(txbuf)) {
+		printk("ERROR: SPI frame too large (%u + %u)\n",
+		       command_length, data_length);
+		return LR11XX_HAL_STATUS_ERROR;
+	}
+
+	memcpy(txbuf, command, command_length);
+	if (data_length > 0) {
+		memcpy(txbuf + command_length, data, data_length);
+	}
+
+	const struct spi_buf tx_buf = {
+		.buf = txbuf,
+		.len = (size_t)command_length + (size_t)data_length,
 	};
-	const struct spi_buf_set tx = {
-		.buffers = tx_bufs,
-		.count = (data_length > 0) ? 2 : 1,
-	};
+	const struct spi_buf_set tx = { .buffers = &tx_buf, .count = 1 };
 
 	gpio_pin_set_dt(&pin_nss, 1); /* Assert NSS (LOW) */
 	ret = spi_write(spi_dev, &spi_cfg, &tx);
 	gpio_pin_set_dt(&pin_nss, 0); /* Deassert NSS (HIGH) */
+
+	last_spi_ret = ret;
 
 	if (ret < 0) {
 		printk("ERROR: SPI write failed: %d\n", ret);
@@ -211,7 +334,9 @@ lr11xx_hal_status_t lr11xx_hal_write(const void *context, const uint8_t *command
 	uint32_t timeout = (opcode == 0x8000 || opcode == 0x8100)
 		? LONG_BUSY_TIMEOUT_MS : BUSY_TIMEOUT_MS;
 
-	if (wait_on_busy(timeout)) {
+	/* Rising-edge aware: the command must be seen through to completion,
+	 * not merely observed to be "not busy yet". */
+	if (wait_command_complete(timeout)) {
 		return LR11XX_HAL_STATUS_ERROR;
 	}
 
@@ -244,12 +369,12 @@ lr11xx_hal_status_t lr11xx_hal_read(const void *context, const uint8_t *command,
 	}
 
 	if (data_length == 0) {
-		return (wait_on_busy(BUSY_TIMEOUT_MS) == 0)
+		return (wait_command_complete(BUSY_TIMEOUT_MS) == 0)
 			? LR11XX_HAL_STATUS_OK : LR11XX_HAL_STATUS_ERROR;
 	}
 
-	/* Step 2: Wait for device ready, then read response */
-	if (wait_on_busy(BUSY_TIMEOUT_MS)) {
+	/* Step 2: Wait for the command to complete, then read the response */
+	if (wait_command_complete(BUSY_TIMEOUT_MS)) {
 		return LR11XX_HAL_STATUS_ERROR;
 	}
 
