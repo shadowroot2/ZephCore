@@ -102,6 +102,9 @@ Two things still want confirming against real hardware: the **battery divider mu
 (the two upstreams disagree — check `get batt` against a multimeter), and the **GNSS module identity** is
 unconfirmed. Reports welcome.
 
+Thanks to [@WillyJL](https://github.com/WillyJL), who requested this port and provided the hardware details / most of the code
+it is based on.
+
 ### ThinkNode M9 — experimental, first testable release
 
 **Consider this a preview, not a finished port.** It builds, flashes and runs, and it is worth testing if

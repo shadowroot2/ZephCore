@@ -614,6 +614,37 @@ if(_BOARD_SD_QUIESCE)
   target_sources(app PRIVATE "${_BOARD_SD_QUIESCE}")
 endif()
 
+# ESP32 pre-RF entropy source (bootloader_random).
+#
+# The ESP32 hardware TRNG (WDEV_RANDOM) is a PRNG that only receives real
+# entropy while WiFi or BT is enabled — see drivers/entropy/entropy_esp32.c.
+# Identity keygen runs long before any of that (and repeaters/room servers
+# never enable RF at all), so sys_csrand_get() contributes nothing there.
+#
+# Espressif's documented remedy is bootloader_random_enable(), which puts the
+# SAR ADC into continuous sampling and mixes its noise into the HWRNG. Its own
+# header endorses this exact use: "Can also be called from app code, if true
+# random numbers are required without initialized RF subsystem."
+# ZephyrRNG::mixIdentitySeed brackets its entropy collection with it.
+#
+# hal/espressif compiles only part of bootloader_support into app builds (the
+# include path is already set up, but not these sources), so pull in the
+# per-SoC implementation explicitly. The generic bootloader_random.c is NOT
+# needed — it only defines these symbols for the bring-up-bypass stub.
+if(CONFIG_SOC_FAMILY_ESPRESSIF_ESP32)
+  set(_ESP_BOOTLOADER_RANDOM
+      "${ZEPHYR_HAL_ESPRESSIF_MODULE_DIR}/components/bootloader_support/src/bootloader_random_${CONFIG_SOC_SERIES}.c")
+  if(EXISTS "${_ESP_BOOTLOADER_RANDOM}")
+    message(STATUS "ZephCore RNG: ESP32 pre-RF entropy (${CONFIG_SOC_SERIES})")
+    target_sources(app PRIVATE "${_ESP_BOOTLOADER_RANDOM}")
+  else()
+    message(WARNING
+      "ZephCore RNG: no bootloader_random source for ${CONFIG_SOC_SERIES} — "
+      "identity keygen will fall back to CPU jitter alone. Check "
+      "hal/espressif components/bootloader_support/src/.")
+  endif()
+endif()
+
 # Native-Linux (native_sim) runtime setup: force real-time clock mode so the
 # simulated clock tracks wall time (required for the real SX126x radio's
 # BUSY/DIO1 timing).  Bakes in the equivalent of the --rt command-line flag.

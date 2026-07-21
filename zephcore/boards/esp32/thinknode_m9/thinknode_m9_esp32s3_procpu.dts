@@ -66,6 +66,13 @@
  * re-attaches the USB pad (usb_serial_jtag_ll_phy_enable_pad) and enables the
  * D+ pull-up, fighting the keypad bus. Native USB is unbonded from the
  * connector anyway — see the chosen-node comment. */
+&cpu0 {
+	clock-frequency = <DT_FREQ_M(240)>;
+};
+
+&cpu1 {
+	clock-frequency = <DT_FREQ_M(240)>;
+};
 
 &i2c0 {
 	status = "okay";

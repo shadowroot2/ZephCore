@@ -13,6 +13,11 @@
 #include <string.h>
 #include <mesh/Utils.h>
 
+#if defined(CONFIG_SOC_FAMILY_ESPRESSIF_ESP32)
+/* Pre-RF entropy for the ESP32 HWRNG — see esp32_entropy_begin() below.
+ * Source file is added to the build by CMakeLists.txt (ESP32 only). */
+#include <bootloader_random.h>
+#endif
 namespace mesh {
 
 #if !IS_ENABLED(CONFIG_CSPRNG_ENABLED)
@@ -113,12 +118,44 @@ void ZephyrRNG::random(uint8_t *dest, size_t sz)
  * statistically prove entropy quality — that's what the literature is
  * for. */
 
+/* Health statistics for one jitter window.  Timing statistics only — never
+ * pool contents or derived key material.  Reporting these is standard practice
+ * for a NIST SP 800-90B style noise source; reporting the bytes would not be. */
+#define JITTER_HIST_SLOTS 16
+
+struct jitter_stats {
+	int      n_samples;
+	int      n_distinct;   /* distinct delta values seen, capped at 8 */
+	int      max_consec;   /* longest run of identical deltas */
+	uint32_t min_delta;
+	uint32_t max_delta;
+	uint32_t mcv_count;    /* occurrences of the most common tracked delta */
+	uint32_t untracked;    /* samples whose value missed the histogram      */
+	bool     ok;
+};
+
+/* log2(x) * 1000, integer math (no FP — printk here has no float support).
+ * Integer part from the leading bit; fraction by linear interpolation between
+ * adjacent powers of two.  Linear interpolation UNDERSTATES log2 across that
+ * range (log2(1.5)=0.585 vs 0.5 linear), so the derived entropy figure errs
+ * low — the safe direction for an entropy claim. */
+static uint32_t log2_millibits(uint32_t x)
+{
+	if (x <= 1) return 0;
+	uint32_t ipart = 31u - (uint32_t)__builtin_clz(x);
+	uint32_t base  = 1u << ipart;
+	uint32_t frac  = (uint32_t)(((uint64_t)(x - base) * 1000u) / base);
+	return ipart * 1000u + frac;
+}
+
 static bool sample_cpu_jitter(uint8_t *pool, size_t pool_size,
-			      size_t pool_offset, uint32_t duration_ms)
+			      size_t pool_offset, uint32_t duration_ms,
+			      struct jitter_stats *st = nullptr)
 {
 	uint32_t accum = k_cycle_get_32();
 	int64_t deadline = k_uptime_get() + duration_ms;
 	size_t idx = pool_offset;
+	uint32_t min_delta = UINT32_MAX, max_delta = 0;
 
 	/* Online health stats: 32 bytes total vs. the previous 512-byte
 	 * deltas[] array. Tracks every sample, not just the first 128. */
@@ -128,11 +165,24 @@ static bool sample_cpu_jitter(uint8_t *pool, size_t pool_size,
 	int n_distinct = 0;
 	int n_samples = 0;
 
+	/* Bounded histogram for the SP 800-90B Most Common Value estimator.
+	 * Holds the first JITTER_HIST_SLOTS distinct deltas; anything beyond
+	 * that is counted in `untracked`.  A value frequent enough to dominate
+	 * p_max shows up within the first few distinct observations with
+	 * overwhelming probability, so this captures what the estimator needs
+	 * — but `untracked` is reported so the assumption stays visible. */
+	uint32_t hist_val[JITTER_HIST_SLOTS] = {0};
+	uint32_t hist_cnt[JITTER_HIST_SLOTS] = {0};
+	int n_hist = 0;
+	uint32_t untracked = 0;
+
 	while (k_uptime_get() < deadline) {
 		uint32_t t1 = k_cycle_get_32();
-		/* Variable-time work — number of iterations depends on the
-		 * accumulator, so timing depends on hardware nondeterminism
-		 * (cache, branch prediction, ISR firing). */
+		/* Variable-time work.  The iteration count comes from the
+		 * accumulator, which carries the PREVIOUS measurement (see the
+		 * feedback step below), so the amount of work done here depends
+		 * on observed hardware nondeterminism rather than on a fixed
+		 * sequence. */
 		volatile uint32_t a = accum;
 		uint32_t iters = (accum & 0x7f);
 		for (uint32_t i = 0; i < iters; i++) {
@@ -141,6 +191,25 @@ static bool sample_cpu_jitter(uint8_t *pool, size_t pool_size,
 		accum = a;
 		uint32_t t2 = k_cycle_get_32();
 		uint32_t delta = t2 - t1;
+
+		/* FEEDBACK — the load-bearing line.  Without it `accum` evolves
+		 * as a pure LCG from a single seed: the iteration count becomes a
+		 * fixed sequence, and on any CPU where reading the cycle counter
+		 * is cheap and same-domain (ESP32 CCOUNT) a warm cache makes each
+		 * `iters` value yield an identical `delta`.  Deltas then repeat
+		 * and the health check below correctly fails — which is exactly
+		 * what was observed on every ESP32 board.
+		 *
+		 * Folding the measurement back in closes the loop, so timing
+		 * variation propagates into subsequent work.  This is the
+		 * mechanism the cited jitterentropy design relies on and which
+		 * the original implementation omitted.
+		 *
+		 * nRF was unaffected: its k_cycle_get_32() is a 32.768 kHz RTC in
+		 * a different clock domain, so the read latency itself varies
+		 * with domain phase and supplied the nondeterminism this line
+		 * now provides everywhere. */
+		accum ^= delta;
 
 		/* Mix into entropy pool */
 		pool[idx++ % pool_size] ^= (uint8_t)delta;
@@ -165,12 +234,109 @@ static bool sample_cpu_jitter(uint8_t *pool, size_t pool_size,
 			if (!found) distinct[n_distinct++] = delta;
 		}
 
+		if (delta < min_delta) min_delta = delta;
+		if (delta > max_delta) max_delta = delta;
+
+		/* MCV histogram */
+		{
+			bool binned = false;
+			for (int j = 0; j < n_hist; j++) {
+				if (hist_val[j] == delta) {
+					hist_cnt[j]++;
+					binned = true;
+					break;
+				}
+			}
+			if (!binned) {
+				if (n_hist < JITTER_HIST_SLOTS) {
+					hist_val[n_hist] = delta;
+					hist_cnt[n_hist] = 1;
+					n_hist++;
+				} else {
+					untracked++;
+				}
+			}
+		}
+
 		n_samples++;
 	}
 
-	if (n_samples < 16) return false;
-	if (max_consec >= 32) return false;  /* stuck source */
-	return n_distinct >= 5;               /* minimal variance */
+	uint32_t mcv_count = 0;
+	for (int j = 0; j < n_hist; j++) {
+		if (hist_cnt[j] > mcv_count) mcv_count = hist_cnt[j];
+	}
+
+	bool ok = (n_samples >= 16)      /* enough samples          */
+		&& (max_consec < 32)     /* not a stuck source      */
+		&& (n_distinct >= 5);    /* minimal variance        */
+
+	if (st) {
+		st->n_samples  = n_samples;
+		st->n_distinct = n_distinct;
+		st->max_consec = max_consec;
+		st->min_delta  = (n_samples > 0) ? min_delta : 0;
+		st->max_delta  = max_delta;
+		st->mcv_count  = mcv_count;
+		st->untracked  = untracked;
+		st->ok         = ok;
+	}
+	return ok;
+}
+
+/* Count distinct byte values in a buffer — a repetition/adaptive-proportion
+ * style health indicator for a CSPRNG draw.  A stuck source collapses this to
+ * 1.  Deliberately coarse: one integer per draw, which detects catastrophic
+ * failure without meaningfully describing the bytes themselves. */
+static int distinct_bytes(const uint8_t *buf, size_t len)
+{
+	bool seen[256] = {false};
+	int n = 0;
+	for (size_t i = 0; i < len; i++) {
+		if (!seen[buf[i]]) { seen[buf[i]] = true; n++; }
+	}
+	return n;
+}
+
+/* One line per jitter window.  `distinct` is capped at 8 by the sampler, so 8/8
+ * means "at least 8" — the pass threshold is 5.  `maxrep` is the longest run of
+ * identical deltas; >=32 fails.  min/max delta expose a resolution problem: if
+ * they are 0 and 1, the cycle counter is too coarse to measure the work at all
+ * and no amount of sampling will help. */
+static void report_jitter(const char *label, const struct jitter_stats *st)
+{
+	printk("[RNG] %s: samples=%d distinct=%d/8 maxrep=%d "
+	       "delta=[%u..%u] -> %s\n",
+	       label, st->n_samples, st->n_distinct, st->max_consec,
+	       st->min_delta, st->max_delta, st->ok ? "PASS" : "FAIL");
+
+	/* Min-entropy estimate, NIST SP 800-90B 6.3.1 Most Common Value:
+	 *   p_max = mcv_count / n_samples
+	 *   H_min per sample = -log2(p_max) = log2(n_samples / mcv_count)
+	 *
+	 * Computed in milli-bits with integer math. This REPLACES the 0.1-0.3
+	 * bits/sample the file header used to assume — assumption is only valid
+	 * if deltas actually vary, which is the very thing that failed on ESP32.
+	 *
+	 * Deliberately NOT measured on the conditioned output: AES-256-CTR makes
+	 * any input look uniform, so output statistics would read perfect even
+	 * for a near-zero-entropy seed. Entropy is a property of the source. */
+	if (st->n_samples <= 0 || st->mcv_count == 0) {
+		printk("[RNG]   entropy est: n/a (no samples)\n");
+		return;
+	}
+
+	uint32_t ratio_q10 = (uint32_t)(((uint64_t)st->n_samples * 1024u)
+					/ st->mcv_count);
+	uint32_t per_mb = log2_millibits(ratio_q10);
+	per_mb = (per_mb > 10000u) ? (per_mb - 10000u) : 0u;   /* less log2(1024) */
+
+	uint64_t total_mb = (uint64_t)per_mb * (uint64_t)st->n_samples;
+	uint32_t total_bits = (uint32_t)(total_mb / 1000u);
+
+	printk("[RNG]   entropy est: %u.%03u bits/sample x %d = ~%u bits "
+	       "(need 256)%s\n",
+	       per_mb / 1000u, per_mb % 1000u, st->n_samples, total_bits,
+	       st->untracked ? " [histogram overflowed — est. is optimistic]" : "");
 }
 
 /* ===== Entropy extraction via AES-256-CTR ================================
@@ -268,8 +434,42 @@ void ZephyrRNG::mixIdentitySeed(uint8_t *out, size_t out_len,
 	uint8_t pool[512];
 	memset(pool, 0, sizeof(pool));
 
-	/* Stage 1: early CSPRNG (strong on nRF/MG24, weak on ESP32 pre-radio) */
-	(void)sys_csrand_get(pool, 64);
+	/* ESP32 only: give the HWRNG a real entropy source for the duration of
+	 * this function.
+	 *
+	 * WDEV_RANDOM is a PRNG that receives hardware entropy only "provided
+	 * Wi-Fi or BT are enabled" (Zephyr drivers/entropy/entropy_esp32.c), and
+	 * sys_csrand_get() maps straight to it. Every caller of this function
+	 * runs before RF is up, and repeater / room-server builds never enable
+	 * RF at all — so stages 1 and 5 below contributed NOTHING on ESP32,
+	 * leaving CPU jitter as the only real source. That was observed failing
+	 * its health check on ThinkNode M9 hardware while deriving a permanent
+	 * identity key.
+	 *
+	 * bootloader_random_enable() puts the SAR ADC into continuous sampling
+	 * and mixes its noise into the HWRNG; Espressif's header explicitly
+	 * sanctions calling it from app code when RF is not up. It must be
+	 * disabled again before anything else touches the ADC or RF — done at
+	 * the end of the collection phase, before AES extraction, so the ADC is
+	 * held for as short a window as possible.
+	 *
+	 * WARNING for future callers: this is unsafe if RF or the ADC is already
+	 * in use. Do not call mixIdentitySeed() after bt_enable() or alongside a
+	 * battery read on ESP32. */
+#if defined(CONFIG_SOC_FAMILY_ESPRESSIF_ESP32)
+	bootloader_random_enable();
+	printk("[RNG] === identity seed health ===\n");
+	printk("[RNG] esp32 pre-RF entropy (bootloader_random): ENABLED\n");
+#else
+	printk("[RNG] === identity seed health ===\n");
+	printk("[RNG] platform TRNG is radio-independent (no pre-RF workaround needed)\n");
+#endif
+
+	/* Stage 1: early CSPRNG (strong on nRF/MG24; on ESP32 this is only real
+	 * because bootloader_random_enable() above is feeding the HWRNG) */
+	int rc1 = sys_csrand_get(pool, 64);
+	printk("[RNG] stage1 csrand    : rc=%d distinct=%d/64\n",
+	       rc1, distinct_bytes(pool, 64));
 
 	/* Stage 2: HWINFO unique device ID — uniqueness across devices */
 	uint8_t devid[16] = {0};
@@ -277,11 +477,18 @@ void ZephyrRNG::mixIdentitySeed(uint8_t *out, size_t out_len,
 	for (ssize_t i = 0; i < devid_len && i < (ssize_t)sizeof(devid); i++) {
 		pool[64 + i] ^= devid[i];
 	}
+	/* NOT secret — this is the efuse/FICR serial, public and printed at boot.
+	 * It contributes uniqueness between devices, never unpredictability. */
+	printk("[RNG] stage2 hwinfo id  : %d bytes (public — uniqueness only)\n",
+	       (int)devid_len);
 
 	/* Stage 3: caller-supplied entropy (e.g. ADC LSB noise) */
 	if (extra && extra_len > 0) {
 		size_t n = (extra_len < 32) ? extra_len : 32;
 		for (size_t i = 0; i < n; i++) pool[80 + i] ^= extra[i];
+		printk("[RNG] stage3 extra     : %d bytes\n", (int)n);
+	} else {
+		printk("[RNG] stage3 extra     : none\n");
 	}
 
 	/* Stage 4: CPU cycle-counter jitter, 200ms.
@@ -292,28 +499,41 @@ void ZephyrRNG::mixIdentitySeed(uint8_t *out, size_t out_len,
 	 * sys_csrand_get in stages 1 and 5) which is a far stronger source than
 	 * jitter sampling anyway. */
 #ifndef CONFIG_ARCH_POSIX
-	bool health_ok = sample_cpu_jitter(pool, sizeof(pool), 112, 200);
+	struct jitter_stats js = {};
+	bool health_ok = sample_cpu_jitter(pool, sizeof(pool), 112, 200, &js);
+	report_jitter("stage4 jitter 200ms", &js);
 	if (!health_ok) {
-#if IS_ENABLED(CONFIG_ZEPHCORE_RNG_DEBUG)
-		printk("ZephyrRNG: jitter health check failed, resampling 400ms\n");
-#endif
-		health_ok = sample_cpu_jitter(pool, sizeof(pool), 112, 400);
+		printk("[RNG] stage4 FAILED — resampling at 400ms\n");
+		health_ok = sample_cpu_jitter(pool, sizeof(pool), 112, 400, &js);
+		report_jitter("stage4 jitter 400ms", &js);
 		if (!health_ok) {
-#if IS_ENABLED(CONFIG_ZEPHCORE_RNG_DEBUG)
-			printk("ZephyrRNG: jitter health still failing — continuing with mixed sources\n");
-#endif
+			printk("[RNG] stage4 STILL FAILING — continuing with mixed sources\n");
 		}
 	}
 #endif /* CONFIG_ARCH_POSIX */
 
 	/* Stage 5: late CSPRNG — catches any mid-boot radio init that
 	 * warmed the TRNG during the 200ms jitter window */
-	(void)sys_csrand_get(pool + 368, 64);
+	int rc5 = sys_csrand_get(pool + 368, 64);
+	printk("[RNG] stage5 csrand    : rc=%d distinct=%d/64\n",
+	       rc5, distinct_bytes(pool + 368, 64));
 
 	/* Stage 6: second jitter sample, independent timing window */
 #ifndef CONFIG_ARCH_POSIX
-	(void)sample_cpu_jitter(pool, sizeof(pool), 432, 50);
+	struct jitter_stats js6 = {};
+	(void)sample_cpu_jitter(pool, sizeof(pool), 432, 50, &js6);
+	report_jitter("stage6 jitter  50ms", &js6);
 #endif /* CONFIG_ARCH_POSIX */
+
+	/* Collection done — release the SAR ADC before anything else needs it.
+	 * Unconditional: every path below this point either returns normally or
+	 * reboots, so there is no path that leaves it enabled. */
+#if defined(CONFIG_SOC_FAMILY_ESPRESSIF_ESP32)
+	bootloader_random_disable();
+	printk("[RNG] esp32 pre-RF entropy: DISABLED (ADC released)\n");
+#endif
+	printk("[RNG] === end (extracting %u bytes via AES-256-CTR) ===\n",
+	       (unsigned)out_len);
 
 	/* Final conditioning: AES-256-CTR over the pool. Extracts a 32-byte
 	 * AES key via SHA-256(pool), then expands to out_len bytes via
