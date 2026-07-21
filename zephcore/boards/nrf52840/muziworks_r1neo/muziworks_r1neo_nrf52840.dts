@@ -60,9 +60,7 @@
 		user_button: button_0 {
 			/* Active HIGH (pressed = VCC), no internal pull — the board
 			 * has an external pull-down and the line is passed through
-			 * from the I/O controller. Matches Meshtastic's
-			 * BUTTON_ACTIVE_LOW 0 / BUTTON_ACTIVE_PULLUP 0 /
-			 * BUTTON_SENSE_TYPE INPUT_SENSE_HIGH. The polarity here is
+			 * from the I/O controller. The polarity here is
 			 * what ui_prepare_for_system_off() reads to pick the
 			 * System OFF SENSE level, so it must stay correct. */
 			gpios = <&gpio0 26 GPIO_ACTIVE_HIGH>;
@@ -122,10 +120,10 @@
 	 *     multiplier = divider_ratio * 1.005 * 3600
 	 * (3.6 V full scale from ADC_GAIN_1_6 + ADC_REF_INTERNAL, +0.5% for
 	 * nRF SAADC gain error). The divider ratio itself is disputed between
-	 * the two upstreams: Arduino MeshCore's constant implies ~1.73
-	 * (→ 6259, the RAK4631-family value), Meshtastic's r1-neo variant.h
-	 * states 1.667 (→ 6031). 6146 splits them and is within ~2% of either;
-	 * correct it once the board has been measured. */
+	 * sources: Arduino MeshCore's constant implies ~1.73 (→ 6259, the
+	 * RAK4631-family value), while the vendor documentation states 1.667
+	 * (→ 6031). 6146 splits them and is within ~2% of either; correct it
+	 * once the board has been measured. */
 	zephyr,user {
 		io-channels = <&adc 7>;
 		vbat-mv-multiplier = <6146>;
@@ -292,8 +290,8 @@
 		reg = <0>;
 		spi-max-frequency = <8000000>;
 
-		/* LoRa control pins. reset-gpios is wired and used — Meshtastic
-		 * drives P1.06 as SX126X_RESET; Arduino MeshCore's RADIOLIB_NC is
+		/* LoRa control pins. reset-gpios is wired and used — P1.06 is
+		 * the SX126x reset line; Arduino MeshCore's RADIOLIB_NC is
 		 * the outlier. ZephCore needs it: ui_prepare_for_system_off()
 		 * parks the radio in HW reset before System OFF. */
 		reset-gpios = <&gpio1 6 GPIO_ACTIVE_LOW>;

@@ -114,8 +114,12 @@ the screen is mirrored or upside down, that's a known one-line fix), GPS output 
 battery calibration, and whether the USB-C port reaches the native USB pads at all (BLE is the companion
 path meanwhile). Not ported: the I2C keyboard, which is driven by a second MCU.
 
-Also worth knowing on this board specifically: the **SD slot shares the radio's SPI bus**. That has no
-effect on normal operation, but it does matter if you use the LR1110 updater below.
+Also worth knowing on this board specifically: the **SD slot shares the radio's SPI bus** with the LR1110
+and the display. An inserted card was confirmed to break LR1110 radio-firmware flashing on this board — the
+write reports success and the radio then runs nothing. To keep a card from disturbing normal operation, the
+firmware now puts any inserted card into SPI idle at startup, before the radio driver initialises, so it
+stays quiet until something actually addresses it. **If the M9 misbehaves in a way you can't explain, try
+it once with the card removed** — that is still the fastest way to rule the slot out.
 
 Feedback from anyone with an M9 is genuinely useful here — the bring-up list in the board's README says
 exactly what to look at.

@@ -4,13 +4,12 @@ A pocket LoRa node built on the **nRF52840 + SX1262** (RAK4630 stamp module on
 a custom muzi baseboard), with GNSS, buzzer, battery-backed RTC and a single
 user button. No display.
 
-The port is cross-derived from three sources, because none of them agrees with
-the others on every pin: Arduino MeshCore's
+The port is cross-derived from several sources, because none of them agrees
+with the others on every pin: Arduino MeshCore's
 [`variants/muziworks_r1_neo`](https://github.com/meshcore-dev/MeshCore/pull/2007),
-Meshtastic's
-[`variants/nrf52840/r1-neo`](https://github.com/meshtastic/firmware/blob/master/variants/nrf52840/r1-neo/variant.h),
-and the vendor's own [product page](https://muzi.works/products/r1-neo-complete-meshtastic-device).
-Where they conflict, the reasoning is recorded in the DTS comments and below.
+other third-party firmware for the same board, and the vendor's own
+documentation. Where they conflict, the reasoning is recorded in the DTS
+comments and below.
 
 ## Build
 
@@ -67,10 +66,10 @@ No QSPI external flash — contacts and channels live in internal flash.
 
 - **GPS TX/RX are swapped relative to the net names.** The schematic labels
   `UART_GPS_RX` (P0.24) and `UART_GPS_TX` (P0.25) from the *module's* point of
-  view, so the MCU's receive pin is P0.25. Meshtastic maps them that way;
-  Arduino MeshCore takes the labels literally and ends up listening on the
-  module's own input pin. ZephCore follows Meshtastic. Getting this backwards
-  is silent — the UART simply never sees a byte.
+  view, so the MCU's receive pin is P0.25. Arduino MeshCore takes the labels
+  literally and ends up listening on the module's own input pin; ZephCore uses
+  the corrected mapping. Getting this backwards is silent — the UART simply
+  never sees a byte.
 - **Soft power, not a switch.** The rail is gated by an I/O controller that
   only holds the DCDC up while P0.13 is asserted, and P0.29 tells it the MCU
   is alive (this also enables button and LED passthrough). Both are `gpio-hog`
@@ -89,8 +88,8 @@ No QSPI external flash — contacts and channels live in internal flash.
 ## To verify on real hardware
 
 1. **Battery multiplier.** `vbat-mv-multiplier = 6146` is a placeholder. The
-   two upstreams disagree on the divider: Arduino MeshCore's constant implies
-   ~1.73 (→ 6259, the RAK4631-family value), Meshtastic's variant.h states
+   sources disagree on the divider: Arduino MeshCore's constant implies
+   ~1.73 (→ 6259, the RAK4631-family value), the vendor documentation states
    1.667 (→ 6031). Measure the cell with a DMM, compare against `get batt`,
    and set the value with ZephCore's convention:
    `multiplier = divider_ratio * 1.005 * 3600`.

@@ -595,6 +595,19 @@ else()
   message(STATUS "ZephCore Battery: generic LiPo curve")
 endif()
 
+# ========== Board-specific startup quirks ==========
+# Optional per-board sd_quiesce.c — boards whose SD slot shares the radio's SPI
+# bus put any inserted card into SPI idle before the radio driver initialises,
+# so it cannot disturb the bus. Registers itself with SYS_INIT; nothing calls
+# into it, so it is simply compiled in when the board provides one.
+file(GLOB_RECURSE _BOARD_SD_QUIESCE
+     "${CMAKE_CURRENT_SOURCE_DIR}/boards/*/${BOARD_BASE}/sd_quiesce.c")
+if(_BOARD_SD_QUIESCE)
+  list(GET _BOARD_SD_QUIESCE 0 _BOARD_SD_QUIESCE)
+  message(STATUS "ZephCore SD: shared-bus quiesce (${_BOARD_SD_QUIESCE})")
+  target_sources(app PRIVATE "${_BOARD_SD_QUIESCE}")
+endif()
+
 # Native-Linux (native_sim) runtime setup: force real-time clock mode so the
 # simulated clock tracks wall time (required for the real SX126x radio's
 # BUSY/DIO1 timing).  Bakes in the equivalent of the --rt command-line flag.
