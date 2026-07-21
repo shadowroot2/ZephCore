@@ -56,12 +56,20 @@
 #endif
 
 /*
- * The 0x6500 -> 0x1001 chip-bootloader update is ONE-WAY and, on every chip
- * we have observed take it, leaves the radio unable to boot ANY transceiver
- * image (0x0402, 0x0401 and 0x0303 all write without error and never run,
- * across two independent flashers). Chips still on bootloader 0x6500 flash
- * and run normally. So it must be opted into explicitly, never performed as
- * a side effect of asking for firmware 0x0402.
+ * Perform the 0x6500 -> 0x1001 chip-bootloader update when firmware 0x0402 is
+ * the target (0x0402 will not run on the old bootloader).
+ *
+ * Verified end-to-end on a T1000-E 2026-07-21: Stage A then Stage B, chip
+ * afterwards reports TYPE=0x01 FW=0x0402 and runs from flash. An earlier
+ * belief that this update bricks radios came from a sample where every
+ * observed 0x1001 chip was on one board (ThinkNode M9) — that board has a
+ * separate, still-open problem, so a board fault was being read as a
+ * bootloader fault.
+ *
+ * It IS one-way: Semtech ships loaders in the forward direction only, and the
+ * new bootloader lives inside the encrypted loader payload, so there is
+ * nothing to flash back. Set this to 0 to flash firmware only and leave the
+ * chip bootloader untouched.
  */
 #ifndef UPDATER_ALLOW_BOOTLOADER_UPDATE
 #define UPDATER_ALLOW_BOOTLOADER_UPDATE 1
@@ -116,6 +124,36 @@ static void led_off(void)   {}
 static void led_toggle(void) {}
 #endif
 
+/* Idle gap inserted after every flash page program.
+ *
+ * Diagnostic for a marginal supply. A page program pulls current for ~3.6 ms
+ * and we issue 959 of them back to back, so a rail that cannot sustain that
+ * burst will sag — and a sagging rail corrupts what gets programmed while the
+ * write still reports OK (the bootloader never reads back). Spacing the pages
+ * lets the supply recover between them. 10 ms stretches a full image write
+ * from ~6.6 s to ~16 s, which costs nothing.
+ *   west build ... -- -DUPDATER_CHUNK_DELAY_MS=10
+ */
+#ifndef UPDATER_CHUNK_DELAY_MS
+#define UPDATER_CHUNK_DELAY_MS 0
+#endif
+
+/* Refuse to flash with an SD card in the slot.
+ *
+ * On the M9 the slot shares SPI2 with the radio, and a card present during
+ * flashing produces a silently corrupt image: every write reports OK, the
+ * chip spends real time programming, and the result fails its integrity check
+ * at boot with no error anywhere to point at. Field-confirmed 2026-07-21 —
+ * removing the card was what finally made that board flash.
+ *
+ * Gated rather than warned because the asymmetry is stark: the cost of the
+ * gate is ejecting a card, the cost of missing it is days of debugging.
+ *   west build ... -- -DUPDATER_IGNORE_SDCARD=1
+ */
+#ifndef UPDATER_IGNORE_SDCARD
+#define UPDATER_IGNORE_SDCARD 0
+#endif
+
 /* ── Helpers ──────────────────────────────────────────────────── */
 
 static void updater_done(void)
@@ -151,6 +189,37 @@ static void fatal_error(const char *msg)
 		led_toggle();
 		k_msleep(200);
 	}
+}
+
+static void check_sdcard(void)
+{
+	int rc = lr1110_updater_probe_sdcard();
+
+	if (rc == -ENOTSUP) {
+		return; /* board has no SD slot on the radio's bus */
+	}
+	if (rc < 0) {
+		printk("  SD slot: probe failed (%d) — continuing\n", rc);
+		return;
+	}
+	if (rc == 0) {
+		printk("  SD slot: empty\n");
+		return;
+	}
+
+	printk("  SD slot: CARD PRESENT\n");
+	if (UPDATER_IGNORE_SDCARD) {
+		printk("  WARNING: flashing anyway (UPDATER_IGNORE_SDCARD=1).\n");
+		return;
+	}
+	printk("\n");
+	printk("  The SD slot shares SPI2 with the radio. Flashing with a\n");
+	printk("  card inserted corrupts the image while every write still\n");
+	printk("  reports success — the chip ends up running nothing and\n");
+	printk("  there is no error to point at.\n");
+	printk("\n");
+	printk("  Remove the SD card and try again.\n");
+	fatal_error("SD card present — refusing to flash");
 }
 
 /* Map a millivolt value from devicetree to the chip's TCXO supply code. */
@@ -413,6 +482,10 @@ static void erase_and_flash_image(void *ctx, const char *what,
 			led_toggle();
 		}
 
+		if (UPDATER_CHUNK_DELAY_MS > 0) {
+			k_msleep(UPDATER_CHUNK_DELAY_MS);
+		}
+
 		offset += this_chunk * sizeof(uint32_t);
 		remaining -= this_chunk;
 		chunk_idx++;
@@ -587,6 +660,14 @@ int main(void)
 	printk("  Image:  %u words (%u KB)\n",
 	       LR11XX_FIRMWARE_IMAGE_SIZE,
 	       (LR11XX_FIRMWARE_IMAGE_SIZE * 4) / 1024);
+	printk("  Build:  SPI=%s  chunk-delay=%ums  bl-update=%s\n",
+#ifdef UPDATER_SPI_DMA
+	       "DMA",
+#else
+	       "PIO",
+#endif
+	       (unsigned)UPDATER_CHUNK_DELAY_MS,
+	       UPDATER_ALLOW_BOOTLOADER_UPDATE ? "yes" : "no");
 	printk("============================================\n");
 	printk("\n");
 
@@ -599,6 +680,7 @@ int main(void)
 		fatal_error("HAL init failed");
 	}
 	ctx = lr1110_updater_get_context();
+	check_sdcard();
 
 	/* ── Step 2: Hardware reset ── */
 	printk("[2/8] Hardware reset LR1110...\n");

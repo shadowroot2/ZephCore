@@ -266,6 +266,111 @@ int lr1110_updater_reset_to_bootloader(void)
 	return ret;
 }
 
+/* ── SD card presence probe ───────────────────────────────────
+ *
+ * On boards where the SD slot shares the radio's SPI bus, an inserted card
+ * breaks LR1110 flashing: every write still reports OK and the programmed
+ * image fails its integrity check at boot, which is indistinguishable from a
+ * dozen other faults and cost days to track down. There is no card-detect pin
+ * wired on the M9, so presence is established over the bus.
+ *
+ * Standard SPI-mode detection: >=74 dummy clocks with CS high to bring the
+ * card up in SPI mode, then CMD0 (GO_IDLE_STATE). A present card answers R1
+ * with the MSB clear (0x01 = idle). An empty slot leaves MISO pulled high, so
+ * every byte reads 0xFF and nothing else. False "absent" is possible if a card
+ * ignores CMD0 — no worse than not probing; false "present" essentially cannot
+ * happen, since 0xFF is all an empty slot can produce.
+ *
+ * Runs at 400 kHz (SD init is specified at 100-400 kHz; the radio path stays
+ * at its own clock) and is safe on the shared bus: the LR1110's NSS is parked
+ * inactive by hal_init, and the TFT is held in reset and is write-only.
+ */
+#if defined(CONFIG_BOARD_THINKNODE_M9)
+/* No DT node exists for the slot — the base board DTS only parks its CS with
+ * a gpio-hog. GPIO48 = gpio1 pin 16. */
+#define SDCARD_CS_PORT_NODE DT_NODELABEL(gpio1)
+#define SDCARD_CS_PIN       16
+#endif
+
+int lr1110_updater_probe_sdcard(void)
+{
+#ifdef SDCARD_CS_PORT_NODE
+	const struct device *cs_port = DEVICE_DT_GET(SDCARD_CS_PORT_NODE);
+	struct spi_config slow_cfg = {
+		.frequency = 400000,
+		.operation = SPI_WORD_SET(8) | SPI_TRANSFER_MSB,
+	};
+	/* CMD0: GO_IDLE_STATE, arg 0, CRC7 0x95 (valid, and required while the
+	 * card is still in its CRC-checked power-up state). */
+	static const uint8_t cmd0[6] = { 0x40, 0x00, 0x00, 0x00, 0x00, 0x95 };
+	uint8_t tx[8], rx[8];
+	int ret, present = 0;
+
+	if (!device_is_ready(cs_port)) {
+		return -ENODEV;
+	}
+	if (gpio_pin_configure(cs_port, SDCARD_CS_PIN, GPIO_OUTPUT_HIGH) < 0) {
+		return -EIO;
+	}
+
+	/* Wake-up clocks, CS HIGH (deselected) — 10 bytes = 80 cycles. */
+	memset(tx, 0xFF, sizeof(tx));
+	const struct spi_buf wake_buf = { .buf = tx, .len = sizeof(tx) };
+	const struct spi_buf_set wake = { .buffers = &wake_buf, .count = 1 };
+
+	ret = spi_write(spi_dev, &slow_cfg, &wake);
+	if (ret == 0) {
+		ret = spi_write(spi_dev, &slow_cfg, &wake); /* >=74 clocks total */
+	}
+	if (ret < 0) {
+		goto out;
+	}
+
+	/* Select the card and issue CMD0. */
+	gpio_pin_set(cs_port, SDCARD_CS_PIN, 0);
+
+	const struct spi_buf cmd_buf = { .buf = (uint8_t *)cmd0, .len = sizeof(cmd0) };
+	const struct spi_buf_set cmd = { .buffers = &cmd_buf, .count = 1 };
+
+	ret = spi_write(spi_dev, &slow_cfg, &cmd);
+	if (ret == 0) {
+		/* Clock the response out with MOSI held high, as the spec
+		 * requires — spi_read() would drive zeros instead. */
+		memset(tx, 0xFF, sizeof(tx));
+		const struct spi_buf rtx_buf = { .buf = tx, .len = sizeof(rx) };
+		const struct spi_buf_set rtx = { .buffers = &rtx_buf, .count = 1 };
+		const struct spi_buf rrx_buf = { .buf = rx, .len = sizeof(rx) };
+		const struct spi_buf_set rrx = { .buffers = &rrx_buf, .count = 1 };
+
+		ret = spi_transceive(spi_dev, &slow_cfg, &rtx, &rrx);
+		if (ret == 0) {
+			for (size_t i = 0; i < sizeof(rx); i++) {
+				if ((rx[i] & 0x80) == 0) { /* valid R1 token */
+					present = 1;
+					break;
+				}
+			}
+		}
+	}
+
+	/* Deselect, then one more byte so the card releases the bus. */
+	gpio_pin_set(cs_port, SDCARD_CS_PIN, 1);
+	memset(tx, 0xFF, sizeof(tx));
+	const struct spi_buf rel_buf = { .buf = tx, .len = 1 };
+	const struct spi_buf_set rel = { .buffers = &rel_buf, .count = 1 };
+
+	spi_write(spi_dev, &slow_cfg, &rel);
+
+out:
+	/* Leave CS parked HIGH exactly as the gpio-hog had it. */
+	gpio_pin_configure(cs_port, SDCARD_CS_PIN, GPIO_OUTPUT_HIGH);
+
+	return (ret < 0) ? ret : present;
+#else
+	return -ENOTSUP;
+#endif
+}
+
 /* ── Semtech HAL interface ────────────────────────────────── */
 
 lr11xx_hal_status_t lr11xx_hal_write(const void *context, const uint8_t *command,

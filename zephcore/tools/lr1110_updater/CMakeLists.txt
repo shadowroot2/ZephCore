@@ -104,6 +104,26 @@ if(DEFINED UPDATER_ALLOW_BOOTLOADER_UPDATE)
         UPDATER_ALLOW_BOOTLOADER_UPDATE=${UPDATER_ALLOW_BOOTLOADER_UPDATE})
 endif()
 
+# Idle gap after every flash page program, in ms. Diagnostic for a marginal
+# supply — see the note in src/main.c.
+#   west build ... -- -DUPDATER_CHUNK_DELAY_MS=10
+if(DEFINED UPDATER_CHUNK_DELAY_MS)
+    target_compile_definitions(app PRIVATE
+        UPDATER_CHUNK_DELAY_MS=${UPDATER_CHUNK_DELAY_MS})
+endif()
+
+# Flash even with an SD card in the slot (shared SPI bus — see src/main.c).
+#   west build ... -- -DUPDATER_IGNORE_SDCARD=1
+if(DEFINED UPDATER_IGNORE_SDCARD)
+    target_compile_definitions(app PRIVATE
+        UPDATER_IGNORE_SDCARD=${UPDATER_IGNORE_SDCARD})
+endif()
+
+# Let a pasted log identify which build produced it.
+if(UPDATER_SPI_DMA)
+    target_compile_definitions(app PRIVATE UPDATER_SPI_DMA=1)
+endif()
+
 # Include paths for Semtech driver headers and firmware image
 target_include_directories(app PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src

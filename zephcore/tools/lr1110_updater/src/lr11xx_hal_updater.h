@@ -66,6 +66,18 @@ void *lr1110_updater_get_context(void);
  *  - busy_seen: false if BUSY never rose within the bounded watch window.
  *  - spi_ret: return code of the last spi_write().
  */
+/**
+ * @brief Probe the shared SPI bus for an inserted SD card.
+ *
+ * Boards where the SD slot shares the radio's bus cannot flash the LR1110
+ * reliably with a card inserted. No card-detect pin is available, so presence
+ * is established with an SPI-mode CMD0 exchange.
+ *
+ * @return 1 if a card responded, 0 if the slot is empty, -ENOTSUP on boards
+ *         with no shared SD slot, or a negative errno on bus failure.
+ */
+int lr1110_updater_probe_sdcard(void);
+
 uint32_t lr1110_updater_last_busy_rise_us(void);
 uint32_t lr1110_updater_last_busy_hold_us(void);
 bool     lr1110_updater_last_busy_seen(void);
