@@ -595,6 +595,12 @@ else()
   message(STATUS "ZephCore Battery: generic LiPo curve")
 endif()
 
+# ========== I2C keypad (boards whose only input is a keyboard) ==========
+if(CONFIG_INPUT)
+  target_sources_ifdef(CONFIG_ZEPHCORE_UI_DISPLAY app PRIVATE
+    helpers/input/stc8h_keypad.c)
+endif()
+
 # ========== Board-specific startup quirks ==========
 # Optional per-board sd_quiesce.c — boards whose SD slot shares the radio's SPI
 # bus put any inserted card into SPI idle before the radio driver initialises,

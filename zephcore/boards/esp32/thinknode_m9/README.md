@@ -1,8 +1,8 @@
 # Elecrow ThinkNode M9
 
 ESP32-S3 handheld with LR1110 radio, ST7789 320x240 TFT, CC1167Q GPS, PCF8563
-RTC, buzzer, STC8H I2C keyboard, QMI8658 IMU + QMC6309 magnetometer, and an SD
-slot (keyboard/IMU/SD not ported — see below).
+RTC, buzzer, STC8H I2C keypad, QMI8658 IMU + QMC6309 magnetometer, and an SD
+slot (IMU/SD not ported — see below).
 
 Ported 2026-07-18 from Arduino MeshCore `variants/thinknode_m9` (which itself
 landed upstream only days earlier), cross-checked against a second,
@@ -90,10 +90,18 @@ in high flash are untouched by the updater flash.
   LR1110 updater).
 - **Charge/power sense** — GPIO1 = external-power detect, **active LOW**;
   GPIO8 = charger DONE. Not consumed by ZephCore yet.
-- **Keyboard identified** — STC8H helper MCU at **I2C 0x6C** on the second
-  bus (SDA=20 SCL=21), `KB_INT` GPIO12 idle-low/rising-edge, backlight
-  GPIO46. Registers: 0x01 battery, 0x03 long-press ms (16-bit write), 0x05
-  matrix key, 0x06 state.
+- **Keypad PORTED** — STC8H helper MCU at **I2C 0x6C** on i2c1 (SDA=20
+  SCL=21), `KB_INT` GPIO12 idle-low/rising-edge, backlight GPIO46.
+  Registers: 0x01-0x04 battery mV little-endian, 0x05 pressed key, 0x06
+  state (write 0x01 = sleep). Driver: `helpers/input/stc8h_keypad.c`,
+  binding `zephcore,stc8h-keypad`. This is the board's ONLY input, so
+  `Kconfig.thinknode_m9` selects `ZEPHCORE_UI_KEYBOARD` -> the full
+  companion UI. **Arrow-key codes are still unknown** — no reference
+  documents them; the driver logs unrecognised codes at INFO so they can be
+  identified on hardware and added to `key_map[]`. Mapped so far: 0x0D
+  enter, 0x86 back, 0x82 home, 0x83 menu, 0x81/0x85 function keys ->
+  page prev/next, 0x87 and 0xA3 long-press variants. Printable ASCII
+  (0x20-0x7E) passes through untranslated.
 - **Also on the sensor bus** — QMI8658 IMU + QMC6309 magnetometer.
   Unported; no address collision with the PCF8563 @0x51.
 
@@ -142,21 +150,26 @@ firmware-sourced (both firmwares agree on all of them).
 
 Still unverified on hardware, in rough priority order:
 
-1. **Display init params** — gamma/porch/vcom inherited from Heltec T114's
+1. **Keypad arrow codes** — the one blocker for a usable UI. Attach a serial
+   console, press each arrow key, and read the `unmapped keypad code 0x..`
+   lines; add them to `key_map[]` in `helpers/input/stc8h_keypad.c` as
+   `INPUT_KEY_UP/DOWN/LEFT/RIGHT`. Until then the UI changes pages but
+   cannot move within a list. Confirm `keypad at 0x6C ready` appears at boot.
+2. **Display init params** — gamma/porch/vcom inherited from Heltec T114's
    ST7789V (no board-specific init values exist in any reference); check
    contrast/colors. If mirrored or upside down, swap `mdac` 0xA0 ↔ 0x60.
-2. **GPS identity/output** — confirm NMEA at 115200 and that the CC1167Q
+3. **GPS identity/output** — confirm NMEA at 115200 and that the CC1167Q
    talks standard sentences (it should; both upstreams parse plain NMEA).
    If a fix never arrives, probe `$PDTINFO` manually.
-3. **Battery calibration** — the 2:1 divider is what both upstreams assume;
+4. **Battery calibration** — the 2:1 divider is what both upstreams assume;
    sanity-check `get bat` against a multimeter once, and check whether the
    4.35 V charger variant actually charges above 4.20 V (OCV curve top).
-4. **USB-OTG companion transport** — see the schematic section above:
+5. **USB-OTG companion transport** — see the schematic section above:
    verify whether the native USB pads reach the USB-C connector at all.
-5. **rx-boosted** — deliberately ON (both upstreams leave boosted gain off /
+6. **rx-boosted** — deliberately ON (both upstreams leave boosted gain off /
    unset; every other ZephCore LR1110 board uses it). Verify RX sensitivity
    and TX power on air.
-6. **ADC2 vs WiFi** — battery reads ride ADC unit 2 (GPIO13), which WiFi also
+7. **ADC2 vs WiFi** — battery reads ride ADC unit 2 (GPIO13), which WiFi also
    uses; expect intermittent read failures in `wifi_ota.conf` builds.
 
 ## Not ported

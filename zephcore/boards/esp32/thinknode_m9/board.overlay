@@ -210,6 +210,20 @@
 	};
 };
 
+/*
+ * STC8H keypad helper MCU — this board's only input device (no user button
+ * exists at hardware level). KB_INT on GPIO12 is idle-low and pulses high on
+ * a keypress; the driver also polls as a safety net.
+ */
+&i2c1 {
+	keypad: keypad@6c {
+		compatible = "zephcore,stc8h-keypad";
+		reg = <0x6c>;
+		irq-gpios = <&gpio0 12 GPIO_ACTIVE_HIGH>;
+		poll-interval-ms = <40>;
+	};
+};
+
 &i2c0 {
 	#include "../../common/sensors-i2c.dtsi"
 	/* ThinkNode M9 has a battery-backed PCF8563 @ 0x51 — opt in to boot-time

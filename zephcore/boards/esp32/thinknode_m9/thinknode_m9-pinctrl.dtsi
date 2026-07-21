@@ -39,6 +39,18 @@
 		};
 	};
 
+	/* I2C1 — STC8H keypad helper MCU @0x6C. Separate bus from the RTC and
+	 * sensors; the keypad is this board's only input device. */
+	i2c1_default: i2c1_default {
+		group1 {
+			pinmux = <I2C1_SDA_GPIO20>,
+				 <I2C1_SCL_GPIO21>;
+			bias-pull-up;
+			drive-open-drain;
+			output-high;
+		};
+	};
+
 	/* UART1 — L76K GPS (GPIO2 = GPS TX → CPU RX, GPIO3 = GPS RX → CPU TX) */
 	uart1_default: uart1_default {
 		group1 {

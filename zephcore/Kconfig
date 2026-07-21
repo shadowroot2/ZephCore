@@ -955,8 +955,9 @@ config ZEPHCORE_UI_KEYBOARD
 	  separate one. Selecting this makes ZEPHCORE_UI_DESIGN_JOYSTICK
 	  available on a board that has no 5-way stick.
 
-	  No board selects this yet: the STC8H driver and the keyboard text
-	  entry screen are not written, and the M9 is unverified on hardware.
+	  Selected by ThinkNode M9. The STC8H driver is helpers/input/
+	  stc8h_keypad.c; the keypad's arrow-key codes are still unknown, so
+	  the driver logs any code it does not recognise (see its header).
 	  The key-space reservation in helpers/ui-joystick/joystick_defs.h is
 	  the groundwork that makes them droppable in later.
 

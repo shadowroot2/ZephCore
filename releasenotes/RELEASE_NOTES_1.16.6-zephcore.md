@@ -112,7 +112,14 @@ It is ZephCore's first ESP32-S3 + LR1110 board, so a fair amount of it is new gr
 an existing port. Currently unverified: display init parameters (inherited from another ST7789V board — if
 the screen is mirrored or upside down, that's a known one-line fix), GPS output from the CC1167Q module,
 battery calibration, and whether the USB-C port reaches the native USB pads at all (BLE is the companion
-path meanwhile). Not ported: the I2C keyboard, which is driven by a second MCU.
+path meanwhile).
+
+The M9 has no user button in hardware — its keypad is the only input — so it now runs the full companion UI
+driven by a new driver for the STC8H keypad MCU on I2C. Enter, back, home, menu and page prev/next are wired
+up, and typed characters pass straight through. **The arrow keys are not mapped yet**: no reference we could
+find documents their codes, so rather than guess, the driver logs any key it doesn't recognise along with its
+hex value. Press the arrows once with a serial console attached and they can be bound in a one-line change.
+Until then you can move between pages but not up and down within a list.
 
 Also worth knowing on this board specifically: the **SD slot shares the radio's SPI bus** with the LR1110
 and the display. An inserted card was confirmed to break LR1110 radio-firmware flashing on this board — the

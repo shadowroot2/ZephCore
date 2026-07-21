@@ -440,6 +440,17 @@ static void joystick_ui_input_cb(struct input_event *evt, void *user_data)
 	/* All other keys: fire on press, ignore release */
 	if (!evt->value) return;
 
+	/* A keypad reports typed characters as their own ASCII code (see the
+	 * key-space contract in joystick_defs.h: 0x20-0x7E is reserved for
+	 * exactly this). Pass them through untranslated — the control codes
+	 * below all live outside that range, so there is no ambiguity. */
+	if (evt->code >= 0x20 && evt->code <= 0x7E) {
+		if (joystick_queue_initialized) {
+			JoystickUITask::enqueueKey((char)evt->code);
+		}
+		return;
+	}
+
 	char key = 0;
 	switch (evt->code) {
 	case INPUT_KEY_LEFT:    key = KEY_LEFT;         break;
@@ -447,6 +458,12 @@ static void joystick_ui_input_cb(struct input_event *evt, void *user_data)
 	case INPUT_KEY_BACK:
 	case INPUT_KEY_ESC:     key = KEY_CANCEL;       break;
 	case INPUT_KEY_1:       key = KEY_CANCEL;       break;
+	/* Keypad boards (ThinkNode M9) — the only input those have */
+	case INPUT_KEY_HOME:    key = KEY_HOME;         break;
+	case INPUT_KEY_MENU:    key = KEY_SELECT;       break;
+	case INPUT_KEY_PAGEUP:  key = KEY_PREV;         break;
+	case INPUT_KEY_PAGEDOWN:key = KEY_NEXT;         break;
+	case INPUT_KEY_F2:      key = KEY_ENTER_LONG;   break;
 	/* Multi tap outputs from input_multi_tap filter */
 	case INPUT_KEY_D:       key = KEY_BUZZ_TOGGLE;  break;  /* 3 taps */
 	case INPUT_KEY_C:       key = KEY_GPS_TOGGLE;   break;  /* 4 taps */
