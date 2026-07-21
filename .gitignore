@@ -131,3 +131,12 @@ PATH_HASH_AUDIT_INDEX.md
 MESHTIMESYNC_PLAN.md
 /meshtimesync-sim/
 releasenotes/RELEASE_NOTES_v1.16.4.md
+
+# Older release notes kept local-only. Renamed 2026-07-16 to the
+# RELEASE_NOTES_<version>-zephcore.md convention; these rules follow the rename.
+# NOTE: the notes file for the CURRENT version must stay TRACKED — the release
+# workflow publishes it as the GitHub release body (body_path). Only add a rule
+# here for versions that are already released.
+releasenotes/RELEASE_NOTES_1.16.3-zephcore.md
+releasenotes/RELEASE_NOTES_1.16.4-zephcore.md
+handover_thinknode_m9.md

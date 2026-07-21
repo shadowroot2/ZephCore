@@ -10,6 +10,7 @@
 #include "joystick_ui_task.h"
 #include "joystick_defs.h"
 #include "joystick_ui_hooks.h"
+#include <helpers/input/zephcore_input_ascii.h>
 #include <helpers/ui/ui_mesh_actions.h>
 #include <helpers/ui/ui_task.h>
 #include <helpers/AdvertDataHelpers.h>
@@ -440,13 +441,16 @@ static void joystick_ui_input_cb(struct input_event *evt, void *user_data)
 	/* All other keys: fire on press, ignore release */
 	if (!evt->value) return;
 
-	/* A keypad reports typed characters as their own ASCII code (see the
-	 * key-space contract in joystick_defs.h: 0x20-0x7E is reserved for
-	 * exactly this). Pass them through untranslated — the control codes
-	 * below all live outside that range, so there is no ambiguity. */
-	if (evt->code >= 0x20 && evt->code <= 0x7E) {
+	/* A keypad reports typed characters offset above the INPUT_KEY_* code
+	 * space (zephcore_input_ascii.h). Unwrap to plain ASCII, which is what
+	 * the key-space contract in joystick_defs.h reserves 0x20-0x7E for.
+	 *
+	 * Testing the raw event code against 0x20-0x7E instead would be wrong:
+	 * INPUT_KEY_LEFT is 105 and INPUT_KEY_RIGHT is 106, so joystick boards
+	 * would see their arrows turn into the letters 'i' and 'j'. */
+	if (ZEPHCORE_INPUT_IS_ASCII(evt->code)) {
 		if (joystick_queue_initialized) {
-			JoystickUITask::enqueueKey((char)evt->code);
+			JoystickUITask::enqueueKey(ZEPHCORE_INPUT_TO_ASCII(evt->code));
 		}
 		return;
 	}

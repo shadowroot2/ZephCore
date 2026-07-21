@@ -14,10 +14,13 @@
  *
  * Key codes emitted
  * -----------------
- * Printable ASCII (0x20-0x7E) is forwarded verbatim as INPUT_KEY_* would not
- * express it; the joystick UI reserves exactly that range for typed characters
- * (see helpers/ui-joystick/joystick_defs.h), so a character can travel to the
- * UI untranslated. Everything else is a named key and is translated here.
+ * Printable ASCII (0x20-0x7E) has no INPUT_KEY_* expression, so it is reported
+ * offset above the whole INPUT_KEY_* code space as ZEPHCORE_INPUT_ASCII_BASE +
+ * <ascii> (see helpers/input/zephcore_input_ascii.h — that header explains why
+ * the bare ASCII value must NOT be used). The joystick UI unwraps it back to a
+ * plain char, which is what its key-space contract reserves 0x20-0x7E for (see
+ * helpers/ui-joystick/joystick_defs.h). Everything else is a named key and is
+ * translated here.
  *
  * The named codes below are the ones confirmed from two independent firmwares
  * for this keypad. Arrow keys are NOT among them, and no reachable reference
@@ -36,6 +39,8 @@
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/input/input.h>
 #include <zephyr/sys/util.h>
+
+#include "zephcore_input_ascii.h"
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(stc8h_keypad, CONFIG_ZEPHCORE_LOG_LEVEL);
@@ -119,10 +124,14 @@ int stc8h_keypad_sleep(const struct device *dev)
 
 static void stc8h_report(const struct device *dev, uint8_t raw)
 {
-	/* Printable characters travel to the UI as themselves. */
+	/* Printable characters are offset out of the INPUT_KEY_* code space —
+	 * see zephcore_input_ascii.h for why the bare ASCII value must not be
+	 * used here. */
 	if (raw >= 0x20 && raw <= 0x7E) {
-		input_report_key(dev, raw, 1, false, K_NO_WAIT);
-		input_report_key(dev, raw, 0, true, K_NO_WAIT);
+		uint16_t code = ZEPHCORE_INPUT_ASCII_BASE + raw;
+
+		input_report_key(dev, code, 1, false, K_NO_WAIT);
+		input_report_key(dev, code, 0, true, K_NO_WAIT);
 		return;
 	}
 
