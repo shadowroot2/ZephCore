@@ -43,7 +43,7 @@
 #include "zephcore_input_ascii.h"
 
 #include <zephyr/logging/log.h>
-LOG_MODULE_REGISTER(stc8h_keypad, CONFIG_ZEPHCORE_LOG_LEVEL);
+LOG_MODULE_REGISTER(stc8h_keypad, CONFIG_ZEPHCORE_BOARD_LOG_LEVEL);
 
 /* Register map — see dts/bindings/input/zephcore,stc8h-keypad.yaml */
 #define STC8H_REG_BATTERY 0x01 /* 0x01..0x04, little-endian millivolts */

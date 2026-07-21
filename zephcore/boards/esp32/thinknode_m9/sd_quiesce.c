@@ -51,7 +51,7 @@
 #include <string.h>
 
 #include <zephyr/logging/log.h>
-LOG_MODULE_REGISTER(m9_sd_quiesce, CONFIG_ZEPHCORE_LOG_LEVEL);
+LOG_MODULE_REGISTER(m9_sd_quiesce, CONFIG_ZEPHCORE_BOARD_LOG_LEVEL);
 
 /* SD CS is GPIO48 = gpio1 pin 16. No DT node describes the slot — the base
  * board DTS only parks this pin with a gpio-hog. */
