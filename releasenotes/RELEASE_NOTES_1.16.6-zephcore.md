@@ -59,8 +59,11 @@ This buys two things:
   device PM and never opens its data pipe until told to — this was the old "enabling PM breaks GPS" trap,
   now handled once at boot with retries.
 
-(Only nRF UARTE ports are gated in. Other UART drivers are deliberately left alone — the saving is
-UARTE-specific and their suspend/resume round-trip is unverified.)
+**The UART suspend requires an nRF UARTE port and a board that can power the GPS module down.** Boards
+without power control keep the UART running and forgo the saving: suspending the port while the module is
+still streaming can wedge the main thread, leaving the radio deaf and the CLI answering `-> busy`. This
+affects **RAK3401 1W** and **GAT562 30S**. Other UART drivers are left alone entirely — the saving is
+UARTE-specific.
 
 ### Removed: Adaptive Power Control
 
