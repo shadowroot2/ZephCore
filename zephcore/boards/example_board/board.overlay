@@ -849,3 +849,33 @@
  *     #include "../../common/sensors-i2c.dtsi"
  * };
  */
+
+/* --- Latched supply rail / true power-off (soft-power boards) ---
+ *
+ * Only needed if your board has NO mechanical power switch and instead keeps
+ * its own supply alive by asserting a "hold" GPIO — typically a companion I/O
+ * controller that gates a DCDC regulator (see muzi works R1 Neo).
+ *
+ * On such a board sys_poweroff() alone is not a power-off. The SoC reaches
+ * System OFF at ~1 uA, but nRF GPIO output latches persist across the
+ * transition, so the hold line stays asserted and the rail keeps draining the
+ * battery. Declare the pins here and ui_prepare_for_system_off() releases them
+ * as its very last step, after the wake button has been observed released.
+ *
+ * Order is preserved and matters: downstream loads first, rail latch LAST.
+ *
+ * Pins are usually the same ones a gpio-hog asserts at boot. That is fine and
+ * intended — a hog is init-time configuration, not a runtime reservation, so
+ * the hog does the early assert and this node does the shutdown release.
+ *
+ * Boards without this node are entirely unaffected (the loop compiles away).
+ *
+ * / {
+ *     poweroff_gpios: poweroff-gpios {
+ *         compatible = "zephcore,poweroff-gpios";
+ *         gpios = <&gpio1 5  GPIO_ACTIVE_HIGH>,   radio module power
+ *                 <&gpio0 29 GPIO_ACTIVE_HIGH>,   I/O controller "MCU on"
+ *                 <&gpio0 13 GPIO_ACTIVE_HIGH>;   rail latch - cuts power
+ *     };
+ * };
+ */

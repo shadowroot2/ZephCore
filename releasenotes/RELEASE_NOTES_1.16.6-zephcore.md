@@ -24,7 +24,8 @@
 ---
 
 A maintenance release: an important **admin-password fix**, **GPS standby power savings**, and the
-removal of **Adaptive Power Control**.
+removal of **Adaptive Power Control** — plus two new boards, **muzi works R1 Neo** and an experimental
+first cut at the **ThinkNode M9**.
 
 ## Highlights
 
@@ -87,6 +88,38 @@ What changes for you:
 - **Your saved settings are safe.** APC's two prefs bytes are kept reserved at their original offsets, so
   no stored configuration shifts and nothing else is misread on upgrade.
 
+## New boards
+
+### muzi works R1 Neo
+
+A pocket LoRa node — nRF52840 + SX1262 (RAK4630 stamp on a custom muzi baseboard), with GNSS, buzzer,
+battery-backed RTC and a single user button. No display, so the UI is button actions only. It reuses the
+RAK4631 flash layout (SoftDevice s140 v6.1.1, app @ `0x26000`), so the stock UF2 bootloader works as-is —
+no bootloader reflash needed. The board's soft-power design is handled in devicetree: the DCDC rail latches
+on at boot and is released on shutdown, so long-press power-off works properly.
+
+Two things still want confirming against real hardware: the **battery divider multiplier** is a placeholder
+(the two upstreams disagree — check `get batt` against a multimeter), and the **GNSS module identity** is
+unconfirmed. Reports welcome.
+
+### ThinkNode M9 — experimental, first testable release
+
+**Consider this a preview, not a finished port.** It builds, flashes and runs, and it is worth testing if
+you have the hardware and don't mind rough edges — but several things have not been confirmed on a real
+device yet, and a few are knowingly missing.
+
+It is ZephCore's first ESP32-S3 + LR1110 board, so a fair amount of it is new ground rather than a copy of
+an existing port. Currently unverified: display init parameters (inherited from another ST7789V board — if
+the screen is mirrored or upside down, that's a known one-line fix), GPS output from the CC1167Q module,
+battery calibration, and whether the USB-C port reaches the native USB pads at all (BLE is the companion
+path meanwhile). Not ported: the I2C keyboard, which is driven by a second MCU.
+
+Also worth knowing on this board specifically: the **SD slot shares the radio's SPI bus**. That has no
+effect on normal operation, but it does matter if you use the LR1110 updater below.
+
+Feedback from anyone with an M9 is genuinely useful here — the bring-up list in the board's README says
+exactly what to look at.
+
 ## Other fixes and improvements
 
 - **Fixed: Heltec V3 failed to build from source** once device PM was enabled. The upstream Zephyr board
@@ -97,6 +130,20 @@ What changes for you:
   now explicitly off for V3, which is simply the truth about that board. Binary releases were unaffected;
   this only bit source builds. (V4 / V4.3 use ZephCore-local board definitions and were never affected.)
 - **Air530z GPS driver patch** comments corrected to match the new PM strategy.
+
+## Sidenote: LR1110 radio firmware updater
+
+Not part of this release and not something you need — but if you have an LR1110 board and feel like it,
+you can now update the **radio chip's own firmware** to Semtech's current version (`0x0402`, the H1_2026
+security release). This is the LR1110's internal firmware, not ZephCore. Prebuilt tools for T1000-E and
+ThinkNode M9 are in [`LR1110_updater/`](https://github.com/liquidraver/ZephCore/tree/master/LR1110_updater)
+— flash one, watch it over serial, then flash ZephCore again afterwards.
+
+Worth reading the [README](https://github.com/liquidraver/ZephCore/blob/master/LR1110_updater/README.md)
+first. Two things in particular: the chip bootloader update it performs is **one-way**, and on the M9 you
+must **take the SD card out** (it shares the radio's SPI bus and silently corrupts the write — the tool
+checks and refuses to start, but still). Boards on older firmwares work perfectly well with
+ZephCore and are fine left alone.
 
 ## Recommended upgrade checklist
 

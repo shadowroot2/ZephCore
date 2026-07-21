@@ -76,6 +76,7 @@ ZephCore — это порт прошивки [MeshCore](https://github.com/mesh
 | **SenseCAP Solar** | SX1262 | GPS L76K, QSPI flash, battery monitor |
 | **XIAO nRF52840 + Wio-SX1262** | SX1262 | Bare XIAO + Wio-SX1262 expansion |
 | **ProMicro SX1262** | SX1262 E22-900M30S | GPS, battery ADC, button, LED |
+| **muzi works R1 Neo** | SX1262 | GPS, RTC, buzzer, button, LEDs, soft power-off |
 
 ### ESP32
 
