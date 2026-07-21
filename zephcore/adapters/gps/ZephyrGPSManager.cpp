@@ -946,8 +946,28 @@ void gps_power_off_for_shutdown(void)
  *
  * Every GPS UART node must carry a sleep pinctrl state (all boards do):
  * without one, suspend fails *after* disabling RX while the PM state stays
- * ACTIVE, so the next resume no-ops with -EALREADY — a dead GPS. */
+ * ACTIVE, so the next resume no-ops with -EALREADY — a dead GPS.
+ *
+ * REQUIRES GPS POWER CONTROL — do not relax this gate.
+ * uarte_pm_suspend() busy-waits for RXTO with no timeout after triggering
+ * STOPRX (uart_nrfx_uarte.c, the only unbounded wait in the path). In
+ * interrupt-driven mode RX runs on a 1-byte buffer with no ENDRX_STARTRX
+ * short, so the receiver stops after every byte until the ISR re-arms it —
+ * and suspend disables the ENDRX interrupt *before* STOPRX, removing the
+ * re-arm. Land in that window with bytes still arriving and STOPRX hits an
+ * already-stopped receiver, no RXTO is generated, and the caller spins
+ * forever. It runs on the main thread, so the whole mesh wedges (observed:
+ * RAK3401 1W repeater on 1.16.6, CLI answering only "-> busy").
+ *
+ * Boards with GPIO/regulator power control cut the module before we get
+ * here, so the line is genuinely quiet and STOPRX always yields RXTO.
+ * Boards without it fall back to gps_software_sleep(), whose PMTK/UBX
+ * commands the module may simply ignore (u-blox MAX-7Q on RAK3401 is
+ * protocol 14/15; the 16-byte UBX-RXM-PMREQ we send is protocol 23+) —
+ * NMEA keeps streaming straight into the suspend. Those boards give up the
+ * ~0.5-1 mA HFCLK saving; uptime wins. */
 #if HAS_GPS_UART && defined(CONFIG_PM_DEVICE) && \
+    (HAS_GPS_POWER_CONTROL || HAS_GPS_POWER_REGULATOR) && \
     DT_NODE_HAS_COMPAT(DT_BUS(DT_NODELABEL(gnss)), nordic_nrf_uarte)
 #define HAS_GPS_UART_PM 1
 #else
