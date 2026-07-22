@@ -264,7 +264,6 @@ static void time_sync_cb(uint32_t unix_ts)
 
 static mesh::ZephyrBoard    s_board;
 static mesh::ZephyrMillisecondClock s_ms_clock;
-static mesh::ZephyrRNG      s_rng;
 
 static const struct device *const lora_dev = DEVICE_DT_GET(DT_ALIAS(lora0));
 
@@ -281,7 +280,7 @@ static mesh::SX127xRadio lora_radio(lora_dev, s_board, &s_radio_prefs);
 static mesh::SX126xRadio lora_radio(lora_dev, s_board, &s_radio_prefs);
 #endif
 
-static mesh::ObserverMesh observer_mesh(lora_radio, s_ms_clock, s_rng, s_rtc_clock);
+static mesh::ObserverMesh observer_mesh(lora_radio, s_ms_clock, s_rtc_clock);
 static RepeaterDataStore  data_store;
 
 /* ========== main() ========== */

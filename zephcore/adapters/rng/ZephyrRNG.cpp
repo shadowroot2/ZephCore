@@ -103,28 +103,23 @@ void ZephyrRNG::random(uint8_t *dest, size_t sz)
 #endif
 }
 
-/* ===== Jitter sampling + online health check =============================
+/* ===== Timing-entropy health check =======================================
  *
- * Stephan Müller "CPU Time Jitter Based Non-Physical True Random Number
- * Generator" — Linux kernel's jitterentropy_rng. NIST SP 800-90B has
- * a compliance class for this entropy source type.
+ * Online health check (NIST SP 800-90B style) for the two-clock beat source
+ * below: repetition count + a distinct-value check tracked across all samples
+ * in the window with scalar state — no per-sample buffer needed. Detects
+ * stuck-source catastrophic failure (e.g. a frozen slow clock). Does not
+ * statistically prove entropy quality — that's what the selftest
+ * output-diversity run is for.
  *
- * IMPORTANT — this source only works where k_cycle_get_32() is CROSS-DOMAIN
- * from the CPU. On nRF it is the 32.768 kHz RTC read from a 64 MHz core, so
- * the read latency itself jitters and this carries real entropy. On ESP32
- * k_cycle_get_32() is CCOUNT, the CPU's own cycle counter — same domain, so
- * the loop is deterministic and this yields ~0 bits (measured on hardware:
- * thousands of identical deltas). ESP32 therefore uses sample_rtc_beat()
- * instead and never calls this function.
- *
- * Health check (NIST SP 800-90B style): online repetition count + a
- * distinct-value check tracked across all samples in the window with
- * scalar state — no per-sample buffer needed. Detects stuck-source
- * catastrophic failure (e.g. cycle counter not advancing). Does not
- * statistically prove entropy quality — that's what the literature is
- * for. */
+ * (The former CPU-jitter fallback — Stephan Müller style k_cycle_get_32()
+ * delta sampling — was removed: it only ever carried entropy where the cycle
+ * counter was already cross-domain from the CPU, and every such board is
+ * exactly a board the beat covers. Where the beat is unavailable the counter
+ * is same-domain, the loop is deterministic, and jitter yields ~0 bits —
+ * measured dead on ESP32 hardware.) */
 
-/* Health statistics for one jitter window.  Timing statistics only — never
+/* Health statistics for one beat window.  Timing statistics only — never
  * pool contents or derived key material.  Reporting these is standard practice
  * for a NIST SP 800-90B style noise source; reporting the bytes would not be. */
 /* Per-stage health reporting can be silenced. The node wants it — it fires
@@ -148,151 +143,14 @@ static bool s_test_kill_hwrng;
 void ZephyrRNG::setTestKillHWRNG(bool kill) { s_test_kill_hwrng = kill; }
 #endif
 
-#define JITTER_HIST_SLOTS 16
-
-struct jitter_stats {
+struct beat_stats {
 	int      n_samples;
 	int      n_distinct;   /* distinct delta values seen, capped at 8 */
 	int      max_consec;   /* longest run of identical deltas */
 	uint32_t min_delta;
 	uint32_t max_delta;
-	uint32_t mcv_count;    /* occurrences of the most common tracked delta */
-	uint32_t untracked;    /* samples whose value missed the histogram      */
 	bool     ok;
 };
-
-/* log2(x) * 1000, integer math (no FP — printk here has no float support).
- * Integer part from the leading bit; fraction by linear interpolation between
- * adjacent powers of two.  Linear interpolation UNDERSTATES log2 across that
- * range (log2(1.5)=0.585 vs 0.5 linear), so the derived entropy figure errs
- * low — the safe direction for an entropy claim. */
-static uint32_t log2_millibits(uint32_t x)
-{
-	if (x <= 1) return 0;
-	uint32_t ipart = 31u - (uint32_t)__builtin_clz(x);
-	uint32_t base  = 1u << ipart;
-	uint32_t frac  = (uint32_t)(((uint64_t)(x - base) * 1000u) / base);
-	return ipart * 1000u + frac;
-}
-
-static bool sample_cpu_jitter(uint8_t *pool, size_t pool_size,
-			      size_t pool_offset, uint32_t duration_ms,
-			      struct jitter_stats *st = nullptr)
-{
-	uint32_t accum = k_cycle_get_32();
-	int64_t deadline = k_uptime_get() + duration_ms;
-	size_t idx = pool_offset;
-	uint32_t min_delta = UINT32_MAX, max_delta = 0;
-
-	/* Online health stats: 32 bytes total vs. the previous 512-byte
-	 * deltas[] array. Tracks every sample, not just the first 128. */
-	uint32_t prev_delta = 0;
-	int cur_consec = 0, max_consec = 0;
-	uint32_t distinct[8] = {0};
-	int n_distinct = 0;
-	int n_samples = 0;
-
-	/* Bounded histogram for the SP 800-90B Most Common Value estimator.
-	 * Holds the first JITTER_HIST_SLOTS distinct deltas; anything beyond
-	 * that is counted in `untracked`.  A value frequent enough to dominate
-	 * p_max shows up within the first few distinct observations with
-	 * overwhelming probability, so this captures what the estimator needs
-	 * — but `untracked` is reported so the assumption stays visible. */
-	uint32_t hist_val[JITTER_HIST_SLOTS] = {0};
-	uint32_t hist_cnt[JITTER_HIST_SLOTS] = {0};
-	int n_hist = 0;
-	uint32_t untracked = 0;
-
-	while (k_uptime_get() < deadline) {
-		uint32_t t1 = k_cycle_get_32();
-		/* Variable-time work — iteration count depends on the accumulator,
-		 * so timing depends on hardware nondeterminism (cache, branch
-		 * prediction, ISR firing). This ONLY carries entropy where the
-		 * cycle counter is cross-domain from the CPU: on nRF k_cycle_get_32
-		 * is the 32.768 kHz RTC read from the 64 MHz core, so the read
-		 * latency itself jitters. On ESP32 it is CCOUNT — same domain, no
-		 * jitter, deltas repeat by the thousand (measured) — which is why
-		 * ESP32 uses sample_rtc_beat() instead and never calls this. */
-		volatile uint32_t a = accum;
-		uint32_t iters = (accum & 0x7f);
-		for (uint32_t i = 0; i < iters; i++) {
-			a = a * 1664525u + 1013904223u;
-		}
-		accum = a;
-		uint32_t t2 = k_cycle_get_32();
-		uint32_t delta = t2 - t1;
-
-		/* Mix into entropy pool */
-		pool[idx++ % pool_size] ^= (uint8_t)delta;
-		pool[idx++ % pool_size] ^= (uint8_t)(delta >> 8);
-		pool[idx++ % pool_size] ^= (uint8_t)accum;
-		pool[idx++ % pool_size] ^= (uint8_t)(accum >> 8);
-
-		/* Online repetition count */
-		if (n_samples > 0 && delta == prev_delta) {
-			if (++cur_consec > max_consec) max_consec = cur_consec;
-		} else {
-			cur_consec = 1;
-		}
-		prev_delta = delta;
-
-		/* Track first 8 distinct delta values */
-		if (n_distinct < 8) {
-			bool found = false;
-			for (int j = 0; j < n_distinct; j++) {
-				if (distinct[j] == delta) { found = true; break; }
-			}
-			if (!found) distinct[n_distinct++] = delta;
-		}
-
-		if (delta < min_delta) min_delta = delta;
-		if (delta > max_delta) max_delta = delta;
-
-		/* MCV histogram */
-		{
-			bool binned = false;
-			for (int j = 0; j < n_hist; j++) {
-				if (hist_val[j] == delta) {
-					hist_cnt[j]++;
-					binned = true;
-					break;
-				}
-			}
-			if (!binned) {
-				if (n_hist < JITTER_HIST_SLOTS) {
-					hist_val[n_hist] = delta;
-					hist_cnt[n_hist] = 1;
-					n_hist++;
-				} else {
-					untracked++;
-				}
-			}
-		}
-
-		n_samples++;
-	}
-
-	uint32_t mcv_count = 0;
-	for (int j = 0; j < n_hist; j++) {
-		if (hist_cnt[j] > mcv_count) mcv_count = hist_cnt[j];
-	}
-
-	bool ok = (n_samples >= 16)      /* enough samples          */
-		&& (max_consec < 32)     /* not a stuck source      */
-		&& (n_distinct >= 5);    /* minimal variance        */
-
-	if (st) {
-		st->n_samples  = n_samples;
-		st->n_distinct = n_distinct;
-		st->max_consec = max_consec;
-		st->min_delta  = (n_samples > 0) ? min_delta : 0;
-		st->max_delta  = max_delta;
-		st->mcv_count  = mcv_count;
-		st->untracked  = untracked;
-		st->ok         = ok;
-	}
-	return ok;
-}
 
 /* ===== Universal two-clock beat entropy ==================================
  *
@@ -318,14 +176,18 @@ static bool sample_cpu_jitter(uint8_t *pool, size_t pool_size,
  *       HFCLK — true for every BLE-capable nRF config; the health check below
  *       catches it if a board ever violates that.
  *     - Otherwise (system timer at CPU frequency, e.g. bare SysTick): no
- *       independent slow clock is identified, and sample_platform_entropy()
- *       falls back to CPU-jitter (unchanged behaviour, no regression).
+ *       independent slow clock is identified and the timing stages are
+ *       SKIPPED — a same-domain counter measures a deterministic loop
+ *       (~0 bits, measured), so sampling it would only pretend to add
+ *       entropy. Such boards (STM32WL SysTick, nRF54L 1 MHz GRTC) rely on
+ *       their true TRNG via the CSPRNG stages, which is what the removed
+ *       CPU-jitter fallback effectively did anyway.
  *
  * Window = 500 us, from an on-hardware ESP32 sweep (memory/findings.md):
  * 120/250/500/1000 us gave 1.85/3.04/3.81/5.14 bits/sample; 500 us is the knee.
  * Full 32-bit delta is mixed. On ESP32 this is a SECONDARY source (the
  * bootloader_random-seeded HWRNG is primary); on nRF it is the strong
- * non-HWRNG leg. Reuses jitter_stats + report_jitter.
+ * non-HWRNG leg.
  *
  * CAVEAT (memory/findings.md): the health stats show the beat VARIES, not that
  * it is random — the selftest output-diversity run is what validates it. */
@@ -346,7 +208,7 @@ static inline uint64_t beat_slow_ticks(void) { return k_cycle_get_32(); }
 
 static bool sample_two_clock_beat(uint8_t *pool, size_t pool_size,
 				  size_t pool_offset, uint32_t duration_ms,
-				  struct jitter_stats *st = nullptr)
+				  struct beat_stats *st = nullptr)
 {
 	/* Enable the CPU cycle counter once (DWT on Cortex-M; no-op-ish on
 	 * Xtensa where CCOUNT always runs). */
@@ -416,8 +278,6 @@ static bool sample_two_clock_beat(uint8_t *pool, size_t pool_size,
 		st->max_consec = max_consec;
 		st->min_delta  = (n_samples > 0) ? min_delta : 0;
 		st->max_delta  = max_delta;
-		st->mcv_count  = 0;      /* span/distinct are the beat's health */
-		st->untracked  = 0;
 		st->ok         = ok;
 	}
 	return ok;
@@ -438,51 +298,24 @@ static int distinct_bytes(const uint8_t *buf, size_t len)
 	return n;
 }
 
-/* One line per jitter window.  `distinct` is capped at 8 by the sampler, so 8/8
+/* One line per beat window.  `distinct` is capped at 8 by the sampler, so 8/8
  * means "at least 8" — the pass threshold is 5.  `maxrep` is the longest run of
- * identical deltas; >=32 fails.  min/max delta expose a resolution problem: if
- * they are 0 and 1, the cycle counter is too coarse to measure the work at all
- * and no amount of sampling will help. */
-static void report_jitter(const char *label, const struct jitter_stats *st)
+ * identical deltas; >=32 fails.  The span/distinct/maxrep line IS the beat's
+ * health — per-sample entropy is characterised offline by the selftest window
+ * sweep, not estimated here (an in-path MCV estimate would need a 16k-slot
+ * histogram).  Deliberately no statistics on the conditioned output:
+ * AES-256-CTR makes any input look uniform, so output statistics would read
+ * perfect even for a near-zero-entropy seed.  Entropy is a property of the
+ * source. */
+#ifdef HAVE_TWO_CLOCK_BEAT
+static void report_beat(const char *label, const struct beat_stats *st)
 {
 	RNG_RPT("[RNG] %s: samples=%d distinct=%d/8 maxrep=%d "
 	       "delta=[%u..%u] -> %s\n",
 	       label, st->n_samples, st->n_distinct, st->max_consec,
 	       st->min_delta, st->max_delta, st->ok ? "PASS" : "FAIL");
-
-	/* Min-entropy estimate, NIST SP 800-90B 6.3.1 Most Common Value:
-	 *   p_max = mcv_count / n_samples
-	 *   H_min per sample = -log2(p_max) = log2(n_samples / mcv_count)
-	 *
-	 * Computed in milli-bits with integer math. This REPLACES the 0.1-0.3
-	 * bits/sample the file header used to assume — assumption is only valid
-	 * if deltas actually vary, which is the very thing that failed on ESP32.
-	 *
-	 * Deliberately NOT measured on the conditioned output: AES-256-CTR makes
-	 * any input look uniform, so output statistics would read perfect even
-	 * for a near-zero-entropy seed. Entropy is a property of the source. */
-	if (st->n_samples <= 0 || st->mcv_count == 0) {
-		/* mcv_count == 0 is the two-clock beat: its health is the
-		 * span/distinct/maxrep line above, not an MCV estimate (that
-		 * would need a 16k-slot histogram in the key path). Per-sample
-		 * entropy is characterised offline by the selftest window sweep.
-		 * Nothing meaningful to print here. */
-		return;
-	}
-
-	uint32_t ratio_q10 = (uint32_t)(((uint64_t)st->n_samples * 1024u)
-					/ st->mcv_count);
-	uint32_t per_mb = log2_millibits(ratio_q10);
-	per_mb = (per_mb > 10000u) ? (per_mb - 10000u) : 0u;   /* less log2(1024) */
-
-	uint64_t total_mb = (uint64_t)per_mb * (uint64_t)st->n_samples;
-	uint32_t total_bits = (uint32_t)(total_mb / 1000u);
-
-	RNG_RPT("[RNG]   entropy est: %u.%03u bits/sample x %d = ~%u bits "
-	       "(need 256)%s\n",
-	       per_mb / 1000u, per_mb % 1000u, st->n_samples, total_bits,
-	       st->untracked ? " [histogram overflowed — est. is optimistic]" : "");
 }
+#endif /* HAVE_TWO_CLOCK_BEAT */
 
 /* ===== Entropy extraction via AES-256-CTR ================================
  *
@@ -573,29 +406,6 @@ static int extract_via_aes_ctr(const uint8_t *pool, size_t pool_len,
 	return ret;
 }
 
-/* Platform entropy sampler + its label. Every board with an identified
- * independent slow clock uses the SAME two-clock beat (ESP32 RTC-slow, nRF and
- * other <1 MHz-systimer boards their RTC). Boards without one fall back to
- * CPU-jitter, which only carries entropy where k_cycle_get_32 is itself cross-
- * domain. Both yield jitter_stats, so the stages and report are identical. */
-#ifdef HAVE_TWO_CLOCK_BEAT
-#define ENTROPY_SRC_LABEL "beat  "
-#else
-#define ENTROPY_SRC_LABEL "jitter"
-#endif
-
-static inline bool sample_platform_entropy(uint8_t *pool, size_t pool_size,
-					   size_t pool_offset,
-					   uint32_t duration_ms,
-					   struct jitter_stats *st)
-{
-#ifdef HAVE_TWO_CLOCK_BEAT
-	return sample_two_clock_beat(pool, pool_size, pool_offset, duration_ms, st);
-#else
-	return sample_cpu_jitter(pool, pool_size, pool_offset, duration_ms, st);
-#endif
-}
-
 void ZephyrRNG::mixIdentitySeed(uint8_t *out, size_t out_len,
 				const uint8_t *extra, size_t extra_len)
 {
@@ -665,27 +475,33 @@ void ZephyrRNG::mixIdentitySeed(uint8_t *out, size_t out_len,
 		RNG_RPT("[RNG] stage3 extra    : %d bytes\n", (int)n);
 	}
 
-	/* Stage 4: hardware-timing entropy, 200ms. RTC two-clock beat on ESP32,
-	 * CPU cycle-counter jitter elsewhere (sample_platform_entropy).
+	/* Stage 4: hardware-timing entropy, 200ms — the two-clock beat.
 	 *
-	 * Skipped on POSIX arch (native_sim / Linux): the simulated clock only
-	 * advances when Zephyr threads yield, so k_uptime_get() is frozen while
-	 * this loop spins → infinite loop.  On Linux we have /dev/urandom (via
-	 * sys_csrand_get in stages 1 and 5) which is a far stronger source than
-	 * this sampling anyway. */
-#ifndef CONFIG_ARCH_POSIX
-	struct jitter_stats js = {};
-	bool health_ok = sample_platform_entropy(pool, sizeof(pool), 112, 200, &js);
-	report_jitter("stage4 " ENTROPY_SRC_LABEL " 200ms", &js);
+	 * Skipped where no independent slow clock exists (see the beat header
+	 * comment): a same-domain counter would sample a deterministic loop and
+	 * only pretend to add entropy. Those boards rely on their true TRNG via
+	 * stages 1 and 5.
+	 *
+	 * Also skipped on POSIX arch (native_sim / Linux): the simulated clock
+	 * only advances when Zephyr threads yield, so k_uptime_get() is frozen
+	 * while this loop spins → infinite loop.  On Linux we have /dev/urandom
+	 * (via sys_csrand_get in stages 1 and 5) which is a far stronger source
+	 * than this sampling anyway. */
+#if defined(HAVE_TWO_CLOCK_BEAT) && !defined(CONFIG_ARCH_POSIX)
+	struct beat_stats js = {};
+	bool health_ok = sample_two_clock_beat(pool, sizeof(pool), 112, 200, &js);
+	report_beat("stage4 beat 200ms", &js);
 	if (!health_ok) {
 		RNG_RPT("[RNG] stage4 FAILED — resampling at 400ms\n");
-		health_ok = sample_platform_entropy(pool, sizeof(pool), 112, 400, &js);
-		report_jitter("stage4 " ENTROPY_SRC_LABEL " 400ms", &js);
+		health_ok = sample_two_clock_beat(pool, sizeof(pool), 112, 400, &js);
+		report_beat("stage4 beat 400ms", &js);
 		if (!health_ok) {
 			RNG_RPT("[RNG] stage4 STILL FAILING — continuing with mixed sources\n");
 		}
 	}
-#endif /* CONFIG_ARCH_POSIX */
+#else
+	RNG_RPT("[RNG] stage4/6 skipped — no independent slow clock (TRNG via csrand only)\n");
+#endif /* HAVE_TWO_CLOCK_BEAT && !CONFIG_ARCH_POSIX */
 
 	/* Stage 5: late CSPRNG — catches any mid-boot radio init that
 	 * warmed the TRNG during the stage-4 window */
@@ -697,11 +513,11 @@ void ZephyrRNG::mixIdentitySeed(uint8_t *out, size_t out_len,
 	       rc5, distinct_bytes(pool + 368, 64));
 
 	/* Stage 6: second hardware-timing sample, independent window */
-#ifndef CONFIG_ARCH_POSIX
-	struct jitter_stats js6 = {};
-	(void)sample_platform_entropy(pool, sizeof(pool), 432, 50, &js6);
-	report_jitter("stage6 " ENTROPY_SRC_LABEL "  50ms", &js6);
-#endif /* CONFIG_ARCH_POSIX */
+#if defined(HAVE_TWO_CLOCK_BEAT) && !defined(CONFIG_ARCH_POSIX)
+	struct beat_stats js6 = {};
+	(void)sample_two_clock_beat(pool, sizeof(pool), 432, 50, &js6);
+	report_beat("stage6 beat  50ms", &js6);
+#endif /* HAVE_TWO_CLOCK_BEAT && !CONFIG_ARCH_POSIX */
 
 	/* Collection done — release the SAR ADC before anything else needs it.
 	 * Unconditional: every path below this point either returns normally or

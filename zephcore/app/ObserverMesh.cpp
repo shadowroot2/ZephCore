@@ -9,6 +9,7 @@
 #include <mesh/Utils.h>
 #include <mesh/LoRaConfig.h>
 #include <adapters/radio/LoRaRadioBase.h>
+#include <adapters/rng/ZephyrRNG.h>   /* generateFirstBootIdentity (hardened keygen) */
 #include <helpers/MeshcoreJson.h>
 
 #include <zephyr/fs/fs.h>
@@ -33,10 +34,10 @@ namespace mesh {
 
 /* ========== Construction ========== */
 
-ObserverMesh::ObserverMesh(Radio &radio, MillisecondClock &ms, RNG &rng, RTCClock &rtc)
+ObserverMesh::ObserverMesh(Radio &radio, MillisecondClock &ms, RTCClock &rtc)
 	: Dispatcher(radio, ms, _pkt_mgr),
 	  _last_rssi(0.0f), _last_score(0.0f), _last_raw_len(0),
-	  _store(nullptr), _creds(nullptr), _rng(&rng), _rtc(&rtc), _start_uptime_secs(0)
+	  _store(nullptr), _creds(nullptr), _rtc(&rtc), _start_uptime_secs(0)
 {
 	memset(_pubkey_hex, 0, sizeof(_pubkey_hex));
 	memset(_packets_topic, 0, sizeof(_packets_topic));
@@ -83,15 +84,19 @@ void ObserverMesh::begin(RepeaterDataStore *store, struct ObserverCreds *creds)
 		LOG_INF("First boot — saved observer prefs defaults");
 	}
 
-	/* Load or generate node identity */
+	/* Load or generate node identity.
+	 *
+	 * Use ZephyrRNG::generateFirstBootIdentity — the SAME hardened path the
+	 * companion and repeater use (bootloader_random-seeded HWRNG + two-clock
+	 * beat, conditioned via AES-256-CTR) — NOT LocalIdentity(_rng). The old
+	 * form drew straight from ZephyrRNG::random() / sys_csrand_get, which on
+	 * an ESP32 observer is unseeded (BLE never comes up to seed WDEV_RANDOM),
+	 * so it derived a permanent key from a weak PRNG. generateFirstBootIdentity
+	 * also owns the reserved-prefix retry (100 attempts + panic backstop),
+	 * replacing the weaker 10-try loop that silently kept a reserved prefix. */
 	if (!_store->loadIdentity(_self_id)) {
 		LOG_INF("No identity found — generating new keypair");
-		int attempts = 0;
-		do {
-			_self_id = LocalIdentity(_rng);
-			attempts++;
-		} while (attempts < 10 &&
-			 (_self_id.pub_key[0] == 0x00 || _self_id.pub_key[0] == 0xFF));
+		mesh::ZephyrRNG::generateFirstBootIdentity(_self_id);
 		_store->saveIdentity(_self_id);
 		LOG_INF("New observer identity saved");
 	}

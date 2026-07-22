@@ -22,14 +22,16 @@ public:
 	 *                                       the HWRNG (else pre-RF = 0 bits)
 	 *   2. HWINFO unique device ID       — per-device uniqueness (public)
 	 *   3. Optional caller-supplied data — e.g. external noise samples
-	 *   4. Hardware-timing entropy       — RTC two-clock beat on ESP32,
-	 *                                       CPU-jitter on nRF (NIST 90B class)
+	 *   4. Hardware-timing entropy       — two-clock beat (ESP32 RTC-slow,
+	 *                                       nRF/MG24 32 kHz RTC); skipped on
+	 *                                       boards with no independent slow
+	 *                                       clock (they rely on their TRNG)
 	 *   5. sys_csrand_get (late)         — second HWRNG draw
 	 *   6. Hardware-timing entropy #2    — independent window
 	 * Conditioned via AES-256-CTR (SHA-256(pool) → key, ECB on counter).
 	 * On ESP32 the primary source is the bootloader_random-seeded HWRNG
 	 * (stages 1+5); the beat (4+6) is a physical second source. On nRF the
-	 * CSPRNG and CPU-jitter are both independently strong. Health-checked;
+	 * CSPRNG and the beat are both independently strong. Health-checked;
 	 * reboots on degenerate output. Blocks ~450ms — first-boot identity only.
 	 *
 	 * Output is suitable as an Ed25519 seed regardless of platform

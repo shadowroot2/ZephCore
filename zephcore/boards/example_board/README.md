@@ -177,7 +177,8 @@ STM32WL caveats — different from every other ZephCore platform:
   AES tables live in ROM (`MBEDTLS_AES_ROM_TABLES`) to reclaim ~8KB SRAM.
 - **TRNG only (no HW CSPRNG):** the STM32 TRNG is enabled as the entropy source
   and `CSPRNG_ENABLED` auto-resolves on top; `ZephyrRNG` further conditions
-  identity seeds with jitter + AES-CTR.
+  identity seeds with AES-CTR (the timing stages are skipped — SysTick has no
+  independent slow clock — so the TRNG-fed CSPRNG stages carry the seed).
 - **No MCUboot / UF2:** single app partition at flash origin + a LittleFS volume
   (see `board.overlay`). Flash over SWD/ST-Link with `west flash` (OpenOCD).
 
