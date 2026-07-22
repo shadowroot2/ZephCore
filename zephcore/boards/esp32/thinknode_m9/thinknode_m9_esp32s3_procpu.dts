@@ -30,10 +30,15 @@
 	model = "Elecrow ThinkNode M9";
 	compatible = "elecrow,thinknode-m9";
 
+	/* No zephyr,console here: the M9's USB-C data lines ride a CH9102-class
+	 * USB-UART bridge into UART0 (verified on hardware — the native USB
+	 * Serial/JTAG console produced no output). The S3's native USB pads
+	 * (GPIO19/20) are not wired to the connector at all; GPIO20/21 carry the
+	 * STC8H keypad I2C bus instead. Every build of this board (app overlay
+	 * and lr1110_updater overlay alike) routes console + shell to uart0 via
+	 * boards/common/esp32s3_console_uart0.dtsi. */
 	chosen {
 		zephyr,sram = &sram1;
-		zephyr,console = &usb_serial;
-		zephyr,shell-uart = &usb_serial;
 		zephyr,flash = &flash0;
 		zephyr,code-partition = &slot0_partition;
 		zephyr,bt-hci = &esp32_bt_hci;
@@ -73,6 +78,12 @@
 &cpu1 {
 	clock-frequency = <DT_FREQ_M(240)>;
 };
+
+/* USB Serial/JTAG stays disabled (SoC default): its PHY pads are GPIO19/20,
+ * and on this board GPIO20 is the keypad's I2C1 SDA. The USJ driver's init
+ * re-attaches the USB pad (usb_serial_jtag_ll_phy_enable_pad) and enables the
+ * D+ pull-up, fighting the keypad bus. Native USB is unbonded from the
+ * connector anyway — see the chosen-node comment. */
 
 &i2c0 {
 	status = "okay";

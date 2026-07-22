@@ -22,13 +22,12 @@
  * helpers/ui-joystick/joystick_defs.h). Everything else is a named key and is
  * translated here.
  *
- * The named codes below are the ones confirmed from two independent firmwares
- * for this keypad. Arrow keys are NOT among them, and no reachable reference
- * documents them — so any code this driver does not recognise is reported at
- * INFO level with its hex value. Press the arrow keys once on real hardware
- * and the log names them; add them to key_map[] and navigation is complete.
- * That is deliberate: guessing arrow codes would produce a driver that looks
- * finished and silently does the wrong thing.
+ * The named codes below (arrows included) come from the stock keypad
+ * firmware's protocol, as recovered from a linked reference-firmware ELF by a
+ * second independent firmware — the register bodies there are the shipped
+ * hardware truth, not header guesses. Any code this driver still does not
+ * recognise is reported at INFO level with its hex value so it can be added
+ * to key_map[].
  */
 
 #define DT_DRV_COMPAT zephcore_stc8h_keypad
@@ -45,13 +44,23 @@
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(stc8h_keypad, CONFIG_ZEPHCORE_BOARD_LOG_LEVEL);
 
-/* Register map — see dts/bindings/input/zephcore,stc8h-keypad.yaml */
+/* Register map — see dts/bindings/input/zephcore,stc8h-keypad.yaml.
+ *
+ * The key register is 0x01, NOT the 0x05 "matrix key" register that the
+ * reference header documents: the recovered implementation bodies read the
+ * key from 0x01, and the 0x05 define is dead code nothing consumes. Reading
+ * 0x05 returns constant 0xFF — that was this driver's original bug (keys
+ * fully dead, phantom 0xFF at init). The overlap with the battery registers
+ * (0x01..0x04 little-endian) is odd but is what the shipped firmware does;
+ * it is also why key reads are IRQ-gated below. */
 #define STC8H_REG_BATTERY 0x01 /* 0x01..0x04, little-endian millivolts */
-#define STC8H_REG_KEY     0x05
+#define STC8H_REG_KEY     0x01
 #define STC8H_REG_STATE   0x06
 #define STC8H_STATE_SLEEP 0x01
 
-#define STC8H_KEY_NONE 0x00
+#define STC8H_KEY_NONE    0x00
+#define STC8H_KEY_INVALID 0x88 /* helper MCU's "invalid key" marker */
+#define STC8H_KEY_ALL_ONES 0xFF /* error sentinel / floating-bus read */
 
 struct stc8h_config {
 	struct i2c_dt_spec i2c;
@@ -63,22 +72,27 @@ struct stc8h_data {
 	const struct device *dev;
 	struct gpio_callback irq_cb;
 	struct k_work_delayable work;
+	atomic_t irq_pending;
 	uint8_t last_key;
 };
 
 /*
- * Named keys, as reported by the helper MCU.
- *
- * Only codes corroborated by two independent firmwares for this keypad are
- * listed. The two function keys are mapped to page navigation because on a
- * board with no other input they are the only way to move between screens;
- * the UI treats them as prev/next.
+ * Named keys, as reported by the helper MCU. Codes from the recovered stock
+ * keypad protocol (see file header). The two function keys are mapped to page
+ * navigation because on a board with no other input they are the only way to
+ * move between screens; the UI treats them as prev/next.
  */
 static const struct {
 	uint8_t raw;
 	uint16_t code;
 } key_map[] = {
 	{ 0x0D, INPUT_KEY_ENTER },  /* enter / confirm                     */
+	{ 0xB5, INPUT_KEY_UP },     /* arrow up                            */
+	{ 0xB6, INPUT_KEY_DOWN },   /* arrow down                          */
+	{ 0xB4, INPUT_KEY_LEFT },   /* arrow left                          */
+	{ 0xB7, INPUT_KEY_RIGHT },  /* arrow right                         */
+	{ 0x08, INPUT_KEY_BACK },   /* del                -> back / cancel */
+	{ 0x89, INPUT_KEY_BACK },   /* del long-press     -> back / cancel */
 	{ 0x86, INPUT_KEY_ESC },    /* back                                */
 	{ 0x82, INPUT_KEY_HOME },   /* home                                */
 	{ 0x83, INPUT_KEY_MENU },   /* context menu                        */
@@ -148,19 +162,44 @@ static void stc8h_report(const struct device *dev, uint8_t raw)
 	LOG_INF("unmapped keypad code 0x%02X — add it to key_map[] to bind it", raw);
 }
 
+static bool stc8h_key_valid(uint8_t raw)
+{
+	return raw != STC8H_KEY_NONE && raw != STC8H_KEY_INVALID &&
+	       raw != STC8H_KEY_ALL_ONES;
+}
+
 static void stc8h_work_handler(struct k_work *work)
 {
 	struct k_work_delayable *dwork = k_work_delayable_from_work(work);
 	struct stc8h_data *data = CONTAINER_OF(dwork, struct stc8h_data, work);
 	const struct device *dev = data->dev;
 	const struct stc8h_config *cfg = dev->config;
+	bool irq_event = atomic_cas(&data->irq_pending, 1, 0);
 	uint8_t key = STC8H_KEY_NONE;
 
 	if (stc8h_read_reg(cfg, STC8H_REG_KEY, &key) == 0) {
-		/* Report on the transition only — the register reads the key
-		 * that is *currently down*, so a held key would otherwise
-		 * repeat at the poll rate. */
-		if (key != STC8H_KEY_NONE && key != data->last_key) {
+		if (irq_event) {
+			/* KB_INT edge latched: this read is a fresh keypress —
+			 * report unconditionally. The register latches the
+			 * *last* key (it does not return to 0 on release), so
+			 * comparing against last_key here would swallow every
+			 * repeated press of the same key. This mirrors the
+			 * reference driver, which only ever reads the key
+			 * register in response to the interrupt. */
+			if (stc8h_key_valid(key)) {
+				stc8h_report(dev, key);
+			}
+		} else if (cfg->irq.port == NULL) {
+			/* No IRQ line: transition polling is all we have. */
+			if (stc8h_key_valid(key) && key != data->last_key) {
+				stc8h_report(dev, key);
+			}
+		} else if (stc8h_key_valid(key) && key != data->last_key &&
+			   gpio_pin_get_dt(&cfg->irq) > 0) {
+			/* Poll with an IRQ line = missed-edge safety net.
+			 * Only report while the key is still held (INT level
+			 * active) — the latched register would otherwise
+			 * re-report the stale last key forever. */
 			stc8h_report(dev, key);
 		}
 		data->last_key = key;
@@ -177,7 +216,10 @@ static void stc8h_irq_handler(const struct device *port, struct gpio_callback *c
 	ARG_UNUSED(port);
 	ARG_UNUSED(pins);
 
-	/* I2C cannot be touched from an ISR — hand off to the work queue. */
+	/* I2C cannot be touched from an ISR — hand off to the work queue.
+	 * The flag tells the handler this run is a real key edge, so it must
+	 * report even when the latched register still holds the same code. */
+	atomic_set(&data->irq_pending, 1);
 	k_work_reschedule(&data->work, K_NO_WAIT);
 }
 
