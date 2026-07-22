@@ -53,6 +53,7 @@ extern "C" void bt_ctlr_assert_handle(char *file, uint32_t line)
 #include <adapters/clock/ZephyrRTCClock.h>
 #include <adapters/clock/ZephyrRTCDiscover.h>
 #include <ZephyrSensorManager.h>
+#include <helpers/LocalCLIHelp.h>
 
 /* UI subsystem (display, buttons, buzzer) */
 #include "ui_task.h"
@@ -245,11 +246,17 @@ static void process_cli_commands(void)
 {
 	struct cli_cmd_line c;
 	while (room_mesh_ptr && k_msgq_get(&cli_cmd_queue, &c, K_NO_WAIT) == 0) {
-		cli_reply_buf[0] = '\0';
-		room_mesh_ptr->handleCommand(0, c.buf, cli_reply_buf);
-		if (cli_reply_buf[0] != '\0') {
+		const char *help = local_cli_help(LocalCLIHelpRole::RoomServer, c.buf);
+		if (help != nullptr) {
 			cli_print("\r\n  -> ");
-			cli_print(cli_reply_buf);
+			cli_print(help);
+		} else {
+			cli_reply_buf[0] = '\0';
+			room_mesh_ptr->handleCommand(0, c.buf, cli_reply_buf);
+			if (cli_reply_buf[0] != '\0') {
+				cli_print("\r\n  -> ");
+				cli_print(cli_reply_buf);
+			}
 		}
 		cli_print("\r\n");
 	}
@@ -466,6 +473,12 @@ static void room_event_loop(void)
 		 * write here on the main thread instead. */
 		if (events & MESH_EVENT_RTC_SAVE) {
 			zephcore_rtc_save((uint32_t)atomic_get(&pending_rtc_epoch));
+#ifdef ZEPHCORE_LORA
+			/* GPS just set the clock — arm the mesh time-sync drift envelope. */
+			if (room_mesh_ptr) {
+				room_mesh_ptr->noteGPSTimeSync();
+			}
+#endif
 		}
 	}
 }
@@ -605,6 +618,8 @@ int main(void)
 	/* Apply RX boost and duty cycle from prefs */
 	lora_radio.setRxBoost(prefs->rx_boost != 0);
 	lora_radio.enableRxDutyCycle(prefs->rx_duty_cycle != 0);
+	lora_radio.setCadParams(prefs->cad_auto != 0, prefs->cad_offset,
+				prefs->cad_probe_interval, prefs->cad_busycap);
 
 	/* Feed initial UI state from loaded prefs */
 	ui_set_node_name(prefs->node_name);

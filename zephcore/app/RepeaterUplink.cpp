@@ -134,7 +134,8 @@ void RepeaterMesh::publishUplinkPacket(mesh::Packet *pkt)
 
     uint32_t now_epoch = getRTCClock()->getCurrentTime();
 
-    static char json_buf[1024];
+    size_t json_cap;
+    char *json_buf = mqtt_publisher_stage(&json_cap);
     struct MeshcorePacketJson pj = {
         _prefs.node_name,
         _uplink_pubkey_hex,
@@ -149,17 +150,20 @@ void RepeaterMesh::publishUplinkPacket(mesh::Packet *pkt)
         (int)(_uplink_last_score * 1000.0f),
         hash_hex,
     };
-    int json_len = meshcore_build_packet_json(json_buf, sizeof(json_buf), &pj);
+    int json_len = meshcore_build_packet_json(json_buf, json_cap, &pj);
 
-    if (json_len <= 0 || json_len >= (int)sizeof(json_buf)) {
+    if (json_len <= 0 || json_len >= (int)json_cap) {
         return;
     }
-    mqtt_publisher_enqueue(_uplink_packets_topic, json_buf, json_len);
+    mqtt_publisher_commit(MQTT_PUB_TOPIC_PACKETS, json_len);
 }
 
 void RepeaterMesh::publishUplinkStatus(const char *status)
 {
-    if (!isUplinkEnabled()) return;
+    /* The connected gate matters here: without it the 300 s status timer
+     * fills the publish queue with stale "online" messages while WiFi or the
+     * broker is down, and they all flush with old timestamps on reconnect. */
+    if (!isUplinkEnabled() || !mqtt_publisher_is_connected()) return;
     if (_uplink_status_topic[0] == '\0') return;
 
     auto& radio_driver = *static_cast<mesh::LoRaRadioBase *>(_radio);
@@ -170,7 +174,8 @@ void RepeaterMesh::publishUplinkStatus(const char *status)
              (double)_prefs.freq, (double)_prefs.bw,
              (unsigned)_prefs.sf, (unsigned)_prefs.cr);
 
-    static char json_buf[768];
+    size_t json_cap;
+    char *json_buf = mqtt_publisher_stage(&json_cap);
     struct MeshcoreStatusJson sj = {
         status,
         now_epoch,
@@ -192,12 +197,12 @@ void RepeaterMesh::publishUplinkStatus(const char *status)
         (unsigned)(getReceiveAirTime() / 1000),
         (unsigned)radio_driver.getPacketsRecvErrors(),
     };
-    int json_len = meshcore_build_status_json(json_buf, sizeof(json_buf), &sj);
+    int json_len = meshcore_build_status_json(json_buf, json_cap, &sj);
 
-    if (json_len <= 0 || json_len >= (int)sizeof(json_buf)) {
+    if (json_len <= 0 || json_len >= (int)json_cap) {
         return;
     }
-    mqtt_publisher_enqueue(_uplink_status_topic, json_buf, json_len);
+    mqtt_publisher_commit(MQTT_PUB_TOPIC_STATUS, json_len);
 }
 
 #endif /* CONFIG_ZEPHCORE_REPEATER_UPLINK && CONFIG_MQTT_LIB */

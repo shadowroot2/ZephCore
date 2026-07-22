@@ -95,6 +95,10 @@ struct lr11xx_data {
 	struct k_sem cad_sem;
 	int cad_result;
 	bool cad_active;
+	/* Adaptive-CAD: signed offset applied to the per-SF base detPeak on
+	 * every LBT CAD; cad_probe_peak overrides for one calibration probe. */
+	int8_t cad_peak_offset;
+	uint8_t cad_probe_peak;
 
 	/* Deferred hardware init — heavy SPI/radio work runs on first config() */
 	bool hw_initialized;
@@ -103,6 +107,18 @@ struct lr11xx_data {
 	 * If DIO1 stays HIGH with no actionable IRQ for too many cycles,
 	 * the LR1110 is hung — trigger a hardware reset. */
 	int dio1_stuck_count;
+
+	/* Timestamp (k_uptime_get_32(), ms) of the first sighting of a
+	 * latched PREAMBLE_DETECTED by lr11xx_is_receiving() in the current
+	 * RX cycle; 0 = none tracked.  Ported from the SX126x preamble-grace
+	 * logic: PREAMBLE_DETECTED is not DIO1-routed but latches in the IRQ
+	 * status register, and the chip never auto-clears it on a foreign
+	 * sync word — without a software bound a foreign/noise preamble pins
+	 * the TX gate until the next DIO1 bulk-clear or the dispatcher's 4 s
+	 * CAD-fail recovery.  Real packets latch SYNC_WORD_HEADER_VALID
+	 * within the grace window; after grace expires with no header, the
+	 * bit is cleared and TX released.  All accesses under spi_mutex. */
+	uint32_t preamble_seen_at_ms;
 
 	/* RX data buffer — filled in DIO1 handler, passed to callback */
 	uint8_t rx_buf[256];
@@ -256,8 +272,11 @@ static void lr11xx_apply_modem_config(struct lr11xx_data *data,
 	lr11xx_radio_set_lora_sync_word(ctx, mc->public_network ? 0x34 : 0x12);
 
 	if (tx_mode) {
-		lr11xx_radio_set_tx_params(ctx, mc->tx_power,
-					   LR11XX_RADIO_RAMP_48_US);
+		/* PA config BEFORE TX params — the power byte in SetTxParams
+		 * is interpreted against the currently selected PA (Semtech
+		 * convention; RadioLib LR11x0::setOutputPower orders it the
+		 * same).  Reversed order only bites the first TX after a
+		 * (hardware) reset, when the chip default PA is still live. */
 		lr11xx_radio_pa_cfg_t pa = {
 			.pa_sel = LR11XX_RADIO_PA_SEL_HP,
 			.pa_reg_supply = LR11XX_RADIO_PA_REG_SUPPLY_VBAT,
@@ -265,6 +284,8 @@ static void lr11xx_apply_modem_config(struct lr11xx_data *data,
 			.pa_hp_sel = cfg->pa_hp_sel,
 		};
 		lr11xx_radio_set_pa_cfg(ctx, &pa);
+		lr11xx_radio_set_tx_params(ctx, mc->tx_power,
+					   LR11XX_RADIO_RAMP_48_US);
 	}
 
 	lr11xx_system_set_dio_irq_params(
@@ -306,6 +327,7 @@ static void lr11xx_start_rx(struct lr11xx_data *data,
 	}
 
 	lr11xx_system_clear_irq_status(ctx, LR11XX_SYSTEM_IRQ_ALL_MASK);
+	data->preamble_seen_at_ms = 0;
 
 	/* Apply modem config for RX */
 	lr11xx_apply_modem_config(data, cfg, false);
@@ -366,6 +388,7 @@ static void lr11xx_restart_rx(struct lr11xx_data *data)
 	void *ctx = &data->hal_ctx;
 
 	lr11xx_system_clear_irq_status(ctx, LR11XX_SYSTEM_IRQ_ALL_MASK);
+	data->preamble_seen_at_ms = 0;
 
 	if (data->rx_duty_cycle_enabled &&
 	    data->dc_rx_ms != 0 && data->dc_sleep_ms != 0) {
@@ -429,8 +452,19 @@ static void lr11xx_dio1_work_handler(struct k_work *work)
 		data->dio1_stuck_count = 0;
 	}
 
-	/* ── RX done ── */
-	if (irq & LR11XX_SYSTEM_IRQ_RX_DONE) {
+	/* ── RX done ──
+	 * Gated on no error bits: a CRC-failed packet asserts RX_DONE and
+	 * CRC_ERROR together on this chip family (same as SX126x — see the
+	 * sx126x patch's "they co-fire here"; LBM's radio_planner likewise
+	 * checks errors before RX_DONE), so an ungated done-first read
+	 * would deliver corrupted payloads as valid.  A good packet
+	 * coalesced with an earlier HEADER_ERROR in the same handler
+	 * window is dropped too — the header error may have shifted the
+	 * RX buffer pointer (errata handling below), making the read
+	 * suspect.  The error branch below owns the window instead. */
+	if ((irq & LR11XX_SYSTEM_IRQ_RX_DONE) &&
+	    !(irq & (LR11XX_SYSTEM_IRQ_CRC_ERROR |
+		     LR11XX_SYSTEM_IRQ_HEADER_ERROR))) {
 		lr11xx_radio_rx_buffer_status_t rx_stat;
 		lr11xx_radio_get_rx_buffer_status(ctx, &rx_stat);
 
@@ -525,20 +559,33 @@ static void lr11xx_dio1_work_handler(struct k_work *work)
 		}
 	}
 
-	/* ── CRC / Header error ── */
-	if (irq & LR11XX_SYSTEM_IRQ_CRC_ERROR ||
-	    ((irq & LR11XX_SYSTEM_IRQ_HEADER_ERROR) &&
-	     !(irq & LR11XX_SYSTEM_IRQ_SYNC_WORD_HEADER_VALID))) {
-		LOG_DBG("RX error: CRC=%d HDR=%d",
+	/* ── CRC / Header error ──
+	 * Plain `CRC || HDR` — no SYNC_WORD_HEADER_VALID gate (RadioLib
+	 * readData's false-alarm filter).  IRQ status is bulk-cleared on
+	 * every handler entry, so a set HEADER_ERROR always belongs to
+	 * this window; a SYNC_VALID bit latched by another packet in the
+	 * same window must not suppress the errata standby below. */
+	if (irq & (LR11XX_SYSTEM_IRQ_CRC_ERROR |
+		   LR11XX_SYSTEM_IRQ_HEADER_ERROR)) {
+		LOG_DBG("RX error: CRC=%d HDR=%d RXDONE=%d",
 			(irq & LR11XX_SYSTEM_IRQ_CRC_ERROR) ? 1 : 0,
-			(irq & LR11XX_SYSTEM_IRQ_HEADER_ERROR) ? 1 : 0);
+			(irq & LR11XX_SYSTEM_IRQ_HEADER_ERROR) ? 1 : 0,
+			(irq & LR11XX_SYSTEM_IRQ_RX_DONE) ? 1 : 0);
 
-		/* LR1110 errata: header error can shift the RX buffer
-		 * pointer by 4 bytes. Standby clears the shift. */
+		/* LR1110 errata: a header error makes the chip's reported
+		 * buffer_start_pointer stale by +4 for every subsequent
+		 * packet (stacking) until a standby resets the shift.
+		 * Arduino MeshCore's CustomLR1110 calls standby() on every
+		 * header error unconditionally — mirror that. */
 		if (irq & LR11XX_SYSTEM_IRQ_HEADER_ERROR) {
 			lr11xx_system_set_standby(ctx,
 						  LR11XX_SYSTEM_STANDBY_CFG_RC);
 		}
+
+		/* Drop whatever the failed (or coalesced) packet left in
+		 * the RX buffer — RadioLib clears it on the CRC-error read
+		 * path too. */
+		lr11xx_regmem_clear_rxbuffer(ctx);
 
 		if (!data->tx_active) {
 			lr11xx_restart_rx(data);
@@ -667,6 +714,29 @@ static uint32_t lr11xx_lora_airtime(const struct device *dev,
 /* Forward declaration — needed by LBT in send_async */
 static int lr11xx_lora_cad(const struct device *dev, k_timeout_t timeout);
 
+/* Blocking-CAD wait budget scaled to the actual CAD duration:
+ * nSym * Tsym + startup radio-side, plus IRQ latency margin.  A fixed
+ * 200 ms fits 2-symbol CAD everywhere but is exceeded by 4-symbol CAD
+ * on slow presets (SF12 @ 62.5 kHz = ~262 ms). */
+static uint32_t lr11xx_cad_timeout_ms(struct lr11xx_data *data)
+{
+	struct lora_modem_config *mc = &data->modem_cfg;
+	uint8_t sf = (uint8_t)mc->datarate;
+	uint8_t symb_nb = mc->cad.symbol_num ?
+			  (uint8_t)mc->cad.symbol_num : 2;
+	uint32_t bw_hz = (uint32_t)(bw_enum_to_khz(mc->bandwidth) * 1000.0f);
+
+	if (bw_hz == 0 || sf < 5 || sf > 12) {
+		return 200;
+	}
+
+	uint32_t tsym_us = ((1UL << sf) * 1000000UL) / bw_hz;
+	/* +1 symbol covers radio startup + internal processing tail */
+	uint32_t ms = ((symb_nb + 1U) * tsym_us) / 1000U + 100U;
+
+	return MAX(ms, 200U);
+}
+
 /* ── Driver API: send_async ─────────────────────────────────────────── */
 
 static int lr11xx_lora_send_async(const struct device *dev,
@@ -689,7 +759,8 @@ static int lr11xx_lora_send_async(const struct device *dev,
 	 * to re-arm. */
 	if (data->modem_cfg.cad.mode == LORA_CAD_MODE_LBT) {
 		bool was_in_rx = data->in_rx_mode;
-		int cad_ret = lr11xx_lora_cad(dev, K_MSEC(200));
+		int cad_ret = lr11xx_lora_cad(dev,
+					      K_MSEC(lr11xx_cad_timeout_ms(data)));
 		if (cad_ret > 0) {
 			if (was_in_rx && data->async_rx_cb != NULL) {
 				k_mutex_lock(&data->spi_mutex, K_FOREVER);
@@ -743,12 +814,15 @@ static int lr11xx_lora_send_async(const struct device *dev,
 
 	/* Clear IRQ, enable DIO1 */
 	lr11xx_system_clear_irq_status(ctx, LR11XX_SYSTEM_IRQ_ALL_MASK);
+	data->preamble_seen_at_ms = 0;
 	lr11xx_hal_enable_dio1_irq(&data->hal_ctx);
 
-	/* Store signal and start TX */
+	/* Store signal and start TX.  10 s timeout: worst legal preset
+	 * (SF12 / BW62.5, max payload) exceeds 5 s airtime — a shorter
+	 * timeout would abort mid-transmission.  Matches the SX126x driver. */
 	data->tx_signal = async;
 	data->tx_active = true;
-	lr11xx_radio_set_tx(ctx, 5000);
+	lr11xx_radio_set_tx(ctx, 10000);
 
 	k_mutex_unlock(&data->spi_mutex);
 	return 0;
@@ -891,6 +965,24 @@ int16_t lr11xx_get_rssi_inst(const struct device *dev)
 	return (int16_t)rssi;
 }
 
+/* Grace period for the PREAMBLE_DETECTED -> SYNC_WORD_HEADER_VALID gap,
+ * SF/BW-aware — same formula as the SX126x driver: (preamble_len + 8)
+ * symbols covers worst-case preamble remainder + sync word + header
+ * decode with margin. */
+static uint32_t lr11xx_preamble_grace_ms(struct lr11xx_data *data)
+{
+	uint8_t sf = (uint8_t)data->modem_cfg.datarate;
+	uint32_t bw_hz = (uint32_t)(bw_enum_to_khz(data->modem_cfg.bandwidth) * 1000.0f);
+	uint16_t preamble = data->modem_cfg.preamble_len;
+
+	if (bw_hz == 0 || sf < 5 || sf > 12) {
+		return 1000;  /* safe default ~1 s if config is uninitialised */
+	}
+	uint64_t us = ((uint64_t)(preamble + 8U) << sf) * 1000000ULL / bw_hz;
+
+	return (uint32_t)((us + 999U) / 1000U);
+}
+
 bool lr11xx_is_receiving(const struct device *dev)
 {
 	struct lr11xx_data *data = dev->data;
@@ -900,12 +992,49 @@ bool lr11xx_is_receiving(const struct device *dev)
 		return false;
 	}
 
-	lr11xx_system_irq_mask_t irq;
+	lr11xx_system_irq_mask_t irq = 0;
 	lr11xx_system_get_irq_status(&data->hal_ctx, &irq);
-	k_mutex_unlock(&data->spi_mutex);
 
-	return (irq & (LR11XX_SYSTEM_IRQ_PREAMBLE_DETECTED |
-		       LR11XX_SYSTEM_IRQ_SYNC_WORD_HEADER_VALID)) != 0;
+	/* Header landed: payload phase in progress.  The bit stays latched
+	 * until the terminal DIO1 event bulk-clears it, so this covers the
+	 * whole packet. */
+	if (irq & LR11XX_SYSTEM_IRQ_SYNC_WORD_HEADER_VALID) {
+		k_mutex_unlock(&data->spi_mutex);
+		return true;
+	}
+
+	/* PREAMBLE_DETECTED with SF-aware grace (SX126x-parity).  Within
+	 * grace, keep reporting busy so a real packet has time to land its
+	 * header; after grace with no header, assume foreign sync word,
+	 * clear the bit and release TX. */
+	if (irq & LR11XX_SYSTEM_IRQ_PREAMBLE_DETECTED) {
+		uint32_t now = k_uptime_get_32();
+		uint32_t seen = data->preamble_seen_at_ms;
+
+		if (seen == 0) {
+			data->preamble_seen_at_ms = (now == 0) ? 1U : now;
+			k_mutex_unlock(&data->spi_mutex);
+			return true;
+		}
+		if ((now - seen) < lr11xx_preamble_grace_ms(data)) {
+			k_mutex_unlock(&data->spi_mutex);
+			return true;
+		}
+		/* Grace expired.  Clear CMD_ERROR along with the preamble
+		 * bit — the LR1110 sets CMD_ERROR whenever ClearIrq is
+		 * called with a mask that excludes it (all FW versions). */
+		lr11xx_system_clear_irq_status(&data->hal_ctx,
+					       LR11XX_SYSTEM_IRQ_PREAMBLE_DETECTED |
+					       LR11XX_SYSTEM_IRQ_CMD_ERROR);
+		data->preamble_seen_at_ms = 0;
+		k_mutex_unlock(&data->spi_mutex);
+		return false;
+	}
+
+	/* No preamble, no header: nothing in flight. */
+	data->preamble_seen_at_ms = 0;
+	k_mutex_unlock(&data->spi_mutex);
+	return false;
 }
 
 uint32_t lr11xx_get_wakeup_time_us(const struct device *dev)
@@ -1035,6 +1164,21 @@ static int lr11xx_do_cad(struct lr11xx_data *data)
 	}
 	if (mc->cad.detection_peak != 0) {
 		detect_peak = mc->cad.detection_peak;
+	} else if (data->cad_peak_offset != 0) {
+		/* Adaptive-CAD operating offset (base +/- learned delta).
+		 * LR11xx detPeak scale is ~48-90 — never mix with SX126x. */
+		int peak = (int)detect_peak + data->cad_peak_offset;
+
+		if (peak < 48) {
+			peak = 48;
+		} else if (peak > 90) {
+			peak = 90;
+		}
+		detect_peak = (uint8_t)peak;
+	}
+	if (data->cad_probe_peak != 0) {
+		/* One-shot calibration probe: absolute peak wins over all. */
+		detect_peak = data->cad_probe_peak;
 	}
 
 	lr11xx_radio_cad_params_t cad = {
@@ -1048,6 +1192,7 @@ static int lr11xx_do_cad(struct lr11xx_data *data)
 	lr11xx_radio_set_cad_params(ctx, &cad);
 
 	lr11xx_system_clear_irq_status(ctx, LR11XX_SYSTEM_IRQ_ALL_MASK);
+	data->preamble_seen_at_ms = 0;
 	data->cad_active = true;
 	lr11xx_radio_set_cad(ctx);
 
@@ -1122,6 +1267,44 @@ static int lr11xx_lora_cad_async(const struct device *dev,
 
 	int ret = lr11xx_do_cad(data);
 	k_mutex_unlock(&data->spi_mutex);
+
+	return ret;
+}
+
+/* ── Extension API: adaptive CAD ────────────────────────────────────── */
+
+void lr11xx_cad_set_peak_offset(const struct device *dev, int8_t offset)
+{
+	struct lr11xx_data *data = dev->data;
+
+	data->cad_peak_offset = offset;
+}
+
+uint8_t lr11xx_cad_base_peak(const struct device *dev)
+{
+	struct lr11xx_data *data = dev->data;
+
+	return lr11xx_cad_detect_peak((uint8_t)data->modem_cfg.datarate);
+}
+
+int lr11xx_cad_probe(const struct device *dev, int8_t peak_offset)
+{
+	struct lr11xx_data *data = dev->data;
+	int base = (int)lr11xx_cad_base_peak(dev);
+	int peak = base + peak_offset;
+	int ret;
+
+	if (peak < 48) {
+		peak = 48;
+	} else if (peak > 90) {
+		peak = 90;
+	}
+
+	/* One-shot absolute override consumed by lr11xx_do_cad().  Probes and
+	 * LBT both run on the mesh loop thread, so no concurrent CAD exists. */
+	data->cad_probe_peak = (uint8_t)peak;
+	ret = lr11xx_lora_cad(dev, K_MSEC(lr11xx_cad_timeout_ms(data)));
+	data->cad_probe_peak = 0;
 
 	return ret;
 }

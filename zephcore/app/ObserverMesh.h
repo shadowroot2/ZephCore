@@ -14,6 +14,7 @@
 #include <mesh/Identity.h>
 #include <mesh/RNG.h>
 #include <mesh/RTC.h>
+#include <helpers/MeshTimeSync.h>
 #include <helpers/NodePrefs.h>
 #include "RepeaterDataStore.h"
 #include "observer_creds.h"
@@ -58,6 +59,11 @@ class ObserverMesh : public Dispatcher {
 	void buildStatusJson(const char *status, char *out, size_t out_size);
 	uint32_t _start_uptime_secs;
 
+	/* Mesh time sync — the observer bypasses mesh::Mesh, so it verifies
+	 * advert signatures itself before harvesting. */
+	MeshTimeSync _timesync{FIRMWARE_BUILD_EPOCH};
+	void harvestTimeSample(Packet *pkt);
+
 protected:
 	/* Capture RSSI + raw bytes before packet is parsed */
 	void logRxRaw(float snr, float rssi, const uint8_t raw[], int len) override;
@@ -83,6 +89,13 @@ public:
 	 * are not configured in the creds struct. */
 	void publishSelfAdvert();
 	void publishStatus(const char *status);
+
+	/* Mesh time sync: paced evaluation (bidirectional stepping — the clock
+	 * is only load-bearing for observation timestamps, which is exactly
+	 * what this fixes). Driven from the 300 s status timer. */
+	void timeSyncTick();
+	/* SNTP just set the clock (trusted): arm suppression + drift envelope. */
+	void noteTrustedTimeSync();
 
 	/* Accessors used by main_observer.cpp */
 	NodePrefs *getNodePrefs()               { return &_prefs; }

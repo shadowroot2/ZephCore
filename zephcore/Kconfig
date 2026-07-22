@@ -126,6 +126,35 @@ config ZEPHCORE_COMPANION_USB
 	  For ESP32-S3 boards, USB_DEVICE_STACK_NEXT must be enabled first via
 	  boards/common/esp32s3_usb.conf before this becomes active.
 
+config ZEPHCORE_COMPANION_SERIAL
+	bool "Enable plain-UART companion transport"
+	depends on ZEPHCORE_ROLE_COMPANION && !ZEPHCORE_COMPANION_USB
+	help
+	  Run the same wired-companion stack (ZephyrCompanionUSB: frame parser,
+	  TX ring, text CLI, BLE-arbitrated interface) over a plain UART instead
+	  of a native-USB CDC-ACM endpoint.  For boards whose USB-C is wired to a
+	  USB-UART bridge rather than the SoC's native USB (e.g. Heltec V3 /
+	  CP2102), or that have no USB device controller at all.
+
+	  The board points the transport at its UART with the
+	  `zephcore,companion-uart` chosen node (e.g. = &uart0); that UART must be
+	  dedicated to the companion (console/shell moved off or disabled), since
+	  the protocol stream and a text console cannot share one line.  Coexists
+	  with BLE exactly like the USB backend — same first-come arbitration.
+
+	  Distinct from the legacy SerialCompanionTransport (no-BLE STM32WL path):
+	  this one keeps BLE and adds the text CLI.
+
+config ZEPHCORE_COMPANION_SERIAL_POLLING
+	bool "Poll the plain-UART companion transport"
+	depends on ZEPHCORE_COMPANION_SERIAL
+	default n
+	help
+	  Receive and transmit the plain-UART companion transport with uart_poll_in()
+	  and uart_poll_out(), rather than UART interrupts. Use this only on boards
+	  whose USB-UART bridge does not deliver RX interrupts reliably. Native USB
+	  CDC transports are unaffected.
+
 if ZEPHCORE_ROLE_REPEATER || ZEPHCORE_ROLE_ROOM_SERVER
 
 config ZEPHCORE_REPEATER_UPLINK
@@ -182,15 +211,50 @@ config ZEPHCORE_MAX_UNSYNCED_POSTS
 
 endif # ZEPHCORE_ROLE_REPEATER || ZEPHCORE_ROLE_ROOM_SERVER
 
+config ZEPHCORE_TIMESYNC_QUORUM
+	int "Mesh time sync: consensus quorum"
+	default 6
+	range 3 32
+	help
+	  Minimum eligible advert senders required before a mesh time-sync
+	  consensus may step the clock (a strict majority of them must also
+	  agree). Each quorum unit costs a local attacker one more physical
+	  radio sustained for tenure-hours, so lowering this trades eclipse
+	  resistance for coverage on small meshes (e.g. 7 repeaters = exactly
+	  6 potential voters). Floor 3 matches the bootstrap quorum — below
+	  that the interval intersection degenerates. Deliberately a build-time
+	  knob, not a runtime pref: this is a security parameter.
+
+config ZEPHCORE_TIMESYNC_TABLE_SIZE
+	int "Mesh time sync: sample table slots"
+	default 16 if ZEPHCORE_ROLE_COMPANION
+	default 32
+	range 8 64
+	help
+	  Per-sender advert sample slots (24 bytes each) for the mesh
+	  time-sync consensus. 32 fits dense neighborhoods; companions
+	  default to 16 (RAM-bound role). Must be at least the quorum for
+	  normal-mode stepping to be reachable.
+
 endmenu # Device Role
 
 if ZEPHCORE_ROLE_COMPANION
 
+config ZEPHCORE_GPS_SATELLITES
+	bool "Report GNSS satellites in view"
+	default y if GNSS
+	select GNSS_SATELLITES
+	help
+	  Enable GSV decoding for companion boards with a GNSS device. This lets
+	  the local CLI and v-contact report satellites visible to the receiver,
+	  rather than only the subset used for a navigation fix.
+
 config ZEPHCORE_MAX_CONTACTS
 	int "Maximum number of contacts"
-	default 350
+	default 200
 	help
-	  Maximum number of contacts that can be stored.
+	  Maximum number of contacts that can be stored. The companion default is
+	  capped at 200 to leave sufficient RAM for BLE and mesh buffers.
 
 config ZEPHCORE_MAX_CHANNELS
 	int "Maximum number of channels"
@@ -200,10 +264,10 @@ config ZEPHCORE_MAX_CHANNELS
 
 config ZEPHCORE_OFFLINE_QUEUE_SIZE
 	int "Offline message queue size"
-	default 256
+	default 100
 	help
-	  Size of the offline message queue for incoming messages.
-	  Arduino MeshCore uses 256 for both T1000-E and Wio Tracker.
+	  Size of the offline message queue for incoming messages. The companion
+	  default is capped at 100 frames to preserve RAM on MCU targets.
 
 config ZEPHCORE_ACK_TABLE_SIZE
 	int "ACK tracking table size"
@@ -234,11 +298,14 @@ config ZEPHCORE_BLE_PASSKEY
 
 config ZEPHCORE_BLE_QUEUE_SIZE
 	int "BLE TX/RX message queue depth"
-	default 12
+	default 24
 	range 4 64
 	help
 	  Number of frames that can be queued for BLE TX/RX.
 	  Larger = better buffering for bursty traffic, more RAM.
+	  24 absorbs the app's bursty CMD_GET_CHANNEL pipelining during
+	  channel sync (it fires up to MAX_CHANNELS requests back-to-back);
+	  at 12 the recv queue overran and dropped requests, stalling sync.
 
 config ZEPHCORE_BLE_CONN_MIN_INTERVAL
 	int "BLE minimum connection interval (units: 1.25ms)"

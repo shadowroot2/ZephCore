@@ -21,6 +21,13 @@ public:
 
 	void begin() override;
 
+	/* SX127x has no RX boost feature — report unsupported so the
+	 * radio.rxgain CLI can reply "Error: unsupported". */
+	bool setRxBoost(bool enable) override {
+		(void)enable;
+		return false;
+	}
+
 protected:
 	/* Hardware primitives */
 	bool hwConfigure(const struct lora_modem_config &cfg) override;

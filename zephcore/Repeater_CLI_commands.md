@@ -30,8 +30,8 @@ All commands are sent over USB serial (CDC-ACM). Commands sent remotely over the
 | Command | Description |
 |---------|-------------|
 | `clock` | Display current UTC time |
-| `clock sync` | Sync clock from the sender's timestamp (only advances, cannot go backwards) |
-| `time <unix_timestamp>` | Set RTC to a specific Unix timestamp (cannot go backwards) |
+| `clock sync` | Sync clock from the sender's timestamp (only advances, cannot go backwards). Arms the 7-day mesh-time-sync suppression window. |
+| `time <unix_timestamp>` | Set RTC to a specific Unix timestamp (cannot go backwards). Arms the 7-day mesh-time-sync suppression window. |
 
 ---
 
@@ -206,7 +206,9 @@ All `set uplink.*` changes are saved immediately and only applied after reboot.
 | `get radio.rxgain` | RX gain boost: `0` or `1` |
 | `get rxduty` | RX duty cycle mode: `0` or `1` |
 | `get gps duty` | Now-effective GPS duty interval in seconds (`always on (0)` when continuous) |
+| `get meshtimesync` | Mesh time-sync state + live dry-run: on/off, eligible voter count, votes for/against, consensus skew and radius, would-be verdict (`ok`/`in-band`/`step±N`/`abstain (reason)`/`hold (reason)`; a recent clock set — manual or GPS — shows as `hold (suppressed)`, and a backward step a forward-only role would refuse is annotated `(skipped: forward-only)`), step counters, suppression countdown, and a per-sender evidence table (`prefix hops count skew E`, `E` = counted toward the verdict above). Entries that count print first, so a size-capped reply never hides the ones that explain the summary; if the table doesn't fully fit, a trailing `+N more` shows how many were left out. Sensing runs even while off, so this works as a dry-run before enabling. Over remote admin the reply is truncated to the packet size (summary always fits); the full table needs the USB CLI. |
 | `get dc.restarts` | Duty-cycle preamble false-positive re-arm counter (RxTimeout re-arms + parked-RX watchdog recoveries). High values mean the preamble detector is tripping on noise/interference without real packets arriving — inflates RX-on time and drains battery; packets are never lost to it. Reset by `clear stats`. |
+| `get cad` | Adaptive-CAD status: header (`a` auto on/off, `o` operating detPeak offset, `pk` absolute peak with family base, `iv` probe interval, `bc` busy cap), then a 3-rung window around the operating offset (`*` marks it) with probe/busy/fp/tp counts and false-positive rate — the three levels the knee controller reads. Probing runs even while `cad.auto` is off (dry-run), so this is the observation tool for picking a site-appropriate detPeak. See `ADAPTIVE_CAD.md`. Not available on SX127x boards (no hardware CAD). |
 | `get adc.multiplier` | Battery voltage ADC calibration multiplier |
 | `get bootloader.ver` | Bootloader version string |
 | `get public.key` | *(USB only)* Node's public key as hex |
@@ -247,9 +249,15 @@ Changes are persisted immediately unless noted. Some require a reboot.
 | `set multi.acks <0\|1>` | | Enable extra ACK transmits |
 | `set path.hash.mode <mode>` | 0, 1, or 2 | Path hashing algorithm |
 | `set loop.detect <mode>` | `off`, `minimal`, `moderate`, `strict` | Loop detection sensitivity |
-| `set radio.rxgain <0\|1\|on\|off>` | | RX gain boost *(reboot required)* |
+| `set radio.rxgain <0\|1\|on\|off>` | | RX gain boost, applied live. Replies `Error: unsupported` on radios without RX boost (SX127x); the pref is still saved. |
 | `set rxduty <0\|1\|on\|off>` | | RX duty cycle mode *(reboot required)*. Window timing auto-sized per SF/BW/preamble from the SX126x datasheet constraints (boot log line `rxduty:` shows the result). Zero-loss guarantee assumes senders on preamble-32 firmware (current MeshCore at SF≤8); legacy preamble-16 senders are only caught ~50% worst-phase — keep off until the local mesh has converted. Presets with 16-symbol preambles (SF≥9) fall back to continuous RX automatically. |
 | `set adc.multiplier <mult>` | (0 = use board default) | Battery voltage ADC calibration multiplier |
+| `set meshtimesync <on\|off>` | default **off** | Mesh time sync: automatically correct this node's clock from the consensus of Ed25519-signed advert timestamps heard on the mesh. Steps at most ±1 h per step, one step per 6 h; abstains without a quorum (default 6) of tenured agreeing senders; never overrides a clock set in the last 7 days, whether from GPS (re-armed on every fix) or a manual set. See `MESHTIMESYNC.md`. |
+| `set cad.auto <on\|off>` | default **on** | Adaptive CAD: let the staircase controller move the operating detPeak offset based on probe statistics. On by default (repeaters and companions); at the default 15 s probe interval it responds to environment change in ~1–2 h. Turn off to observe/hand-tune via `get cad` + `set cad.offset`. See `ADAPTIVE_CAD.md`. |
+| `set cad.offset <n>` | −8 to 12, default 0 | Operating detPeak offset from the chip family's per-SF base (SX126x: SF+13; LR11xx/LR20xx: 56–68 table). Negative = more sensitive LBT (catches weaker signals, risks false busy), positive = less sensitive. Wide range so dense hilltops / quiet valleys can settle far from base. The per-family absolute clamp in the driver (SX126x 15–40, LR 48–90) is a firmware guardrail against a CAD that never/always fires, not a chip limit (`cadDetPeak` is a full `uint8_t`). Applied live; the auto staircase may move it later if `cad.auto` is on. |
+| `set cad.probe.interval <sec>` | 0 (off) or 10–255, default **15** | Seconds between calibration CAD probes. Default 15 s → ~1–2 h staircase response. 0 disables probing entirely (also freezes auto adaptation). |
+| `set cad.busycap <pct>` | 0 (off) or 10–90, default **25** | Airtime-protection cap: the max percentage of TX attempts the node will let CAD defer before the staircase backs off to a less sensitive detPeak — counting **real** traffic, not just false positives. On a congested hilltop most busy verdicts are distant traffic won on capture anyway, so deferring for all of it starves the node's own airtime. Self-targeting: a quiet node's busy rate never reaches the cap. Shown as `bc:` in `get cad`. 0 disables the cap (pure knee-seeking). |
+| `set cad.reset` | | Clear the accumulated per-level CAD probe statistics (RAM only; also cleared automatically on any radio parameter change). |
 | `set prv.key <hex>` | 64-char hex (32-byte key) | Replace private key; derive new identity *(reboot to apply)* |
 
 ---

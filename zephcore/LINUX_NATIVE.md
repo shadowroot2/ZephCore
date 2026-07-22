@@ -582,7 +582,7 @@ All native-Linux board files live under **`boards/linux_native/`**:
 
 End-to-end verified under WSL Ubuntu 24.04 (gcc 13.3):
 
-- ✅ All 7 `patches/zephyr/*.patch` apply cleanly (including the new `0007-spi-gpio-native-linux.patch`).
+- ✅ All `patches/zephyr/*.patch` apply cleanly (including the new `0007-spi-gpio-native-linux.patch`).
 - ✅ All files in `patches/zephyr-new/` copy correctly into the Zephyr tree.
 - ✅ Platform detection routes `BOARD=native_sim` to `boards/linux_native/linux_common.conf`.
 - ✅ `native_sim/native/64` builds clean → `build/zephyr/zephcore_native_linux.exe` (~4.3 MB ELF).

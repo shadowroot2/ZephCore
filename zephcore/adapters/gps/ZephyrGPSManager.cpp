@@ -24,7 +24,6 @@
 #include <zephyr/drivers/uart.h>
 #include <zephyr/drivers/regulator.h>
 #include <zephyr/drivers/i2c.h>
-#include <zephyr/fs/fs.h>
 #include <string.h>
 #if defined(CONFIG_SOC_NRF52840)
 #include <nrfx.h>
@@ -95,6 +94,14 @@ static int64_t last_fix_uptime_ms = 0;  /* k_uptime when last validated fix was 
 static int64_t standby_start_ms = 0;    /* k_uptime when standby started (for next-wake calc) */
 static uint64_t standby_interval_ms = 0; /* How long standby lasts (for next-wake calc) */
 static uint16_t last_gnss_satellites = 0; /* Updated on every active GNSS callback, even before fix */
+static uint16_t last_gnss_visible_satellites = 0; /* Updated from GSV when GNSS_SATELLITES is enabled */
+#if IS_ENABLED(CONFIG_GNSS_SATELLITES)
+/* GNSS system bits currently span bit 0 (GPS) through bit 13 (QZSS L1S).
+ * GSV is published separately for each constellation, so retain the most
+ * recent count for every system and present their sum to the UI. */
+#define GNSS_VISIBLE_SYSTEM_COUNT 14
+static uint16_t gnss_visible_by_system[GNSS_VISIBLE_SYSTEM_COUNT];
+#endif
 
 #define GPS_GOOD_FIX_COUNT       3       /* Need 3 consecutive good fixes */
 #define GPS_MIN_SATELLITES       4       /* Minimum satellites for valid fix */
@@ -112,9 +119,9 @@ static inline bool gps_duty_cycling(void)
 	return gps_wake_interval_ms != 0;
 }
 
-/* k_uptime of the last always-on position/clock refresh — rate-limits the
- * flash write + RTC sync to gps_acquire_timeout_ms while streaming (see
- * gnss_data_cb), so continuous operation doesn't hammer flash. */
+/* k_uptime of the last always-on fix-callback invocation — rate-limits the
+ * RTC sync / node-position update to gps_acquire_timeout_ms while streaming
+ * (see gnss_data_cb), so 1Hz fixes don't fire the callback continuously. */
 static int64_t last_promote_ms = 0;
 
 /* Repeater acquire window — GPS only for time sync. The standby interval is
@@ -133,59 +140,6 @@ static void gps_start_acquiring(void);
 /* Delayable work for event-driven timers (no polling!) */
 static K_WORK_DELAYABLE_DEFINE(gps_wake_work, gps_wake_work_fn);
 static K_WORK_DELAYABLE_DEFINE(gps_timeout_work, gps_timeout_work_fn);
-
-/* ========== Last-known position persistence ========== */
-#define GPS_POS_FILE "/lfs/gps_pos"
-
-/* On-disk format: lat(8) + lon(8) + alt(4) = 20 bytes */
-struct gps_pos_record {
-	int64_t latitude_ndeg;
-	int64_t longitude_ndeg;
-	int32_t altitude_mm;
-};
-
-static void gps_save_position(const struct gps_position *pos)
-{
-	struct fs_file_t file;
-	struct gps_pos_record rec = {
-		.latitude_ndeg = pos->latitude_ndeg,
-		.longitude_ndeg = pos->longitude_ndeg,
-		.altitude_mm = pos->altitude_mm,
-	};
-
-	fs_file_t_init(&file);
-	if (fs_open(&file, GPS_POS_FILE, FS_O_CREATE | FS_O_WRITE) == 0) {
-		fs_write(&file, &rec, sizeof(rec));
-		fs_close(&file);
-	}
-}
-
-static bool gps_load_position(void)
-{
-	struct fs_file_t file;
-	struct gps_pos_record rec;
-
-	fs_file_t_init(&file);
-	if (fs_open(&file, GPS_POS_FILE, FS_O_READ) < 0) {
-		return false;
-	}
-	ssize_t n = fs_read(&file, &rec, sizeof(rec));
-	fs_close(&file);
-
-	if (n != sizeof(rec)) {
-		return false;
-	}
-
-	current_pos.latitude_ndeg = rec.latitude_ndeg;
-	current_pos.longitude_ndeg = rec.longitude_ndeg;
-	current_pos.altitude_mm = rec.altitude_mm;
-	current_pos.valid = true;
-	current_pos.satellites = 0;
-	current_pos.timestamp_ms = 0;  /* unknown — loaded from flash */
-	LOG_INF("GPS: Restored last position from flash lat=%lld lon=%lld",
-		rec.latitude_ndeg / 1000000, rec.longitude_ndeg / 1000000);
-	return true;
-}
 
 #else
 static gps_enable_callback_t gps_enable_cb = NULL;
@@ -303,20 +257,6 @@ static void gnss_data_cb(const struct device *dev, const struct gnss_data *data)
 					gps_time_synced = true;
 					last_fix_uptime_ms = k_uptime_get();
 
-					/* Promote (persist position + sync clock via the fix
-					 * callback) every duty-cycle wake; in always-on, only on
-					 * the first fix and then once per gps_acquire_timeout_ms,
-					 * so streaming doesn't hammer flash. current_pos (the
-					 * telemetry source) is updated on every fix above either way. */
-					bool promote = duty || first_ever ||
-						(k_uptime_get() - last_promote_ms >=
-						 (int64_t)gps_acquire_timeout_ms);
-					if (promote) {
-						last_promote_ms = k_uptime_get();
-						/* Persist position to flash for reboot survival */
-						gps_save_position(&current_pos);
-					}
-
 					if (duty) {
 						/* Cancel timeout */
 						k_work_cancel_delayable(&gps_timeout_work);
@@ -341,11 +281,18 @@ static void gnss_data_cb(const struct device *dev, const struct gnss_data *data)
 						return;
 					}
 
-					/* Always-on: keep streaming (no standby). Reset the gate so
-					 * we don't re-promote every fix; refresh persisted position
-					 * + RTC on the cadence captured by `promote` above. */
+					/* Always-on: keep streaming (no standby). Throttle the fix
+					 * callback (RTC sync + node-position update in main) to
+					 * once per gps_acquire_timeout_ms — at 1Hz fixes it would
+					 * otherwise fire constantly. Always fire on the first-ever
+					 * fix so the clock syncs right away. current_pos (the
+					 * telemetry source) is updated on every fix above. */
 					consecutive_good_fixes = 0;
+					bool promote = first_ever ||
+						(k_uptime_get() - last_promote_ms >=
+						 (int64_t)gps_acquire_timeout_ms);
 					if (promote && gps_fix_cb) {
+						last_promote_ms = k_uptime_get();
 						double lat = (double)data->nav_data.latitude / 1000000000.0;
 						double lon = (double)data->nav_data.longitude / 1000000000.0;
 						k_mutex_unlock(&gps_mutex);
@@ -392,6 +339,50 @@ static void gnss_data_cb(const struct device *dev, const struct gnss_data *data)
 
 /* Register GNSS callback for all GNSS devices */
 GNSS_DATA_CALLBACK_DEFINE(NULL, gnss_data_cb);
+
+#if IS_ENABLED(CONFIG_GNSS_SATELLITES)
+/* GSV is independent of the GGA/RMC fix stream. It is published separately
+ * for each constellation, so aggregate the current counts across systems. */
+static void gnss_satellites_cb(const struct device *dev,
+			       const struct gnss_satellite *satellites, uint16_t size)
+{
+	ARG_UNUSED(dev);
+	uint16_t callback_counts[GNSS_VISIBLE_SYSTEM_COUNT] = { 0 };
+	uint32_t updated_systems = 0;
+
+	if (!gps_enabled || gps_current_state == GPS_STATE_STANDBY) {
+		return;
+	}
+
+	for (uint16_t i = 0; i < size; i++) {
+		uint32_t system = (uint32_t)satellites[i].system;
+
+		if (system != 0U && (system & (system - 1U)) == 0U) {
+			uint32_t index = (uint32_t)__builtin_ctz(system);
+
+			if (index < GNSS_VISIBLE_SYSTEM_COUNT) {
+				callback_counts[index]++;
+				updated_systems |= BIT(index);
+			}
+		}
+	}
+
+	k_mutex_lock(&gps_mutex, K_FOREVER);
+	for (uint32_t i = 0; i < GNSS_VISIBLE_SYSTEM_COUNT; i++) {
+		if ((updated_systems & BIT(i)) != 0U) {
+			gnss_visible_by_system[i] = callback_counts[i];
+		}
+	}
+
+	last_gnss_visible_satellites = 0;
+	for (uint32_t i = 0; i < GNSS_VISIBLE_SYSTEM_COUNT; i++) {
+		last_gnss_visible_satellites += gnss_visible_by_system[i];
+	}
+	k_mutex_unlock(&gps_mutex);
+}
+
+GNSS_SATELLITES_CALLBACK_DEFINE(NULL, gnss_satellites_cb);
+#endif
 
 /* Find and initialize GNSS device */
 static const struct device *gnss_dev = NULL;
@@ -1359,9 +1350,6 @@ int gps_manager_init(void)
 #if HAS_GNSS
 	gnss_init();
 
-	/* Restore last known position from flash (survives reboot) */
-	gps_load_position();
-
 	/* Configure constellations + fix rate NOW while chip is powered
 	 * and the modem pipe is open (driver init already ran).
 	 * This is the ONLY safe place to call modem_chat_run_script() —
@@ -1492,6 +1480,21 @@ void gps_enable(bool enable)
 #endif
 		gps_current_state = GPS_STATE_OFF;
 		consecutive_good_fixes = 0;
+
+		/* Zero the stale satellite count so a re-enable doesn't briefly
+		 * report a live fix (e.g. joystick UI showing "3D FIX") off old
+		 * data before any new NMEA sentence arrives. lat/lon/valid are
+		 * deliberately left alone — telemetry/UI "last known position"
+		 * reads (gps_get_position) intentionally survive an on/off
+		 * toggle; only the live fix-quality indicator resets. */
+		k_mutex_lock(&gps_mutex, K_FOREVER);
+		current_pos.satellites = 0;
+		last_gnss_satellites = 0;
+		last_gnss_visible_satellites = 0;
+#if IS_ENABLED(CONFIG_GNSS_SATELLITES)
+		memset(gnss_visible_by_system, 0, sizeof(gnss_visible_by_system));
+#endif
+		k_mutex_unlock(&gps_mutex);
 
 		/* Clear first-fix flags so the next enable gets a fresh long
 		 * first-acquisition window again — the user explicitly toggled GPS
@@ -1695,6 +1698,7 @@ void gps_get_state_info(struct gps_state_info *info)
 #if HAS_GNSS
 	info->state = (uint8_t)gps_current_state;
 	info->satellites = last_gnss_satellites;
+	info->visible_satellites = last_gnss_visible_satellites;
 
 	if (last_fix_uptime_ms > 0) {
 		/* Seconds since last validated fix */

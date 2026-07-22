@@ -62,6 +62,18 @@
 	status = "okay";
 };
 
+/*
+ * BT HCI controller — the upstream ttgo_lora32 DTS leaves the node disabled
+ * (esp32_common.dtsi already sets chosen zephyr,bt-hci to it).  Companion
+ * builds set CONFIG_BT=y, and the hal_espressif CMake compiles the ESP32 BT
+ * controller under CONFIG_BT alone; without this node BT_ESP32 stays off and
+ * its Kconfig symbols (CONFIG_ESP32_BT_CONTROLLER_TASK_PRIO etc.) are
+ * undefined, breaking the bt.c compile.  Same fix as ttgo_tbeam.
+ */
+&esp32_bt_hci {
+	status = "okay";
+};
+
 /* I2C sensors — auto-detected at runtime */
 &i2c0 {
 	#include "../../common/sensors-i2c.dtsi"

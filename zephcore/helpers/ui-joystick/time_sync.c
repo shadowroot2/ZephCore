@@ -17,6 +17,7 @@ static const char *source_short_name(enum time_sync_source src)
 	case TIME_SYNC_APP:  return "App";
 	case TIME_SYNC_WIFI: return "WiFi";
 	case TIME_SYNC_CLI:  return "CLI";
+	case TIME_SYNC_MESH: return "Mesh";
 	default:             return NULL;
 	}
 }

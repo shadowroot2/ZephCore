@@ -96,6 +96,21 @@ uint32_t SX126xRadio::hwWakeupTimeUs()
 	return sx126x_get_wakeup_time_us(_dev);
 }
 
+int SX126xRadio::hwCadProbe(int8_t level)
+{
+	return sx126x_cad_probe(_dev, level);
+}
+
+void SX126xRadio::hwCadSetPeakOffset(int8_t offset)
+{
+	sx126x_cad_set_peak_offset(_dev, offset);
+}
+
+uint8_t SX126xRadio::hwCadBasePeak()
+{
+	return sx126x_cad_base_peak(_dev);
+}
+
 uint32_t SX126xRadio::getDutyCycleTimeoutRestarts() const
 {
 	return sx126x_get_dc_timeout_restarts(_dev);

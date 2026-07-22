@@ -21,7 +21,8 @@ struct GroupChannel {
 
 class MeshTables {
 public:
-	virtual bool hasSeen(const Packet *packet) = 0;
+	virtual bool wasSeen(const Packet *packet) = 0;	/* pure query, no insert */
+	virtual void markSeen(const Packet *packet) = 0;	/* explicit insert */
 	virtual void clear(const Packet *packet) = 0;
 };
 

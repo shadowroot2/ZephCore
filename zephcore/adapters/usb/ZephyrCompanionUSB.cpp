@@ -49,6 +49,38 @@ enum usb_rx_state {
 
 #define USB_TEXT_LINE_MAX 128
 
+/* Board-selected fallback for USB-UART bridges which expose a working UART
+ * data path but fail to raise the RX IRQ expected by the normal backend. */
+#define COMPANION_SERIAL_POLLING \
+	(IS_ENABLED(CONFIG_ZEPHCORE_COMPANION_SERIAL_POLLING) && \
+	 IS_ENABLED(CONFIG_ZEPHCORE_COMPANION_SERIAL))
+#define COMPANION_SERIAL_POLL_INTERVAL_MS 5
+
+/* ---- Backend selection --------------------------------------------------
+ * The companion byte transport is normally a native-USB CDC-ACM UART, but the
+ * same frame parser / TX ring / CLI runs unchanged over a plain UART too — for
+ * boards whose USB-C is a USB-UART bridge (e.g. Heltec V3 / CP2102) or that
+ * have no USB device controller at all.  A board selects the backend with the
+ * `zephcore,companion-uart` chosen node; absent that we fall back to the sole
+ * cdc-acm-uart, so existing native-USB and nRF builds resolve identically.
+ *
+ * COMPANION_HAS_DTR is true only for the CDC backend — a plain UART has no DTR
+ * line, so session end there is protocol-driven (CMD_APP_START), exactly like
+ * the legacy SerialCompanionTransport. */
+#if DT_HAS_CHOSEN(zephcore_companion_uart)
+#  define COMPANION_UART_DEV    DEVICE_DT_GET(DT_CHOSEN(zephcore_companion_uart))
+#  define COMPANION_HAS_DTR     DT_NODE_HAS_COMPAT(DT_CHOSEN(zephcore_companion_uart), zephyr_cdc_acm_uart)
+#  define COMPANION_HAS_BACKEND 1
+#elif DT_HAS_COMPAT_STATUS_OKAY(zephyr_cdc_acm_uart) && \
+	(IS_ENABLED(CONFIG_USB_CDC_ACM) || IS_ENABLED(CONFIG_USBD_CDC_ACM_CLASS))
+#  define COMPANION_UART_DEV    DEVICE_DT_GET_ONE(zephyr_cdc_acm_uart)
+#  define COMPANION_HAS_DTR     1
+#  define COMPANION_HAS_BACKEND 1
+#else
+#  define COMPANION_HAS_DTR     0
+#  define COMPANION_HAS_BACKEND 0
+#endif
+
 /* USB CDC state */
 static const struct device *usb_dev;
 static uint8_t usb_ring_buf_data[USB_RING_BUF_SIZE];
@@ -66,6 +98,12 @@ static uint32_t usb_frame_start_time;  /* Timestamp of sync byte for current fra
 static uint8_t usb_tx_ring_buf_data[USB_TX_RING_BUF_SIZE];
 static struct ring_buf usb_tx_ring_buf;
 static struct k_spinlock usb_tx_lock;
+
+#if COMPANION_SERIAL_POLLING
+static struct k_work_delayable usb_uart_poll_work;
+static struct k_work usb_poll_tx_drain_work;
+static struct k_mutex usb_poll_tx_mutex;
+#endif
 
 /* Main-thread wake for assembled binary frames (set by init).  The byte
  * assembly below runs on sysworkq, but V3-protocol parsing must happen on the
@@ -113,6 +151,48 @@ static inline void usb_cli_echo(const char *s, size_t n)
 static void usb_rx_work_fn(struct k_work *work);
 
 K_WORK_DEFINE(usb_rx_work, usb_rx_work_fn);
+
+#if COMPANION_SERIAL_POLLING
+static void usb_uart_poll_work_fn(struct k_work *work)
+{
+	ARG_UNUSED(work);
+
+	bool received = false;
+	uint8_t byte;
+
+	/* Drain the hardware FIFO even when the ESP32 driver did not notify us
+	 * through uart_irq_callback_set(). Bound one pass to preserve sysworkq
+	 * fairness during a binary transfer. */
+	for (int i = 0; i < 64 && uart_poll_in(usb_dev, &byte) == 0; ++i) {
+		ring_buf_put(&usb_ring_buf, &byte, 1);
+		received = true;
+	}
+	if (received) {
+		k_work_submit(&usb_rx_work);
+	}
+	k_work_schedule(&usb_uart_poll_work,
+			K_MSEC(COMPANION_SERIAL_POLL_INTERVAL_MS));
+}
+
+static void usb_poll_tx_drain_work_fn(struct k_work *work)
+{
+	ARG_UNUSED(work);
+	if (s_tx_drain_cb) {
+		s_tx_drain_cb();
+	}
+}
+
+static void usb_poll_write(const uint8_t *data, size_t len)
+{
+	/* The main mesh loop and the local CLI worker can both write. Keep complete
+	 * output chunks contiguous, so replies cannot interleave on the wire. */
+	k_mutex_lock(&usb_poll_tx_mutex, K_FOREVER);
+	for (size_t i = 0; i < len; ++i) {
+		uart_poll_out(usb_dev, data[i]);
+	}
+	k_mutex_unlock(&usb_poll_tx_mutex);
+}
+#endif
 
 /* USB CDC UART interrupt callback - puts bytes in ring buffer */
 static void usb_uart_isr(const struct device *dev, void *user_data)
@@ -225,29 +305,33 @@ static void usb_rx_work_fn(struct k_work *work)
 				usb_rx_st = USB_RX_LEN_LO;
 				usb_frame_start_time = k_uptime_get_32();
 			} else if (byte >= 0x20 && byte <= 0x7E) {
-				/* Printable ASCII. Enter text CLI mode only when the
-				 * interface is idle, or we're already in a text session
-				 * (subsequent command lines). Never during a BLE session,
-				 * nor a binary USB companion session — an official client's
-				 * bytes must not be parsed as CLI. The iface read is
-				 * side-effect-free; the claim happens later, on Enter. */
+				/* Printable ASCII. A physical USB session may switch from the
+				 * binary companion protocol to the local text CLI without
+				 * closing its CDC port (Web Serial clients commonly keep it
+				 * open). BLE remains exclusive: USB text never steals an active
+				 * BLE session. The claim/switch happens only on Enter, so a
+				 * stray printable byte in a binary session produces no output. */
 				enum zephcore_iface ifc = zephcore_ble_get_active_iface();
-				if (ifc == ZEPHCORE_IFACE_NONE ||
-				    (ifc == ZEPHCORE_IFACE_USB && usb_session_is_text)) {
+				if (ifc == ZEPHCORE_IFACE_NONE || ifc == ZEPHCORE_IFACE_USB) {
+					const bool echo_text = ifc == ZEPHCORE_IFACE_NONE ||
+						usb_session_is_text;
 					/* Arm the inactivity watchdog so a stray byte resyncs
 					 * to IDLE on its own. */
 					usb_text_len = 0;
 					usb_text_line[usb_text_len++] = (char)byte;
 					usb_frame_start_time = k_uptime_get_32();
 					usb_rx_st = USB_RX_TEXT;
-					/* Banner once per session, then echo. */
-					if (!usb_text_banner_sent) {
-						usb_text_banner_sent = true;
-						usb_cli_echo(USB_CLI_BANNER, sizeof(USB_CLI_BANNER) - 1);
+					/* Do not write into an active binary session until Enter
+					 * confirms that this is an intentional CLI command. */
+					if (echo_text) {
+						if (!usb_text_banner_sent) {
+							usb_text_banner_sent = true;
+							usb_cli_echo(USB_CLI_BANNER, sizeof(USB_CLI_BANNER) - 1);
+						}
+						usb_cli_echo((const char *)&byte, 1);
 					}
-					usb_cli_echo((const char *)&byte, 1);
 				}
-				/* else: printable but iface busy/binary — ignore */
+				/* else: printable while BLE owns the interface — ignore */
 			}
 			/* else: ignore control bytes / noise */
 			break;
@@ -264,6 +348,17 @@ static void usb_rx_work_fn(struct k_work *work)
 				if (usb_text_len > 0) {
 					usb_text_line[usb_text_len] = '\0';
 					if (usb_claim_active((uint8_t)usb_text_line[0], true) && s_cli_line_cb) {
+						/* usb_claim_active sets the mode on a new NONE→USB
+						 * claim. Also support taking an existing binary USB
+						 * session over for text CLI without a DTR drop. */
+						if (!usb_session_is_text) {
+							usb_session_is_text = true;
+							if (!usb_text_banner_sent) {
+								usb_text_banner_sent = true;
+								usb_cli_echo(USB_CLI_BANNER,
+									     sizeof(USB_CLI_BANNER) - 1);
+							}
+						}
 						s_cli_line_cb(usb_text_line);
 					}
 				}
@@ -332,8 +427,10 @@ static void usb_rx_work_fn(struct k_work *work)
 	}
 }
 
+#if COMPANION_HAS_DTR
 /* DTR-transition callback from the shared ZephyrUSBCDC module.
- * On drop: host closed the port → reset parser, hand control back to BLE. */
+ * On drop: host closed the port → reset parser, hand control back to BLE.
+ * CDC-only — a plain-UART backend has no DTR and never registers this. */
 static void on_dtr_change(bool dtr_active)
 {
 	if (dtr_active) {
@@ -378,6 +475,7 @@ static void on_dtr_change(bool dtr_active)
 	ring_buf_reset(&usb_tx_ring_buf);
 	k_spin_unlock(&usb_tx_lock, key);
 }
+#endif /* COMPANION_HAS_DTR */
 
 /* Queue a frame for interrupt-driven TX (sync byte + LE length + payload,
  * matching the MeshCore ArduinoSerialInterface framing). The whole frame is
@@ -398,6 +496,16 @@ size_t zephcore_usb_companion_write_frame(const uint8_t *src, size_t len)
 	};
 	size_t total = sizeof(hdr) + len;
 
+#if COMPANION_SERIAL_POLLING
+	usb_poll_write(hdr, sizeof(hdr));
+	usb_poll_write(src, len);
+	/* Preserve the contact pump's drained notification without recursively
+	 * re-entering it from the write call. */
+	k_work_submit(&usb_poll_tx_drain_work);
+	LOG_DBG("usb_write_frame: polled len=%u hdr=0x%02x", (unsigned)len, src[0]);
+	return len;
+#else
+
 	k_spinlock_key_t key = k_spin_lock(&usb_tx_lock);
 	if (ring_buf_space_get(&usb_tx_ring_buf) < total) {
 		k_spin_unlock(&usb_tx_lock, key);
@@ -412,6 +520,7 @@ size_t zephcore_usb_companion_write_frame(const uint8_t *src, size_t len)
 
 	LOG_DBG("usb_write_frame: queued len=%u hdr=0x%02x", (unsigned)len, src[0]);
 	return len;
+#endif
 }
 
 /* True if the TX ring can hold one more frame of `payload_len` (+3 framing).
@@ -421,10 +530,15 @@ bool zephcore_usb_companion_tx_has_space(size_t payload_len)
 	if (!usb_dev) {
 		return false;
 	}
+#if COMPANION_SERIAL_POLLING
+	ARG_UNUSED(payload_len);
+	return true;
+#else
 	k_spinlock_key_t key = k_spin_lock(&usb_tx_lock);
 	bool ok = ring_buf_space_get(&usb_tx_ring_buf) >= payload_len + 3;
 	k_spin_unlock(&usb_tx_lock, key);
 	return ok;
+#endif
 }
 
 void zephcore_usb_companion_reset_rx(void)
@@ -438,7 +552,7 @@ void zephcore_usb_companion_reset_rx(void)
 	usb_session_is_text = false;
 
 	/* Drop any half-sent TX too — the session it belonged to is gone. */
-	if (usb_dev) {
+	if (usb_dev && !COMPANION_SERIAL_POLLING) {
 		uart_irq_tx_disable(usb_dev);
 	}
 	k_spinlock_key_t key = k_spin_lock(&usb_tx_lock);
@@ -476,10 +590,14 @@ void zephcore_usb_companion_write_text(const char *text, size_t len)
 	if (!usb_dev || !text || len == 0) {
 		return;
 	}
+#if COMPANION_SERIAL_POLLING
+	usb_poll_write((const uint8_t *)text, len);
+#else
 	k_spinlock_key_t key = k_spin_lock(&usb_tx_lock);
 	ring_buf_put(&usb_tx_ring_buf, (const uint8_t *)text, len);
 	k_spin_unlock(&usb_tx_lock, key);
 	uart_irq_tx_enable(usb_dev);
+#endif
 }
 
 void zephcore_usb_companion_init(struct k_event *mesh_events,
@@ -491,29 +609,42 @@ void zephcore_usb_companion_init(struct k_event *mesh_events,
 	s_mesh_events = mesh_events;
 	s_mesh_event_ble_rx = mesh_event_ble_rx;
 
-	/* The cdc_acm_uart DT node may be present without the class driver compiled
-	 * (shared esp32s3_usb_otg.dtsi exposes the node unconditionally; the class is
-	 * only enabled with esp32s3_usb.conf). Gate the device-get on the class too,
-	 * else DEVICE_DT_GET_ONE references an undefined device ordinal on, e.g., a
-	 * debug ESP32-S3 companion (CONFIG_LOG=y) built without esp32s3_usb.conf. */
-#if DT_HAS_COMPAT_STATUS_OKAY(zephyr_cdc_acm_uart) && \
-	(IS_ENABLED(CONFIG_USB_CDC_ACM) || IS_ENABLED(CONFIG_USBD_CDC_ACM_CLASS))
-	usb_dev = DEVICE_DT_GET_ONE(zephyr_cdc_acm_uart);
+	/* COMPANION_UART_DEV resolves to the chosen `zephcore,companion-uart` node,
+	 * or the sole cdc-acm-uart for back-compat (see the backend block above).
+	 * The cdc_acm_uart DT node may be present without the class driver compiled
+	 * (shared esp32s3_usb_otg.dtsi exposes the node unconditionally; the class
+	 * is only enabled with esp32s3_usb.conf) — the COMPANION_HAS_BACKEND gate
+	 * folds that case in, so DEVICE_DT_GET never references an undefined ordinal
+	 * on, e.g., a debug ESP32-S3 companion built without esp32s3_usb.conf. */
+#if COMPANION_HAS_BACKEND
+	usb_dev = COMPANION_UART_DEV;
 	if (device_is_ready(usb_dev)) {
-		LOG_INF("USB CDC device ready: %s", usb_dev->name);
+		LOG_INF("Companion UART ready: %s (%s)", usb_dev->name,
+			COMPANION_HAS_DTR ? "CDC" : "serial");
 		ring_buf_init(&usb_ring_buf, sizeof(usb_ring_buf_data), usb_ring_buf_data);
 		ring_buf_init(&usb_tx_ring_buf, sizeof(usb_tx_ring_buf_data), usb_tx_ring_buf_data);
 
-		/* Set up UART interrupt callback (RX enabled now, TX enabled on demand
-		 * by write_frame and disabled by the ISR when the TX ring drains). */
+		/* M5 selects polling because its bridge has no reliable RX IRQ. Other
+		 * plain-UART boards keep the normal interrupt-driven transport. */
+#if COMPANION_SERIAL_POLLING
+		k_work_init_delayable(&usb_uart_poll_work, usb_uart_poll_work_fn);
+		k_work_init(&usb_poll_tx_drain_work, usb_poll_tx_drain_work_fn);
+		k_mutex_init(&usb_poll_tx_mutex);
+		k_work_schedule(&usb_uart_poll_work, K_NO_WAIT);
+#else
+		/* RX is enabled now; TX is enabled on demand and disabled on drain. */
 		uart_irq_callback_set(usb_dev, usb_uart_isr);
 		uart_irq_rx_enable(usb_dev);
+#endif
 
+#if COMPANION_HAS_DTR
 		/* DTR state changes (including disconnect) reach us via the
-		 * shared usbd_msg_callback — no polling work needed. */
+		 * shared usbd_msg_callback — no polling work needed.  Plain-UART
+		 * backends have no DTR; their session reset is protocol-driven. */
 		zephcore_usbd_set_dtr_cb(on_dtr_change);
+#endif
 	} else {
-		LOG_WRN("USB CDC device not ready");
+		LOG_WRN("Companion UART not ready");
 		usb_dev = NULL;
 	}
 #endif

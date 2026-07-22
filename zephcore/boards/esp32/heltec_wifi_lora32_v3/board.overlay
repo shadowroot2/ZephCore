@@ -3,13 +3,13 @@
  * Heltec WiFi LoRa 32 V3 — ZephCore overlay
  *
  * The upstream Zephyr DTS already defines SX1262, SSD1306 OLED, button,
- * LED, battery ADC, Vext/ADC control, I2C0, SPI2, and BLE.
+ * LED, battery ADC, Vext/ADC control, I2C0, SPI2, BLE, and WiFi.
  * This overlay adds ZephCore-specific integration on top.
  *
  * LoRa SPI2 pins:  SCLK=9, MOSI=10, MISO=11, NSS=8
  * LoRa control:    DIO1=14, BUSY=13, RESET=12
  * Display I2C0:    SDA=17, SCL=18 (SSD1306 @ 0x3C)
- * Battery ADC:     GPIO1 (ADC1 ch0), enable GPIO37, divider 100K/390K
+ * Battery ADC:     GPIO1 = ADC1 ch0 (&adc0), enable GPIO37 active-HIGH, divider 100K/390K
  * Vext:            GPIO36 (active-LOW, powers OLED) — regulator + vin-supply in overlay
  * Button:          GPIO0
  * LED:             GPIO35
@@ -23,6 +23,11 @@
 		/* Keep console/shell on UART0 for stable host logging on V3 */
 		zephyr,console = &uart0;
 		zephyr,shell-uart = &uart0;
+		/* Plain-UART companion backend (CONFIG_ZEPHCORE_COMPANION_SERIAL):
+		 * the wired companion + text CLI run over uart0 (USB-C via CP2102).
+		 * Inert unless that conf is built; in a serial-companion build the
+		 * conf also moves console/shell off uart0 so the companion owns it. */
+		zephcore,companion-uart = &uart0;
 	};
 
 	/* Add label to upstream buttons node (defined without one) */
@@ -30,17 +35,31 @@
 	};
 
 	/* Battery ADC — ZephCore reads via zephyr,user { io-channels }.
-	 * GPIO1 is ADC unit 1, so use &adc0. &adc1 is ADC unit 2 and overlaps
-	 * GPIO11 / SX1262 MISO on this board. Multiplier matches official
-	 * MeshCore Heltec V3 ADC_MULTIPLIER=5.42; the previous 5720 value
-	 * reported about 4.45V on a fully charged 1S LiPo. */
+	 * Upstream vbatt node uses voltage-divider compatible which ZephCore
+	 * doesn't use (deleted below).
+	 *
+	 * IMPORTANT: the battery pin is GPIO1 = ADC unit 1 channel 0. In the
+	 * upstream esp32s3 DTS the node *labelled* adc0 is unit 1 and the node
+	 * labelled adc1 is unit 2 (the label is 0-indexed, the unit is 1-indexed).
+	 * So GPIO1 lives on &adc0. The previous &adc1 (unit 2) channel 0 mapped to
+	 * ADC2_CH0 = GPIO11 = the SX1262 MISO — wrong peripheral, always read 0.
+	 *
+	 * The 5.420 multiplier is calibrated against the official MeshCore Heltec V3
+	 * firmware; the theoretical 5.720 value over-reports a full 1S cell on the
+	 * board's actual divider. */
 	zephyr,user {
 		io-channels = <&adc0 0>;
 		vbat-mv-multiplier = <5420>;
 	};
 
-	/* Battery ADC enable — GPIO37 (gpio1 pin 5) drives the divider.
-	 * Active high matches V3.2/V4. Early V3 boards may need ACTIVE_LOW. */
+	/* Battery ADC enable — GPIO37 (gpio1 pin 5) must be driven to read.
+	 * Upstream has an adc_ctrl power-domain-gpio on the same GPIO37; it is
+	 * deleted below so this regulator is the sole owner (else the two fight
+	 * over the pin and the per-read enable/disable in ZephyrBoard is not
+	 * deterministic). Active-HIGH on V3.2/V4 (transistor in the enable path);
+	 * the previous GPIO_ACTIVE_LOW never powered the divider so the read was 0.
+	 * ZephyrBoard toggles this per read, so between reads the divider draws
+	 * nothing. (Early V3 boards may need GPIO_ACTIVE_LOW — see GH #50.) */
 	vbat_enable: vbat-enable {
 		compatible = "regulator-fixed";
 		regulator-name = "vbat-enable";
@@ -81,12 +100,6 @@
 	status = "okay";
 };
 
-/* ZephCore Heltec V3 companion uses BLE only. Keep the ESP32 Wi-Fi block
- * disabled so the driver cannot be pulled in by board defaults. */
-&wifi {
-	status = "disabled";
-};
-
 /* Add RX boosted mode and DIO1 pull-down to LoRa radio.
  * Upstream omits rx-boosted and has no pull-down on DIO1. */
 &lora0 {
@@ -113,8 +126,23 @@
 	};
 };
 
-/* Battery ADC channel config. Without channel@0, adc_channel_setup_dt() fails
- * and getBattMilliVolts() returns 0 before reading the ADC. */
+/*
+ * Flash partitions live in partitions.overlay (this dir) so the identical map is
+ * fed to both the app and the MCUboot image — see that file and sysbuild/CMakeLists.txt.
+ */
+
+/* LittleFS auto-mount — standard /lfs mount point */
+#include "../../common/filesystem.dtsi"
+
+/* After SSD1306 no longer references vext_ctrl, remove upstream power-domain node. */
+/delete-node/ &vext_ctrl;
+
+/* Battery ADC channel configuration on adc0 (ADC unit 1 -> GPIO1).
+ * adc0 is status="disabled" upstream, so enable it here. Without the channel
+ * node adc_channel_setup_dt() fails and getBattMilliVolts() returns 0 before it
+ * ever performs a conversion — the primary cause of the hard "0% (0mV)".
+ * ADC_GAIN_1 = 0 dB with ADC_REF_INTERNAL (~1100 mV); the divider output for a
+ * 3.0-4.2 V cell (~580-810 mV) sits well inside range. */
 &adc0 {
 	status = "okay";
 	#address-cells = <1>;
@@ -129,61 +157,23 @@
 	};
 };
 
-/* Remove upstream battery nodes that point at the wrong ADC unit and claim
- * GPIO37 separately from our vbat_enable regulator. */
+/* Remove the upstream 'vbatt' voltage-divider (io-channels on &adc1 = unit 2 =
+ * GPIO11 = SX1262 MISO — wrong node) and the adc_ctrl power-domain that also
+ * claims GPIO37 and fights the vbat_enable regulator above. */
 / {
 	/delete-node/ vbatt;
 };
 /delete-node/ &adc_ctrl;
 
-/*
- * Flash partitions — reclaim unused space from 8MB layout.
- * Delete lpcore slots, storage, scratch, and coredump partitions.
- * Repurpose 0x7A0000 - 0x800000 (384KB) for LittleFS.
- */
-/delete-node/ &slot0_lpcore_partition;
-/delete-node/ &slot1_lpcore_partition;
-/delete-node/ &storage_partition;
-/delete-node/ &scratch_partition;
-/delete-node/ &coredump_partition;
-/delete-node/ &slot0_partition;
-/delete-node/ &slot1_partition;
-
-/ {
-	chosen {
-		zephyr,settings-partition = &storage_partition;
-	};
+/* ADC unit 2 (label adc1) is unused on this board; keep it disabled so nothing
+ * can claim GPIO11 (SX1262 MISO) as an ADC pad. */
+&adc1 {
+	status = "disabled";
 };
 
-&flash0 {
-	partitions {
-		/* App slots — both trimmed 8KB so slot0 == slot1 (16KB total freed
-		 * for the NVS partition below), keeping MCUboot swap-mode compatible,
-		 * not just overwrite-only.  slot0 start (0x20000) unchanged. */
-		slot0_partition: partition@20000 {
-			label = "image-0";
-			reg = <0x20000 0x3BE000>;
-		};
-		slot1_partition: partition@3de000 {
-			label = "image-1";
-			reg = <0x3DE000 0x3BE000>;
-		};
-		/* BLE bond store — 16KB NVS, isolated from /lfs (see esp32_common.conf).
-		 * Carved from the end of slot1 so lfs stays byte-identical. */
-		storage_partition: partition@79c000 {
-			label = "storage";
-			reg = <0x79C000 0x4000>;
-		};
-		/* LittleFS 384KB for DataStore (identity, prefs, contacts) */
-		lfs_partition: partition@7a0000 {
-			label = "lfs";
-			reg = <0x7A0000 0x60000>;
-		};
-	};
+/* The ESP32-S3 die-temperature sensor is used as the local temperature
+ * source for telemetry and the low-battery emergency notice. It is disabled
+ * in the upstream SoC DTS by default, so enable it explicitly for V3. */
+&coretemp {
+	status = "okay";
 };
-
-/* LittleFS auto-mount — standard /lfs mount point */
-#include "../../common/filesystem.dtsi"
-
-/* After SSD1306 no longer references vext_ctrl, remove upstream power-domain node. */
-/delete-node/ &vext_ctrl;

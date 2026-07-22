@@ -84,4 +84,19 @@ uint32_t LR1110Radio::hwWakeupTimeUs()
 	return lr11xx_get_wakeup_time_us(_dev);
 }
 
+int LR1110Radio::hwCadProbe(int8_t level)
+{
+	return lr11xx_cad_probe(_dev, level);
+}
+
+void LR1110Radio::hwCadSetPeakOffset(int8_t offset)
+{
+	lr11xx_cad_set_peak_offset(_dev, offset);
+}
+
+uint8_t LR1110Radio::hwCadBasePeak()
+{
+	return lr11xx_cad_base_peak(_dev);
+}
+
 } /* namespace mesh */

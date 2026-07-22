@@ -86,6 +86,39 @@ uint32_t lr11xx_get_random(const struct device *dev);
  */
 void lr11xx_reset_agc(const struct device *dev);
 
+/**
+ * @brief Set the adaptive-CAD operating detPeak offset
+ *
+ * Signed delta applied to the per-SF base cadDetPeak on every LBT CAD.
+ * Takes effect on the next CAD — no reconfigure needed.  Clamped
+ * in-driver to the LR11xx scale (48-90).
+ *
+ * @param dev    LoRa device
+ * @param offset Signed offset from the base table value
+ */
+void lr11xx_cad_set_peak_offset(const struct device *dev, int8_t offset);
+
+/**
+ * @brief Per-SF base cadDetPeak for the currently configured SF
+ *
+ * @param dev LoRa device
+ * @return Base detPeak (56-68 on this family)
+ */
+uint8_t lr11xx_cad_base_peak(const struct device *dev);
+
+/**
+ * @brief Run one blocking calibration CAD at base detPeak + peak_offset
+ *
+ * Uses the operating modem config (SF/BW/symbol count).  Leaves the chip
+ * in STANDBY — the caller must restart RX afterwards.  Mesh loop thread
+ * only.
+ *
+ * @param dev         LoRa device
+ * @param peak_offset Signed offset from the base table value
+ * @return 1 = activity detected, 0 = channel free, <0 = error
+ */
+int lr11xx_cad_probe(const struct device *dev, int8_t peak_offset);
+
 #ifdef __cplusplus
 }
 #endif

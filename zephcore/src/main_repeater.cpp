@@ -53,6 +53,7 @@ extern "C" void bt_ctlr_assert_handle(char *file, uint32_t line)
 #include <adapters/clock/ZephyrRTCClock.h>
 #include <adapters/clock/ZephyrRTCDiscover.h>
 #include <ZephyrSensorManager.h>
+#include <helpers/LocalCLIHelp.h>
 
 /* UI subsystem (display, buttons, buzzer) */
 #include "ui_task.h"
@@ -142,6 +143,7 @@ K_TIMER_DEFINE(housekeeping_timer, housekeeping_timer_fn, NULL);
 /* Forward declarations */
 #ifdef ZEPHCORE_LORA
 static RepeaterMesh *repeater_mesh_ptr;
+static void refresh_repeater_ui_radio_state(void);
 #endif
 
 /* Print string to USB serial */
@@ -232,11 +234,18 @@ static void process_cli_commands(void)
 {
 	struct cli_cmd_line c;
 	while (repeater_mesh_ptr && k_msgq_get(&cli_cmd_queue, &c, K_NO_WAIT) == 0) {
-		cli_reply_buf[0] = '\0';
-		repeater_mesh_ptr->handleCommand(0, c.buf, cli_reply_buf);
-		if (cli_reply_buf[0] != '\0') {
+		const char *help = local_cli_help(LocalCLIHelpRole::Repeater, c.buf);
+		if (help != nullptr) {
 			cli_print("\r\n  -> ");
-			cli_print(cli_reply_buf);
+			cli_print(help);
+		} else {
+			cli_reply_buf[0] = '\0';
+			repeater_mesh_ptr->handleCommand(0, c.buf, cli_reply_buf);
+			refresh_repeater_ui_radio_state();
+			if (cli_reply_buf[0] != '\0') {
+				cli_print("\r\n  -> ");
+				cli_print(cli_reply_buf);
+			}
 		}
 		cli_print("\r\n");
 	}
@@ -359,6 +368,51 @@ static mesh::SimpleMeshTables mesh_tables;
 
 /* RepeaterMesh requires: board, radio, ms_clock, rng, rtc, tables */
 static RepeaterMesh repeater_mesh(zephyr_board, lora_radio, ms_clock, zephyr_rng, rtc_clock, mesh_tables);
+
+static void refresh_repeater_ui_radio_state(void)
+{
+	if (!repeater_mesh_ptr) {
+		return;
+	}
+
+	ui_set_radio_params(
+		lora_radio.getActiveFrequencyHz(),
+		lora_radio.getActiveSpreadingFactor(),
+		lora_radio.getActiveBandwidthKHzX10(),
+		lora_radio.getActiveCodingRate(),
+		lora_radio.getConfiguredTxPower(),
+		lora_radio.getNoiseFloor());
+
+	bool apc_enabled = false;
+	int8_t apc_reduction = 0;
+	int16_t apc_margin_x10 = 0;
+	uint8_t apc_target = repeater_mesh_ptr->getNodePrefs()->apc_margin;
+
+#ifdef CONFIG_ZEPHCORE_APC
+	apc_enabled = repeater_mesh_ptr->isAPCEnabled();
+	apc_reduction = repeater_mesh_ptr->getAPCReduction();
+	apc_margin_x10 = (int16_t)(repeater_mesh_ptr->getAPCMargin() * 10.0f);
+	apc_target = repeater_mesh_ptr->getAPCTargetMargin();
+#endif
+
+	ui_set_radio_runtime(
+		lora_radio.getEffectiveTxPower(),
+		apc_enabled,
+		apc_reduction,
+		apc_margin_x10,
+		apc_target,
+		lora_radio.getActiveSyncWord(),
+		lora_radio.getActivePreambleLength(),
+		lora_radio.isRxDutyCycleEnabled(),
+		lora_radio.isRadioReady(),
+		lora_radio.isInRecvMode(),
+		lora_radio.isTxActive());
+
+	ui_set_radio_stats(
+		lora_radio.getPacketsRecv(),
+		lora_radio.getPacketsSent(),
+		lora_radio.getPacketsRecvErrors());
+}
 #endif
 
 /* Repeater event loop */
@@ -426,17 +480,9 @@ static void repeater_event_loop(void)
 			ui_set_clock(rtc_clock.getCurrentTime());
 
 #ifdef ZEPHCORE_LORA
-			/* Refresh radio params (noise floor changes from calibration) */
-			if (repeater_mesh_ptr) {
-				NodePrefs *p = repeater_mesh_ptr->getNodePrefs();
-				ui_set_radio_params(
-					(uint32_t)(p->freq * 1000000.0f + 0.5f),
-					p->sf,
-					(uint16_t)(p->bw * 10.0f + 0.5f),
-					p->cr,
-					p->tx_power_dbm,
-					lora_radio.getNoiseFloor());
-			}
+			/* Refresh live radio/APC state (noise floor, TX power
+			 * reduction, RX/TX mode, packet counters). */
+			refresh_repeater_ui_radio_state();
 
 			/* Battery is now refreshed lazily from ui_pages_render() with
 			 * a 30 s freshness guard — no periodic ADC fire here. */
@@ -448,6 +494,12 @@ static void repeater_event_loop(void)
 		 * write here on the main thread instead. */
 		if (events & MESH_EVENT_RTC_SAVE) {
 			zephcore_rtc_save((uint32_t)atomic_get(&pending_rtc_epoch));
+#ifdef ZEPHCORE_LORA
+			/* GPS just set the clock — arm the mesh time-sync drift envelope. */
+			if (repeater_mesh_ptr) {
+				repeater_mesh_ptr->noteGPSTimeSync();
+			}
+#endif
 		}
 	}
 }
@@ -587,16 +639,12 @@ int main(void)
 	/* Apply RX boost and duty cycle from prefs */
 	lora_radio.setRxBoost(prefs->rx_boost != 0);
 	lora_radio.enableRxDutyCycle(prefs->rx_duty_cycle != 0);
+	lora_radio.setCadParams(prefs->cad_auto != 0, prefs->cad_offset,
+				prefs->cad_probe_interval, prefs->cad_busycap);
 
 	/* Feed initial UI state from loaded prefs */
 	ui_set_node_name(prefs->node_name);
-	ui_set_radio_params(
-		(uint32_t)(prefs->freq * 1000000.0f + 0.5f),  /* MHz → Hz */
-		prefs->sf,
-		(uint16_t)(prefs->bw * 10.0f + 0.5f),         /* kHz → 0.1 kHz */
-		prefs->cr,
-		prefs->tx_power_dbm,
-		lora_radio.getNoiseFloor());
+	refresh_repeater_ui_radio_state();
 	ui_set_battery_provider(get_battery_mv);
 	ui_set_battery(zephyr_board.getBattMilliVolts(), 0);
 	ui_set_gps_available(gps_is_available());

@@ -209,6 +209,15 @@ CompanionMesh::CompanionMesh(mesh::Radio &radio, mesh::MillisecondClock &ms, mes
 	_dirty_channels_expiry = 0;
 	memset(_send_scope.key, 0, sizeof(_send_scope.key));
 	_send_scope_force_unscoped = false;
+	_vcontact_cli_cb = nullptr;
+	_vcontact_help_cb = nullptr;
+	memset(_vcontact_pubkey, 0, sizeof(_vcontact_pubkey));
+	_vcontact_lastmod = 0;
+	memset(_vcontact_recent_ts, 0, sizeof(_vcontact_recent_ts));
+	_vcontact_recent_head = 0;
+	memset(_vcontact_pending, 0, sizeof(_vcontact_pending));
+	_vcontact_pending_count = 0;
+	_vcontact_hold_msgwait = false;
 	memset(&prefs, 0, sizeof(prefs));
 	prefs.node_lat = 0;
 	prefs.node_lon = 0;
@@ -217,6 +226,17 @@ CompanionMesh::CompanionMesh(mesh::Radio &radio, mesh::MillisecondClock &ms, mes
 void CompanionMesh::begin()
 {
 	BaseChatMesh::begin();
+
+	/* Derive the v-contact pubkey from our identity: stable per node, unique
+	 * per device. Deliberately NOT a real keypair — no private key exists
+	 * anywhere, so nothing addressed to this key is decryptable by anyone. */
+	deriveVContactKey();
+	/* Stamp lastmod only if a time source already ran (hardware RTC restore
+	 * happens before begin()). Otherwise stay deferred (lastmod = 0) until
+	 * vcontactClockSynced() — an advert stamped now would show as 1970. */
+	if (vcontactClockValid()) {
+		_vcontact_lastmod = (uint32_t)getRTCClock()->getCurrentTime();
+	}
 #ifdef CONFIG_ZEPHCORE_APC
 	_power_ctrl.setSF(prefs.sf);
 	_power_ctrl.setTargetMargin(prefs.apc_margin);
@@ -303,7 +323,7 @@ bool CompanionMesh::onContactPathRecv(ContactInfo &from, uint8_t *in_path, uint8
 		if (tag == _pending_discovery) {
 			_pending_discovery = 0;
 
-			if (in_path_len <= MAX_PATH_SIZE && out_path_len <= MAX_PATH_SIZE) {
+			if (mesh::Packet::isValidPathLen(in_path_len) && mesh::Packet::isValidPathLen(out_path_len)) {
 				uint8_t rsp[172];
 				int i = 0;
 				rsp[i++] = PUSH_CODE_PATH_DISCOVERY_RESP;
@@ -311,11 +331,9 @@ bool CompanionMesh::onContactPathRecv(ContactInfo &from, uint8_t *in_path, uint8
 				memcpy(&rsp[i], from.id.pub_key, 6);
 				i += 6;
 				rsp[i++] = out_path_len;
-				memcpy(&rsp[i], out_path, out_path_len);
-				i += out_path_len;
+				i += mesh::Packet::writePath(&rsp[i], out_path, MAX_PATH_SIZE, out_path_len);
 				rsp[i++] = in_path_len;
-				memcpy(&rsp[i], in_path, in_path_len);
-				i += in_path_len;
+				i += mesh::Packet::writePath(&rsp[i], in_path, MAX_PATH_SIZE, in_path_len);
 				sendPush(rsp[0], &rsp[1], i - 1);
 			} else {
 				LOG_WRN("onContactPathRecv: invalid path sizes: out=%d in=%d",
@@ -342,6 +360,22 @@ void CompanionMesh::loop()
 	if (_dirty_channels_expiry && now >= _dirty_channels_expiry) {
 		flushDirtyChannels();
 	}
+}
+
+void CompanionMesh::onAdvertTimeSample(const mesh::Identity &id, uint32_t timestamp,
+				       uint8_t hops)
+{
+	/* Signature already verified by mesh::Mesh before this hook fires. */
+	_timesync.onAdvertHeard(id.pub_key, timestamp, hops,
+				(uint32_t)(k_uptime_get() / 1000));
+}
+
+void CompanionMesh::timeSyncTick()
+{
+	if (!prefs.meshtimesync) return;
+	/* Shared policy (suppression/pedigree, forward-only) lives in runTick;
+	 * no companion-side bookkeeping needs shifting on a step. */
+	_timesync.runTick(*getRTCClock());
 }
 
 void CompanionMesh::onLoginSent(const ContactInfo &contact)
@@ -589,6 +623,24 @@ bool CompanionMesh::continueContactIteration()
 		}
 		_contact_iter_idx++;
 		return true;
+	} else if (_contact_iter_idx == getNumContacts()) {
+		// Virtual tail entry: the v-contact (never in the real table).
+		// vcontactReady() implies lastmod != 0 — deferred (clock-invalid)
+		// state is excluded so the app never sees a 1970 timestamp.
+		if (vcontactReady() && _vcontact_lastmod > _contact_iter_since) {
+			if (_vcontact_lastmod > _contact_iter_lastmod) {
+				_contact_iter_lastmod = _vcontact_lastmod;
+			}
+			ContactInfo vc;
+			buildVContact(vc);
+			uint8_t rsp[CONTACT_FRAME_SIZE];
+			size_t n = serializeContact(rsp, vc, PACKET_CONTACT);
+			if (!writeFrame(rsp, n)) {
+				return true;  /* retry this step when TX drains */
+			}
+		}
+		_contact_iter_idx++;
+		return true;
 	} else {
 		// Send PACKET_CONTACT_END with most_recent_lastmod
 		uint8_t rsp[5];
@@ -802,6 +854,352 @@ void CompanionMesh::queueContactMessage(const ContactInfo &contact, mesh::Packet
 	queueOfflineMessage(frame, i);
 }
 
+/* ========== V-contact: loopback admin contact ==========
+ * A synthesized CHAT contact ("v<node_name>") that exists only toward the
+ * connected BLE/USB app. Chat messages to it run the text CLI; replies and
+ * unsolicited notices (battery alert, restart reason) come back as normal
+ * contact messages via the offline queue. Invariants:
+ *   - never enters the real contacts table (and thus never the RF RX
+ *     matching path) — CMD_ADD_UPDATE_CONTACT is intercepted to a no-op OK;
+ *   - no packet object is ever created for it — interception happens before
+ *     any sendMessage/sendRequest path, so nothing can reach the radio;
+ *   - its pubkey is SHA256-derived with no private key, so even hand-crafted
+ *     over-the-air traffic addressed to it is undecryptable and dropped. */
+
+void CompanionMesh::buildVContact(ContactInfo &c) const
+{
+	memcpy(c.id.pub_key, _vcontact_pubkey, PUB_KEY_SIZE);
+	c.type = ADV_TYPE_CHAT;
+	c.flags = 0;
+	c.out_path_len = 0;  /* zero-hop direct — renders as "0 hops" in the app */
+	c.shared_secret_valid = false;
+	memset(c.out_path, 0, sizeof(c.out_path));
+	c.name[0] = 'v';
+	StrHelper::strzcpy(&c.name[1], prefs.node_name, sizeof(c.name) - 1);
+	c.last_advert_timestamp = _vcontact_lastmod;
+	c.lastmod = _vcontact_lastmod;
+	c.gps_lat = 0;
+	c.gps_lon = 0;
+	c.sync_since = 0;
+}
+
+bool CompanionMesh::isVContactKey(const uint8_t *key, int prefix_len) const
+{
+	if (!isVContactEnabled()) return false;
+	if (prefix_len > PUB_KEY_SIZE) prefix_len = PUB_KEY_SIZE;
+	return memcmp(key, _vcontact_pubkey, prefix_len) == 0;
+}
+
+bool CompanionMesh::vcontactClockValid()
+{
+	/* Anything before the firmware build epoch is a never-synced clock. */
+	return (uint32_t)getRTCClock()->getCurrentTime() >= (uint32_t)FIRMWARE_BUILD_EPOCH;
+}
+
+void CompanionMesh::vcontactClockSynced()
+{
+	if (!isVContactEnabled() || !vcontactClockValid()) {
+		return;
+	}
+	if (_vcontact_lastmod == 0) {
+		/* Deferred activation: first valid time source — stamp and announce.
+		 * From here the contact also appears in CMD_GET_CONTACTS syncs. */
+		vcontactPushAdvert();
+	}
+	/* Flush notices buffered while the clock was invalid; queueing them now
+	 * gives them real timestamps instead of 1970. */
+	for (uint8_t i = 0; i < _vcontact_pending_count; i++) {
+		vcontactQueueText(_vcontact_pending[i]);
+	}
+	_vcontact_pending_count = 0;
+}
+
+void CompanionMesh::vcontactQueueText(const char *text)
+{
+	/* Offline-queue frames cap at 172 bytes and the V3 header takes 16, so
+	 * split long CLI replies into <=150-char chunks, preferring line breaks.
+	 * Each chunk becomes its own chat message; getCurrentTimeUnique() keeps
+	 * their timestamps strictly increasing so the app orders them. */
+	static const size_t CHUNK_MAX = 150;
+	ContactInfo vc;
+	buildVContact(vc);
+
+	const char *p = text;
+	size_t remaining = strlen(text);
+	while (remaining > 0) {
+		size_t take = remaining;
+		if (take > CHUNK_MAX) {
+			take = CHUNK_MAX;
+			for (size_t i = take; i > CHUNK_MAX / 2; i--) {
+				if (p[i - 1] == '\n') { take = i; break; }
+			}
+		}
+		char chunk[CHUNK_MAX + 1];
+		memcpy(chunk, p, take);
+		chunk[take] = '\0';
+		size_t adv = take;
+		for (size_t i = 0; i < take; i++) {
+			if (chunk[i] == '\r') chunk[i] = ' ';  /* CRLF CLI output → LF */
+		}
+		while (take > 0 && (chunk[take - 1] == '\n' || chunk[take - 1] == ' ')) {
+			chunk[--take] = '\0';  /* trim trailing break of this bubble */
+		}
+		if (take > 0) {
+			queueContactMessage(vc, nullptr, TXT_TYPE_PLAIN,
+				getRTCClock()->getCurrentTimeUnique(), nullptr, 0, chunk);
+		}
+		p += adv;
+		remaining -= adv;
+	}
+	/* Suppress the "you have messages" prompt during the app's initial sync
+	 * (CMD_APP_START until the first PACKET_NO_MORE_MSGS). Sent mid-sync it
+	 * makes the app interleave message-sync into the contact stream and
+	 * truncate it. The message is already safe in the offline queue and the
+	 * app's own initial message-sync drains it — so no prompt is needed inside
+	 * the window. Outside it, the prompt goes out immediately. */
+	if (!_vcontact_hold_msgwait) {
+		sendPush(PUSH_CODE_MSG_WAITING);
+	}
+}
+
+void CompanionMesh::vcontactNotify(const char *text)
+{
+	if (!isVContactEnabled() || !text || !text[0]) return;
+	LOG_INF("vcontact notify: %s", text);
+	if (!vcontactClockValid()) {
+		/* Clock never synced — a message queued now would show as 1970.
+		 * Buffer it; vcontactClockSynced() flushes with a real timestamp.
+		 * Drop-oldest when full (restart reason + battery is the whole
+		 * expected population). */
+		if (_vcontact_pending_count >= (uint8_t)ARRAY_SIZE(_vcontact_pending)) {
+			memmove(_vcontact_pending[0], _vcontact_pending[1],
+				sizeof(_vcontact_pending[0]) * (ARRAY_SIZE(_vcontact_pending) - 1));
+			_vcontact_pending_count = ARRAY_SIZE(_vcontact_pending) - 1;
+		}
+		strncpy(_vcontact_pending[_vcontact_pending_count], text,
+			sizeof(_vcontact_pending[0]) - 1);
+		_vcontact_pending[_vcontact_pending_count][sizeof(_vcontact_pending[0]) - 1] = '\0';
+		_vcontact_pending_count++;
+		return;
+	}
+	vcontactQueueText(text);
+}
+
+void CompanionMesh::deriveVContactKey()
+{
+	/* v-contact pubkey = SHA256("zc-vcontact" || self pubkey). Re-run whenever
+	 * the identity changes (boot, CMD_IMPORT_PRIVATE_KEY) so the key always
+	 * tracks the current identity. */
+	static const char vc_salt[] = "zc-vcontact";
+	mesh::Utils::sha256(_vcontact_pubkey, PUB_KEY_SIZE,
+		(const uint8_t *)vc_salt, sizeof(vc_salt) - 1,
+		self_id.pub_key, PUB_KEY_SIZE);
+}
+
+void CompanionMesh::vcontactPushAdvert()
+{
+	if (!isVContactEnabled()) return;
+	if (!vcontactClockValid()) {
+		/* Defer — an advert stamped now would carry a 1970 timestamp.
+		 * vcontactClockSynced() re-runs this once a time source arrives. */
+		return;
+	}
+	/* Bump lastmod so incremental contact syncs (since > 0) pick up the
+	 * rename/re-enable. */
+	_vcontact_lastmod = (uint32_t)getRTCClock()->getCurrentTime();
+	ContactInfo vc;
+	buildVContact(vc);
+	uint8_t rsp[CONTACT_FRAME_SIZE];
+	size_t n = serializeContact(rsp, vc);  /* no header — push code is separate */
+	sendPush(PUSH_CODE_NEW_ADVERT, rsp, n);
+}
+
+void CompanionMesh::vcontactPushDeleted()
+{
+	sendPush(PUSH_CODE_CONTACT_DELETED, _vcontact_pubkey, PUB_KEY_SIZE);
+}
+
+bool CompanionMesh::vcontactHandleFrame(const uint8_t *data, size_t len)
+{
+	if (!isVContactEnabled()) return false;
+
+	switch (data[0]) {
+	case CMD_SEND_TXT_MSG:
+		/* Same frame layout as the real handler: cmd(1) + txt_type(1) +
+		 * attempt(1) + timestamp(4) + pub_key_prefix(6) + text(N). */
+		if (len >= 14 && isVContactKey(&data[7], 6)) {
+			uint8_t txt_type = data[1];
+			if (txt_type != TXT_TYPE_PLAIN && txt_type != TXT_TYPE_CLI_DATA) {
+				sendPacketError(ERR_UNSUPPORTED);
+				return true;
+			}
+			uint32_t msg_timestamp = get_le32(&data[3]);
+
+			/* Extract the text now — needed both for the ack hash below and
+			 * for the CLI call. */
+			char line[MAX_TEXT_LEN + 1];
+			size_t text_len = len - 13;
+			if (text_len > MAX_TEXT_LEN) text_len = MAX_TEXT_LEN;
+			memcpy(line, &data[13], text_len);
+			line[text_len] = '\0';
+
+			/* Compute the SAME delivery-ack the app expects for this exact
+			 * (timestamp, attempt, text): sha256 over ts(4) + (attempt&3)(1) +
+			 * text, salted with our pubkey — identical to composeMsgPacket() on
+			 * the real send path. The old code sent a RANDOM ack, which never
+			 * matched the value the app derives locally, so the app treated the
+			 * loopback message as un-acked and resent it once (attempt=1) a few
+			 * seconds later → duplicate reply. Emitting the correct SENT +
+			 * CONFIRMED up front (before the CLI runs) settles the app at once. */
+			uint8_t hbuf[5 + MAX_TEXT_LEN];
+			memcpy(hbuf, &data[3], 4);          /* timestamp, on-wire LE bytes */
+			hbuf[4] = (data[2] & 3);            /* attempt & 3 */
+			memcpy(&hbuf[5], line, text_len);
+			uint32_t ack = 0;
+			mesh::Utils::sha256((uint8_t *)&ack, 4, hbuf, 5 + text_len,
+				self_id.pub_key, PUB_KEY_SIZE);
+			if (ack == 0) ack = 1;
+
+			sendPacketSent(MSG_SEND_SENT_DIRECT, ack, 3000);
+			uint8_t ack_push[8];
+			memcpy(ack_push, &ack, 4);
+			memset(&ack_push[4], 0, 4);         /* trip time: 0 ms */
+			sendPush(PUSH_CODE_SEND_CONFIRMED, ack_push, 8);
+
+			/* Dedupe app resends: a retry reuses the message timestamp (only
+			 * the attempt byte changes). The correct ack above should stop most
+			 * retries, but a CONFIRMED lost under BLE congestion still triggers
+			 * one — and it lands after other messages, so match against a ring
+			 * of recent timestamps (a single last-seen slot misses it). A
+			 * surviving retry re-acks (done above) without re-running the CLI. */
+			bool dup = false;
+			if (msg_timestamp != 0) {
+				for (uint8_t i = 0; i < VCONTACT_DEDUP_SLOTS; i++) {
+					if (_vcontact_recent_ts[i] == msg_timestamp) { dup = true; break; }
+				}
+				if (!dup) {
+					_vcontact_recent_ts[_vcontact_recent_head] = msg_timestamp;
+					_vcontact_recent_head =
+						(_vcontact_recent_head + 1) % VCONTACT_DEDUP_SLOTS;
+				}
+			}
+
+			if (!dup) {
+				LOG_INF("vcontact CLI: '%s'", line);
+				const char *help = _vcontact_help_cb ? _vcontact_help_cb(line) : nullptr;
+				if (help != nullptr) {
+					/* Help is intentionally handled outside the fixed reply buffer;
+					 * vcontactQueueText() splits the full local-only catalogue into
+					 * transport-safe chat messages. */
+					vcontactQueueText(help);
+				} else {
+					char reply[VCONTACT_CLI_REPLY_SIZE];
+					reply[0] = '\0';
+					if (_vcontact_cli_cb) {
+						_vcontact_cli_cb(line, reply);
+					} else {
+						strcpy(reply, "CLI not available");
+					}
+					if (reply[0] != '\0') {
+						vcontactQueueText(reply);
+					}
+				}
+			} else {
+				LOG_DBG("vcontact CLI: dup ts=%u, re-ack only", msg_timestamp);
+			}
+			return true;
+		}
+		return false;
+
+	case CMD_GET_CONTACT_BY_KEY:
+		if (len >= 1 + PUB_KEY_SIZE && isVContactKey(&data[1], PUB_KEY_SIZE)) {
+			ContactInfo vc;
+			buildVContact(vc);
+			uint8_t rsp[CONTACT_FRAME_SIZE];
+			size_t n = serializeContact(rsp, vc, PACKET_CONTACT);
+			writeFrame(rsp, n);
+			return true;
+		}
+		return false;
+
+	case CMD_GET_ADVERT_PATH:
+		/* The v-contact appears in the app's contact list, so the app queries
+		 * its advert path (at connect, and around a config/identity import). The
+		 * v-contact has no over-the-air advert, so the real handler's
+		 * findAdvertPath() misses and returns ERR_NOT_FOUND — which the app
+		 * surfaces as a fatal "not found" that aborts the whole operation. The
+		 * v-contact IS this node (loopback), so its path is direct (zero hops):
+		 * answer that here, before the real handler runs. Frame layout matches
+		 * the real handler: [cmd][reserved][7-byte pubkey prefix]. */
+		if (len >= 2 + 7 && isVContactKey(&data[2], 7)) {
+			uint8_t rsp[6];
+			size_t i = 0;
+			rsp[i++] = PACKET_ADVERT_PATH;
+			put_le32(&rsp[i], _vcontact_lastmod ? _vcontact_lastmod
+				: (uint32_t)getRTCClock()->getCurrentTime()); i += 4;
+			rsp[i++] = 0;  // path_len = 0 → direct (zero hop)
+			writeFrame(rsp, i);
+			return true;
+		}
+		return false;
+
+	case CMD_ADD_UPDATE_CONTACT:
+	case CMD_RESET_PATH:
+		/* Never let the v-contact into the real contacts table (it must stay
+		 * out of the RF RX matching path); path resets are meaningless for a
+		 * loopback contact. Reply OK so app-side flows don't surface errors. */
+		if (len >= 1 + PUB_KEY_SIZE && isVContactKey(&data[1], PUB_KEY_SIZE)) {
+			sendPacketOk();
+			return true;
+		}
+		return false;
+
+	case CMD_REMOVE_CONTACT:
+		/* App-side delete turns the feature off (mirrors user intent);
+		 * `set v.contact on` (USB CLI) brings it back. */
+		if (len >= 1 + PUB_KEY_SIZE && isVContactKey(&data[1], PUB_KEY_SIZE)) {
+			prefs.v_contact_enabled = 0;
+			_store->savePrefs(prefs);
+			sendPacketOk();
+			return true;
+		}
+		return false;
+
+	case CMD_SEND_TELEMETRY_REQ:
+		/* Contact telemetry request: [cmd][3 reserved][32-byte pubkey].
+		 * The v-contact represents THIS node, so its telemetry is our own
+		 * self-telemetry. Synthesize the SENT ack the app blocks on, then push
+		 * a TELEMETRY_RESPONSE tagged with the v-contact key so the app matches
+		 * it to the loopback contact. (Real contacts fall through to the async
+		 * RF path below; the loopback key just isn't in the contacts table.) */
+		if (len >= 4 + PUB_KEY_SIZE && isVContactKey(&data[4], PUB_KEY_SIZE)) {
+			uint32_t tag = 0;
+			getRNG()->random((uint8_t *)&tag, 4);
+			if (tag == 0) tag = 1;
+			sendPacketSent(MSG_SEND_SENT_DIRECT, tag, 3000);
+
+			uint8_t rsp[8 + 4 + 11 + 11 + (12 * POWER_MAX_CHANNELS) + 8];
+			int i = 0;
+			rsp[i++] = PUSH_CODE_TELEMETRY_RESPONSE;
+			rsp[i++] = 0;  /* reserved */
+			memcpy(&rsp[i], _vcontact_pubkey, 6);
+			i += 6;
+			i += appendSelfTelemetry(&rsp[i],
+				TELEM_PERM_BASE | TELEM_PERM_LOCATION | TELEM_PERM_ENVIRONMENT);
+			sendPush(rsp[0], &rsp[1], i - 1);
+			return true;
+		}
+		return false;
+
+	default:
+		/* Every other pubkey-addressed opcode (login, binary req,
+		 * path discovery, export, ...) resolves the contact via
+		 * lookupContactByPubKey(); the v-contact is never in the table, so
+		 * they fail with ERR_NOT_FOUND before any packet exists. */
+		return false;
+	}
+}
+
 void CompanionMesh::queueLocalSentContactMessage(const ContactInfo &contact,
 	uint32_t timestamp, const char *text, bool delivered)
 {
@@ -937,7 +1335,12 @@ uint32_t CompanionMesh::calcFloodTimeoutMillisFor(uint32_t pkt_airtime_millis) c
 
 uint32_t CompanionMesh::calcDirectTimeoutMillisFor(uint32_t pkt_airtime_millis, uint8_t path_len) const
 {
-	return 500 + (uint32_t)((pkt_airtime_millis * 6.0f + 250) * (path_len + 1));
+	/* path_len is the packed hash-size-encoded byte (top 2 bits = hash_size-1,
+	 * bottom 6 = hop count) — mask to the real hop count before scaling, or
+	 * any path learned at path_hash_mode>0 inflates this by up to ~17x
+	 * (e.g. a 3-hop path at 2-byte hashes encodes as 67, not 3). */
+	uint8_t path_hash_count = path_len & 63;
+	return 500 + (uint32_t)((pkt_airtime_millis * 6.0f + 250) * (path_hash_count + 1));
 }
 
 void CompanionMesh::onSendTimeout()
@@ -1116,7 +1519,13 @@ int CompanionMesh::appendSelfTelemetry(uint8_t *reply, uint8_t permissions)
 				reply[i++] = (press >> 8) & 0xFF;
 				reply[i++] = press & 0xFF;
 			}
+#if defined(CONFIG_BOARD_T1000_E)
+			/* T1000-E has a physical light sensor; preserve its lux value. */
 			if (env.has_light) {
+#else
+			/* Boards without GPS keep their physical light telemetry. */
+			if (env.has_light && !gps_is_available()) {
+#endif
 				reply[i++] = CH_SELF;
 				reply[i++] = LPP_LUMINOSITY;
 				uint16_t light = (uint16_t)env.light_lux;
@@ -1156,6 +1565,23 @@ int CompanionMesh::appendSelfTelemetry(uint8_t *reply, uint8_t permissions)
 			}
 		}
 	}
+
+/* Cayenne LPP has no satellite-count type.  Reuse the luminosity field
+ * on the self channel so existing client UIs show the value rather than
+ * an anonymous secondary Analog Input channel.  T1000-E is excluded: its
+ * physical light sensor keeps reporting real lux. */
+#if !defined(CONFIG_BOARD_T1000_E)
+	if ((permissions & TELEM_PERM_LOCATION) && gps_is_available()) {
+		struct gps_state_info gsi;
+		gps_get_state_info(&gsi);
+		uint16_t sats_in_view = gsi.visible_satellites ?
+			gsi.visible_satellites : gsi.satellites;
+		reply[i++] = CH_SELF;
+		reply[i++] = LPP_LUMINOSITY;
+		reply[i++] = (sats_in_view >> 8) & 0xFF;
+		reply[i++] = sats_in_view & 0xFF;
+	}
+#endif
 
 	// Trigger GPS wake for fresh fix on next request
 	if (gps_is_available() && gps_is_enabled()) {
@@ -1216,9 +1642,21 @@ uint8_t CompanionMesh::onContactRequest(const ContactInfo &contact, uint32_t sen
 	return 0;  // Unknown request or denied
 }
 
-void CompanionMesh::logTx(mesh::Packet *, int)
+void CompanionMesh::logTx(mesh::Packet *pkt, int)
 {
 #if ZEPHCORE_HAS_UI_TASK
+	/* Dispatcher invokes logTx only after radio->onSendFinished(), so the
+	 * T-1000E TX LED begins after the packet has physically left the radio.
+	 * Exclude ACKs, telemetry, and forwarding housekeeping. */
+#if defined(CONFIG_BOARD_T1000_E)
+	if (pkt != nullptr) {
+		uint8_t type = pkt->getPayloadType();
+		if (type == PAYLOAD_TYPE_TXT_MSG || type == PAYLOAD_TYPE_GRP_TXT ||
+		    type == PAYLOAD_TYPE_ADVERT) {
+			ui_led_force_tx();
+		}
+	}
+#endif
 	ui_notify_packet_sent();
 #endif
 }
@@ -1635,14 +2073,37 @@ bool CompanionMesh::handleProtocolFrame(const uint8_t *data, size_t len)
 		resetContactIterator();
 	}
 
+	/* V-contact interception — must run before any contact lookup so a frame
+	 * addressed to the loopback contact can never create a radio packet. */
+	if (vcontactHandleFrame(data, len)) {
+		return true;
+	}
+
 	switch (data[0]) {
 	case CMD_APP_START: {
 		if (len < 8) {
 			sendPacketError(ERR_ILLEGAL_ARG);
 			return true;
 		}
-		// Reset contact iterator for fresh start
+		// Reset per-session state for a fresh app session. BLE/USB also run
+		// this cleanup on disconnect, but the serial transport has no
+		// disconnect event, so APP_START is its authoritative session-reset
+		// point: drop a stale contact iteration (a leftover PACKET_CONTACT_END
+		// would confuse the new session's sync state machine), a half-finished
+		// message sync, and free an abandoned Ed25519 sign buffer (else an 8KB
+		// leak if the previous session dropped mid-CMD_SIGN). Idempotent — all
+		// no-ops when the state is already clean.
 		_contact_iter_active = false;
+		cancelSyncPending();
+		cleanupSignState();
+
+		/* New session: suppress v-contact notice MSG_WAITING until the initial
+		 * sync (contacts + messages) completes at PACKET_NO_MORE_MSGS. */
+		_vcontact_hold_msgwait = true;
+
+		/* If a time source already ran (hardware RTC, GPS), activate the
+		 * deferred v-contact and flush buffered notices for this session. */
+		vcontactClockSynced();
 
 		// Return SELF_INFO
 		uint8_t rsp[90];  // 58 fixed + up to 32 bytes name
@@ -1690,6 +2151,7 @@ bool CompanionMesh::handleProtocolFrame(const uint8_t *data, size_t len)
 				ContactInfo c;
 				if (getContactByIdx(i, c) && c.type != ADV_TYPE_NONE) total++;
 			}
+			if (vcontactReady()) total++;  /* virtual tail entry (post time sync) */
 			uint8_t rsp[5];
 			rsp[0] = PACKET_CONTACT_START;
 			put_le32(&rsp[1], total);
@@ -2114,6 +2576,15 @@ bool CompanionMesh::handleProtocolFrame(const uint8_t *data, size_t len)
 			 * connection parameters now without disrupting
 			 * channel/contact/message throughput. */
 			zephcore_ble_conn_params_ready();
+
+			/* Full initial sync (contacts + messages) complete: stop
+			 * suppressing v-contact notice prompts. Any notice queued during
+			 * the window was just drained by this message-sync; if one raced in
+			 * after the last peek, prompt for it now. */
+			_vcontact_hold_msgwait = false;
+			if (_offline_queue_count > 0) {
+				sendPush(PUSH_CODE_MSG_WAITING);
+			}
 		}
 		return true;
 	}
@@ -2127,6 +2598,8 @@ bool CompanionMesh::handleProtocolFrame(const uint8_t *data, size_t len)
 			_store->savePrefs(prefs);
 			/* Push the new name to BLE so scanners see it without a reboot. */
 			zephcore_ble_update_name(prefs.node_name);
+			/* v-contact name tracks the node name — update the app's copy. */
+			vcontactPushAdvert();
 		}
 		sendPacketOk();
 		return true;
@@ -2221,6 +2694,7 @@ bool CompanionMesh::handleProtocolFrame(const uint8_t *data, size_t len)
 			if (gps_has_time_sync()) {
 				LOG_DBG("Ignoring phone time sync - GPS time sync active");
 				sendPacketOk();
+				vcontactClockSynced();  /* GPS time counts as valid too */
 				return true;
 			}
 
@@ -2231,7 +2705,11 @@ bool CompanionMesh::handleProtocolFrame(const uint8_t *data, size_t len)
 				getRTCClock()->setCurrentTime(secs);
 				time_sync_report(TIME_SYNC_APP);
 				zephcore_rtc_save(secs);  /* persist to hardware RTC */
+				_timesync.noteManualSync((uint32_t)(k_uptime_get() / 1000));
 				sendPacketOk();
+				/* App just gave us wall time — activate the deferred
+				 * v-contact and flush buffered notices. */
+				vcontactClockSynced();
 			} else {
 				sendPacketError(ERR_ILLEGAL_ARG);
 			}
@@ -2481,7 +2959,24 @@ bool CompanionMesh::handleProtocolFrame(const uint8_t *data, size_t len)
 				mesh::LocalIdentity new_identity;
 				new_identity.readFrom(&data[1], PRV_KEY_SIZE);
 				if (_store->saveMainIdentity(new_identity)) {
+					/* The v-contact key is derived from our identity, so it
+					 * changes with the new key. Tell the connected app to drop
+					 * the old v-contact (old key), re-derive, then re-advertise
+					 * the new one — otherwise the app's cached loopback contact
+					 * points at a key we no longer recognise (messaging + its
+					 * advert-path query break until a reboot re-syncs). Order
+					 * matters: delete uses the CURRENT (old) key. */
+					bool vc_was_enabled = isVContactEnabled();
+					if (vc_was_enabled) vcontactPushDeleted();
 					self_id = new_identity;
+					deriveVContactKey();
+					/* New identity → old advert timestamp is meaningless. Clear
+					 * it so vcontactPushAdvert() re-activates cleanly: with a
+					 * valid clock it stamps + emits now; without one it defers
+					 * and vcontactClockSynced() (the lastmod==0 path) emits at the
+					 * next time-sync instead of only after a reboot. */
+					_vcontact_lastmod = 0;
+					if (vc_was_enabled) vcontactPushAdvert();
 					/* Reload contacts to invalidate ECDH shared secrets */
 					resetContacts();
 					_store->loadContacts(this);
@@ -2744,9 +3239,22 @@ bool CompanionMesh::handleProtocolFrame(const uint8_t *data, size_t len)
 			int n = snprintf(dp, remaining, "gps_interval:%u", (unsigned)gps_interval);
 			if (n > 0 && (size_t)n < remaining) {
 				dp += n;
+				first = false;
 			}
 			// If snprintf would have truncated, dp stays put — writeFrame
 			// sends only what we successfully wrote.
+		}
+		{
+			size_t remaining = (size_t)(rsp_end - dp);
+			if (!first && remaining > 0) {
+				*dp++ = ',';
+				remaining--;
+			}
+			int n = snprintf(dp, remaining, "meshtimesync:%d",
+					 prefs.meshtimesync ? 1 : 0);
+			if (n > 0 && (size_t)n < remaining) {
+				dp += n;
+			}
 		}
 		// Note: Environment sensors are auto-detected, no settings needed
 
@@ -2786,6 +3294,10 @@ bool CompanionMesh::handleProtocolFrame(const uint8_t *data, size_t len)
 					} else {
 						sendPacketError(ERR_ILLEGAL_ARG);
 					}
+				} else if (strcmp(key, "meshtimesync") == 0) {
+					prefs.meshtimesync = (val[0] == '1') ? 1 : 0;
+					_store->savePrefs(prefs);
+					sendPacketOk();
 				} else {
 					sendPacketError(ERR_ILLEGAL_ARG);
 				}

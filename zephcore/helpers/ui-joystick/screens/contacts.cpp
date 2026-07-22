@@ -540,7 +540,14 @@ bool ContactsScreen::handleInput(char key)
 				const ContactInfo *src = live ? live : &_active_contact;
 				memset(_editpath_hexbuf, 0, sizeof(_editpath_hexbuf));
 				int hlen = 0;
-				int nbytes = src->out_path_len < MAX_PATH_SIZE ? src->out_path_len : MAX_PATH_SIZE;
+				/* out_path_len is packed (top 2 bits = hash_size-1, bottom 6 = hop
+				 * count) — decode the real byte length instead of treating the
+				 * encoded byte as a raw count (breaks for path_hash_mode > 0). */
+				int nbytes = 0;
+				if (mesh::Packet::isValidPathLen(src->out_path_len)) {
+					uint8_t hash_size = (src->out_path_len >> 6) + 1;
+					nbytes = (src->out_path_len & 63) * hash_size;
+				}
 				for (int i = 0; i < nbytes && hlen < (int)sizeof(_editpath_hexbuf) - 2; i++) {
 					snprintf(_editpath_hexbuf + hlen, 3, "%02X", src->out_path[i]);
 					hlen += 2;
@@ -611,14 +618,25 @@ bool ContactsScreen::handleInput(char key)
 					if (live) {
 						int hlen = (int)strlen(_editpath_hexbuf);
 						int nbytes = hlen / 2;
-						if (nbytes > MAX_PATH_SIZE) nbytes = MAX_PATH_SIZE;
-						for (int i = 0; i < nbytes; i++) {
-							char b[3] = { _editpath_hexbuf[i*2], _editpath_hexbuf[i*2+1], '\0' };
-							live->out_path[i] = (uint8_t)strtol(b, nullptr, 16);
+						/* Encode with the mesh's *current* hash size, not always
+						 * hash_size=1 — a path saved as 1-byte hops would silently
+						 * mismatch every relay's isHashMatch() once path_hash_mode>0. */
+						uint8_t hash_size = _task->getPathHashBytes();
+						int max_bytes = hash_size * 63;
+						if (max_bytes > MAX_PATH_SIZE) max_bytes = MAX_PATH_SIZE;
+						if (nbytes > max_bytes) nbytes = max_bytes;
+						if (nbytes % hash_size != 0) {
+							_task->showAlert("Bad path length", 800);
+						} else {
+							for (int i = 0; i < nbytes; i++) {
+								char b[3] = { _editpath_hexbuf[i*2], _editpath_hexbuf[i*2+1], '\0' };
+								live->out_path[i] = (uint8_t)strtol(b, nullptr, 16);
+							}
+							uint8_t hop_count = (uint8_t)(nbytes / hash_size);
+							live->out_path_len = (uint8_t)(((hash_size - 1) << 6) | (hop_count & 0x3F));
+							_active_contact = *live;
+							_task->showAlert(nbytes == 0 ? "Path cleared" : "Path saved", 800);
 						}
-						live->out_path_len = (uint8_t)nbytes;
-						_active_contact = *live;
-						_task->showAlert(nbytes == 0 ? "Path cleared" : "Path saved", 800);
 					}
 				}
 				_editpath_confirm_exit = false;
@@ -644,14 +662,25 @@ bool ContactsScreen::handleInput(char key)
 				if (live) {
 					int hlen = (int)strlen(_editpath_hexbuf);
 					int nbytes = hlen / 2;
-					if (nbytes > MAX_PATH_SIZE) nbytes = MAX_PATH_SIZE;
-					for (int i = 0; i < nbytes; i++) {
-						char b[3] = { _editpath_hexbuf[i*2], _editpath_hexbuf[i*2+1], '\0' };
-						live->out_path[i] = (uint8_t)strtol(b, nullptr, 16);
+					/* Encode with the mesh's *current* hash size, not always
+					 * hash_size=1 — a path saved as 1-byte hops would silently
+					 * mismatch every relay's isHashMatch() once path_hash_mode>0. */
+					uint8_t hash_size = _task->getPathHashBytes();
+					int max_bytes = hash_size * 63;
+					if (max_bytes > MAX_PATH_SIZE) max_bytes = MAX_PATH_SIZE;
+					if (nbytes > max_bytes) nbytes = max_bytes;
+					if (nbytes % hash_size != 0) {
+						_task->showAlert("Bad path length", 800);
+					} else {
+						for (int i = 0; i < nbytes; i++) {
+							char b[3] = { _editpath_hexbuf[i*2], _editpath_hexbuf[i*2+1], '\0' };
+							live->out_path[i] = (uint8_t)strtol(b, nullptr, 16);
+						}
+						uint8_t hop_count = (uint8_t)(nbytes / hash_size);
+						live->out_path_len = (uint8_t)(((hash_size - 1) << 6) | (hop_count & 0x3F));
+						_active_contact = *live;
+						_task->showAlert(nbytes == 0 ? "Path cleared" : "Path saved", 800);
 					}
-					live->out_path_len = (uint8_t)nbytes;
-					_active_contact = *live;
-					_task->showAlert(nbytes == 0 ? "Path cleared" : "Path saved", 800);
 				}
 				_mode = CMODE_SUBMENU;
 				return true;

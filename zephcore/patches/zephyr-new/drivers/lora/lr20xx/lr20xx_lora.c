@@ -99,6 +99,10 @@ struct lr20xx_data {
 	struct k_sem cad_sem;
 	int cad_result;	/* 0=free, 1=busy, <0=error */
 	bool cad_active;
+	/* Adaptive-CAD: signed offset applied to the per-SF base detPeak on
+	 * every LBT CAD; cad_probe_peak overrides for one calibration probe. */
+	int8_t cad_peak_offset;
+	uint8_t cad_probe_peak;
 
 	/* Deferred hardware init */
 	bool hw_initialized;
@@ -601,8 +605,17 @@ static void lr20xx_dio1_work_handler(struct k_work *work)
 		data->dio1_stuck_count = 0;
 	}
 
-	/* ── RX done ── */
-	if (irq & LR20XX_SYSTEM_IRQ_RX_DONE) {
+	/* ── RX done ──
+	 * Gated on no error bits: a CRC-failed packet asserts RX_DONE and
+	 * CRC_ERROR together on this chip family (same as SX126x/LR11xx),
+	 * so an ungated done-first read would deliver corrupted payloads
+	 * as valid.  A good packet coalesced with an earlier header error
+	 * in the same handler window is dropped too — the aborted packet
+	 * may have left bytes in the RX FIFO, misaligning the read.  The
+	 * error branch below owns the window instead. */
+	if ((irq & LR20XX_SYSTEM_IRQ_RX_DONE) &&
+	    !(irq & (LR20XX_SYSTEM_IRQ_CRC_ERROR |
+		     LR20XX_SYSTEM_IRQ_LORA_HEADER_ERROR))) {
 		uint16_t pkt_len = 0;
 		lr20xx_radio_common_get_rx_packet_length(ctx, &pkt_len);
 
@@ -688,13 +701,23 @@ static void lr20xx_dio1_work_handler(struct k_work *work)
 		}
 	}
 
-	/* ── CRC / Header error ── */
-	if (irq & LR20XX_SYSTEM_IRQ_CRC_ERROR ||
-	    ((irq & LR20XX_SYSTEM_IRQ_LORA_HEADER_ERROR) &&
-	     !(irq & LR20XX_SYSTEM_IRQ_SYNC_WORD_HEADER_VALID))) {
-		LOG_WRN("RX error: CRC=%d HDR=%d",
+	/* ── CRC / Header error ──
+	 * Plain `CRC || HDR` — no SYNC_WORD_HEADER_VALID gate.  IRQ status
+	 * is bulk-cleared on every handler entry, so a set header error
+	 * always belongs to this window; a SYNC_VALID bit latched by
+	 * another packet in the same window must not suppress it. */
+	if (irq & (LR20XX_SYSTEM_IRQ_CRC_ERROR |
+		   LR20XX_SYSTEM_IRQ_LORA_HEADER_ERROR)) {
+		LOG_WRN("RX error: CRC=%d HDR=%d RXDONE=%d",
 			(irq & LR20XX_SYSTEM_IRQ_CRC_ERROR) ? 1 : 0,
-			(irq & LR20XX_SYSTEM_IRQ_LORA_HEADER_ERROR) ? 1 : 0);
+			(irq & LR20XX_SYSTEM_IRQ_LORA_HEADER_ERROR) ? 1 : 0,
+			(irq & LR20XX_SYSTEM_IRQ_RX_DONE) ? 1 : 0);
+
+		/* Drop whatever the failed (or coalesced) packet left in
+		 * the RX FIFO so the next packet's read starts aligned —
+		 * lr20xx_restart_rx does not clear it (only full start_rx
+		 * does). */
+		lr20xx_radio_fifo_clear_rx(ctx);
 
 		if (!data->tx_active) {
 			lr20xx_restart_rx(data);
@@ -819,6 +842,29 @@ static uint32_t lr20xx_lora_airtime(const struct device *dev,
 
 static int lr20xx_lora_cad(const struct device *dev, k_timeout_t timeout);
 
+/* Blocking-CAD wait budget scaled to the actual CAD duration:
+ * nSym * Tsym + startup radio-side, plus IRQ latency margin.  A fixed
+ * 200 ms fits 2-symbol CAD everywhere but is exceeded by 4-symbol CAD
+ * on slow presets (SF12 @ 62.5 kHz = ~262 ms). */
+static uint32_t lr20xx_cad_timeout_ms(struct lr20xx_data *data)
+{
+	struct lora_modem_config *mc = &data->modem_cfg;
+	uint8_t sf = (uint8_t)mc->datarate;
+	uint8_t symb_nb = mc->cad.symbol_num ?
+			  (uint8_t)mc->cad.symbol_num : 2;
+	uint32_t bw_hz = (uint32_t)(bw_enum_to_khz(mc->bandwidth) * 1000.0f);
+
+	if (bw_hz == 0 || sf < 5 || sf > 12) {
+		return 200;
+	}
+
+	uint32_t tsym_us = ((1UL << sf) * 1000000UL) / bw_hz;
+	/* +1 symbol covers radio startup + internal processing tail */
+	uint32_t ms = ((symb_nb + 1U) * tsym_us) / 1000U + 100U;
+
+	return MAX(ms, 200U);
+}
+
 static int lr20xx_lora_send_async(const struct device *dev,
 				  uint8_t *buf, uint32_t data_len,
 				  struct k_poll_signal *async)
@@ -839,7 +885,8 @@ static int lr20xx_lora_send_async(const struct device *dev,
 	 * to re-arm. */
 	if (data->modem_cfg.cad.mode == LORA_CAD_MODE_LBT) {
 		bool was_in_rx = data->in_rx_mode;
-		int cad_ret = lr20xx_lora_cad(dev, K_MSEC(200));
+		int cad_ret = lr20xx_lora_cad(dev,
+					      K_MSEC(lr20xx_cad_timeout_ms(data)));
 		if (cad_ret > 0) {
 			LOG_DBG("LBT: channel busy");
 			if (was_in_rx && data->async_rx_cb != NULL) {
@@ -1156,6 +1203,21 @@ static int lr20xx_do_cad(struct lr20xx_data *data)
 	}
 	if (mc->cad.detection_peak != 0) {
 		cad.cad_detect_peak = mc->cad.detection_peak;
+	} else if (data->cad_peak_offset != 0) {
+		/* Adaptive-CAD operating offset (base +/- learned delta).
+		 * LR20xx detPeak scale matches LR11xx (~48-90). */
+		int peak = (int)cad.cad_detect_peak + data->cad_peak_offset;
+
+		if (peak < 48) {
+			peak = 48;
+		} else if (peak > 90) {
+			peak = 90;
+		}
+		cad.cad_detect_peak = (uint8_t)peak;
+	}
+	if (data->cad_probe_peak != 0) {
+		/* One-shot calibration probe: absolute peak wins over all. */
+		cad.cad_detect_peak = data->cad_probe_peak;
 	}
 
 	lr20xx_radio_lora_configure_cad_params(ctx, &cad);
@@ -1241,6 +1303,44 @@ static int lr20xx_lora_cad_async(const struct device *dev,
 
 	int ret = lr20xx_do_cad(data);
 	k_mutex_unlock(&data->spi_mutex);
+
+	return ret;
+}
+
+/* ── Extension API: adaptive CAD ────────────────────────────────────── */
+
+void lr20xx_cad_set_peak_offset(const struct device *dev, int8_t offset)
+{
+	struct lr20xx_data *data = dev->data;
+
+	data->cad_peak_offset = offset;
+}
+
+uint8_t lr20xx_cad_base_peak(const struct device *dev)
+{
+	struct lr20xx_data *data = dev->data;
+
+	return lr20xx_cad_detect_peak((uint8_t)data->modem_cfg.datarate);
+}
+
+int lr20xx_cad_probe(const struct device *dev, int8_t peak_offset)
+{
+	struct lr20xx_data *data = dev->data;
+	int base = (int)lr20xx_cad_base_peak(dev);
+	int peak = base + peak_offset;
+	int ret;
+
+	if (peak < 48) {
+		peak = 48;
+	} else if (peak > 90) {
+		peak = 90;
+	}
+
+	/* One-shot absolute override consumed by lr20xx_do_cad().  Probes and
+	 * LBT both run on the mesh loop thread, so no concurrent CAD exists. */
+	data->cad_probe_peak = (uint8_t)peak;
+	ret = lr20xx_lora_cad(dev, K_MSEC(lr20xx_cad_timeout_ms(data)));
+	data->cad_probe_peak = 0;
 
 	return ret;
 }

@@ -8,7 +8,7 @@
  * LittleFS.  Nothing is hardcoded.
  *
  * Event loop:
- *   LORA_RX  → ObserverMesh::loop() → enqueuePacket() → mqtt_publisher_enqueue()
+ *   LORA_RX  → ObserverMesh::loop() → enqueuePacket() → mqtt_publisher_commit()
  *   CLI_RX   → ObserverMesh::handleCLI() (set/get commands)
  */
 
@@ -159,26 +159,31 @@ static void print_banner(void)
 	cli_println(line);
 
 	cli_println("");
-	cli_println("--- Configure ---");
-	cli_println("set wifi.ssid <name>       WiFi network name");
-	cli_println("set wifi.psk  <password>   WiFi password (empty = open)");
-	cli_println("set mqtt.host <hostname>   MQTT broker hostname");
-	cli_println("set mqtt.port <port>       MQTT broker port (default 8883)");
-	cli_println("set mqtt.tls  <0|1>        TLS on/off (default 1)");
-	cli_println("set mqtt.user <username>   MQTT username");
-	cli_println("set mqtt.password <pass>   MQTT password");
-	cli_println("set mqtt.iata <code>       Location code (e.g. BUD BTS VIE SEA)");
-	cli_println("set name      <name>       Node display name");
-	cli_println("set freq      <MHz|Hz>     LoRa frequency (e.g. 867.935 or 867935000)");
-	cli_println("set sf        <7-12>       Spreading factor");
-	cli_println("set bw        <idx>        Bandwidth: 3=62.5 0=125 1=250 2=500 kHz");
-	cli_println("set cr        <5-8>        Coding rate");
-	cli_println("");
-	cli_println("--- Query ---");
-	cli_println("get wifi.status            WiFi connection state");
-	cli_println("get mqtt.status            MQTT connection state");
-	cli_println("get radio                  LoRa radio parameters");
-	cli_println("help                       Show this screen");
+	cli_println("--- Local CLI ---");
+	cli_println("get role");
+	cli_println("get board");
+	cli_println("get version");
+	cli_println("get public.key");
+	cli_println("get/set name");
+	cli_println("get/set freq");
+	cli_println("set sf <7-12>");
+	cli_println("set bw <idx|kHz>");
+	cli_println("set cr <5-8>");
+	cli_println("get radio");
+	cli_println("get/set meshtimesync");
+	cli_println("get/set wifi.ssid");
+	cli_println("set wifi.psk <password>");
+	cli_println("get wifi.status");
+	cli_println("get/set mqtt.host");
+	cli_println("get/set mqtt.port");
+	cli_println("get/set mqtt.tls");
+	cli_println("get/set mqtt.user");
+	cli_println("set mqtt.password <password>");
+	cli_println("get/set mqtt.iata");
+	cli_println("get mqtt.status");
+	cli_println("get/set lat");
+	cli_println("get/set lon");
+	cli_println("help");
 	cli_println("=========================");
 }
 
@@ -228,9 +233,14 @@ static void process_cli_rx(void)
 
 static mesh::ZephyrRTCClock s_rtc_clock;
 
+/* SNTP callback runs on the WiFi thread; the mesh time-sync module is
+ * main-thread-only, so just flag the sync and let the event loop arm it. */
+static atomic_t s_sntp_synced;
+
 static void time_sync_cb(uint32_t unix_ts)
 {
 	s_rtc_clock.setCurrentTime(unix_ts);
+	atomic_set(&s_sntp_synced, 1);
 	LOG_INF("RTC synced from SNTP: %u", unix_ts);
 }
 
@@ -345,8 +355,8 @@ int main(void)
 	 * this observer on the map (requires lat/lon to be configured). */
 	mqtt_publisher_set_connect_cb([]() {
 		/* Runs on the MQTT publisher thread — defer to the main loop. Publishing
-		 * here would race the periodic-status path on publishStatus()'s shared
-		 * static JSON buffer; publishSelfAdvert() also signs + formats. */
+		 * here would race the main-thread producer on the publisher's staging
+		 * buffer; publishSelfAdvert() also signs + formats. */
 		k_event_post(&mesh_events, MESH_EVENT_MQTT_CONNECT);
 	});
 	k_timer_start(&status_timer, K_SECONDS(300), K_SECONDS(300));
@@ -366,8 +376,13 @@ int main(void)
 		if (ev & MESH_EVENT_CLI_RX) {
 			process_cli_rx();
 		}
+		if (atomic_cas(&s_sntp_synced, 1, 0)) {
+			/* SNTP set the clock — arm suppression + drift envelope. */
+			observer_mesh.noteTrustedTimeSync();
+		}
 		if (ev & MESH_EVENT_STATUS) {
 			observer_mesh.publishStatus("online");
+			observer_mesh.timeSyncTick();
 		}
 		if (ev & MESH_EVENT_MQTT_CONNECT) {
 			observer_mesh.publishStatus("online");

@@ -38,6 +38,7 @@
 #include <zephyr/logging/log.h>
 
 #include "ZephyrBLE.h"
+#include "companion_framing.h"
 
 LOG_MODULE_REGISTER(linux_tcp_transport, LOG_LEVEL_INF);
 
@@ -45,9 +46,9 @@ LOG_MODULE_REGISTER(linux_tcp_transport, LOG_LEVEL_INF);
 #define LISTEN_PORT      CONFIG_ZEPHCORE_LINUX_TCP_PORT
 #define LISTEN_BACKLOG   1
 
-/* TX congestion control (mirrors ZephyrBLE.cpp). Push codes >= 0x80 are
- * lossy event signals; protocol response frames < 0x80 are lossless. */
-#define PUSH_CODE_BASE       0x80
+/* TX congestion control (mirrors ZephyrBLE.cpp). Lossy (>= 0x80) vs lossless
+ * (< 0x80) classification is shared via companion_is_lossless_protocol_frame()
+ * in companion_framing.h. */
 #define TX_OVERFLOW_RETRY_MS 250
 
 /* Bound on a single blocking send. tx_drain_work_fn runs on the system
@@ -57,10 +58,8 @@ LOG_MODULE_REGISTER(linux_tcp_transport, LOG_LEVEL_INF);
  * let the app reconnect rather than stall the node. */
 #define TX_SEND_TIMEOUT_SEC  2
 
-struct frame {
-	uint16_t len;
-	uint8_t buf[MAX_FRAME_SIZE];
-};
+/* struct frame + framing constants + lossless classification are shared via
+ * companion_framing.h (included above). */
 
 K_MSGQ_DEFINE(ble_send_queue, sizeof(struct frame), FRAME_QUEUE_SIZE, 4);
 K_MSGQ_DEFINE(ble_recv_queue, sizeof(struct frame), FRAME_QUEUE_SIZE, 4);
@@ -103,14 +102,6 @@ static bool overflow_pending;
 
 static void overflow_retry_work_fn(struct k_work *work);
 static K_WORK_DELAYABLE_DEFINE(overflow_retry_work, overflow_retry_work_fn);
-
-static bool is_lossless_protocol_frame(const uint8_t *data, uint16_t len)
-{
-	if (!data || len == 0) {
-		return false;
-	}
-	return data[0] < PUSH_CODE_BASE;
-}
 
 static void close_client_locked(void)
 {
@@ -469,7 +460,7 @@ size_t zephcore_ble_send(const uint8_t *data, uint16_t len)
 
 		/* Lossless protocol response frames are never dropped — report
 		 * failure so the caller retries instead of clobbering overflow. */
-		if (is_lossless_protocol_frame(data, len)) {
+		if (companion_is_lossless_protocol_frame(data, len)) {
 			LOG_DBG("TX queue full for lossless frame hdr=0x%02x, retry later",
 				data[0]);
 			return 0;

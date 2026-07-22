@@ -49,6 +49,15 @@ void buzzer_set_quiet(bool quiet);
 /** @return true if muted */
 bool buzzer_is_quiet(void);
 
+/** @return true if the user preference is muted, ignoring automatic overrides. */
+bool buzzer_is_user_quiet(void);
+
+/**
+ * Temporarily silence the buzzer for low battery without changing the user's
+ * persisted preference. Clearing the override restores that preference.
+ */
+void buzzer_set_low_battery_quiet(bool quiet);
+
 /**
  * Set quiet mode without interrupting the current melody.
  * In-progress melody plays to completion; future plays suppressed.

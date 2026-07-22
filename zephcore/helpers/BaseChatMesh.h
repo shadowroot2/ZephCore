@@ -157,6 +157,11 @@ protected:
 	virtual void onLoginSent(const ContactInfo &contact) {}
 	virtual void onChannelAdded(ChannelDetails *ch) {}
 
+	/* Every signature-verified advert, before contact filtering/dedup —
+	 * mesh time-sync harvesting hook. */
+	virtual void onAdvertTimeSample(const mesh::Identity &id, uint32_t timestamp,
+		uint8_t hops) { (void)id; (void)timestamp; (void)hops; }
+
 	// Storage concepts for subclasses to override
 	virtual int getBlobByKey(const uint8_t key[], int key_len, uint8_t dest_buf[]) { return 0; }
 	virtual bool putBlobByKey(const uint8_t key[], int key_len, const uint8_t src_buf[], int len) { return false; }

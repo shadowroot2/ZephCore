@@ -85,6 +85,21 @@ void ui_set_radio_params(uint32_t freq_hz, uint8_t sf, uint16_t bw_khz_x10,
 			 uint8_t cr, int8_t tx_power, int16_t noise_floor);
 
 /**
+ * Update extended live radio/APC details for display.
+ */
+void ui_set_radio_runtime(int8_t effective_tx_power, bool apc_enabled,
+			  int8_t apc_reduction, int16_t apc_margin_x10,
+			  uint8_t apc_target_margin, uint8_t sync_word,
+			  uint16_t preamble_len, bool rx_duty_cycle,
+			  bool radio_ready, bool in_rx, bool tx_active);
+
+/**
+ * Update radio packet counters for display.
+ */
+void ui_set_radio_stats(uint32_t packets_rx, uint32_t packets_tx,
+			uint32_t packets_err);
+
+/**
  * Update GPS data for display.
  */
 void ui_set_gps_data(bool has_fix, uint8_t sats,
@@ -174,10 +189,22 @@ void ui_led_set_ble_connected(bool connected);
 void ui_led_set_ble_enabled(bool enabled);
 
 /**
- * Flash the heartbeat LED immediately on message receipt.
- * Cancels the current cycle, pulses, then resumes normal heartbeat.
+ * Flash the heartbeat LED on message receipt.
+ * Cancels the current cycle, then resumes normal heartbeat.
  */
 void ui_led_flash_msg(void);
+
+/**
+ * Force the T-1000E LED on briefly after a user-originated message or advert.
+ * Other boards implement this as a no-op.
+ */
+void ui_led_force_tx(void);
+
+/**
+ * Confirm a local on/off setting change: one flash for on, two for off.
+ * T-1000E implements this even when heartbeat LEDs are disabled.
+ */
+void ui_led_confirm_state(bool enabled);
 
 /**
  * Flash the heartbeat LED 3 times as a visual shutdown indicator.
@@ -228,20 +255,26 @@ void ui_set_power_source_provider(bool (*provider)(void));
  */
 void ui_set_auto_shutdown_mv(uint16_t mv);
 
-/**
- * Register an optional hook called just before shutdown.
- * battery_mv is the confirmed low battery reading; uptime_ms is boot uptime.
- * The hook runs in the caller's thread and may block briefly.
- */
-typedef void (*ui_auto_shutdown_notify_cb_t)(uint16_t battery_mv, uint32_t uptime_ms);
-void ui_set_auto_shutdown_notify_callback(ui_auto_shutdown_notify_cb_t cb);
+/* Reason codes passed to the shutdown hook. */
+#define UI_SHUTDOWN_LOW_BATTERY  1
+
+/* Grace period (ms) the poweroff is deferred by when the hook asks for it.
+ * This leaves enough time for a queued LoRa Public-channel shutdown message
+ * to be transmitted before power is cut. */
+#define UI_SHUTDOWN_GRACE_MS     8000
 
 /**
- * Send the registered shutdown notification immediately, if any.
- * Manual shutdown paths use the current battery reading; auto-shutdown uses
- * the confirmed low-battery reading directly.
+ * Register a pre-shutdown hook, called from ui_auto_shutdown_check() just
+ * before power-off. The companion uses it to report the shutdown. battery_mv
+ * and uptime_ms are the measurement that confirmed the automatic shutdown.
+ * Return value:
+ *   true  = a live notice was queued — defer poweroff by
+ *           UI_SHUTDOWN_GRACE_MS so its delivery can finish.
+ *   false = nothing was queued — power off immediately.
+ * The hook runs on the main thread and must not block.
  */
-void ui_notify_shutdown(void);
+typedef bool (*ui_shutdown_fn)(int reason, uint16_t battery_mv, uint32_t uptime_ms);
+void ui_set_shutdown_hook(ui_shutdown_fn fn);
 
 /**
  * Low-battery auto-shutdown check (companion only).

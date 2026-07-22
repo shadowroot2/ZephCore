@@ -8,6 +8,9 @@
 - Логику отправки mesh-сообщений не менять без отдельной просьбы.
 - Готовые прошивки складывать в `firmware/`.
 - После анализа спрашивать перед сборкой, если пользователь прямо не сказал собирать.
+- Не создавать GitHub release и не отправлять изменения на GitHub без явной
+  просьбы пользователя в текущем диалоге.
+- После каждой сборки сообщать Flash и RAM; для ESP32 также сообщать IRAM.
 - Для ESP32/S3 пока не создавать отдельный signed app image, если пользователь не попросит. Нужен merged-bin.
 
 ## Репозиторий
@@ -34,8 +37,19 @@
 
 Дополнительно:
 
-- Для M6 оставлена телеметрия солнечной панели как `Current 6W`.
-- Параметр мощности 6W должен быть только у M6.
+- Статус зарядки: `EXT_CHRG_DETECT=P0.15`, `GPIO_ACTIVE_LOW`.
+  `gpio_pin_get_dt()` уже возвращает логическое активное состояние с учетом
+  active-low; правильная проверка — `gpio_pin_get_dt(&charge_detect) > 0`.
+  Нельзя добавлять ручную инверсию: она уже приводила к ложным `6 W` без
+  зарядки.
+- В телеметрии M6 Repeater поле Power передается всегда: `6 W` при активном
+  `P0.15`, `0 W` без зарядки.  Это номинальная мощность солнечной панели
+  (`charge-power-mw = <6000>`), а не измерение текущей мощности.
+- Параметр мощности солнечной панели должен быть только у M6.
+- Для M6 GPS: Air530Z/L76K управляется через `GPS_EN=P0.06`,
+  `GPS_STANDBY=P0.30` принудительно HIGH gpio-hog. `GPS_RESET` не трогать,
+  deferred init и лишние reset/sleep aliases не возвращать. Пользователь
+  подтвердил рабочий GPS/fix в этой конфигурации.
 
 ## ThinkNode M1
 
@@ -49,6 +63,12 @@
 - Сравнивались ZephCore, MeshCore и Meshtastic.
 - Добавлялась поддержка отображения освещенности в телеметрии.
 - После правок нужно следить, чтобы BLE не был отключен в companion-сборке.
+- В поле luminosity оставлять реальные люксы: число спутников туда не писать.
+- При отключенном BLE входящее сообщение должно трижды мигать LED даже при
+  `LEDs off`; после завершенной физической отправки сообщения или advert LED
+  загорается на 2 секунды независимо от BLE и настройки LEDs.
+- Подтверждение переключения: LEDs on — один короткий blink, LEDs off — два;
+  аналогичное подтверждение нужно для GPS и buzzer.
 
 ## RPi Pico / PicoW + Waveshare SX1262
 
@@ -83,8 +103,27 @@
 Важное:
 
 - Дубль прошивки больше не собирать.
+- GPS-страница UI намеренно убрана.
+- USB-C Heltec V3 — это мост CP2102 к `uart0`, не native USB Serial-JTAG.
+  Для CLI без BLE обязателен `CONFIG_ZEPHCORE_COMPANION_SERIAL=y`; console/shell
+  на `uart0` должны быть выключены, иначе их UART IRQ callbacks конфликтуют с
+  Companion transport и команды не доходят до обработчика.
+- В overlay включен `&coretemp { status = "okay"; };`: это восстанавливает
+  температуру в телеметрии и в low-battery emergency-сообщении. Это температура
+  кристалла ESP32-S3, не окружающего воздуха.
 
 ## ThinkNode M5 Companion
+
+- USB-C is a UART0 bridge. The Companion transport and text CLI own UART0;
+  `CONFIG_CONSOLE`, `CONFIG_UART_CONSOLE` and `CONFIG_SHELL` must remain off,
+  otherwise the UART callbacks conflict and CLI input is not delivered.
+- M5 selects `ZEPHCORE_COMPANION_SERIAL_POLLING`: if the UART0 bridge fails
+  to deliver RX interrupts, the transport drains its hardware FIFO every 5 ms
+  with `uart_poll_in()` and sends replies with `uart_poll_out()`. This is
+  M5-only; all other serial-companion boards retain interrupt-driven I/O.
+  Verified on hardware: local USB CLI (`help`, `gps`) responds correctly with
+  polling enabled; the previous interrupt-driven path accepted no command
+  bytes despite the host opening the serial port.
 
 Плата:
 
@@ -155,6 +194,38 @@ LED note:
 - В repeater и room сборках BLE должен быть выключен.
 - В companion/client сборках BLE нужен.
 
+## Companion: лимиты, CLI, GPS и батарея
+
+- Лимиты всех Companion: 200 контактов, 100 offline сообщений.
+- `help` доступен только в локальном CLI и не должен пересылаться по LoRa.
+  Выводить одну команду на строку, только доступные текущей роли/плате команды;
+  сервисные команды находятся внизу. `gps [on|off|setloc|advert]` идет сразу
+  после `time` на платах с GPS.
+- Для Companion `help` также доступен через loopback vContact: полный список
+  разбивается на несколько локальных chat-сообщений из-за лимита пакета. По
+  LoRa он по-прежнему никогда не отправляется.
+- Из Companion help исключены `guest.password`, `allow.read.only`, `rxduty`;
+  `stop ota` не показывается на NRF companion/repeater.
+- Для M1/M5/M6 показывать и передавать `Sats in view`, а не только спутники,
+  использованные для fix; единый лимит — 32. В Cayenne LPP число видимых
+  спутников передается через luminosity на GPS-платах, кроме T1000-E.
+- Не трогать GPS RESET на M1, M5 и M6: пользователь подтвердил работоспособность
+  M6 после его удаления.
+- M1 использует ту же LiPo-кривую, что и M5 (100% от 4.10 V). При заряде ниже
+  25% отключать buzzer и стартовую мелодию; heartbeat — три быстрых blink раз
+  в пять секунд.
+- Low-battery auto-shutdown (не ручное выключение) перед отключением отправляет
+  в `#zephcore` voltage, temperature и uptime. Если публичного канала нет,
+  он создается автоматически как `#zephcore`, с ключом public-channel от полного имени. На GPS-платах добавляет `GPS: off`,
+  либо `Sats in view` и Google Maps ссылку только при ненулевых координатах.
+  Префикс: `Low batt - Shutting down`. При выключении из меню очищать экран и
+  показывать `Power OFF`.
+- Отправка этого emergency-сообщения в `#zephcore` при автоотключении — отдельная
+  сохраняемая настройка `get/set autoshutdown.emergency on|off` (по умолчанию `on`). При
+  `off` автоотключение и vContact/flash fallback остаются активными; меняется
+  только отправка emergency-сообщения. Поле добавлено в конец prefs blob, поэтому старые
+  пользовательские файлы без него мигрируют безопасно с дефолтом `on`.
+
 ## Полезные команды
 
 M5 build:
@@ -186,3 +257,15 @@ python3 -m esptool --chip esp32s3 merge-bin \
 - `shadow-20260715-t1000-e-client.uf2` — Seeed T1000-E client/companion с light telemetry.
 
 SHA в ответы не выводить, пользователь попросил не показывать.
+
+## Pico W Room Server
+
+- Собирать только `firmware/picow-room-server.uf2`. Образ
+  `waveshare_rp2040_lora-room-server.uf2` не создавать и не включать в
+  результаты без отдельного запроса пользователя.
+- Для Pico W полностью отключены `WIFI_AIROC`, `WIFI`, `NETWORKING` и
+  CYW43 GPIO. Wi-Fi и штатный зелёный LED не используются: LED подключён к
+  `WL_GPIO0` CYW43439 и без его драйвера недоступен. Не добавлять их снова без
+  явного запроса пользователя.
+- Последняя сборка без Wi-Fi: `firmware/picow-room-server.uf2`, Flash 12.39%
+  (194860 / 1572608 B), RAM 31.82% (85692 / 263 KB), UF2 390656 B.

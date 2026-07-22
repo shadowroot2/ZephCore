@@ -41,6 +41,24 @@ public:
 	virtual void setTxPowerReduction(int8_t reduction_db) { (void)reduction_db; }
 	virtual int8_t getTxPowerReduction() const { return 0; }
 
+	/* Adaptive CAD (LBT detPeak calibration).  Default no-ops for radios
+	 * without hardware CAD (SX127x). */
+	virtual void setCadParams(bool auto_enabled, int8_t offset,
+				  uint16_t probe_interval_s, uint8_t busycap_pct) {
+		(void)auto_enabled; (void)offset; (void)probe_interval_s;
+		(void)busycap_pct;
+	}
+	/* One housekeeping tick of the CAD calibrator: maybe run a probe,
+	 * update stats, maybe step the staircase (auto mode). */
+	virtual void cadMaintenance() {}
+	virtual int8_t getCadOffset() const { return 0; }
+	virtual void resetCadStats() {}
+	/* Writes a human-readable status block; returns chars written (0 = not
+	 * supported by this radio). */
+	virtual int formatCadStatus(char *buf, int cap) {
+		(void)buf; (void)cap; return 0;
+	}
+
 	/* Packet statistics */
 	virtual uint32_t getPacketsRecv() const { return 0; }
 	virtual uint32_t getPacketsSent() const { return 0; }

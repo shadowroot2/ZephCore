@@ -17,6 +17,7 @@ enum time_sync_source {
 	TIME_SYNC_APP,
 	TIME_SYNC_WIFI,
 	TIME_SYNC_CLI,
+	TIME_SYNC_MESH,   /* mesh time-sync consensus step */
 };
 
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_DESIGN_JOYSTICK) || \

@@ -54,35 +54,10 @@
 };
 
 /*
- * Flash partitions — repartition default ESP32 layout.
- * Default storage_partition is 192KB at 0x3B0000.
- *
- * 0x3B0000 - 0x3E0000 (192KB) LittleFS (identity, contacts, channels, BLE bonds)
+ * Flash partitions live in partitions.overlay (this dir) so the identical map
+ * is fed to both the app and the MCUboot image — see that file and
+ * sysbuild/CMakeLists.txt.
  */
-/delete-node/ &storage_partition;
-/delete-node/ &scratch_partition;
-
-/ {
-	chosen {
-		zephyr,settings-partition = &storage_partition;
-	};
-};
-
-&flash0 {
-	partitions {
-		/* LittleFS 192KB for DataStore (identity, prefs, contacts) */
-		lfs_partition: partition@3b0000 {
-			label = "lfs";
-			reg = <0x3B0000 0x30000>;
-		};
-		/* BLE bond store — 16KB NVS, isolated from /lfs (see esp32_common.conf).
-		 * Placed in the unused scratch region just above lfs (lfs unchanged). */
-		storage_partition: partition@3e0000 {
-			label = "storage";
-			reg = <0x3E0000 0x4000>;
-		};
-	};
-};
 
 /* LittleFS auto-mount — standard /lfs mount point */
 #include "../../common/filesystem.dtsi"

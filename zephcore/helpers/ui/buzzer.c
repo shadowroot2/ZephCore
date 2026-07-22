@@ -60,7 +60,8 @@ struct buzzer_ctx {
 	uint16_t bpm;             /* Beats per minute */
 	uint32_t whole_note_ms;   /* Duration of a whole note in ms */
 
-	bool quiet;
+	bool quiet;              /* User preference */
+	bool low_battery_quiet;  /* Temporary automatic power-saving override */
 	bool playing;
 	bool initialized;
 };
@@ -421,7 +422,7 @@ void buzzer_play(const char *rtttl)
 		buzzer_stop();
 	}
 
-	if (ctx.quiet) {
+	if (buzzer_is_quiet()) {
 		return;
 	}
 
@@ -486,7 +487,27 @@ void buzzer_set_quiet_deferred(bool quiet)
 
 bool buzzer_is_quiet(void)
 {
+	return ctx.quiet || ctx.low_battery_quiet;
+}
+
+bool buzzer_is_user_quiet(void)
+{
 	return ctx.quiet;
+}
+
+void buzzer_set_low_battery_quiet(bool quiet)
+{
+	if (ctx.low_battery_quiet == quiet) {
+		return;
+	}
+
+	ctx.low_battery_quiet = quiet;
+	if (quiet && ctx.initialized) {
+		/* Stop a current alert immediately: at a critically low charge it is
+		 * more useful to preserve the remaining runtime than finish a melody. */
+		buzzer_stop();
+	}
+	LOG_INF("buzzer low-battery override %s", quiet ? "enabled" : "cleared");
 }
 
 bool buzzer_is_playing(void)

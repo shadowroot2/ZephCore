@@ -102,8 +102,28 @@ bool ZephyrDataStore::mount()
 		ext_lfs_mounted = true;
 		LOG_INF("External QSPI LittleFS at %s (automounted, 100 blobs)", extMountPoint());
 	} else {
+#if DT_NODE_EXISTS(DT_NODELABEL(qspi_lfs))
+		/* Boot-time automount can miss the QSPI on the first boot after a
+		 * factory-erase (blank flash) or an early-boot timing race with QSPI
+		 * init.  Retry the mount explicitly (fs_mount auto-formats blank flash,
+		 * and mounts valid data without touching it) so contacts/channels land
+		 * on /ext.  Without this the store silently falls back to internal /lfs,
+		 * and the next boot that does mount /ext runs a needless contact
+		 * migration — the "Migrating contacts to external storage" churn. */
+		FS_FSTAB_DECLARE_ENTRY(DT_NODELABEL(qspi_lfs));
+		int rc = fs_mount(&FS_FSTAB_ENTRY(DT_NODELABEL(qspi_lfs)));
+		if (is_mounted(extMountPoint())) {
+			ext_lfs_mounted = true;
+			LOG_INF("External QSPI LittleFS at %s (mounted on retry, rc=%d)",
+				extMountPoint(), rc);
+		} else {
+			ext_lfs_mounted = false;
+			LOG_WRN("External QSPI mount retry failed (rc=%d) - using internal only (20 blobs)", rc);
+		}
+#else
 		ext_lfs_mounted = false;
 		LOG_INF("External QSPI NOT mounted at %s - using internal only (20 blobs)", extMountPoint());
+#endif
 	}
 
 	return true;
@@ -370,6 +390,28 @@ bool ZephyrDataStore::formatFileSystem()
 	if (mounted) {
 		lfs_mounted = true;
 	}
+
+#if DT_NODE_EXISTS(DT_NODELABEL(qspi_lfs))
+	/* Remount external QSPI too.  We unmounted it above and flattened its
+	 * partition, so it must be re-mounted here — otherwise a runtime format
+	 * (factory reset, or the first-boot "no prefs" auto-format) leaves /ext
+	 * unmounted for the rest of the session.  begin() then reads
+	 * ext_lfs_mounted=false and the store falls back to internal /lfs, so
+	 * contacts/channels save to /lfs and get needlessly migrated back to /ext
+	 * on the next boot ("Migrating contacts to external storage" churn). */
+	{
+		FS_FSTAB_DECLARE_ENTRY(DT_NODELABEL(qspi_lfs));
+		int ext_rc = fs_mount(&FS_FSTAB_ENTRY(DT_NODELABEL(qspi_lfs)));
+		if (is_mounted(extMountPoint())) {
+			ext_lfs_mounted = true;
+			LOG_INF("formatFileSystem: /ext remounted (rc=%d)", ext_rc);
+		} else {
+			ext_lfs_mounted = false;
+			LOG_ERR("formatFileSystem: /ext remount failed (rc=%d)", ext_rc);
+		}
+	}
+#endif
+
 	LOG_INF("formatFileSystem: mount() returned %d", mounted ? 1 : 0);
 	return mounted;
 }
@@ -378,6 +420,12 @@ void ZephyrDataStore::factoryReset()
 {
 	LOG_INF("=== FACTORY RESET STARTING ===");
 	if (formatFileSystem()) {
+		/* Mark the freshly-formatted FS as ZephCore-initialised so the
+		 * post-reboot first-boot check (no prefs → format) doesn't format it a
+		 * SECOND time. That redundant format re-ran formatFileSystem() without
+		 * a following mount(), which is what used to leave /ext unmounted and
+		 * push contacts/channels onto internal flash. */
+		writeInitMarker();
 		LOG_INF("=== FACTORY RESET COMPLETE - REBOOT REQUIRED ===");
 	} else {
 		LOG_ERR("=== FACTORY RESET FAILED ===");
@@ -481,6 +529,28 @@ bool ZephyrDataStore::saveMainIdentity(const mesh::LocalIdentity &identity)
 	return atomicReplaceFile(MAIN_ID_FILE, buf, n);
 }
 
+/* ── Shutdown-reason breadcrumb ────────────────────────────────────── */
+
+void ZephyrDataStore::saveShutdownReason(uint8_t code)
+{
+	/* Best-effort: called at a software power-off, possibly at low battery. */
+	(void)atomicReplaceFile(SHUTDOWN_FILE, &code, 1);
+}
+
+uint8_t ZephyrDataStore::takeShutdownReason()
+{
+	uint8_t code = 0;
+	size_t len = 0;
+
+	if (openRead(SHUTDOWN_FILE, &code, sizeof(code), len) && len >= 1) {
+		removeFile(SHUTDOWN_FILE);
+		return code;
+	}
+	/* Stray/empty file — clear it so it can't linger. */
+	removeFile(SHUTDOWN_FILE);
+	return 0;
+}
+
 /* ── Preferences ───────────────────────────────────────────────────── */
 
 void ZephyrDataStore::loadPrefs(NodePrefs &prefs)
@@ -506,8 +576,11 @@ void ZephyrDataStore::loadPrefs(NodePrefs &prefs)
 		LOG_ERR("loadPrefs: read failed");
 		return;
 	}
-	if (len < 88) {
-		LOG_ERR("loadPrefs: file too small (%d bytes, need 88)", (int)len);
+	if (len < 90) {
+		/* gps_interval occupies bytes 86-89, so a shorter blob would read
+		 * its top bytes from uninitialized stack — reject rather than load a
+		 * garbage interval. */
+		LOG_ERR("loadPrefs: file too small (%d bytes, need 90)", (int)len);
 		return;
 	}
 	LOG_DBG("loadPrefs: loaded %d bytes from %s", (int)len, PREFS_FILE);
@@ -664,16 +737,100 @@ void ZephyrDataStore::loadPrefs(NodePrefs &prefs)
 		}
 	}
 
-	/* Offset 151: UI timezone offset in minutes (2 bytes LE).
-	 * Absent in older files -> keep caller/default Kconfig offset. */
+	/* Local timezone builds wrote a 153-byte blob, with timezone at 151-152.
+	 * Master now uses those bytes for new feature flags, so migrate before
+	 * interpreting either byte as meshtimesync or v-contact. */
+	if (len == 153) {
+		prefs.ui_timezone_offset_minutes = (int16_t)((uint16_t)buf[151] |
+			((uint16_t)buf[152] << 8));
+		if (prefs.ui_timezone_offset_minutes < -1439 ||
+			prefs.ui_timezone_offset_minutes > 1439) {
+			prefs.ui_timezone_offset_minutes = CONFIG_ZEPHCORE_UI_TIMEZONE_OFFSET_MINUTES;
+		}
+		/* This legacy timezone-only layout predates the opt-out flag. */
+		prefs.auto_shutdown_emergency = 1;
+		return;
+	}
+
+	/* Offset 151: meshtimesync (ZephCore extension, default 0 = off) */
+	if (off < len) {
+		prefs.meshtimesync = buf[off++];
+		if (prefs.meshtimesync > 1) {
+			prefs.meshtimesync = 0;
+		}
+	}
+
+	/* Offset 152: v_contact_enabled (ZephCore extension, default 1 = on) */
+	if (off < len) {
+		prefs.v_contact_enabled = buf[off++];
+		if (prefs.v_contact_enabled > 1) {
+			prefs.v_contact_enabled = 1;
+		}
+	} else {
+		prefs.v_contact_enabled = 1;
+	}
+
+	/* Offset 153: v_battery_alert_mv (ZephCore extension, 2 bytes LE).
+	 * 0xFFFF sentinel = derive from board auto-shutdown threshold; 0 = off. */
+	if (off + 2 <= len) {
+		prefs.v_battery_alert_mv = (uint16_t)buf[off] | ((uint16_t)buf[off + 1] << 8);
+		off += 2;
+	} else {
+		prefs.v_battery_alert_mv = 0xFFFF;
+	}
+
+	/* Offset 155: cad_auto (ZephCore extension, default 0 = dry-run) */
+	if (off < len) {
+		prefs.cad_auto = buf[off++];
+		if (prefs.cad_auto > 1) {
+			prefs.cad_auto = 0;
+		}
+	}
+
+	/* Offset 156: cad_offset (ZephCore extension, signed, default 0) */
+	if (off < len) {
+		prefs.cad_offset = (int8_t)buf[off++];
+		if (prefs.cad_offset < CAD_OFFSET_MIN || prefs.cad_offset > CAD_OFFSET_MAX) {
+			prefs.cad_offset = 0;
+		}
+	}
+
+	/* Offset 157: cad_probe_interval (ZephCore extension, seconds; 0 = off).
+	 * Absent in pre-existing files → keep the in-RAM default (60). */
+	if (off < len) {
+		prefs.cad_probe_interval = buf[off++];
+		if (prefs.cad_probe_interval != 0 && prefs.cad_probe_interval < 10) {
+			prefs.cad_probe_interval = 10;
+		}
+	}
+
+	/* Offset 158: cad_busycap (ZephCore extension, percent; 0 = off).
+	 * Absent in pre-existing files → keep the in-RAM default (25). */
+	if (off < len) {
+		prefs.cad_busycap = buf[off++];
+		if (prefs.cad_busycap > 90) {
+			prefs.cad_busycap = 90;
+		}
+	}
+
+	/* Offset 159: UI timezone in signed minutes (2 bytes LE). */
 	if (off + 2 <= len) {
 		prefs.ui_timezone_offset_minutes = (int16_t)((uint16_t)buf[off] |
 			((uint16_t)buf[off + 1] << 8));
 		off += 2;
 		if (prefs.ui_timezone_offset_minutes < -1439 ||
-		    prefs.ui_timezone_offset_minutes > 1439) {
+			prefs.ui_timezone_offset_minutes > 1439) {
 			prefs.ui_timezone_offset_minutes = CONFIG_ZEPHCORE_UI_TIMEZONE_OFFSET_MINUTES;
 		}
+	}
+
+	/* Offset 161: send the low-battery emergency notice before automatic shutdown.
+	 * Older prefs blobs stop at the timezone field; preserve the previous
+	 * behavior for them by defaulting this new extension to enabled. */
+	if (off < len) {
+		prefs.auto_shutdown_emergency = buf[off++] ? 1 : 0;
+	} else {
+		prefs.auto_shutdown_emergency = 1;
 	}
 }
 
@@ -749,10 +906,27 @@ void ZephyrDataStore::savePrefs(const NodePrefs &prefs)
 	buf[off++] = (prefs.auto_shutdown_mv >> 8) & 0xFF;
 	/* Offset 150: rx_duty_cycle (ZephCore extension) */
 	buf[off++] = prefs.rx_duty_cycle;
-	/* Offset 151: UI timezone offset in minutes (ZephCore extension, 2 bytes LE) */
+	/* Offset 151: meshtimesync (ZephCore extension) */
+	buf[off++] = prefs.meshtimesync;
+	/* Offset 152: v_contact_enabled (ZephCore extension) */
+	buf[off++] = prefs.v_contact_enabled;
+	/* Offset 153: v_battery_alert_mv (ZephCore extension, 2 bytes LE) */
+	buf[off++] = prefs.v_battery_alert_mv & 0xFF;
+	buf[off++] = (prefs.v_battery_alert_mv >> 8) & 0xFF;
+	/* Offset 155: cad_auto (ZephCore extension) */
+	buf[off++] = prefs.cad_auto;
+	/* Offset 156: cad_offset (ZephCore extension, signed) */
+	buf[off++] = (uint8_t)prefs.cad_offset;
+	/* Offset 157: cad_probe_interval (ZephCore extension, seconds) */
+	buf[off++] = prefs.cad_probe_interval;
+	/* Offset 158: cad_busycap (ZephCore extension, percent) */
+	buf[off++] = prefs.cad_busycap;
+	/* Offset 159: UI timezone in signed minutes (2 bytes LE) */
 	buf[off++] = (uint16_t)prefs.ui_timezone_offset_minutes & 0xFF;
 	buf[off++] = ((uint16_t)prefs.ui_timezone_offset_minutes >> 8) & 0xFF;
-	/* Total: 153 bytes */
+	/* Offset 161: auto-shutdown emergency notice enabled */
+	buf[off++] = prefs.auto_shutdown_emergency ? 1 : 0;
+	/* Total: 162 bytes */
 
 	bool ok = atomicReplaceFile(PREFS_FILE, buf, off);
 	LOG_DBG("savePrefs: wrote %s, ok=%d (%d bytes), name='%.16s'",

@@ -28,7 +28,8 @@ struct gps_position {
 /* GPS state info for UI display */
 struct gps_state_info {
 	uint8_t state;          /* 0=OFF, 1=STANDBY (sleeping), 2=ACQUIRING (searching) */
-	uint16_t satellites;    /* Current/last satellite count */
+	uint16_t satellites;    /* Satellites used for the current/last navigation solution (GGA) */
+	uint16_t visible_satellites; /* Satellites currently visible to the receiver (GSV), 0 if unavailable */
 	uint32_t last_fix_age_s;  /* Seconds since last validated fix (UINT32_MAX = never) */
 	uint32_t next_search_s;   /* Seconds until next search (0 = searching now or off) */
 };
