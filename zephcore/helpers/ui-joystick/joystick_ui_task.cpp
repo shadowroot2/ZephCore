@@ -878,6 +878,7 @@ void JoystickUITask::loop()
 			consumed = true;
 		} else if (key == KEY_LED_TOGGLE) {
 			toggleLeds();
+			showAlert(isLedsDisabled() ? "LEDs: OFF" : "LEDs: ON", 1000);
 			consumed = true;
 		} else if (key == KEY_FLOOD_ADVERT) {
 			/* Canonical scoped path: honors prefs.path_hash_mode and the
@@ -1036,7 +1037,11 @@ void JoystickUITask::toggleLeds()
 {
 	bool new_disabled = !isLedsDisabled();
 	if (_prefs) _prefs->leds_disabled = new_disabled ? 1 : 0;
-	ui_set_heartbeat_led(!new_disabled);
+	/* ui_set_leds_disabled (not ui_set_heartbeat_led): it owns the
+	 * s_leds_disabled gate in ui_common.c. Calling only the heartbeat
+	 * helper left that gate at its boot value, so a node booted with
+	 * leds_disabled=1 could never re-enable its LEDs from the UI. */
+	ui_set_leds_disabled(new_disabled);
 	mesh_set_leds_disabled(new_disabled);
 }
 
