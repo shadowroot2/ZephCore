@@ -678,10 +678,10 @@
  *
  *     /* Multi-tap action mapping (standard ZephCore assignment):
  *      *   1 tap  (400ms wait) → KEY_1 = page next
- *      *   2 taps (400ms wait) → KEY_B = flood advert
+ *      *   2 taps (400ms wait) → KEY_B = LED heartbeat toggle
  *      *   3 taps (400ms wait) → KEY_D = buzzer mute toggle
  *      *   4 taps (400ms wait) → KEY_C = GPS on/off
- *      *   5 taps (immediate)  → KEY_E = LED heartbeat toggle */
+ *      *   5 taps (immediate)  → KEY_E = flood advert */
  *     user_btn_multitap {
  *         compatible = "zephcore,input-multi-tap";
  *         input-codes = <INPUT_KEY_A>;

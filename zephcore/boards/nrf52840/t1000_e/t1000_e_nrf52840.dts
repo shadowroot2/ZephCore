@@ -73,11 +73,11 @@
 	};
 
 	/* Input filter: user button multi-tap detection
-	 * 1 tap  (500ms wait) → KEY_1 = arms SOS; hold >=1s within 3s sends SOS
-	 * 2 taps (500ms wait) → KEY_B = flood advert
+	 * 1 tap  (500ms wait) → KEY_1 = arms SOS; hold >=1s within 3s confirms it
+	 * 2 taps (500ms wait) → KEY_B = LED heartbeat toggle
 	 * 3 taps (500ms wait) → KEY_D = buzzer mute toggle
 	 * 4 taps (500ms wait) → KEY_C = GPS on/off
-	 * 5 taps (immediate)  → KEY_E = LED heartbeat toggle */
+	 * 5 taps (immediate)  → KEY_E = flood advert */
 	user_btn_multitap {
 		compatible = "zephcore,input-multi-tap";
 		/* No 'input' phandle — listen to ALL devices.

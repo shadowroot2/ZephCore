@@ -79,8 +79,8 @@ No QSPI external flash — contacts and channels live in internal flash.
 - **Long-press = real power-off.** Hold the button ≥1 s: the buzzer plays the
   shutdown melody, the radio and GNSS are parked, then the latch drops and the
   board is genuinely off (not a ~1 µA System OFF doze). Press again to boot.
-- **Multi-tap actions:** 2 taps = flood advert, 3 = buzzer mute toggle,
-  4 = GPS on/off, 5 = LED heartbeat toggle. A single tap maps to "page next",
+- **Multi-tap actions:** 2 taps = LED heartbeat toggle, 3 = buzzer mute toggle,
+  4 = GPS on/off, 5 = flood advert. A single tap maps to "page next",
   which is a no-op here since there is no display.
 - **NFC pins** (P0.09/P0.10) are freed via `nfct-pins-as-gpios`; they are NC on
   this board. Harmless, and consistent with the other RAK-based boards.

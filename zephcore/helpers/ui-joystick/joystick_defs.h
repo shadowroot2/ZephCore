@@ -55,10 +55,10 @@
 /* Global action keys emitted by multi tap filter, handled in loop().
  * Kept above 0xF0 so they stay clear of the printable range — see the
  * key-space contract above. */
-#define KEY_FLOOD_ADVERT  ((char)0xF5)   /* INPUT_KEY_B: 2 taps → flood advert (unused) */
+#define KEY_FLOOD_ADVERT  ((char)0xF5)   /* INPUT_KEY_E: 5 taps → flood advert */
 #define KEY_BUZZ_TOGGLE   ((char)0xF6)   /* INPUT_KEY_D: 3 taps → buzzer mute toggle */
 #define KEY_GPS_TOGGLE    ((char)0xF7)   /* INPUT_KEY_C: 4 taps → GPS on/off */
-#define KEY_LED_TOGGLE    ((char)0xF8)   /* INPUT_KEY_E: 5 taps → LED heartbeat toggle */
+#define KEY_LED_TOGGLE    ((char)0xF8)   /* INPUT_KEY_B: 2 taps → LED heartbeat toggle */
 
 /* ===== Layout constants (calibrated for 128x64 OLED, 6x8 font) ===== */
 /* All hard-coded offsets from old Arduino code are preserved here.

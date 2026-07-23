@@ -93,10 +93,10 @@
 
 	/* Input filter: multi-tap
 	 * 1 tap  → KEY_1 = (reserved / next page if display added)
-	 * 2 taps → KEY_B = flood advert
+	 * 2 taps → KEY_B = LED heartbeat toggle
 	 * 3 taps → KEY_D = buzzer mute toggle
 	 * 4 taps → KEY_C = GPS on/off
-	 * 5 taps → KEY_E = LED heartbeat toggle */
+	 * 5 taps → KEY_E = flood advert */
 	user_btn_multitap {
 		compatible = "zephcore,input-multi-tap";
 		input-codes = <INPUT_KEY_A>;

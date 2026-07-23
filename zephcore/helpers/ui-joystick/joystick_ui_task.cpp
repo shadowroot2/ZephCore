@@ -469,9 +469,10 @@ static void joystick_ui_input_cb(struct input_event *evt, void *user_data)
 	case INPUT_KEY_PAGEDOWN:key = KEY_NEXT;         break;
 	case INPUT_KEY_F2:      key = KEY_ENTER_LONG;   break;
 	/* Multi tap outputs from input_multi_tap filter */
+	case INPUT_KEY_B:       key = KEY_LED_TOGGLE;   break;  /* 2 taps */
 	case INPUT_KEY_D:       key = KEY_BUZZ_TOGGLE;  break;  /* 3 taps */
 	case INPUT_KEY_C:       key = KEY_GPS_TOGGLE;   break;  /* 4 taps */
-	case INPUT_KEY_E:       key = KEY_LED_TOGGLE;   break;  /* 5 taps */
+	case INPUT_KEY_E:       key = KEY_FLOOD_ADVERT; break;  /* 5 taps */
 	default: break;
 	}
 
@@ -877,6 +878,15 @@ void JoystickUITask::loop()
 			consumed = true;
 		} else if (key == KEY_LED_TOGGLE) {
 			toggleLeds();
+			consumed = true;
+		} else if (key == KEY_FLOOD_ADVERT) {
+			/* Canonical scoped path: honors prefs.path_hash_mode and the
+			 * default transport scope (same as the Advert menu item). */
+			if (_mesh && _mesh->sendSelfAdvert(true)) {
+				showAlert("Advert flood sent", 1000);
+			} else {
+				showAlert("Advert failed", 1000);
+			}
 			consumed = true;
 		}
 		if (!consumed && _curr) {

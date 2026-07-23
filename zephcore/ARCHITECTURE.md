@@ -765,6 +765,10 @@ Single button; tap-count → key-code mapping comes from the board's devicetree 
 - 4 taps → GPS toggle
 - 5 taps → Flood advert (immediate, no delay)
 
+On T1000-E, one short press arms SOS for three seconds; a following hold of
+at least one second confirms it with the SOS melody. The multitap delay stays
+at 500 ms on that board.
+
 ### 8.4 Buzzer
 
 Non-blocking RTTTL parser on dedicated work queue. Predefined melodies for startup, shutdown, messages, ACKs. 2-second safety watchdog auto-silences on work queue stall.

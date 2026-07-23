@@ -7,14 +7,14 @@
  * All event-driven via Zephyr input subsystem + k_work.
  *
  * Input flow (after longpress + multi-tap filter chain):
- *   KEY_1     → action_page_next()       (1 tap, 400ms delayed)
+ *   KEY_1     → action_page_next()       (1 tap; T1000-E arms SOS, 500ms delayed)
  *   KEY_LEFT  → action_page_prev()       (2 taps — RAK4631 / Pocket / Heltec V3–V4.3)
- *   KEY_B     → action_flood_advert()    (2 taps on extended multitap overlays)
+ *   KEY_B     → action_leds_toggle()     (2 taps on extended multitap overlays)
  *   KEY_D     → action_buzzer_toggle()   (3 taps)
- *   KEY_C     → action_gps_toggle()      (4 taps, immediate)
+ *   KEY_C     → action_gps_toggle()      (4 taps)
  *   KEY_G     → GPS switch on/off        (hardware toggle, ThinkNode M1)
  *   KEY_POWER / KEY_F → action_deep_sleep() (long press — boards that emit these)
- *   T-1000E: KEY_1 then KEY_F within 3s → SOS; bare KEY_F → deep sleep
+ *   T-1000E: KEY_1 then KEY_F within 3s → SOS melody + send; bare KEY_F → deep sleep
  *   KEY_ENTER → action_page_enter()      (long press — Pocket / Heltec; joystick center Wio)
  *   KEY_RIGHT → action_page_next()       (joystick, Wio Tracker)
  *
@@ -686,7 +686,7 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 	switch (evt->code) {
 	/* ===== Multi-tap outputs ===== */
 	case INPUT_KEY_1:
-		/* Single tap (400ms delayed): page next */
+		/* Single tap: page next, except the T1000-E SOS arm gesture. */
 	#if defined(CONFIG_BOARD_T1000_E)
 		/* The T-1000E has no display. A single tap arms its SOS gesture;
 		 * the following >=1 s hold must arrive within three seconds. */
@@ -697,8 +697,8 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 		break;
 
 	case INPUT_KEY_B:
-		/* Double tap (400ms delayed): flood advert */
-		action_flood_advert();
+		/* Double tap (400ms delayed): toggle LED heartbeat */
+		action_leds_toggle();
 		break;
 
 	case INPUT_KEY_D:
@@ -712,8 +712,8 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 		break;
 
 	case INPUT_KEY_E:
-		/* Quintuple tap (immediate): toggle LED heartbeat */
-		action_leds_toggle();
+		/* Quintuple tap (immediate): flood advert */
+		action_flood_advert();
 		break;
 
 	/* ===== Longpress output ===== */
@@ -723,6 +723,11 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 	#if defined(CONFIG_BOARD_T1000_E)
 		if ((int32_t)(t1000_sos_armed_until - k_uptime_get_32()) >= 0) {
 			t1000_sos_armed_until = 0;
+		#ifdef CONFIG_ZEPHCORE_UI_BUZZER
+			/* The tone is immediate confirmation that the hold was accepted,
+			 * so the user can release the button before LoRa transmission. */
+			buzzer_play(MELODY_SOS);
+		#endif
 			mesh_send_sos();
 			break;
 		}
