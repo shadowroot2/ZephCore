@@ -61,6 +61,17 @@ static bool     has_color;    /* true when a raw RGB565 TFT is available */
 
 const uint8_t *zephcore_font_6x8_glyph(uint8_t c);
 
+#if IS_ENABLED(CONFIG_ZEPHCORE_DISPLAY_LARGE_FONT)
+#define COLOR_FONT_SCALE_NUM 3
+#define COLOR_FONT_SCALE_DEN 2
+#else
+#define COLOR_FONT_SCALE_NUM 1
+#define COLOR_FONT_SCALE_DEN 1
+#endif
+
+#define COLOR_FONT_W (6 * COLOR_FONT_SCALE_NUM / COLOR_FONT_SCALE_DEN)
+#define COLOR_FONT_H (8 * COLOR_FONT_SCALE_NUM / COLOR_FONT_SCALE_DEN)
+
 #define COLOR_TEXT_MAX_CHARS 32
 #define COLOR_MAX_OPS        72
 #define COLOR_MAX_WIDTH      320
@@ -257,23 +268,37 @@ static void color_write_rect_now(int x, int y, int w, int h, uint16_t color)
 
 static void color_write_char_now(int x, int y, uint8_t c, uint16_t color)
 {
-	uint16_t glyph_buf[6 * 8];
+	uint16_t glyph_buf[COLOR_FONT_W * COLOR_FONT_H];
 	const uint8_t *glyph = zephcore_font_6x8_glyph(c);
 	uint16_t fg = sys_cpu_to_be16(color);
 	uint16_t bg = sys_cpu_to_be16(MC_COLOR_BLACK);
 
 	for (int row = 0; row < 8; row++) {
 		for (int col = 0; col < 6; col++) {
-			bool on = (glyph[col] >> row) & 0x01;
-			glyph_buf[row * 6 + col] = on ? fg : bg;
+			uint16_t pixel =
+				((glyph[col] >> row) & 0x01) ? fg : bg;
+
+			int dx = col * COLOR_FONT_SCALE_NUM / COLOR_FONT_SCALE_DEN;
+			int dy = row * COLOR_FONT_SCALE_NUM / COLOR_FONT_SCALE_DEN;
+
+			for (int sy = 0; sy < COLOR_FONT_SCALE_NUM; sy++) {
+				for (int sx = 0; sx < COLOR_FONT_SCALE_NUM; sx++) {
+					int px = dx + sx;
+					int py = dy + sy;
+
+					if (px < COLOR_FONT_W && py < COLOR_FONT_H) {
+						glyph_buf[py * COLOR_FONT_W + px] = pixel;
+					}
+				}
+			}
 		}
 	}
 
 	const struct display_buffer_descriptor desc = {
 		.buf_size = sizeof(glyph_buf),
-		.width = 6,
-		.height = 8,
-		.pitch = 6,
+		.width = COLOR_FONT_W,
+		.height = COLOR_FONT_H,
+		.pitch = COLOR_FONT_W,
 	};
 
 	display_write(color_dev, (uint16_t)(x + DISP_INSET),
@@ -286,13 +311,13 @@ static void color_write_text_now(int x, int y, const char *text, uint16_t color)
 		return;
 	}
 
-	for (const char *p = text; *p; p++, x += 6) {
+	for (const char *p = text; *p; p++, x += COLOR_FONT_W) {
 		uint8_t c = (uint8_t)*p;
 
 		if (c < 32) {
 			c = '?';
 		}
-		if (x + 6 > (int)mc_display_width() || y + 8 > (int)mc_display_height()) {
+		if (x + COLOR_FONT_W > (int)mc_display_width() || y + COLOR_FONT_H > (int)mc_display_height()) {
 			break;
 		}
 		color_write_char_now(x, y, c, color);

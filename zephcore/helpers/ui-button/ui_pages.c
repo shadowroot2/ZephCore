@@ -94,20 +94,20 @@ static inline int ui_content_y(void)
  * mc_display_has_color(); monochrome displays keep the existing CFB path. */
 #define UI_COLOR_BG         MC_COLOR_BLACK
 #define UI_COLOR_HEADER_BG  0x2104  /* dark neutral panel */
-#define UI_COLOR_TITLE      0xffde  /* warm white */
+#define UI_COLOR_TITLE      MC_COLOR_GRAY  /* warm white */
 #define UI_COLOR_LABEL      MC_COLOR_WHITE  /* small-TFT gamma renders mid-gray near-black */
 #define UI_COLOR_VALUE      MC_COLOR_WHITE
-#define UI_COLOR_OK         0x07e0
+#define UI_COLOR_OK         MC_COLOR_GREEN
 #define UI_COLOR_ACTIVE     UI_COLOR_OK
 #define UI_COLOR_WARN       0xffa0
 #define UI_COLOR_ERROR      MC_COLOR_RED
-#define UI_COLOR_DIM        0x4208
+#define UI_COLOR_DIM        MC_COLOR_GRAY
 #define UI_COLOR_DISABLED   UI_COLOR_DIM  /* off/disabled states stay as faint as possible */
 #define UI_COLOR_TX         MC_COLOR_ORANGE
 #define UI_COLOR_RX         UI_COLOR_OK
 
-#define COLOR_FONT_W 6
-#define COLOR_FONT_H 8
+#define COLOR_FONT_W  mc_display_font_width()
+#define COLOR_FONT_H  mc_display_font_height()
 #define ACTIVITY_GRAPH_SAMPLES 16
 
 /* Vertically center `total` rows of text within the content area and
@@ -377,7 +377,7 @@ static void draw_color_segments_at(int x, int y, const char *label,
 				   const char *value, uint16_t value_color)
 {
 	mc_display_color_text(x, y, label, UI_COLOR_LABEL);
-	x += (int)strlen(label) * 6;
+	x += (int)strlen(label) * COLOR_FONT_W;
 	mc_display_color_text(x, y, value, value_color);
 }
 
@@ -1035,7 +1035,7 @@ static void render_bluetooth_color(void)
 			      !state.ble_enabled ? "disabled" :
 			      state.ble_connected ? "connected" : "advertising",
 			      color);
-	y += LINE_H + 4;
+	y += LINE_H + (FONT_H / 4);
 	draw_centered_color(y,
 			    state.ble_enabled ? "Press to disable"
 					      : "Press to enable",
@@ -1086,7 +1086,7 @@ static void render_advert_color(void)
 
 	draw_badge(0, y, "ADV", just_sent ? UI_COLOR_OK : UI_COLOR_ACTIVE);
 	mc_display_color_text(32, y, "Zero-hop advert", UI_COLOR_VALUE);
-	y += LINE_H + 2;
+	y += LINE_H + (FONT_H / 2);
 
 	if (just_sent) {
 		draw_centered_color(y,

@@ -130,7 +130,7 @@ void mc_display_text(int x, int y, const char *text, bool invert);
 #define MC_COLOR_ORANGE   0xfd20
 #define MC_COLOR_RED      0xf800
 #define MC_COLOR_BLUE     0x001f
-#define MC_COLOR_GRAY     0x8410
+#define MC_COLOR_GRAY     0xEF7D
 
 /**
  * Draw text using RGB565 color when supported. On non-color displays this
