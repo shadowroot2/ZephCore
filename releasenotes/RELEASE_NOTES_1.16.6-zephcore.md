@@ -23,9 +23,9 @@
 
 ---
 
-A maintenance release: an important **admin-password fix**, **GPS standby power savings**, and the
-removal of **Adaptive Power Control** — plus two new boards, **muzi works R1 Neo** and an experimental
-first cut at the **ThinkNode M9**.
+A maintenance release: an important **admin-password fix**, a substantial **identity-key randomness
+hardening** on ESP32, **GPS standby power savings**, and the removal of **Adaptive Power Control** —
+plus two new boards, **muzi works R1 Neo** and an experimental first cut at the **ThinkNode M9** in dev.
 
 ## Highlights
 
@@ -101,14 +101,18 @@ RAK4631 flash layout (SoftDevice s140 v6.1.1, app @ `0x26000`), so the stock UF2
 no bootloader reflash needed. The board's soft-power design is handled in devicetree: the DCDC rail latches
 on at boot and is released on shutdown, so long-press power-off works properly.
 
-Two things still want confirming against real hardware: the **battery divider multiplier** is a placeholder
-(the two upstreams disagree — check `get batt` against a multimeter), and the **GNSS module identity** is
+Two things still want confirming against real hardware: the **battery divider multiplier** is an estimate, and the **GNSS module identity** is
 unconfirmed. Reports welcome.
 
 Thanks to [@WillyJL](https://github.com/WillyJL), who requested this port and provided the hardware details / most of the code
 it is based on.
 
-### ThinkNode M9 — experimental, first testable release
+### ThinkNode M9 — experimental, source build only
+
+**Not part of this release's prebuilt binaries or the web configurator** — bring-up is still in progress,
+so it has been held out of the automated release matrix for now. If you have the hardware, build and flash
+it yourself (`west build -b thinknode_m9/esp32s3/procpu zephcore --pristine`); everything below describes
+that source build, not a download.
 
 **Consider this a preview, not a finished port.** It builds, flashes and runs, and it is worth testing if
 you have the hardware and don't mind rough edges — but several things have not been confirmed on a real
@@ -147,6 +151,16 @@ exactly what to look at.
   now explicitly off for V3, which is simply the truth about that board. Binary releases were unaffected;
   this only bit source builds. (V4 / V4.3 use ZephCore-local board definitions and were never affected.)
 - **Air530z GPS driver patch** comments corrected to match the new PM strategy.
+- **ESP32 BLE controller heap raised from 32 KB to 64 KB** (all ESP32 boards except T-Beam). The Espressif
+  BLE controller allocates 30 KB from this pool in a single call during `bt_enable()`; at 32 KB that left
+  almost no margin for whatever else had allocated before BLE came up. Found during ThinkNode M9 bring-up,
+  where the extra display, keypad and LR1110 init pushed past it and the blob asserted instead of failing
+  gracefully — every ESP32 board was one allocation away from the same failure. T-Beam is held at the old
+  32 KB (only 768 bytes of DRAM free) since it can't absorb the increase; that narrower margin is tracked
+  separately.
+- **Fixed: companion battery calibration (`adc_multiplier`) reset itself every reboot.** It was applied at
+  boot but never written back to prefs, so any calibration you set silently reverted to the board default
+  on the next power cycle. Now persisted.
 
 ## Sidenote: LR1110 radio firmware updater
 
