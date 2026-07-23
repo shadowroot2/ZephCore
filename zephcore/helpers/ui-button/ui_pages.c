@@ -94,20 +94,26 @@ static inline int ui_content_y(void)
  * mc_display_has_color(); monochrome displays keep the existing CFB path. */
 #define UI_COLOR_BG         MC_COLOR_BLACK
 #define UI_COLOR_HEADER_BG  0x2104  /* dark neutral panel */
-#define UI_COLOR_TITLE      MC_COLOR_GRAY  /* warm white */
+#define UI_COLOR_TITLE      MC_COLOR_LIGHT_GRAY  /* soft white, slightly recessed vs values */
 #define UI_COLOR_LABEL      MC_COLOR_WHITE  /* small-TFT gamma renders mid-gray near-black */
 #define UI_COLOR_VALUE      MC_COLOR_WHITE
 #define UI_COLOR_OK         MC_COLOR_GREEN
 #define UI_COLOR_ACTIVE     UI_COLOR_OK
 #define UI_COLOR_WARN       0xffa0
 #define UI_COLOR_ERROR      MC_COLOR_RED
-#define UI_COLOR_DIM        MC_COLOR_GRAY
-#define UI_COLOR_DISABLED   UI_COLOR_DIM  /* off/disabled states stay as faint as possible */
+#define UI_COLOR_DIM        MC_COLOR_LIGHT_GRAY  /* small-TFT gamma (T114) crushes anything
+						  * darker toward black — in person this reads
+						  * as a proper gray, not white (PR #62) */
+#define UI_COLOR_DISABLED   UI_COLOR_DIM  /* off/disabled states dimmer than values */
+#define UI_COLOR_FAINT      0x4208  /* dark structural fills (badge bg, separators, bar tracks) —
+				     * decoration, must stay subtle so content pops against it */
 #define UI_COLOR_TX         MC_COLOR_ORANGE
 #define UI_COLOR_RX         UI_COLOR_OK
 
-#define COLOR_FONT_W  mc_display_font_width()
-#define COLOR_FONT_H  mc_display_font_height()
+/* Glyph cell of the color renderer (display.c upscales the 6x8 font under
+ * LARGE_FONT) — NOT the CFB font metrics, which can differ (10x16 vs 9x12). */
+#define COLOR_FONT_W  mc_display_color_font_width()
+#define COLOR_FONT_H  mc_display_color_font_height()
 #define ACTIVITY_GRAPH_SAMPLES 16
 
 /* Vertically center `total` rows of text within the content area and
@@ -343,7 +349,7 @@ static void render_page_indicator(void)
 
 	/* Separator line below dots */
 	if (color) {
-		mc_display_color_fill_rect(0, SEP_Y, DISP_W, 1, UI_COLOR_DIM);
+		mc_display_color_fill_rect(0, SEP_Y, DISP_W, 1, UI_COLOR_FAINT);
 	} else {
 		mc_display_hline(0, SEP_Y, DISP_W);
 	}
@@ -396,7 +402,7 @@ static void draw_badge(int x, int y, const char *text, uint16_t color)
 {
 	int w = color_text_width(text) + 4;
 
-	mc_display_color_fill_rect(x, y - 1, w, COLOR_FONT_H + 2, UI_COLOR_DIM);
+	mc_display_color_fill_rect(x, y - 1, w, COLOR_FONT_H + 2, UI_COLOR_FAINT);
 	mc_display_color_text(x + 2, y, text, color);
 }
 
@@ -418,7 +424,7 @@ static void draw_metric_bar(int x, int y, int w, int h, int value,
 
 	int filled = (w * value) / max_value;
 
-	mc_display_color_fill_rect(x, y, w, h, UI_COLOR_DIM);
+	mc_display_color_fill_rect(x, y, w, h, UI_COLOR_FAINT);
 	if (filled > 0) {
 		mc_display_color_fill_rect(x, y, filled, h, color);
 	}
@@ -507,7 +513,7 @@ static void draw_activity_graph(int x, int y, int w, int h)
 	sample_activity_graph();
 
 	mc_display_color_fill_rect(x, y, w, h, UI_COLOR_BG);
-	mc_display_color_fill_rect(x, mid, w, 1, UI_COLOR_DIM);
+	mc_display_color_fill_rect(x, mid, w, 1, UI_COLOR_FAINT);
 
 	for (int i = 0; i < ACTIVITY_GRAPH_SAMPLES; i++) {
 		uint8_t idx = (uint8_t)((activity_head + 1U + i) %

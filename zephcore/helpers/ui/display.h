@@ -106,6 +106,29 @@ static inline bool mc_display_has_color(void)
 #endif
 
 /**
+ * Glyph cell size of the color overlay renderer in pixels.  The 6x8 font
+ * is upscaled 1.5x under CONFIG_ZEPHCORE_DISPLAY_LARGE_FONT, so this can
+ * differ from the CFB font metrics — layout math for color pages must use
+ * these, not mc_display_font_width/height().  On monochrome builds
+ * mc_display_color_text() falls back to the CFB path, so these fall back
+ * to the CFB metrics too.
+ */
+#if MC_DISPLAY_COLOR_PANEL
+uint8_t mc_display_color_font_width(void);
+uint8_t mc_display_color_font_height(void);
+#else
+static inline uint8_t mc_display_color_font_width(void)
+{
+	return mc_display_font_width();
+}
+
+static inline uint8_t mc_display_color_font_height(void)
+{
+	return mc_display_font_height();
+}
+#endif
+
+/**
  * Clear the framebuffer (fill with black).
  * Call before rendering a new frame.
  */
@@ -130,7 +153,8 @@ void mc_display_text(int x, int y, const char *text, bool invert);
 #define MC_COLOR_ORANGE   0xfd20
 #define MC_COLOR_RED      0xf800
 #define MC_COLOR_BLUE     0x001f
-#define MC_COLOR_GRAY     0xEF7D
+#define MC_COLOR_GRAY       0x8410  /* true mid-gray — small-TFT gamma may crush it near-black */
+#define MC_COLOR_LIGHT_GRAY 0xef7d  /* ~93% white — reads as soft white on small TFTs */
 
 /**
  * Draw text using RGB565 color when supported. On non-color displays this
