@@ -501,7 +501,7 @@ add_definitions(-DFIRMWARE_BUILD_EPOCH=${ZEPHCORE_BUILD_EPOCH}u)
 # release is tagged/named, and what the Mesh America catalog uses as its version
 # key — so the configurator can match a running device against the catalog. Keep
 # all four identical; the release workflow reads this value directly.
-set(ZEPHCORE_FIRMWARE_VERSION "1.16.6-zephcore")
+set(ZEPHCORE_FIRMWARE_VERSION "1.16.7-zephcore")
 add_definitions(-DFIRMWARE_VERSION="${ZEPHCORE_FIRMWARE_VERSION}")
 
 add_subdirectory(lib/monocypher)
