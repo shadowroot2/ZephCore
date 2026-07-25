@@ -671,6 +671,26 @@ config ZEPHCORE_LORA_DC_MIN_SYMBOLS
 	  for extra detection margin on very noisy sites.  SF5/6 adds +4
 	  internally.  Lowering below 8 risks missed packets at low SNR.
 
+config ZEPHCORE_LORA_DC_MARGIN_PCT
+	int "RX duty cycle: sleep-budget safety margin (percent)"
+	range 0 40
+	default 15
+	help
+	  Percentage the per-cycle deaf-time budget is derated before the
+	  sleep period is programmed.  The theoretical catch budget assumes
+	  the sleep clock and wake transition are exact, but the chip's sleep
+	  timer runs on an internal RC oscillator (RC64k on SX126x, RTC on
+	  LR11xx) that drifts several percent over temperature, and the wake-
+	  transition estimate is a datasheet figure the datasheet itself calls
+	  "not accurate and may vary".  Either overshoot silently pushes real
+	  deaf time past the budget and drops the fraction of packets whose
+	  preamble phase aligns with the window edge — signal-strength-
+	  independent loss that presents as random DC packet drops.  This
+	  margin trades a little radio-off time for that robustness and is
+	  shared by every radio (SX126x / LR11xx / LR20xx).  Set to 0 to
+	  restore the old zero-margin behaviour; 15% is a conservative default,
+	  lower it once you have measured your board's clock+transition on air.
+
 endmenu
 
 config ZEPHCORE_RTC_AUTODISCOVER

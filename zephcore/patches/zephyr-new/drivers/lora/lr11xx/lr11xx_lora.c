@@ -32,6 +32,16 @@ LOG_MODULE_REGISTER(lr11xx_lora, CONFIG_LORA_LOG_LEVEL);
 #define LR11XX_DIO1_WQ_STACK_SIZE 2560
 K_THREAD_STACK_DEFINE(lr11xx_dio1_wq_stack, LR11XX_DIO1_WQ_STACK_SIZE);
 
+/* Wedge-recovery watchdog — its own low-priority queue so the confirm poll
+ * (a BUSY-high dwell of up to LR11XX_WEDGE_CONFIRM_MS) never blocks DIO1 RX
+ * processing. */
+#define LR11XX_WEDGE_WQ_STACK_SIZE 1024
+K_THREAD_STACK_DEFINE(lr11xx_wedge_wq_stack, LR11XX_WEDGE_WQ_STACK_SIZE);
+
+#define LR11XX_WEDGE_CHECK_MS   3000  /* base cadence between health checks     */
+#define LR11XX_WEDGE_IDLE_MS   12000  /* only probe after this much DIO1 silence */
+#define LR11XX_WEDGE_CONFIRM_MS  250  /* continuous BUSY-high past this = wedged */
+
 /* ── Driver data structures ─────────────────────────────────────────── */
 
 struct lr11xx_config {
@@ -119,6 +129,16 @@ struct lr11xx_data {
 	 * within the grace window; after grace expires with no header, the
 	 * bit is cleared and TX released.  All accesses under spi_mutex. */
 	uint32_t preamble_seen_at_ms;
+
+	/* Wedge-recovery watchdog: the LR1110 can rarely be left BUSY-high with
+	 * DIO1 low (a command racing the autonomous SetRxDutyCycle sleep phase) —
+	 * no IRQ ever fires, so the event-driven driver never re-arms and the node
+	 * goes permanently deaf.  last_dio1_ms records the last proof-of-life (a
+	 * handled DIO1 event); the watchdog re-arms RX via a hardware reset when
+	 * BUSY stays continuously high past any legitimate DC cycle with no DIO1. */
+	uint32_t last_dio1_ms;
+	struct k_work_delayable wedge_work;
+	struct k_work_q wedge_wq;
 
 	/* RX data buffer — filled in DIO1 handler, passed to callback */
 	uint8_t rx_buf[256];
@@ -303,12 +323,27 @@ static void lr11xx_apply_modem_config(struct lr11xx_data *data,
 		0);
 }
 
-/* ── RX duty cycle — disabled on LR1110 ─────────────────────────────── */
+/* ── RX duty cycle ──────────────────────────────────────────────────── */
 
-/* LR1110 SetRxDutyCycle is fundamentally broken: both MODE_RX and
- * MODE_CAD fail to detect in-progress preambles, dropping 23-40% of
- * packets depending on the sleep fraction.  The SX1262 handles this
- * correctly.  LR1110 always uses continuous RX instead. */
+/* SetRxDutyCycle(MODE_RX) works the same way as the SX126x: on a positive
+ * over-the-air (preamble) detection the chip auto-recomputes its RX timeout
+ * to 2*rx_period + sleep_period and stays in RX for the whole packet (SWDR001
+ * lr11xx_radio.h step 2).  Because that extension is native, the LR1110 needs
+ * NO StopTimerOnPreamble and NO parked-RX watchdog: a false detection lets the
+ * bounded 2*rx+sleep timer expire and re-arm via the normal RX-timeout path,
+ * so there is no infinite-park failure mode to recover from (unlike the
+ * SX126x, whose StopTimerOnPreamble freezes the timer).  Window sizing —
+ * including the shared clock/transition safety margin — is owned by the
+ * adapter (LoRaRadioBase::startReceive); the driver only re-arms with the
+ * stored timing.
+ *
+ * The earlier "fundamentally broken, 23-40% loss" verdict was a window-sizing
+ * bug in the adapter, not a chip defect.  One item is still HW-unverified: the
+ * chip's sleep-with-retention warm wakes should keep the boosted RX gain
+ * (the SX126x needs an explicit retention-list write for this; the LR11xx SDK
+ * exposes no such list, implying it is automatic — measure sensitivity across
+ * cycles on a live board to confirm).  We re-apply SetRxBoosted on every host
+ * restart regardless, as cheap insurance. */
 
 /* ── Start RX (internal) ────────────────────────────────────────────── */
 
@@ -421,6 +456,9 @@ static void lr11xx_dio1_work_handler(struct k_work *work)
 	void *ctx = &data->hal_ctx;
 	bool rx_restarted = false;
 
+	/* Proof of life for the wedge watchdog: the chip generated an IRQ. */
+	data->last_dio1_ms = k_uptime_get_32();
+
 	k_mutex_lock(&data->spi_mutex, K_FOREVER);
 
 	/* Read IRQ status then clear ALL bits.  Must use ALL_MASK because
@@ -453,18 +491,21 @@ static void lr11xx_dio1_work_handler(struct k_work *work)
 	}
 
 	/* ── RX done ──
-	 * Gated on no error bits: a CRC-failed packet asserts RX_DONE and
-	 * CRC_ERROR together on this chip family (same as SX126x — see the
-	 * sx126x patch's "they co-fire here"; LBM's radio_planner likewise
-	 * checks errors before RX_DONE), so an ungated done-first read
-	 * would deliver corrupted payloads as valid.  A good packet
-	 * coalesced with an earlier HEADER_ERROR in the same handler
-	 * window is dropped too — the header error may have shifted the
-	 * RX buffer pointer (errata handling below), making the read
-	 * suspect.  The error branch below owns the window instead. */
+	 * Deliver on RX_DONE unless it is a GENUINE reception failure:
+	 *   - CRC_ERROR: a CRC-failed packet asserts RX_DONE+CRC_ERROR together
+	 *     on this chip family, so an ungated read would deliver corruption.
+	 *   - HEADER_ERROR with NO valid header (SYNC_WORD_HEADER_VALID clear):
+	 *     no good header decoded, the buffer is suspect.
+	 * A HEADER_ERROR that coincides with a VALID header is a foreign/colliding
+	 * signal's error while OUR packet decoded fine — RadioLib's readData keeps
+	 * the packet in exactly this case (CRC_ERR || (HDR_ERR && !HDR_VALID)), and
+	 * the SX126x path never routes HEADER_ERROR at all.  Dropping these good
+	 * packets was the LR1110 under-load packet-loss bug (verified 2026-07-24:
+	 * ~7-10% loss vs SX1262, load-dependent, size-skewed). */
 	if ((irq & LR11XX_SYSTEM_IRQ_RX_DONE) &&
-	    !(irq & (LR11XX_SYSTEM_IRQ_CRC_ERROR |
-		     LR11XX_SYSTEM_IRQ_HEADER_ERROR))) {
+	    !(irq & LR11XX_SYSTEM_IRQ_CRC_ERROR) &&
+	    !((irq & LR11XX_SYSTEM_IRQ_HEADER_ERROR) &&
+	      !(irq & LR11XX_SYSTEM_IRQ_SYNC_WORD_HEADER_VALID))) {
 		lr11xx_radio_rx_buffer_status_t rx_stat;
 		lr11xx_radio_get_rx_buffer_status(ctx, &rx_stat);
 
@@ -476,6 +517,19 @@ static void lr11xx_dio1_work_handler(struct k_work *work)
 			lr11xx_regmem_read_buffer8(ctx, data->rx_buf,
 						   rx_stat.buffer_start_pointer,
 						   rx_stat.pld_len_in_bytes);
+
+			/* Buffer-shift errata, header-error variant: if a foreign
+			 * HEADER_ERROR coalesced with this good packet, a standby
+			 * must reset the +4 buffer_start_pointer drift so it cannot
+			 * corrupt the NEXT packet's read.  The payload is already
+			 * captured above, so resetting now keeps the packet AND the
+			 * errata protection.  (A plain RX_DONE with no header error
+			 * gets the same reset from the STDBY_RC rx/tx fallback; this
+			 * makes the coalesced case explicit, not fallback-reliant.) */
+			if (irq & LR11XX_SYSTEM_IRQ_HEADER_ERROR) {
+				lr11xx_system_set_standby(ctx,
+							  LR11XX_SYSTEM_STANDBY_CFG_RC);
+			}
 
 			/* LR1110 errata: RX buffer base shifts 4 bytes per
 			 * received packet.  Without clearing, after ~64
@@ -559,32 +613,38 @@ static void lr11xx_dio1_work_handler(struct k_work *work)
 		}
 	}
 
-	/* ── CRC / Header error ──
-	 * Plain `CRC || HDR` — no SYNC_WORD_HEADER_VALID gate (RadioLib
-	 * readData's false-alarm filter).  IRQ status is bulk-cleared on
-	 * every handler entry, so a set HEADER_ERROR always belongs to
-	 * this window; a SYNC_VALID bit latched by another packet in the
-	 * same window must not suppress the errata standby below. */
-	if (irq & (LR11XX_SYSTEM_IRQ_CRC_ERROR |
-		   LR11XX_SYSTEM_IRQ_HEADER_ERROR)) {
+	/* ── CRC / header error ──
+	 * A HEADER_ERROR that coincides with a VALID header but no RX_DONE means a
+	 * foreign/colliding signal errored while OUR good packet is still
+	 * mid-reception.  Do NOT abort it: the old reflex standby()+restart here
+	 * dropped the in-flight packet, and doing that on every foreign header
+	 * error under load is what cost the LR1110 packets (the SX126x never routes
+	 * HEADER_ERROR for exactly this reason).  Leave the chip in RX; the good
+	 * packet's own RX_DONE delivers it above. */
+	if ((irq & LR11XX_SYSTEM_IRQ_HEADER_ERROR) &&
+	    (irq & LR11XX_SYSTEM_IRQ_SYNC_WORD_HEADER_VALID) &&
+	    !(irq & LR11XX_SYSTEM_IRQ_RX_DONE)) {
+		LOG_DBG("RX: foreign HDR err during valid header — not aborting");
+		rx_restarted = true;  /* reception continues; skip safety-net restart */
+	} else if (irq & (LR11XX_SYSTEM_IRQ_CRC_ERROR |
+			  LR11XX_SYSTEM_IRQ_HEADER_ERROR)) {
 		LOG_DBG("RX error: CRC=%d HDR=%d RXDONE=%d",
 			(irq & LR11XX_SYSTEM_IRQ_CRC_ERROR) ? 1 : 0,
 			(irq & LR11XX_SYSTEM_IRQ_HEADER_ERROR) ? 1 : 0,
 			(irq & LR11XX_SYSTEM_IRQ_RX_DONE) ? 1 : 0);
 
-		/* LR1110 errata: a header error makes the chip's reported
-		 * buffer_start_pointer stale by +4 for every subsequent
-		 * packet (stacking) until a standby resets the shift.
-		 * Arduino MeshCore's CustomLR1110 calls standby() on every
-		 * header error unconditionally — mirror that. */
+		/* LR1110 errata: a real header error (no valid header) drifts the
+		 * reported buffer_start_pointer +4 per subsequent packet until a
+		 * standby resets it (Arduino MeshCore's CustomLR1110 standbys on
+		 * header error).  Only for a genuine header error — a valid header
+		 * is handled above and must never trigger this abort. */
 		if (irq & LR11XX_SYSTEM_IRQ_HEADER_ERROR) {
 			lr11xx_system_set_standby(ctx,
 						  LR11XX_SYSTEM_STANDBY_CFG_RC);
 		}
 
-		/* Drop whatever the failed (or coalesced) packet left in
-		 * the RX buffer — RadioLib clears it on the CRC-error read
-		 * path too. */
+		/* Drop whatever the failed packet left in the RX buffer — RadioLib
+		 * clears it on the CRC-error read path too. */
 		lr11xx_regmem_clear_rxbuffer(ctx);
 
 		if (!data->tx_active) {
@@ -958,8 +1018,28 @@ int16_t lr11xx_get_rssi_inst(const struct device *dev)
 	struct lr11xx_data *data = dev->data;
 	int8_t rssi;
 
-	k_mutex_lock(&data->spi_mutex, K_FOREVER);
-	lr11xx_radio_get_rssi_inst(&data->hal_ctx, &rssi);
+	/* GPIO BUSY read FIRST — bail before the HAL's wait_on_busy stalls (3 s)
+	 * on the autonomous duty-cycle sleep phase.  Issuing GetRssiInst (0x0205)
+	 * into a chip parked in SetRxDutyCycle sleep-with-retention wedges it
+	 * BUSY-high permanently (root cause of the 2026-07-24 "T1000 goes deaf"
+	 * wedge).  -128 is the busy/contended sentinel the noise-floor sampler
+	 * expects (LoRaRadioBase::triggerNoiseFloorCalibrate retries next tick).
+	 * Direct parity with sx126x_get_rssi_inst. */
+	if (gpio_pin_get_dt(&data->hal_ctx.busy)) {
+		return -128;
+	}
+	if (k_mutex_lock(&data->spi_mutex, K_NO_WAIT) != 0) {
+		return -128;
+	}
+	if (gpio_pin_get_dt(&data->hal_ctx.busy)) {
+		k_mutex_unlock(&data->spi_mutex);
+		return -128;
+	}
+
+	if (lr11xx_radio_get_rssi_inst(&data->hal_ctx, &rssi) != LR11XX_STATUS_OK) {
+		k_mutex_unlock(&data->spi_mutex);
+		return -128;
+	}
 	k_mutex_unlock(&data->spi_mutex);
 
 	return (int16_t)rssi;
@@ -986,6 +1066,16 @@ static uint32_t lr11xx_preamble_grace_ms(struct lr11xx_data *data)
 bool lr11xx_is_receiving(const struct device *dev)
 {
 	struct lr11xx_data *data = dev->data;
+
+	/* GPIO BUSY read FIRST: during the autonomous duty-cycle sleep phase the
+	 * chip is asleep (BUSY high) and by definition not mid-packet, so report
+	 * "not receiving" WITHOUT issuing get_irq_status — which, like GetRssiInst,
+	 * can wedge the chip BUSY-high if issued into DC sleep.  Same guard as
+	 * lr11xx_get_rssi_inst; this path runs on every TX gate so it is the other
+	 * async command that could hit the sleep window. */
+	if (gpio_pin_get_dt(&data->hal_ctx.busy)) {
+		return false;
+	}
 
 	/* Non-blocking — skip if SPI busy */
 	if (k_mutex_lock(&data->spi_mutex, K_NO_WAIT) != 0) {
@@ -1416,6 +1506,66 @@ static int lr11xx_hw_init(struct lr11xx_data *data,
 	return 0;
 }
 
+/* ── Wedge-recovery watchdog ────────────────────────────────────────── */
+
+/* Detects the "BUSY stuck high, DIO1 silent" wedge and re-arms RX with a
+ * hardware reset.  False-positive free by construction: a healthy chip —
+ * continuous RX or autonomous DC cycling — always drops BUSY low within one
+ * duty-cycle period, so a *continuous* BUSY-high dwell longer than any
+ * legitimate cycle, with no DIO1 event for >12 s, can only be a genuine wedge.
+ * Passive: reads the BUSY GPIO only (no SPI), so it cannot itself disturb the
+ * chip or race the autonomous DC state machine.  Runs on its own queue at the
+ * DIO1 priority; the confirm poll yields every 2 ms so a real packet arriving
+ * mid-confirm is still processed promptly on the DIO1 queue. */
+static void lr11xx_wedge_watchdog_handler(struct k_work *work)
+{
+	struct k_work_delayable *dwork = k_work_delayable_from_work(work);
+	struct lr11xx_data *data = CONTAINER_OF(dwork, struct lr11xx_data,
+						wedge_work);
+	const struct lr11xx_config *cfg = data->dev->config;
+
+	/* Only monitor steady RX. */
+	if (!data->in_rx_mode || data->tx_active || !data->configured) {
+		goto rearm;
+	}
+
+	/* Recent DIO1 activity = chip provably alive. */
+	if ((k_uptime_get_32() - data->last_dio1_ms) < LR11XX_WEDGE_IDLE_MS) {
+		goto rearm;
+	}
+
+	/* Idle: either quiet RF (chip still DC-cycling) or a wedge.  Poll BUSY
+	 * continuously for one confirm window — a healthy chip shows a low edge
+	 * within a cycle; a wedge stays high the whole window. */
+	{
+		uint32_t start = k_uptime_get_32();
+		bool saw_low = false;
+
+		while ((k_uptime_get_32() - start) < LR11XX_WEDGE_CONFIRM_MS) {
+			if (!gpio_pin_get_dt(&data->hal_ctx.busy)) {
+				saw_low = true;
+				break;
+			}
+			k_msleep(2);
+		}
+		if (saw_low) {
+			goto rearm;   /* alive */
+		}
+	}
+
+	LOG_ERR("LR11xx wedge (BUSY stuck, DIO1 silent >%ums) — hardware reset",
+		LR11XX_WEDGE_IDLE_MS);
+	k_mutex_lock(&data->spi_mutex, K_FOREVER);
+	lr11xx_hardware_reset(data, cfg);
+	lr11xx_start_rx(data, cfg);
+	k_mutex_unlock(&data->spi_mutex);
+	data->last_dio1_ms = k_uptime_get_32();
+
+rearm:
+	k_work_schedule_for_queue(&data->wedge_wq, &data->wedge_work,
+				  K_MSEC(LR11XX_WEDGE_CHECK_MS));
+}
+
 /* ── Driver init (lightweight — runs at POST_KERNEL) ────────────────── */
 
 static int lr11xx_lora_init(const struct device *dev)
@@ -1436,6 +1586,17 @@ static int lr11xx_lora_init(const struct device *dev)
 			   K_THREAD_STACK_SIZEOF(lr11xx_dio1_wq_stack),
 			   K_PRIO_COOP(7), NULL);
 	k_thread_name_set(&data->dio1_wq.thread, "lr11xx_dio1");
+
+	/* Wedge-recovery watchdog on its own queue (see handler).  Same priority
+	 * as DIO1 so it never preempts RX; its confirm poll yields every 2 ms. */
+	k_work_init_delayable(&data->wedge_work, lr11xx_wedge_watchdog_handler);
+	k_work_queue_start(&data->wedge_wq, lr11xx_wedge_wq_stack,
+			   K_THREAD_STACK_SIZEOF(lr11xx_wedge_wq_stack),
+			   K_PRIO_COOP(7), NULL);
+	k_thread_name_set(&data->wedge_wq.thread, "lr11xx_wedge");
+	data->last_dio1_ms = k_uptime_get_32();
+	k_work_schedule_for_queue(&data->wedge_wq, &data->wedge_work,
+				  K_MSEC(LR11XX_WEDGE_CHECK_MS));
 
 	/* Check SPI bus */
 	if (!spi_is_ready_dt(&cfg->bus)) {

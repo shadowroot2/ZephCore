@@ -540,8 +540,23 @@ void LoRaRadioBase::startReceive()
 			const uint32_t sym_us = (uint32_t)
 				(((uint64_t)(1U << sf) * 1000000ULL) / bw_hz);
 			const uint32_t trans_us = hwWakeupTimeUs();
-			const uint32_t deaf_us =
+
+			/* Theoretical per-cycle deaf budget, then derate by
+			 * CONFIG_..._MARGIN_PCT.  The budget assumes the sleep
+			 * clock and wake transition are exact; in reality the
+			 * chip sleep timer runs on an RC oscillator that drifts
+			 * several % over temperature and the wake transition is a
+			 * "may vary" datasheet figure.  Either overshoot pushes
+			 * real deaf time past the budget and drops phase-edge
+			 * packets (strength-independent DC loss).  Deraging the
+			 * whole budget is slightly stricter than deraging sleep
+			 * alone, which is the safe direction. */
+			const uint32_t deaf_budget_us =
 				(uint32_t)(P - 2 * D - 1) * sym_us;
+			const uint32_t deaf_us = deaf_budget_us -
+				(uint32_t)(((uint64_t)deaf_budget_us *
+					    CONFIG_ZEPHCORE_LORA_DC_MARGIN_PCT) /
+					   100U);
 
 			if (deaf_us > trans_us + 2000) {
 				const uint32_t sleep_us = deaf_us - trans_us;

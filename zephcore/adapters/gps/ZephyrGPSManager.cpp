@@ -989,6 +989,21 @@ static void gps_uart_set_power(bool on)
 	if (!device_is_ready(gps_uart_dev)) {
 		return;
 	}
+	if (!on) {
+		/* Let the GNSS line go quiet before suspending. Every caller
+		 * cuts module power (GPS_EN low / reset asserted / regulator
+		 * off) immediately before this, but a byte can still be in
+		 * flight. Settle so it finishes and the driver's RX ISR re-arms,
+		 * leaving the receiver armed-and-idle when the suspend's STOPRX
+		 * fires — that state yields RXTO, whereas a just-stopped,
+		 * un-rearmed receiver can produce none and (pre-0010) hung the
+		 * main thread. ~5 ms comfortably covers one character time at
+		 * GNSS baud plus ISR latency; standby happens at most every few
+		 * minutes, so the cost is negligible. Backstop: patch 0010
+		 * bounds the driver's RXTO wait so a missed RXTO can never hang
+		 * us even if a byte still lands in the race window. */
+		k_msleep(5);
+	}
 	int ret = pm_device_action_run(gps_uart_dev,
 				       on ? PM_DEVICE_ACTION_RESUME
 					  : PM_DEVICE_ACTION_SUSPEND);
