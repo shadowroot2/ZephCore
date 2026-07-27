@@ -447,6 +447,11 @@ void ui_set_leds_disabled(bool disabled)
 	ui_led_on_disabled_changed(disabled);
 }
 
+bool ui_leds_disabled(void)
+{
+	return s_leds_disabled;
+}
+
 /* Start a short forced flash pattern on T-1000E. */
 #if HAS_HEARTBEAT_LED && defined(CONFIG_BOARD_T1000_E)
 static void t1000_led_flash_pattern(uint8_t count)

@@ -25,6 +25,9 @@ LOG_MODULE_REGISTER(zephcore_main, CONFIG_ZEPHCORE_MAIN_LOG_LEVEL);
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/drivers/hwinfo.h>
 #include <zephyr/sys/reboot.h>
+#ifdef CONFIG_POWEROFF
+#include <zephyr/sys/poweroff.h>
+#endif
 #include <ZephyrSensorManager.h>
 #include <helpers/time_sync.h>
 #include <helpers/LocalCLIHelp.h>
@@ -32,6 +35,9 @@ LOG_MODULE_REGISTER(zephcore_main, CONFIG_ZEPHCORE_MAIN_LOG_LEVEL);
 #include "ui_mesh_actions.h"
 #include <helpers/ui/ui_timezone.h>
 #include "oled_power.h"
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
+#include "display.h"
+#endif
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
 #include "buzzer.h"
 #endif
@@ -1163,6 +1169,117 @@ static bool handle_findme_cli(const char *line, char *reply)
 	return true;
 }
 
+/* Local controls use the same preference and hardware paths as their menus. */
+static void companion_manual_shutdown(void)
+{
+#ifdef CONFIG_POWEROFF
+	LOG_INF("CLI: shutting down");
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
+	buzzer_play(MELODY_SHUTDOWN);
+	while (buzzer_is_playing()) {
+		k_sleep(K_MSEC(50));
+	}
+	buzzer_stop();
+	if (buzzer_is_quiet()) {
+		ui_led_flash_shutdown();
+	}
+#endif
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
+	mc_display_on();
+	mc_display_clear();
+	const char *power_off = "Power OFF";
+	uint8_t fw = mc_display_font_width();
+	uint8_t fh = mc_display_font_height();
+	int x = (fw && mc_display_width())
+		? ((int)mc_display_width() - (int)strlen(power_off) * fw) / 2 : 0;
+	int y = (fh && mc_display_height())
+		? ((int)mc_display_height() - fh) / 2 : 0;
+	mc_display_text(x < 0 ? 0 : x, y < 0 ? 0 : y, power_off, false);
+	mc_display_finalize();
+	if (!mc_display_is_epd()) {
+		k_sleep(K_MSEC(1000));
+	}
+#endif
+	ui_prepare_for_system_off();
+	sys_poweroff();
+#endif
+}
+
+static bool handle_local_ui_cli(const char *line, char *reply)
+{
+	if (strcmp(line, "shutdown") == 0) {
+#ifdef CONFIG_POWEROFF
+		companion_manual_shutdown();
+#else
+		strcpy(reply, "ERROR: power-off unavailable");
+#endif
+		return true;
+	}
+
+	if (strcmp(line, "leds") == 0) {
+#if DT_NODE_HAS_PROP(DT_ALIAS(led0), gpios) || DT_NODE_HAS_PROP(DT_ALIAS(led1), gpios)
+		snprintf(reply, CLI_REPLY_SIZE, "LEDs %s",
+			 ui_leds_disabled() ? "off" : "on");
+#else
+		strcpy(reply, "ERROR: no controllable LEDs on this board");
+#endif
+		return true;
+	}
+
+	bool leds_on = strcmp(line, "leds on") == 0;
+	bool leds_off = strcmp(line, "leds off") == 0;
+	if (leds_on || leds_off) {
+#if DT_NODE_HAS_PROP(DT_ALIAS(led0), gpios) || DT_NODE_HAS_PROP(DT_ALIAS(led1), gpios)
+		ui_set_leds_disabled(!leds_on);
+		mesh_set_leds_disabled(!leds_on);
+#if defined(CONFIG_BOARD_T1000_E)
+		ui_led_confirm_state(leds_on);
+#endif
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
+		buzzer_play(leds_on ? MELODY_LED_ON : MELODY_LED_OFF);
+#endif
+		snprintf(reply, CLI_REPLY_SIZE, "OK - LEDs %s", leds_on ? "on" : "off");
+#else
+		strcpy(reply, "ERROR: no controllable LEDs on this board");
+#endif
+		return true;
+	}
+
+	if (strcmp(line, "buzz") == 0) {
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
+		snprintf(reply, CLI_REPLY_SIZE, "Buzzer %s",
+			 buzzer_is_quiet() ? "off" : "on");
+#else
+		strcpy(reply, "ERROR: no buzzer on this board");
+#endif
+		return true;
+	}
+
+	bool buzz_on;
+	if (strcmp(line, "buzz on") == 0) {
+		buzz_on = true;
+	} else if (strcmp(line, "buzz off") == 0) {
+		buzz_on = false;
+	} else {
+		return false;
+	}
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
+	if (buzz_on) {
+		buzzer_set_quiet(false);
+		buzzer_play(MELODY_BUZZER_ON);
+	} else {
+		buzzer_play(MELODY_BUZZER_OFF);
+		buzzer_set_quiet_deferred(true);
+	}
+	mesh_set_buzzer_quiet(!buzz_on);
+	ui_set_buzzer_quiet(buzzer_is_quiet());
+	snprintf(reply, CLI_REPLY_SIZE, "OK - buzzer %s", buzz_on ? "on" : "off");
+#else
+	strcpy(reply, "ERROR: no buzzer on this board");
+#endif
+	return true;
+}
+
 /* Pre-shutdown hook called only from ui_auto_shutdown_check() after its
  * low-battery confirmation. It conditionally queues the #zephcore emergency
  * notice, then retains the existing v-contact/flash fallback behaviour. */
@@ -1204,6 +1321,9 @@ static_assert(VCONTACT_CLI_REPLY_SIZE == CLI_REPLY_SIZE,
 static void companion_cli_exec(const char *line, char *reply)
 {
 	reply[0] = '\0';
+	if (handle_local_ui_cli(line, reply)) {
+		return;
+	}
 	if (handle_findme_cli(line, reply)) {
 		return;
 	}

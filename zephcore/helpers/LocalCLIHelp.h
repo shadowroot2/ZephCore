@@ -8,6 +8,7 @@
 #pragma once
 
 #include <string.h>
+#include <zephyr/devicetree.h>
 
 enum class LocalCLIHelpRole {
 	Companion,
@@ -56,6 +57,12 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"CLI companion:\r\n"
 		"ver\r\nboard\r\nadvert\r\nadvert.zerohop\r\n"
 		"clock [sync]\r\ntime <epoch>\r\ngps [on|off|setloc|advert]\r\n"
+#if DT_NODE_HAS_PROP(DT_ALIAS(led0), gpios) || DT_NODE_HAS_PROP(DT_ALIAS(led1), gpios)
+		"leds [on|off]\r\n"
+#endif
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
+		"buzz [on|off]\r\n"
+#endif
 		"password <value>\r\nclear stats\r\n"
 		"stats-packets\r\nstats-radio\r\nstats-core\r\n"
 		"get/set dutycycle\r\nget/set af\r\nget/set int.thresh\r\n"
@@ -88,7 +95,11 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
 		"findme\r\n"
 #endif
-		"reboot\r\nclkreboot\r\nerase\r\nhelp";
+		"reboot\r\n"
+#if IS_ENABLED(CONFIG_POWEROFF)
+		"shutdown\r\n"
+#endif
+		"clkreboot\r\nerase\r\nhelp";
 	static const char repeater[] =
 		"CLI repeater:\r\n"
 		"setperm <permissions> <pubkey>\r\n"

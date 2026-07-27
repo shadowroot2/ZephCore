@@ -176,6 +176,9 @@ void ui_set_buzzer_quiet(bool quiet);
  */
 void ui_set_leds_disabled(bool disabled);
 
+/** Return the current LED heartbeat state. */
+bool ui_leds_disabled(void);
+
 /**
  * Enable or disable the heartbeat LED.
  */

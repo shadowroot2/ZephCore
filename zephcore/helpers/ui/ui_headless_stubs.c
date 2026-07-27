@@ -129,6 +129,11 @@ WEAK void ui_set_leds_disabled(bool disabled)
 	ARG_UNUSED(disabled);
 }
 
+WEAK bool ui_leds_disabled(void)
+{
+	return true;
+}
+
 WEAK void ui_set_heartbeat_led(bool enabled)
 {
 	ARG_UNUSED(enabled);

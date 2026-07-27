@@ -23,16 +23,20 @@ extern "C" {
 #define MELODY_MSG_CONTACT "MsgRcv3:d=4,o=6,b=200:32e,32g,32b,16c7"
 #define MELODY_MSG_CHANNEL "kerplop:d=16,o=6,b=120:32g#,32c#"
 #define MELODY_ACK         "ack:d=32,o=8,b=120:c"
+#define MELODY_BUZZER_ON   "bon:d=16,o=7,b=200:c,p,c,p,c,p,p,8e"
+#define MELODY_BUZZER_OFF  "bof:d=16,o=7,b=200:c,p,c,p,c,p,p,8g5"
+#define MELODY_LED_ON      "lon:d=16,o=7,b=200:c,p,c,p,c,p,c,p,c,p,p,8e"
+#define MELODY_LED_OFF     "lof:d=16,o=7,b=200:c,p,c,p,c,p,c,p,c,p,p,8g5"
 /* Morse "ZEPHCORE" (unit = 62.5 ms, total = 5.06 s). */
-#define MELODY_FINDME      "FindMe:d=32,o=7,b=120:" \
-                           "16c7.,p,16c7.,p,c7,p,c7,p,p,p," /* Z --.. */ \
-                           "c7,p,p,p,"                     /* E . */ \
-                           "c7,p,16c7.,p,16c7.,p,c7,p,p,p," /* P .--. */ \
-                           "c7,p,c7,p,c7,p,c7,p,p,p,"       /* H .... */ \
-                           "16c7.,p,c7,p,16c7.,p,c7,p,p,p," /* C -.-. */ \
-                           "16c7.,p,16c7.,p,16c7.,p,p,p,"   /* O --- */ \
-                           "c7,p,16c7.,p,c7,p,p,p,"          /* R .-. */ \
-                           "c7"                              /* E . */
+#define MELODY_FINDME      "FindMe:d=32,o=5,b=120:" \
+                           "16c5.,p,16c5.,p,c5,p,c5,p,p,p," /* Z --.. */ \
+                           "c5,p,p,p,"                     /* E . */ \
+                           "c5,p,16c5.,p,16c5.,p,c5,p,p,p," /* P .--. */ \
+                           "c5,p,c5,p,c5,p,c5,p,p,p,"       /* H .... */ \
+                           "16c5.,p,c5,p,16c5.,p,c5,p,p,p," /* C -.-. */ \
+                           "16c5.,p,16c5.,p,16c5.,p,p,p,"   /* O --- */ \
+                           "c5,p,16c5.,p,c5,p,p,p,"          /* R .-. */ \
+                           "c5"                              /* E . */
 
 /**
  * Initialize buzzer from devicetree ('buzzer' alias → pwm-leds).

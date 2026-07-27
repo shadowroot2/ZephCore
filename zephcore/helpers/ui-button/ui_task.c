@@ -78,14 +78,8 @@ LOG_MODULE_REGISTER(ui_task, CONFIG_ZEPHCORE_BOARD_LOG_LEVEL);
  * OFF tail: low G5 (~784Hz)   = "disabled"  */
 #define MELODY_BEEP_2     "b2:d=16,o=7,b=200:c,p,c"
 
-#define MELODY_BUZZER_ON  "bon:d=16,o=7,b=200:c,p,c,p,c,p,p,8e"
-#define MELODY_BUZZER_OFF "bof:d=16,o=7,b=200:c,p,c,p,c,p,p,8g5"
-
 #define MELODY_GPS_ON     "gon:d=16,o=7,b=200:c,p,c,p,c,p,c,p,p,8e"
 #define MELODY_GPS_OFF    "gof:d=16,o=7,b=200:c,p,c,p,c,p,c,p,p,8g5"
-
-#define MELODY_LED_ON     "lon:d=16,o=7,b=200:c,p,c,p,c,p,c,p,c,p,p,8e"
-#define MELODY_LED_OFF    "lof:d=16,o=7,b=200:c,p,c,p,c,p,c,p,c,p,p,8g5"
 
 
 /* ========== Deep Sleep / System OFF ========== */
