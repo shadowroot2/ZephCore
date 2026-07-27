@@ -288,6 +288,10 @@ void ui_set_shutdown_hook(ui_shutdown_fn fn);
  */
 void ui_auto_shutdown_check(void);
 
+/** True after auto-shutdown has committed; UI renderers must not overwrite
+ * the terminal low-battery screen while a queued emergency message drains. */
+bool ui_shutdown_in_progress(void);
+
 /**
  * Drop the battery-refresh freshness timestamp. The next
  * ui_refresh_battery() call is guaranteed to sample the ADC.

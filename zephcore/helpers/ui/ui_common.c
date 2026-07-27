@@ -715,6 +715,11 @@ void ui_set_shutdown_hook(ui_shutdown_fn fn)
 	s_shutdown_hook = fn;
 }
 
+bool ui_shutdown_in_progress(void)
+{
+	return s_shutting_down;
+}
+
 #ifdef CONFIG_ZEPHCORE_UI_DISPLAY
 static void auto_shutdown_warn_screen(bool hold)
 {
@@ -739,6 +744,10 @@ static void auto_shutdown_warn_screen(bool hold)
 	mc_display_text(x1, y1, l1, false);
 	mc_display_text(x2, y1 + fh + 2, l2, false);
 	mc_display_finalize();
+	/* The normal EPD auto-off path leaves SSD16xx blanked.  finalize() writes
+	 * its RAM but does not move pixels until blanking is released, so commit
+	 * this terminal frame explicitly before System OFF. */
+	mc_display_epd_commit();
 
 	/* OLED blanks the instant power drops, so hold long enough to read it.
 	 * EPD keeps the image with no power, so skip the delay. The deferred-
@@ -827,6 +836,7 @@ void ui_auto_shutdown_check(void)
 void ui_set_auto_shutdown_mv(uint16_t mv) { (void)mv; }
 void ui_auto_shutdown_check(void) { }
 void ui_set_shutdown_hook(ui_shutdown_fn fn) { (void)fn; }
+bool ui_shutdown_in_progress(void) { return false; }
 
 #endif /* CONFIG_ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS > 0 */
 

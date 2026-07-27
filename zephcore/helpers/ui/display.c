@@ -857,6 +857,18 @@ void mc_display_epd_full_reset(void)
 	disp_on = false;
 }
 
+void mc_display_epd_commit(void)
+{
+	if (!disp_initialized || !is_epd) {
+		return;
+	}
+
+	/* mc_display_off() leaves SSD16xx blanked so an EPD consumes no power.
+	 * CFB can still fill the controller RAM while blanked, but cannot update
+	 * the physical panel until blanking is released. */
+	display_blanking_off(disp_dev);
+}
+
 const struct device *mc_display_get_device(void)
 {
 	return disp_initialized ? disp_dev : NULL;

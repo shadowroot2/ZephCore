@@ -23,6 +23,16 @@ extern "C" {
 #define MELODY_MSG_CONTACT "MsgRcv3:d=4,o=6,b=200:32e,32g,32b,16c7"
 #define MELODY_MSG_CHANNEL "kerplop:d=16,o=6,b=120:32g#,32c#"
 #define MELODY_ACK         "ack:d=32,o=8,b=120:c"
+/* Morse "ZEPHCORE" (unit = 62.5 ms, total = 5.06 s). */
+#define MELODY_FINDME      "FindMe:d=32,o=7,b=120:" \
+                           "16c7.,p,16c7.,p,c7,p,c7,p,p,p," /* Z --.. */ \
+                           "c7,p,p,p,"                     /* E . */ \
+                           "c7,p,16c7.,p,16c7.,p,c7,p,p,p," /* P .--. */ \
+                           "c7,p,c7,p,c7,p,c7,p,p,p,"       /* H .... */ \
+                           "16c7.,p,c7,p,16c7.,p,c7,p,p,p," /* C -.-. */ \
+                           "16c7.,p,16c7.,p,16c7.,p,p,p,"   /* O --- */ \
+                           "c7,p,16c7.,p,c7,p,p,p,"          /* R .-. */ \
+                           "c7"                              /* E . */
 
 /**
  * Initialize buzzer from devicetree ('buzzer' alias → pwm-leds).
@@ -36,6 +46,12 @@ int buzzer_init(void);
  * No-op if quiet. String must remain valid until melody completes.
  */
 void buzzer_play(const char *rtttl);
+
+/**
+ * Play a melody regardless of user mute and the temporary low-battery mute.
+ * Intended only for an explicitly requested physical-location alert.
+ */
+void buzzer_play_force(const char *rtttl);
 
 /** Stop current melody and silence the buzzer. */
 void buzzer_stop(void);

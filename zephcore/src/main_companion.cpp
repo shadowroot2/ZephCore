@@ -1146,6 +1146,23 @@ static bool handle_vcontact_cli(const char *line, char *reply)
 	return false;
 }
 
+/* Locate this companion with a five-second audible melody.  This explicit
+ * request deliberately overrides user mute and the low-battery sound limit. */
+static bool handle_findme_cli(const char *line, char *reply)
+{
+	if (strcmp(line, "findme") != 0) {
+		return false;
+	}
+
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
+	buzzer_play_force(MELODY_FINDME);
+	strcpy(reply, "OK - findme melody (5 s)");
+#else
+	strcpy(reply, "ERROR: no buzzer on this board");
+#endif
+	return true;
+}
+
 /* Pre-shutdown hook called only from ui_auto_shutdown_check() after its
  * low-battery confirmation. It conditionally queues the #zephcore emergency
  * notice, then retains the existing v-contact/flash fallback behaviour. */
@@ -1187,6 +1204,9 @@ static_assert(VCONTACT_CLI_REPLY_SIZE == CLI_REPLY_SIZE,
 static void companion_cli_exec(const char *line, char *reply)
 {
 	reply[0] = '\0';
+	if (handle_findme_cli(line, reply)) {
+		return;
+	}
 	if (handle_vcontact_cli(line, reply)) {
 		return;
 	}

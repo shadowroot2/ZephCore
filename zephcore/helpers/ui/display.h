@@ -232,6 +232,12 @@ void mc_display_set_auto_off_ms(uint32_t ms);
 void mc_display_epd_full_reset(void);
 
 /**
+ * EPD-only: commit the already-rendered framebuffer when the panel was
+ * blanked by auto-off.  No-op for non-EPD displays.
+ */
+void mc_display_epd_commit(void);
+
+/**
  * Get the raw display device pointer.
  * Used by easter egg (Doom) to bypass CFB and write directly.
  * Returns NULL if display not initialized.

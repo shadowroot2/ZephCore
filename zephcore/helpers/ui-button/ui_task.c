@@ -153,7 +153,7 @@ static void render_work_handler(struct k_work *work)
 {
 	ARG_UNUSED(work);
 
-	if (!ui_initialized) {
+	if (!ui_initialized || ui_shutdown_in_progress()) {
 		return;
 	}
 

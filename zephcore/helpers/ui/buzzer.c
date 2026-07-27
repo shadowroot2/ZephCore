@@ -411,7 +411,7 @@ int buzzer_init(void)
 	return 0;
 }
 
-void buzzer_play(const char *rtttl)
+static void buzzer_play_internal(const char *rtttl, bool force)
 {
 	if (!ctx.initialized) {
 		return;
@@ -422,7 +422,7 @@ void buzzer_play(const char *rtttl)
 		buzzer_stop();
 	}
 
-	if (buzzer_is_quiet()) {
+	if (!force && buzzer_is_quiet()) {
 		return;
 	}
 
@@ -443,6 +443,16 @@ void buzzer_play(const char *rtttl)
 
 	/* Start playing first note immediately on dedicated wq */
 	k_work_reschedule_for_queue(&buzzer_wq, &ctx.note_work, K_NO_WAIT);
+}
+
+void buzzer_play(const char *rtttl)
+{
+	buzzer_play_internal(rtttl, false);
+}
+
+void buzzer_play_force(const char *rtttl)
+{
+	buzzer_play_internal(rtttl, true);
 }
 
 void buzzer_stop(void)

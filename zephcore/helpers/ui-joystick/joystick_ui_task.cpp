@@ -781,7 +781,7 @@ void JoystickUITask::renderLockOverlay()
 /* ===== loop() ===== */
 void JoystickUITask::loop()
 {
-	if (!_initialized) return;
+	if (!_initialized || ui_shutdown_in_progress()) return;
 
 	uint32_t now = k_uptime_get_32();
 
