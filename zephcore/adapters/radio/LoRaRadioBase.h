@@ -68,7 +68,6 @@ public:
 	/* Advanced radio features */
 	int getNoiseFloor() const override;
 	void triggerNoiseFloorCalibrate(int threshold) override;
-	void resetAGC() override;
 	bool isReceiving() override;
 	void recoverRxState() override;
 
@@ -108,6 +107,7 @@ public:
 	void setCadParams(bool auto_enabled, int8_t offset,
 			  uint16_t probe_interval_s, uint8_t busycap_pct) override;
 	void cadMaintenance() override;
+	uint32_t msUntilNextMaintenance() override;
 	int8_t getCadOffset() const override { return _cad_offset; }
 	void resetCadStats() override;
 	int formatCadStatus(char *buf, int cap) override;
@@ -124,7 +124,6 @@ protected:
 	 * latch + raw IRQ bits, never clears.  Backs LoRaRadioBase::isReceiving(). */
 	virtual bool hwIsReceiving() = 0;
 	virtual void hwSetRxBoost(bool enable) = 0;
-	virtual void hwResetAGC() = 0;
 
 	/** GPIO-only BUSY check (no SPI). Default false for chips without duty-cycle sleep. */
 	virtual bool hwIsChipBusy() { return false; }
@@ -194,6 +193,13 @@ protected:
 	int _noise_floor;
 	int _calibration_threshold;
 	uint8_t _ema_unguarded;         /* tick counter for warmup + periodic bypass */
+	/* Absolute uptime deadline of the next floor sample.  The sampler used
+	 * to run on every housekeeping tick, which pinned its cadence to the
+	 * 5 s timer; owning its own deadline is what lets that timer go away.
+	 * Advanced by NOISE_FLOOR_INTERVAL_MS after a sample lands, and by the
+	 * shorter retry when an attempt is turned away because the radio was
+	 * mid-packet / transmitting / in its duty-cycle sleep window. */
+	int64_t _noise_floor_next_ms;
 
 	/* Adaptive CAD state */
 	struct CadLevelStats {
@@ -209,6 +215,11 @@ protected:
 	uint8_t _cad_busycap_pct;       /* airtime cap: max % TX deferred (0 = off) */
 	int64_t _cad_last_probe_ms;
 	int64_t _cad_last_decay_ms;
+	/* Earliest uptime at which a due-but-blocked probe may be retried.  The
+	 * interval check in cadMaintenance() is against _cad_last_probe_ms,
+	 * which only advances on a probe that actually ran — without this a
+	 * blocked probe would report "due now" forever and spin the wake. */
+	int64_t _cad_retry_ms;
 	uint8_t _cad_probe_rr;          /* round-robin index (sweep) / frontier mix counter */
 
 	int8_t pickCadProbeLevel();

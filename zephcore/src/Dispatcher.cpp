@@ -34,7 +34,6 @@ Dispatcher::Dispatcher(Radio &radio, MillisecondClock &ms, PacketManager &mgr)
 	tx_budget_ms = 0;
 	last_budget_update = 0;
 	duty_cycle_window_ms = 0;
-	next_agc_reset_time = 0;
 	_err_flags = 0;
 	radio_nonrx_start = 0;
 	prev_isrecv_mode = true;
@@ -148,15 +147,8 @@ void Dispatcher::loop()
 		} else {
 			return;
 		}
-		next_agc_reset_time = futureMillis(getAGCResetInterval());
 	}
 
-	{
-		Packet *pkt = _mgr->getNextInbound((uint32_t)_ms->getMillis());
-		if (pkt) {
-			processRecvPacket(pkt);
-		}
-	}
 	checkRecv();
 	checkSend();
 }
@@ -165,8 +157,12 @@ void Dispatcher::maintenanceLoop()
 {
 	_radio->triggerNoiseFloorCalibrate(getInterferenceThreshold());
 
-	/* RX mode watchdog: TX counts as "active" to avoid false triggers
-	 * when the 5s housekeeping timer misses brief RX windows. */
+	/* RX mode watchdog: TX counts as "active" to avoid false triggers when
+	 * a maintenance pass lands between brief RX windows.  Diagnostic only —
+	 * it raises a status bit and recovers nothing — but that bit is surfaced
+	 * on every role: the repeater/room-server "stats" CLI reply and binary
+	 * telemetry read _err_flags directly, the MQTT uplink publishes it, and
+	 * the companion returns it in its BLE device-status response. */
 	bool is_active = _radio->isInRecvMode() || !_radio->isSendComplete();
 	if (is_active != prev_isrecv_mode) {
 		prev_isrecv_mode = is_active;
@@ -174,14 +170,9 @@ void Dispatcher::maintenanceLoop()
 			radio_nonrx_start = (uint32_t)_ms->getMillis();
 		}
 	}
-	if (!is_active && (uint32_t)_ms->getMillis() - radio_nonrx_start > 8000) { /* 8s stall threshold */
+	if (!is_active &&
+	    (uint32_t)_ms->getMillis() - radio_nonrx_start > RADIO_STALL_THRESHOLD_MS) {
 		_err_flags |= ERR_EVENT_STARTRX_TIMEOUT;
-	}
-
-	/* Periodic AGC recalibration */
-	if (getAGCResetInterval() > 0 && millisHasNowPassed(next_agc_reset_time)) {
-		_radio->resetAGC();
-		next_agc_reset_time = futureMillis(getAGCResetInterval());
 	}
 
 	/* Adaptive CAD: probe scheduling + staircase live in the radio;
@@ -197,6 +188,31 @@ void Dispatcher::maintenanceLoop()
 		cad_offset_shadow = cad_off;
 		onCadOffsetChanged(cad_off);
 	}
+}
+
+uint32_t Dispatcher::msUntilNextMaintenance()
+{
+	uint32_t now = (uint32_t)_ms->getMillis();
+	/* Noise floor sampling + CAD probing/decay both live in the radio and
+	 * carry their own deadlines. */
+	uint32_t next = _radio->msUntilNextMaintenance();
+
+	/* Radio stall watchdog.  Only pending while the radio is known to be
+	 * neither receiving nor transmitting as of the last pass — the
+	 * transition into that state is itself event-driven (TX start, RX done,
+	 * CAD), so there is nothing to poll for while the radio is active.
+	 *
+	 * The already-flagged check is load-bearing: the verdict is a latched
+	 * status bit, so once raised its deadline sits permanently in the past.
+	 * Without this the query would return 0 on every call and the event loop
+	 * would re-arm at its minimum interval forever. */
+	if (!prev_isrecv_mode && !(_err_flags & ERR_EVENT_STARTRX_TIMEOUT)) {
+		next = maintenanceSooner(
+			next, maintenanceUntil(now, radio_nonrx_start +
+						       RADIO_STALL_THRESHOLD_MS));
+	}
+
+	return next;
 }
 
 bool Dispatcher::tryParsePacket(Packet *pkt, const uint8_t *raw, int len)

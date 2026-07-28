@@ -12,13 +12,31 @@
 #include <zephyr/drivers/lora.h>
 
 /* --- Noise floor calibration (EMA) ---
- * Median-of-N RSSI reads → EMA.  alpha = 1/8, converges in ~8 ticks (~40s).
+ * Median-of-N RSSI reads → EMA.  alpha = 1/8, converges in ~8 ticks.
  * Samples above floor + SAMPLING_THRESHOLD rejected as interference. */
 #define NOISE_FLOOR_EMA_SHIFT            3   /* alpha = 1/(1<<3) = 1/8 */
 #define NOISE_FLOOR_SAMPLES_PER_TICK     8   /* median of 8 reads per tick */
 #define NOISE_FLOOR_UNGUARDED_INTERVAL   16  /* ticks between unfiltered samples (power of 2) */
 #define NOISE_FLOOR_SAMPLING_THRESHOLD   14  /* dB above floor to reject as interference */
 #define DEFAULT_NOISE_FLOOR              0   /* sentinel: seed from first sample */
+
+/* Sampling cadence.  The sampler used to run once per housekeeping tick and so
+ * inherited that 5 s period; owning an explicit interval is what let the
+ * periodic tick go away (see mesh/Maintenance.h).  Both the 8-sample warmup and
+ * the every-16th-sample unguarded bypass are counted in samples, so they scale
+ * with this value — see the Kconfig help before changing it. */
+#define NOISE_FLOOR_INTERVAL_MS  CONFIG_ZEPHCORE_NOISE_FLOOR_INTERVAL_MS
+/* A due sample that lands while the radio is mid-packet, transmitting, or in
+ * its duty-cycle sleep window is retried on this deadline rather than waiting a
+ * full interval.
+ *
+ * 5000 is not a tuned guess: before the deadline conversion a blocked sample
+ * simply waited for the next 5 s housekeeping tick, so this reproduces the old
+ * retry grid exactly.  It matters under RX duty cycle, where the chip is in its
+ * sleep window a large fraction of the time and blocked attempts are the norm
+ * rather than the exception — a shorter retry there can push the wake rate
+ * ABOVE the fixed tick this conversion replaced, inverting the whole point. */
+#define NOISE_FLOOR_RETRY_MS             5000
 
 /* --- Adaptive CAD (LBT detPeak calibration) ---
  * Housekeeping-tick CAD probes accumulate per-level busy/free statistics;
@@ -67,6 +85,11 @@
 #define CAD_BUSY_DEFER_HYST_PERMILLE 100  /* descend only if frontier busy <= cap-10% */
 #define CAD_PROBE_RSSI_GUARD     7     /* dB above floor = channel visibly busy, skip probe */
 #define CAD_STATS_DECAY_MS       (6UL * 3600UL * 1000UL)  /* halve counters every 6 h */
+/* Retry deadline for a due probe turned away by the idle-RX guards or the
+ * RSSI prefilter.  Those paths leave _cad_last_probe_ms untouched (by design —
+ * a skipped probe is not a probe), so the deadline query needs its own marker
+ * to avoid reporting "due now" on every wake. */
+#define CAD_PROBE_RETRY_MS       2000
 
 /* --- RX ring buffer --- */
 #define RX_RING_SIZE 8  /* ~2 KB; buffers burst arrivals at SF7/BW500 */

@@ -169,12 +169,6 @@ protected:
     int getInterferenceThreshold() const override {
         return _prefs.interference_threshold;
     }
-    int getAGCResetInterval() const override {
-        if (_prefs.rx_duty_cycle) {
-            return 0;
-        }
-        return ((int)_prefs.agc_reset_interval) * 4000;
-    }
     uint8_t getExtraAckTransmitCount() const override {
         return _prefs.multi_acks;
     }
@@ -287,6 +281,13 @@ public:
 
     void handleCommand(uint32_t sender_timestamp, char* command, char* reply);
     void loop();
+
+    /* Folds this role's own time-based work in loop() — advert timers,
+     * tempradio apply/revert, ACL flush, uplink status, mesh time sync — into
+     * the base maintenance deadline, so the event loop can arm one wake that
+     * covers both loop() and maintenanceLoop().  Every item here is an
+     * absolute deadline already; none of them was ever a poll. */
+    uint32_t msUntilNextMaintenance() override;
 
     bool hasPendingWork() const;
 };

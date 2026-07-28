@@ -34,6 +34,14 @@ void Mesh::maintenanceLoop()
 	_contention.tick(now);
 }
 
+uint32_t Mesh::msUntilNextMaintenance()
+{
+	uint32_t now = (uint32_t)_ms->getMillis();
+
+	return maintenanceSooner(Dispatcher::msUntilNextMaintenance(),
+				 _contention.msUntilNextTick(now));
+}
+
 void Mesh::extendPendingRetransmit(uint32_t hash32)
 {
 	uint32_t now = (uint32_t)_ms->getMillis();

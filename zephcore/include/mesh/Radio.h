@@ -6,6 +6,7 @@
 #pragma once
 
 #include <stdint.h>
+#include <mesh/Maintenance.h>
 
 namespace mesh {
 
@@ -22,7 +23,6 @@ public:
 
 	virtual int getNoiseFloor() const { return 0; }
 	virtual void triggerNoiseFloorCalibrate(int threshold) { (void)threshold; }
-	virtual void resetAGC() {}
 
 	virtual bool isInRecvMode() const = 0;
 	virtual bool isReceiving() { return false; }
@@ -49,6 +49,11 @@ public:
 	/* One housekeeping tick of the CAD calibrator: maybe run a probe,
 	 * update stats, maybe step the staircase (auto mode). */
 	virtual void cadMaintenance() {}
+
+	/* Milliseconds until this radio's periodic work (noise floor sampling,
+	 * CAD probing/decay) next needs a call, or MAINTENANCE_IDLE when it has
+	 * nothing pending.  Radios with no periodic work keep the default. */
+	virtual uint32_t msUntilNextMaintenance() { return MAINTENANCE_IDLE; }
 	virtual int8_t getCadOffset() const { return 0; }
 	virtual void resetCadStats() {}
 	/* Writes a human-readable status block; returns chars written (0 = not

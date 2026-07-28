@@ -198,7 +198,7 @@ All `set uplink.*` changes are saved immediately and only applied after reboot.
 | `get guest.password` | Guest access password |
 | `get owner.info` | Owner/contact info (pipes `\|` display as newlines) |
 | `get int.thresh` | Interference threshold |
-| `get agc.reset.interval` | AGC reset interval in ms (stored in 4 s steps) |
+| `get agc.reset.interval` | Removed - replies `use rxduty instead` |
 | `get multi.acks` | Extra ACK transmit count (`0` or `1`) |
 | `get path.hash.mode` | Path hashing algorithm: `0`, `1`, or `2` |
 | `get loop.detect` | Loop detection level: `off`, `minimal`, `moderate`, or `strict` |
@@ -243,7 +243,7 @@ Changes are persisted immediately unless noted. Some require a reboot.
 | `set guest.password <pwd>` | | Set guest access password |
 | `set owner.info <text>` | Use `\|` for newlines | Owner/contact information |
 | `set int.thresh <value>` | | Interference detection threshold |
-| `set agc.reset.interval <ms>` | Rounded to 4 s | AGC reset interval |
+| `set agc.reset.interval <ms>` | Accepted, ignored | Removed - replies `use rxduty instead` |
 | `set multi.acks <0\|1>` | | Enable extra ACK transmits |
 | `set path.hash.mode <mode>` | 0, 1, or 2 | Path hashing algorithm |
 | `set loop.detect <mode>` | `off`, `minimal`, `moderate`, `strict` | Loop detection sensitivity |

@@ -80,6 +80,7 @@ public:
 	void begin();
 	void loop();
 	void maintenanceLoop();
+	uint32_t msUntilNextMaintenance() override;
 
 	LocalIdentity self_id;
 

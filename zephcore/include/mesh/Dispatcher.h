@@ -11,6 +11,7 @@
 #include <mesh/Utils.h>
 #include <mesh/Radio.h>
 #include <mesh/Clock.h>
+#include <mesh/Maintenance.h>
 #include <string.h>
 
 namespace mesh {
@@ -29,8 +30,6 @@ public:
 	virtual uint32_t getOutboundSchedule(int i) const = 0;
 	virtual bool rescheduleOutbound(int i, uint32_t new_scheduled_for) = 0;
 	virtual uint8_t peekNextOutboundPriority(uint32_t now) const = 0;
-	virtual void queueInbound(Packet *packet, uint32_t scheduled_for) = 0;
-	virtual Packet *getNextInbound(uint32_t now) = 0;
 };
 
 /* Notifies event loop of pending TX so it can schedule a wake. */
@@ -42,6 +41,9 @@ typedef uint32_t DispatcherAction;
 #define ACTION_MANUAL_HOLD       (1)
 #define ACTION_RETRANSMIT(pri)   (((uint32_t)1 + (pri))<<24)
 #define ACTION_RETRANSMIT_DELAYED(pri, _delay)  ((((uint32_t)1 + (pri))<<24) | (_delay))
+
+/* Radio considered stalled after this long neither receiving nor sending. */
+#define RADIO_STALL_THRESHOLD_MS    8000
 
 #define ERR_EVENT_FULL              (1 << 0)
 #define ERR_EVENT_CAD_TIMEOUT       (1 << 1)
@@ -57,7 +59,6 @@ class Dispatcher {
 	uint32_t last_budget_update;
 	uint32_t duty_cycle_window_ms;
 	uint32_t radio_nonrx_start;
-	uint32_t next_agc_reset_time;
 	bool prev_isrecv_mode;
 	int8_t cad_offset_shadow;
 	bool cad_offset_shadow_valid;
@@ -89,7 +90,6 @@ protected:
 	virtual uint32_t getCADFailRetryDelay() const;
 	virtual uint32_t getCADFailMaxDuration() const;
 	virtual int getInterferenceThreshold() const { return 0; }
-	virtual int getAGCResetInterval() const { return 0; }
 	virtual uint32_t getDutyCycleWindowMs() const { return 3600000UL; } /* 1h default */
 	/* Adaptive CAD: called when the auto staircase moved the operating
 	 * detPeak offset — subclasses persist it to prefs. */
@@ -99,6 +99,13 @@ public:
 	void begin();
 	void loop();
 	void maintenanceLoop();
+
+	/* Milliseconds until maintenanceLoop() next has work, or
+	 * MAINTENANCE_IDLE if nothing is pending.  Cheap and side-effect free:
+	 * the event loop calls it after every pass to size its next sleep.
+	 * Subclasses that add their own time-based work in loop() override this
+	 * and fold their deadlines in — see RepeaterMesh. */
+	virtual uint32_t msUntilNextMaintenance();
 	Packet *obtainNewPacket();
 	void releasePacket(Packet *packet);
 	void sendPacket(Packet *packet, uint8_t priority, uint32_t delay_millis = 0);

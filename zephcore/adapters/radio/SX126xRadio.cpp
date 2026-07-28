@@ -80,12 +80,6 @@ void SX126xRadio::hwSetRxBoost(bool enable)
 	sx126x_set_rx_boost(_dev, enable);
 }
 
-void SX126xRadio::hwResetAGC()
-{
-	/* Warm sleep → Calibrate(ALL) → re-calibrate image → re-apply RX settings */
-	sx126x_reset_agc(_dev);
-}
-
 bool SX126xRadio::hwIsChipBusy()
 {
 	return sx126x_is_chip_busy(_dev);

@@ -1429,6 +1429,48 @@ void RepeaterMesh::loop() {
     last_millis = now;
 }
 
+uint32_t RepeaterMesh::msUntilNextMaintenance() {
+    uint32_t now = (uint32_t)_ms->getMillis();
+    uint32_t next = mesh::Mesh::msUntilNextMaintenance();
+
+    /* Advert timers.  0 means "disabled" for both — flood defaults to 47 h,
+     * periodic local advert is off unless configured. */
+    if (next_flood_advert) {
+        next = mesh::maintenanceSooner(next, mesh::maintenanceUntil(now, next_flood_advert));
+    }
+    if (next_local_advert) {
+        next = mesh::maintenanceSooner(next, mesh::maintenanceUntil(now, next_local_advert));
+    }
+
+    /* Temporary radio params: apply, then revert. Both CLI-armed, both 0 when idle. */
+    if (set_radio_at) {
+        next = mesh::maintenanceSooner(next, mesh::maintenanceUntil(now, set_radio_at));
+    }
+    if (revert_radio_at) {
+        next = mesh::maintenanceSooner(next, mesh::maintenanceUntil(now, revert_radio_at));
+    }
+
+    /* Deferred ACL write-back. */
+    if (dirty_contacts_expiry) {
+        next = mesh::maintenanceSooner(next, mesh::maintenanceUntil(now, dirty_contacts_expiry));
+    }
+
+#if IS_ENABLED(CONFIG_ZEPHCORE_REPEATER_UPLINK) && IS_ENABLED(CONFIG_MQTT_LIB)
+    if (_uplink_next_status_at) {
+        next = mesh::maintenanceSooner(next,
+                                       mesh::maintenanceUntil(now, _uplink_next_status_at));
+    }
+#endif
+
+    /* Mesh time sync evaluates at most every 15 min, and only when enabled. */
+    if (_prefs.meshtimesync) {
+        next = mesh::maintenanceSooner(
+            next, _timesync.msUntilNextEval((uint32_t)(k_uptime_get() / 1000)));
+    }
+
+    return next;
+}
+
 void RepeaterMesh::timeSyncTick() {
     if (!_prefs.meshtimesync) return;
     if (!_timesync.runTick(*getRTCClock())) return;

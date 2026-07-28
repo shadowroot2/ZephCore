@@ -29,7 +29,6 @@ protected:
 	int16_t hwGetCurrentRSSI() override;
 	bool hwIsReceiving() override;
 	void hwSetRxBoost(bool enable) override;
-	void hwResetAGC() override;
 	bool hwIsChipBusy() override;
 	uint32_t hwWakeupTimeUs() override;
 	int hwCadProbe(int8_t level) override;

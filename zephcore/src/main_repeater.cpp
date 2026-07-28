@@ -59,6 +59,19 @@ extern "C" void bt_ctlr_assert_handle(char *file, uint32_t line)
 #include "ui_task.h"
 #include <helpers/ui/ui_timezone.h>
 
+/* Headless repeaters link the weak no-op ui_* stubs (ui_headless_stubs.c), so
+ * the periodic UI refresh in the maintenance pass is pure work for nothing on
+ * them.  Guard the hot path on a real ui_* implementation being linked; the
+ * one-shot calls at init and in the CLI reply path stay unguarded, matching
+ * the rest of the file.
+ *
+ * This MUST mirror the CMake condition that selects the stubs, not the display
+ * devicetree node: ZEPHCORE_UI_DESIGN_BUTTON is enabled by BUTTONS *or*
+ * DISPLAY *or* BUZZER, so a board with buttons/buzzer and no panel still links
+ * the real UI and still needs these updates. */
+#define ZEPHCORE_HAS_UI (IS_ENABLED(CONFIG_ZEPHCORE_UI_DESIGN_BUTTON) || \
+			 IS_ENABLED(CONFIG_ZEPHCORE_UI_DESIGN_JOYSTICK))
+
 /* Radio + mesh includes (shared header selects LR1110 or SX126x) */
 #include <mesh/RadioIncludes.h>
 
@@ -87,15 +100,26 @@ static const struct gpio_dt_spec led1 = GPIO_DT_SPEC_GET(LED1_NODE, gpios);
 #define MESH_EVENT_LORA_RX       BIT(0)  /* LoRa packet received */
 #define MESH_EVENT_LORA_TX_DONE  BIT(1)  /* LoRa TX complete */
 #define MESH_EVENT_CLI_RX        BIT(2)  /* CLI command received */
-#define MESH_EVENT_HOUSEKEEPING  BIT(3)  /* Periodic housekeeping (noise floor, etc.) */
+#define MESH_EVENT_MAINTENANCE   BIT(3)  /* A maintenance deadline came due */
 #define MESH_EVENT_GPS_ACTION    BIT(4)  /* GPS state change (must run on main thread!) */
 #define MESH_EVENT_TX_DRAIN      BIT(5)  /* Outbound packet delay expired, run checkSend */
 #define MESH_EVENT_RTC_SAVE      BIT(6)  /* Hardware-RTC write requested off-main */
 #define MESH_EVENT_INIT_ADVERT   BIT(7)  /* Deferred boot advert — send on main thread */
-#define MESH_EVENT_ALL           (MESH_EVENT_LORA_RX | MESH_EVENT_LORA_TX_DONE | MESH_EVENT_CLI_RX | MESH_EVENT_HOUSEKEEPING | MESH_EVENT_GPS_ACTION | MESH_EVENT_TX_DRAIN | MESH_EVENT_RTC_SAVE | MESH_EVENT_INIT_ADVERT)
+#define MESH_EVENT_ALL           (MESH_EVENT_LORA_RX | MESH_EVENT_LORA_TX_DONE | MESH_EVENT_CLI_RX | MESH_EVENT_MAINTENANCE | MESH_EVENT_GPS_ACTION | MESH_EVENT_TX_DRAIN | MESH_EVENT_RTC_SAVE | MESH_EVENT_INIT_ADVERT)
 
-/* Housekeeping interval - infrequent to preserve power savings */
-#define HOUSEKEEPING_INTERVAL_MS CONFIG_ZEPHCORE_HOUSEKEEPING_INTERVAL_MS
+/* Maintenance is deadline-driven, not periodic: after every pass the loop asks
+ * the mesh when its soonest pending deadline is (msUntilNextMaintenance) and
+ * arms a single one-shot wake for exactly that moment.  An idle repeater with
+ * nothing scheduled therefore sleeps until its next real deadline instead of
+ * waking on a fixed cadence.
+ *
+ * MAINTENANCE_BACKSTOP_MS bounds that: it caps how long we will go without a
+ * pass even when everything reports idle, so a deadline that is missed or
+ * mis-reported degrades to the old behaviour instead of wedging.
+ * MAINTENANCE_MIN_MS floors it, so an item that is due-but-blocked (radio
+ * mid-packet, duty-cycle sleep window) re-arms shortly rather than spinning. */
+#define MAINTENANCE_BACKSTOP_MS CONFIG_ZEPHCORE_MAINTENANCE_BACKSTOP_MS
+#define MAINTENANCE_MIN_MS      50
 
 /* Event object for mesh loop */
 static struct k_event mesh_events;
@@ -130,15 +154,16 @@ K_MSGQ_DEFINE(cli_cmd_queue, sizeof(struct cli_cmd_line), 4, 4);
 
 /* Work items for event-driven processing */
 static void cli_rx_work_fn(struct k_work *work);
-static void housekeeping_timer_fn(struct k_timer *timer);
+static void maintenance_timer_fn(struct k_timer *timer);
 static void tx_drain_work_fn(struct k_work *work);
 static void initial_advert_work_fn(struct k_work *work);
 K_WORK_DEFINE(cli_rx_work, cli_rx_work_fn);
 K_WORK_DELAYABLE_DEFINE(tx_drain_work, tx_drain_work_fn);
 K_WORK_DELAYABLE_DEFINE(initial_advert_work, initial_advert_work_fn);
 
-/* Housekeeping timer for periodic tasks (noise floor calibration, etc.) */
-K_TIMER_DEFINE(housekeeping_timer, housekeeping_timer_fn, NULL);
+/* One-shot maintenance wake, re-armed after every loop pass (see
+ * arm_maintenance_wake).  Not periodic — the period is the deadline. */
+K_TIMER_DEFINE(maintenance_timer, maintenance_timer_fn, NULL);
 
 /* Forward declarations */
 #ifdef ZEPHCORE_LORA
@@ -252,11 +277,43 @@ static void process_cli_commands(void)
 }
 #endif
 
-/* Housekeeping timer callback - signals event to wake mesh loop periodically */
-static void housekeeping_timer_fn(struct k_timer *timer)
+/* Maintenance deadline expired — wake the mesh loop to run the pass. */
+static void maintenance_timer_fn(struct k_timer *timer)
 {
 	ARG_UNUSED(timer);
-	k_event_post(&mesh_events, MESH_EVENT_HOUSEKEEPING);
+	k_event_post(&mesh_events, MESH_EVENT_MAINTENANCE);
+}
+
+/* Ask the mesh for its soonest pending deadline and arm the one-shot for it.
+ * Called after every loop pass, whatever woke us: any event may have created
+ * or cleared a deadline (a queued advert, a CLI tempradio command, a CAD probe
+ * that just ran), so the schedule is recomputed from scratch each time rather
+ * than tracked incrementally.
+ *
+ * The backstop below is an unconditional CEILING on the wait, not a fallback
+ * used only when everything reports idle.  That means it must stay well above
+ * the shortest legitimate recurring deadline (the noise-floor sampler, and the
+ * CAD probe) or it becomes the effective period and the deadline scheduling
+ * buys nothing — see ZEPHCORE_MAINTENANCE_BACKSTOP_MS. */
+static void arm_maintenance_wake(void)
+{
+	uint32_t delay = MAINTENANCE_BACKSTOP_MS;
+
+#ifdef ZEPHCORE_LORA
+	if (repeater_mesh_ptr) {
+		uint32_t next = repeater_mesh_ptr->msUntilNextMaintenance();
+
+		if (next < delay) {
+			delay = next;
+		}
+	}
+#endif
+
+	if (delay < MAINTENANCE_MIN_MS) {
+		delay = MAINTENANCE_MIN_MS;
+	}
+
+	k_timer_start(&maintenance_timer, K_MSEC(delay), K_NO_WAIT);
 }
 
 #ifdef ZEPHCORE_LORA
@@ -406,9 +463,8 @@ static void repeater_event_loop(void)
 	/* Print startup banner (no prompt - Arduino style) */
 	cli_print("\r\n=== ZephCore Repeater ===\r\n");
 
-	/* Start housekeeping timer for periodic maintenance tasks */
-	k_timer_start(&housekeeping_timer, K_MSEC(HOUSEKEEPING_INTERVAL_MS),
-		      K_MSEC(HOUSEKEEPING_INTERVAL_MS));
+	/* Arm the first maintenance wake; every pass below re-arms it. */
+	arm_maintenance_wake();
 
 	for (;;) {
 		/* Wait for any mesh event - blocks until signaled */
@@ -444,8 +500,8 @@ static void repeater_event_loop(void)
 		}
 #endif
 
-		/* Periodic housekeeping — maintenance + display refresh */
-		if (events & MESH_EVENT_HOUSEKEEPING) {
+		/* A maintenance deadline came due — run the pass. */
+		if (events & MESH_EVENT_MAINTENANCE) {
 #ifdef ZEPHCORE_LORA
 			/* Radio maintenance: noise floor calibration, AGC reset,
 			 * RX watchdog.  Separated from loop() so these never run
@@ -460,16 +516,21 @@ static void repeater_event_loop(void)
 			}
 #endif
 
+#if ZEPHCORE_HAS_UI
 			ui_set_clock(rtc_clock.getCurrentTime());
 
 #ifdef ZEPHCORE_LORA
 			/* Refresh live radio state (noise floor, TX power
-			 * reduction, RX/TX mode, packet counters). */
+			 * reduction, RX/TX mode, packet counters).  Headless
+			 * repeaters compile this out entirely — every ui_set_*
+			 * below it is a weak no-op there (ui_headless_stubs.c),
+			 * so the whole block was pure work for nothing. */
 			refresh_repeater_ui_radio_state();
 
 			/* Battery is now refreshed lazily from ui_pages_render() with
 			 * a 30 s freshness guard — no periodic ADC fire here. */
 #endif
+#endif /* ZEPHCORE_HAS_UI */
 		}
 
 		/* Off-main RTC write request (gps_fix_callback runs in modem_chat
@@ -484,6 +545,11 @@ static void repeater_event_loop(void)
 			}
 #endif
 		}
+
+		/* Re-arm for the soonest deadline this pass left behind.  Done for
+		 * every wake, not just maintenance ones: a CLI command, an inbound
+		 * packet or a GPS fix can all create or clear a deadline. */
+		arm_maintenance_wake();
 	}
 }
 

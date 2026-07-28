@@ -47,9 +47,11 @@ LoRaRadioBase::LoRaRadioBase(const struct device *lora_dev, MainBoard &board,
 	  _last_rssi(0), _last_snr(0),
 	  _rx_head(0), _rx_tail(0),
 	  _noise_floor(DEFAULT_NOISE_FLOOR), _calibration_threshold(0), _ema_unguarded(0),
+	  _noise_floor_next_ms(0),
 	  _cad_auto(false), _cad_offset(0), _cad_probe_interval_s(0),
 	  _cad_busycap_pct(0),
-	  _cad_last_probe_ms(0), _cad_last_decay_ms(0), _cad_probe_rr(0),
+	  _cad_last_probe_ms(0), _cad_last_decay_ms(0), _cad_retry_ms(0),
+	  _cad_probe_rr(0),
 	  _rx_duty_cycle_enabled(IS_ENABLED(CONFIG_ZEPHCORE_LORA_RX_DUTY_CYCLE)),
 	  _rx_boost_enabled(true),
 	  _dc_last_rx_us(0), _dc_last_sleep_us(0),
@@ -771,6 +773,19 @@ void LoRaRadioBase::triggerNoiseFloorCalibrate(int threshold)
 {
 	_calibration_threshold = threshold;
 
+	/* Own the sampling cadence rather than inheriting the caller's.  Early
+	 * calls are a no-op, so this is safe to invoke from any wake. */
+	int64_t now = k_uptime_get();
+
+	if (_noise_floor_next_ms != 0 && now < _noise_floor_next_ms) {
+		return;
+	}
+
+	/* Due.  Any bail-out below is a blocked attempt, not a completed one —
+	 * push the deadline out by the short retry so msUntilNextMaintenance()
+	 * cannot report "due now" on a loop. */
+	_noise_floor_next_ms = now + NOISE_FLOOR_RETRY_MS;
+
 	if (!atomic_get(&_in_recv_mode) || atomic_get(&_tx_active)) {
 		return;
 	}
@@ -794,10 +809,15 @@ void LoRaRadioBase::triggerNoiseFloorCalibrate(int threshold)
 	for (int i = 0; i < NOISE_FLOOR_SAMPLES_PER_TICK; i++) {
 		samples[i] = hwGetCurrentRSSI();
 		if (samples[i] == -128) {
-			/* Chip busy or RSSI read contended — retry next tick. */
+			/* Chip busy or RSSI read contended — keep the short
+			 * retry deadline set above and try again shortly. */
 			return;
 		}
 	}
+
+	/* A full sample landed: next one is a full interval away. */
+	_noise_floor_next_ms = now + NOISE_FLOOR_INTERVAL_MS;
+
 	/* Insertion sort — tiny array, branch-friendly on Cortex-M */
 	for (int i = 1; i < NOISE_FLOOR_SAMPLES_PER_TICK; i++) {
 		int16_t key = samples[i];
@@ -856,35 +876,6 @@ void LoRaRadioBase::triggerNoiseFloorCalibrate(int threshold)
 
 	LOG_DBG("noise_floor_cal: rssi=%d, floor=%d, tick=%u",
 		rssi, _noise_floor, _ema_unguarded - 1);
-}
-
-void LoRaRadioBase::resetAGC()
-{
-	/* Don't reset AGC while transmitting or receiving — warm sleep would
-	 * abort the TX or corrupt the incoming packet.  maintenanceLoop()
-	 * will retry next housekeeping cycle.
-	 * Also skip if the chip is in its duty-cycle sleep phase: hwResetAGC()
-	 * holds the SPI mutex with K_FOREVER and would hang for 3 s. */
-	if (atomic_get(&_tx_active) || isReceiving()) {
-		return;
-	}
-	if (_rx_duty_cycle_enabled && hwIsChipBusy()) {
-		return;
-	}
-
-	hwResetAGC();
-
-	/* Warm sleep + calibrate leaves the radio in STANDBY.
-	 * Restart receive if we were in RX mode. */
-	if (atomic_get(&_in_recv_mode)) {
-		startReceive();
-	}
-
-	/* Reset noise floor so it reconverges from scratch (seed + warmup).
-	 * Without this, a stuck _noise_floor of -120 makes the sampling threshold
-	 * too low to accept normal samples, self-reinforcing the stuck value. */
-	_noise_floor = DEFAULT_NOISE_FLOOR;
-	_ema_unguarded = 0;
 }
 
 bool LoRaRadioBase::isReceiving()
@@ -1101,6 +1092,14 @@ void LoRaRadioBase::cadMaintenance()
 	if (now - _cad_last_probe_ms < (int64_t)_cad_probe_interval_s * 1000) {
 		return;
 	}
+	if (now < _cad_retry_ms) {
+		return;
+	}
+
+	/* Due.  _cad_last_probe_ms only advances on a probe that actually runs,
+	 * so hold a short retry deadline across the guards below — otherwise a
+	 * blocked probe reports "due now" to msUntilNextMaintenance() forever. */
+	_cad_retry_ms = now + CAD_PROBE_RETRY_MS;
 
 	/* Same guards as the noise-floor calibrator: only probe from idle
 	 * continuous/duty-cycle RX, never during TX or an active packet,
@@ -1206,6 +1205,57 @@ void LoRaRadioBase::cadMaintenance()
 	if (_cad_auto) {
 		cadStaircaseStep();
 	}
+}
+
+/* int64 uptime delta → the uint32 "ms from now" the maintenance contract wants.
+ * Already-passed deadlines saturate at 0 (due now), far-future ones at IDLE. */
+static uint32_t clampDeadline(int64_t remaining_ms)
+{
+	if (remaining_ms <= 0) {
+		return 0;
+	}
+	if (remaining_ms >= (int64_t)mesh::MAINTENANCE_IDLE) {
+		return mesh::MAINTENANCE_IDLE;
+	}
+	return (uint32_t)remaining_ms;
+}
+
+/* When does this radio next need a maintenance call?  Two independent items:
+ * the noise floor sampler (always running) and the CAD calibrator (only when
+ * probing is enabled).  Both hold absolute uptime deadlines, so this is a pure
+ * read — it must not touch the chip, since the event loop calls it on every
+ * wake to decide how long it may sleep. */
+uint32_t LoRaRadioBase::msUntilNextMaintenance()
+{
+	int64_t now = k_uptime_get();
+	uint32_t next = mesh::MAINTENANCE_IDLE;
+
+	/* Noise floor.  A zero deadline means "never sampled yet" — due now. */
+	if (_noise_floor_next_ms == 0) {
+		return 0;
+	}
+	next = clampDeadline(_noise_floor_next_ms - now);
+
+	if (_cad_probe_interval_s == 0) {
+		return next;
+	}
+
+	/* CAD probe: whichever is later of the interval since the last probe
+	 * that actually ran and any retry deadline left by a blocked one. */
+	int64_t probe_at = _cad_last_probe_ms + (int64_t)_cad_probe_interval_s * 1000;
+
+	if (probe_at < _cad_retry_ms) {
+		probe_at = _cad_retry_ms;
+	}
+	next = mesh::maintenanceSooner(next, clampDeadline(probe_at - now));
+
+	/* Stats decay. _cad_last_decay_ms == 0 means the first call latches it
+	 * rather than decaying, so treat that as due now. */
+	if (_cad_last_decay_ms == 0) {
+		return 0;
+	}
+	return mesh::maintenanceSooner(
+		next, clampDeadline(_cad_last_decay_ms + (int64_t)CAD_STATS_DECAY_MS - now));
 }
 
 int LoRaRadioBase::formatCadStatus(char *buf, int cap)

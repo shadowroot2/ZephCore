@@ -62,7 +62,10 @@ struct NodePrefs {
 	uint8_t flood_max_unscoped;     // hop limit for un-scoped (ROUTE_TYPE_FLOOD) floods
 	uint8_t flood_max_advert;       // hop limit for ADVERT floods (curbs advert churn)
 	uint8_t interference_threshold;
-	uint8_t agc_reset_interval;     // stored as secs / 4
+	uint8_t agc_reset_interval;     // RETIRED: read/written for on-disk layout
+	                                // compatibility only, never acted on.
+	                                // "set agc.reset.interval" replies
+	                                // "use rxduty instead".
 	// Power saving
 	uint8_t powersaving_enabled;
 	// GPS settings
