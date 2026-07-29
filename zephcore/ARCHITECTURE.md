@@ -430,7 +430,7 @@ dBm): it gates on signal *strength* ≈ link budget, blind to distance, so
 raising it means "react to strong signals only, ignore faint/echo". The right
 LBT sensitivity is site-dependent and cannot be derived from the RSSI floor.
 `LoRaRadioBase::cadMaintenance()` (housekeeping tick) runs one calibration CAD
-probe per `cad.probe.interval` (default **15 s**) at a signed **level** relative
+probe per `probe.interval` (default **15 s**) at a signed **level** relative
 to the family's per-SF base detPeak, restarts RX, and classifies busy verdicts
 with a ground-truth filter. **Key property:** the probe is *skipped* when RSSI >
 floor+7 dB, so probes only ever sample the quiet/faint regime — the whole loop
@@ -760,9 +760,10 @@ Shutdown.
 
 Single button; tap-count → key-code mapping comes from the board's devicetree `tap-codes` (up to 5). Typical mapping:
 - 1 tap → Page next
-- 2 taps → Flood advert
+- 2 taps → LED heartbeat toggle
 - 3 taps → Buzzer toggle
-- 4 taps → GPS toggle (immediate, no delay)
+- 4 taps → GPS toggle
+- 5 taps → Flood advert (immediate, no delay)
 
 ### 8.4 Buzzer
 
@@ -854,6 +855,7 @@ Build strings and flash methods: `boards/supported_boards.md` and `boards/exampl
 | SenseCAP Solar | nRF52840 | SX1262 | L76K | - | QSPI, battery monitor |
 | XIAO nRF52840 + Wio-SX1262 | nRF52840 | SX1262 | - | - | - |
 | ProMicro SX1262 | nRF52840 | SX1262 (E22-900M30S) | Yes | - | Button, LED, battery ADC |
+| muzi works R1 Neo | nRF52840 | SX1262 | Yes | - | Buzzer, button, RX8130CE RTC, latched-rail power-off |
 | XIAO nRF54L15 | nRF54L15 | SX1262 | - | - | Contacts capped at 450 |
 | XIAO ESP32-C3 | ESP32-C3 | SX1262 | - | - | Contacts capped at 300 |
 | XIAO ESP32-C6 | ESP32-C6 | SX1262 | - | - | - |

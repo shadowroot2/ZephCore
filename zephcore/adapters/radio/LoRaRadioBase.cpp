@@ -47,10 +47,12 @@ LoRaRadioBase::LoRaRadioBase(const struct device *lora_dev, MainBoard &board,
 	  _last_rssi(0), _last_snr(0),
 	  _rx_head(0), _rx_tail(0),
 	  _noise_floor(DEFAULT_NOISE_FLOOR), _calibration_threshold(0), _ema_unguarded(0),
-	  _noise_floor_next_ms(0),
-	  _cad_auto(false), _cad_offset(0), _cad_probe_interval_s(0),
+	  _noise_floor_next_ms(0), _noise_floor_retries(0),
+	  _measure_interval_ms(CONFIG_ZEPHCORE_NOISE_FLOOR_INTERVAL_MS),
+	  _sample_rssi(0), _sample_channel_quiet(false), _sample_fresh(false),
+	  _cad_auto(false), _cad_offset(0), _probe_interval_s(0),
 	  _cad_busycap_pct(0),
-	  _cad_last_probe_ms(0), _cad_last_decay_ms(0), _cad_retry_ms(0),
+	  _cad_last_probe_ms(0), _cad_last_decay_ms(0),
 	  _cad_probe_rr(0),
 	  _rx_duty_cycle_enabled(IS_ENABLED(CONFIG_ZEPHCORE_LORA_RX_DUTY_CYCLE)),
 	  _rx_boost_enabled(true),
@@ -777,13 +779,28 @@ void LoRaRadioBase::triggerNoiseFloorCalibrate(int threshold)
 	 * calls are a no-op, so this is safe to invoke from any wake. */
 	int64_t now = k_uptime_get();
 
+	/* Invalidate first: "fresh" must mean a sample landed in THIS pass, not
+	 * merely at some point in the past.  cadMaintenance() runs immediately
+	 * after us and treats the verdict as current-channel ground truth, so a
+	 * carried-over sample would let it probe on a reading taken a full
+	 * interval ago — on a different channel state entirely. */
+	_sample_fresh = false;
+
 	if (_noise_floor_next_ms != 0 && now < _noise_floor_next_ms) {
 		return;
 	}
 
 	/* Due.  Any bail-out below is a blocked attempt, not a completed one —
-	 * push the deadline out by the short retry so msUntilNextMaintenance()
-	 * cannot report "due now" on a loop. */
+	 * push the deadline out by the retry so msUntilNextMaintenance() cannot
+	 * report "due now" on a loop.  Bounded for the same reason as the CAD
+	 * probe: an unbounded retry grid makes the retry period the de-facto
+	 * wake period whenever the radio is persistently busy. */
+	if (_noise_floor_retries >= NOISE_FLOOR_MAX_RETRIES) {
+		_noise_floor_retries = 0;
+		_noise_floor_next_ms = now + _measure_interval_ms;
+		return;
+	}
+	_noise_floor_retries++;
 	_noise_floor_next_ms = now + NOISE_FLOOR_RETRY_MS;
 
 	if (!atomic_get(&_in_recv_mode) || atomic_get(&_tx_active)) {
@@ -816,7 +833,8 @@ void LoRaRadioBase::triggerNoiseFloorCalibrate(int threshold)
 	}
 
 	/* A full sample landed: next one is a full interval away. */
-	_noise_floor_next_ms = now + NOISE_FLOOR_INTERVAL_MS;
+	_noise_floor_next_ms = now + _measure_interval_ms;
+	_noise_floor_retries = 0;
 
 	/* Insertion sort — tiny array, branch-friendly on Cortex-M */
 	for (int i = 1; i < NOISE_FLOOR_SAMPLES_PER_TICK; i++) {
@@ -831,10 +849,31 @@ void LoRaRadioBase::triggerNoiseFloorCalibrate(int threshold)
 	int16_t rssi = (samples[NOISE_FLOOR_SAMPLES_PER_TICK / 2 - 1] +
 			samples[NOISE_FLOOR_SAMPLES_PER_TICK / 2]) / 2;
 
-	/* First sample after reset (DEFAULT_NOISE_FLOOR == 0): seed directly. */
+	/* Publish this sample for cadMaintenance().  The CAD probe needs exactly
+	 * the same fact we just established — "is the channel at its floor right
+	 * now?" — and used to answer it with its own single hwGetCurrentRSSI() on
+	 * its own deadline.  That cost a second wake per interval (measured: two
+	 * 15 s grids ~3 s apart) and made the worse decision, since one raw read
+	 * is precisely what the median-of-8 exists to defend against.
+	 *
+	 * The verdict is taken against the floor BEFORE this sample is folded in,
+	 * so it compares a new observation to the established floor rather than
+	 * to one already dragged toward it. */
+	_sample_rssi = rssi;
+	_sample_channel_quiet = (_noise_floor == DEFAULT_NOISE_FLOOR) ||
+				(rssi <= _noise_floor + CAD_PROBE_RSSI_GUARD);
+	_sample_fresh = true;
+
+	/* First sample after reset (DEFAULT_NOISE_FLOOR == 0): seed directly.
+	 * The lower clamp tracks the active bandwidth — thermal noise is
+	 * 10*log10(BW) so a fixed rail pins narrow-BW presets several dB high
+	 * (BW 31.25 kHz sits ~3 dB below BW 62.5) and never engages at all on
+	 * wide ones. */
+	int16_t floor_min = noise_floor_min_dbm(getActiveBandwidthKHzX10() / 10);
+
 	if (_noise_floor == DEFAULT_NOISE_FLOOR) {
 		_noise_floor = rssi;
-		if (_noise_floor < -120) _noise_floor = -120;
+		if (_noise_floor < floor_min) _noise_floor = floor_min;
 		if (_noise_floor > -50) _noise_floor = -50;
 		_ema_unguarded = 0;
 		LOG_DBG("noise_floor_cal: seed=%d", _noise_floor);
@@ -871,7 +910,7 @@ void LoRaRadioBase::triggerNoiseFloorCalibrate(int threshold)
 	int half = W / 2;                                      /* 4 */
 	int step = (diff + (diff > 0 ? half : -half)) / W;
 	_noise_floor += step;
-	if (_noise_floor < -120) _noise_floor = -120;
+	if (_noise_floor < floor_min) _noise_floor = floor_min;
 	if (_noise_floor > -50) _noise_floor = -50;
 
 	LOG_DBG("noise_floor_cal: rssi=%d, floor=%d, tick=%u",
@@ -934,12 +973,25 @@ void LoRaRadioBase::setCadParams(bool auto_enabled, int8_t offset,
 
 	_cad_auto = auto_enabled;
 	_cad_offset = offset;
-	_cad_probe_interval_s = probe_interval_s;
+	_probe_interval_s = probe_interval_s;
 	_cad_busycap_pct = busycap_pct;
+
+	/* One interval governs every periodic radio measurement, because there
+	 * is only one measurement: the noise-floor sampler takes a median-of-8
+	 * and the CAD probe consumes that same reading (see cadMaintenance).
+	 * Splitting them into two knobs could only ever express a rate the
+	 * hardware does not actually run at.
+	 *
+	 * 0 means "CAD probing off" — the floor sampler still has to run, so it
+	 * falls back to the build-time default. */
+	_measure_interval_ms = probe_interval_s
+			       ? (uint32_t)probe_interval_s * 1000U
+			       : (uint32_t)CONFIG_ZEPHCORE_NOISE_FLOOR_INTERVAL_MS;
+
 	hwCadSetPeakOffset(_cad_offset);
 
-	LOG_INF("cad: auto=%d offset=%d probe_interval=%us busycap=%u%%",
-		(int)auto_enabled, (int)offset, (unsigned)probe_interval_s,
+	LOG_INF("cad: auto=%d offset=%d measure_interval=%ums busycap=%u%%",
+		(int)auto_enabled, (int)offset, (unsigned)_measure_interval_ms,
 		(unsigned)busycap_pct);
 }
 
@@ -1075,7 +1127,7 @@ void LoRaRadioBase::cadStaircaseStep()
 
 void LoRaRadioBase::cadMaintenance()
 {
-	if (_cad_probe_interval_s == 0) {
+	if (_probe_interval_s == 0) {
 		return;
 	}
 
@@ -1089,39 +1141,30 @@ void LoRaRadioBase::cadMaintenance()
 		_cad_last_decay_ms = now;
 	}
 
-	if (now - _cad_last_probe_ms < (int64_t)_cad_probe_interval_s * 1000) {
-		return;
-	}
-	if (now < _cad_retry_ms) {
-		return;
-	}
+	/* No separate probe-interval check: the probe interval IS the measurement
+	 * interval (setCadParams derives _measure_interval_ms from it), so a
+	 * fresh sample means a probe is due by construction. */
 
-	/* Due.  _cad_last_probe_ms only advances on a probe that actually runs,
-	 * so hold a short retry deadline across the guards below — otherwise a
-	 * blocked probe reports "due now" to msUntilNextMaintenance() forever. */
-	_cad_retry_ms = now + CAD_PROBE_RETRY_MS;
-
-	/* Same guards as the noise-floor calibrator: only probe from idle
-	 * continuous/duty-cycle RX, never during TX or an active packet,
-	 * never while the chip is in its duty-cycle sleep (BUSY) phase. */
-	if (!atomic_get(&_in_recv_mode) || atomic_get(&_tx_active)) {
+	/* Ride on the noise-floor sampler rather than measuring independently.
+	 *
+	 * A fresh sample means the sampler ran THIS pass, which already proves
+	 * everything the probe needs: the radio was idle in RX, not transmitting,
+	 * not mid-packet, and out of its duty-cycle sleep window — the sampler
+	 * applies exactly those guards before it reads.  So there is nothing left
+	 * to re-check, no separate deadline, and no retry budget: if no sample
+	 * landed this pass, the probe simply waits for the next one.
+	 *
+	 * This is what makes the wake cost one per interval instead of two.  It
+	 * also upgrades the ground-truth prefilter from a single raw RSSI read to
+	 * the sampler's median-of-8 — the probe is trying to establish that the
+	 * channel is quiet, and a busy verdict taken over real traffic teaches
+	 * nothing about false positives, so the outlier rejection matters here. */
+	if (!_sample_fresh) {
 		return;
 	}
-	if (!isRadioReady() || isReceiving()) {
-		return;
-	}
+	_sample_fresh = false;
 
-	/* Ground-truth prefilter: skip when the channel is visibly busy —
-	 * a busy verdict against strong traffic teaches us nothing about
-	 * false positives.  (Below-noise-floor LoRa can't be excluded here;
-	 * the post-probe RX check below handles that side.) */
-	int16_t rssi = hwGetCurrentRSSI();
-
-	if (rssi == -128) {
-		return;
-	}
-	if (_noise_floor != DEFAULT_NOISE_FLOOR &&
-	    rssi > _noise_floor + CAD_PROBE_RSSI_GUARD) {
+	if (!_sample_channel_quiet) {
 		return;
 	}
 
@@ -1236,18 +1279,15 @@ uint32_t LoRaRadioBase::msUntilNextMaintenance()
 	}
 	next = clampDeadline(_noise_floor_next_ms - now);
 
-	if (_cad_probe_interval_s == 0) {
+	if (_probe_interval_s == 0) {
 		return next;
 	}
 
-	/* CAD probe: whichever is later of the interval since the last probe
-	 * that actually ran and any retry deadline left by a blocked one. */
-	int64_t probe_at = _cad_last_probe_ms + (int64_t)_cad_probe_interval_s * 1000;
-
-	if (probe_at < _cad_retry_ms) {
-		probe_at = _cad_retry_ms;
-	}
-	next = mesh::maintenanceSooner(next, clampDeadline(probe_at - now));
+	/* The CAD probe deliberately contributes NO deadline of its own.  It runs
+	 * off the noise-floor sampler's measurement (see cadMaintenance), so its
+	 * wake is already accounted for above.  Giving it a second deadline is
+	 * what produced two independent 15 s grids ~3 s apart — one extra wake
+	 * per interval, forever, on every repeater. */
 
 	/* Stats decay. _cad_last_decay_ms == 0 means the first call latches it
 	 * rather than decaying, so treat that as due now. */
@@ -1277,7 +1317,7 @@ int LoRaRadioBase::formatCadStatus(char *buf, int cap)
 		      "a:%s o:%d pk:%d(b%u/4s) iv:%us bc:%u%%",
 		      _cad_auto ? "on" : "off", (int)_cad_offset,
 		      (int)base + _cad_offset, base,
-		      (unsigned)_cad_probe_interval_s,
+		      (unsigned)_probe_interval_s,
 		      (unsigned)_cad_busycap_pct);
 
 	/* Only the 3 rungs around the operating offset — the far rungs are mildly

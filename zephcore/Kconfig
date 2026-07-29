@@ -424,24 +424,28 @@ config ZEPHCORE_MAINTENANCE_BACKSTOP_MS
 	  UNCONDITIONAL, so this is a safety net against a deadline that is missed
 	  or mis-reported — not a value that should ever bind in normal operation.
 
-	  MUST stay above ZEPHCORE_NOISE_FLOOR_INTERVAL_MS and the CAD probe
-	  interval (prefs cad_probe_interval, default 15 s), which are the shortest
-	  recurring deadlines on an idle repeater.  Set at or below them and this
-	  silently becomes the wake period, reproducing the old fixed 5 s tick and
-	  making the deadline scheduling a no-op.  That is exactly the bug the
-	  original 5000 default shipped with.
+	  MUST stay above the radio measurement interval ("set probe.interval",
+	  default 15 s; ZEPHCORE_NOISE_FLOOR_INTERVAL_MS when probing is off) —
+	  the shortest recurring deadline on an idle repeater.  Set at or below it
+	  and this silently becomes the wake period, reproducing the old fixed 5 s
+	  tick and making the deadline scheduling a no-op.  That is exactly the bug
+	  the original 5000 default shipped with.
 
 	  Lowering it costs wakes without improving responsiveness — real work is
 	  already scheduled at its own deadline.  Raising it widens the window in
 	  which a scheduling bug goes unnoticed.
 
 config ZEPHCORE_NOISE_FLOOR_INTERVAL_MS
-	int "Noise floor sampling interval (ms)"
-	default 5000 if ZEPHCORE_ROLE_COMPANION || ZEPHCORE_ROLE_ROOM_SERVER
+	int "Default radio measurement interval (ms)"
 	default 15000
 	range 1000 120000
 	help
-	  How often the radio samples ambient RSSI to update the noise floor EMA.
+	  Fallback cadence for periodic radio measurements — the noise-floor RSSI
+	  sample and the CAD probe that consumes it.
+
+	  This is only the DEFAULT.  At runtime the "probe.interval" pref governs
+	  both (see set probe.interval); this value applies when that pref is 0,
+	  i.e. CAD probing is switched off but the floor sampler still has to run.
 
 	  This used to be implicit: the sampler ran once per housekeeping tick, so
 	  it inherited that 5 s period.  The sampler lives in shared radio code, so

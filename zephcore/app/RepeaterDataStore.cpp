@@ -203,29 +203,15 @@ bool RepeaterDataStore::loadPrefs(NodePrefs& prefs) {
      * read leaves the constructor defaults flood_max_unscoped=64, flood_max_advert=8). */
     fs_read(&file, &prefs.flood_max_unscoped, sizeof(prefs.flood_max_unscoped));
     fs_read(&file, &prefs.flood_max_advert, sizeof(prefs.flood_max_advert));
-    if (entry.size == 298) {
-        /* Local timezone layout. A non-boolean byte identifies it without
-         * misreading an early SmartCAD development blob. */
-        uint8_t legacy[2] = { 0, 0 };
-        fs_read(&file, legacy, sizeof(legacy));
-        int16_t tz = (int16_t)((uint16_t)legacy[0] | ((uint16_t)legacy[1] << 8));
-        if (tz >= -1439 && tz <= 1439 && (legacy[0] > 1 || legacy[1] > 1)) {
-            prefs.ui_timezone_offset_minutes = tz;
-        } else {
-            prefs.meshtimesync = legacy[0];
-            prefs.cad_auto = legacy[1];
-        }
-    } else {
-        fs_read(&file, &prefs.meshtimesync, sizeof(prefs.meshtimesync));
-        fs_read(&file, &prefs.cad_auto, sizeof(prefs.cad_auto));
-        fs_read(&file, &prefs.cad_offset, sizeof(prefs.cad_offset));
-        fs_read(&file, &prefs.cad_probe_interval, sizeof(prefs.cad_probe_interval));
-        fs_read(&file, &prefs.cad_busycap, sizeof(prefs.cad_busycap));
-        int16_t tz = prefs.ui_timezone_offset_minutes;
-        if (fs_read(&file, &tz, sizeof(tz)) == (ssize_t)sizeof(tz)) {
-            prefs.ui_timezone_offset_minutes = tz;
-        }
-    }
+    /* Mesh time sync (absent in <297-byte files; no-op EOF read keeps default 0 = off) */
+    fs_read(&file, &prefs.meshtimesync, sizeof(prefs.meshtimesync));
+    /* Adaptive CAD (absent in <300-byte files; no-op EOF reads keep defaults
+     * auto=0, offset=0, probe_interval=60) */
+    fs_read(&file, &prefs.cad_auto, sizeof(prefs.cad_auto));
+    fs_read(&file, &prefs.cad_offset, sizeof(prefs.cad_offset));
+    fs_read(&file, &prefs.probe_interval, sizeof(prefs.probe_interval));
+    /* cad_busycap absent in <301-byte files; EOF read keeps default 25 */
+    fs_read(&file, &prefs.cad_busycap, sizeof(prefs.cad_busycap));
 
     fs_close(&file);
 
@@ -257,7 +243,7 @@ bool RepeaterDataStore::loadPrefs(NodePrefs& prefs) {
     if (prefs.meshtimesync > 1) prefs.meshtimesync = 0;
     if (prefs.cad_auto > 1) prefs.cad_auto = 0;
     if (prefs.cad_offset < CAD_OFFSET_MIN || prefs.cad_offset > CAD_OFFSET_MAX) prefs.cad_offset = 0;
-    if (prefs.cad_probe_interval != 0 && prefs.cad_probe_interval < 10) prefs.cad_probe_interval = 10;
+    if (prefs.probe_interval != 0 && prefs.probe_interval < 10) prefs.probe_interval = 10;
     if (prefs.cad_busycap > 90) prefs.cad_busycap = 90;
     if (prefs.ui_timezone_offset_minutes < -1439 || prefs.ui_timezone_offset_minutes > 1439) {
         prefs.ui_timezone_offset_minutes = CONFIG_ZEPHCORE_UI_TIMEZONE_OFFSET_MINUTES;
@@ -366,7 +352,7 @@ bool RepeaterDataStore::savePrefs(const NodePrefs& prefs) {
     /* Adaptive CAD (offsets 297-300) */
     fs_write(&file, &prefs.cad_auto, sizeof(prefs.cad_auto));
     fs_write(&file, &prefs.cad_offset, sizeof(prefs.cad_offset));
-    fs_write(&file, &prefs.cad_probe_interval, sizeof(prefs.cad_probe_interval));
+    fs_write(&file, &prefs.probe_interval, sizeof(prefs.probe_interval));
     fs_write(&file, &prefs.cad_busycap, sizeof(prefs.cad_busycap));
     fs_write(&file, &prefs.ui_timezone_offset_minutes, sizeof(prefs.ui_timezone_offset_minutes));
 

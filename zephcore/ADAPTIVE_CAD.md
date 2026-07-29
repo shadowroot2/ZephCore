@@ -90,7 +90,7 @@ caveat noted at the end, viewed through the strong/faint lens.)
 
 ## How it works
 
-Every `cad.probe.interval` seconds (default 15), when the radio is idle
+Every `probe.interval` seconds (default 15), when the radio is idle
 in receive mode, the firmware runs one **calibration CAD probe** and
 immediately re-arms RX. A probe takes one CAD duration — about 4 ms at
 SF7/250 kHz, up to ~130 ms at SF12/125 kHz — so the added radio deaf time
@@ -248,7 +248,7 @@ any time with `set cad.auto on`. Offset changes (manual or automatic)
 appear in the log as `cad: step down/up -> offset N`.
 
 To collect dry-run data faster, drop the interval (probing is temporary
-then): `set cad.probe.interval 10`. At the default 15 s, allow ~a day for
+then): `set probe.interval 10`. At the default 15 s, allow ~a day for
 a knee to resolve clearly, longer to capture day/night variation.
 
 ## Command reference
@@ -258,7 +258,7 @@ a knee to resolve clearly, longer to capture day/night variation.
 | `get cad` | | Status + per-level statistics (see above). |
 | `set cad.auto <on\|off>` | **on** | Staircase controller acts on the stats. Off = observe/hand-tune. |
 | `set cad.offset <n>` | 0 | Operating offset, −8…12. Negative = more sensitive. Applied live. |
-| `set cad.probe.interval <sec>` | 15 | Probe cadence; 0 disables probing (and freezes auto), 10–255 otherwise. |
+| `set probe.interval <sec>` | 15 | Shared cadence for the noise-floor sample and the CAD probe that consumes it; 0 disables probing (and freezes auto), 10–255 otherwise. |
 | `set cad.busycap <pct>` | 25 | Faint-tolerance / airtime cap: raise detPeak once more than this % of (quiet-moment) probes trip on faint signals. Lower = reject faint/echo harder (busy backbones); 0 = off. 10–90 otherwise. |
 | `set cad.reset` | | Clear accumulated statistics (RAM only). |
 

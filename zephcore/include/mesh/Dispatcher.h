@@ -35,6 +35,12 @@ public:
 /* Notifies event loop of pending TX so it can schedule a wake. */
 typedef void (*tx_queued_callback_t)(uint32_t delay_ms, void *user_data);
 
+/* Wakes the event loop so loop() runs at the next opportunity.  For off-main
+ * code that sets state loop() must drain (MQTT CONNACK, SNTP): without it that
+ * state waits for whatever deadline happens to fire next, which since the move
+ * to deadline-driven maintenance can be minutes rather than the old 5 s tick. */
+typedef void (*wake_callback_t)(void *user_data);
+
 typedef uint32_t DispatcherAction;
 
 #define ACTION_RELEASE           (0)
@@ -66,6 +72,8 @@ class Dispatcher {
 	uint32_t n_recv_flood, n_recv_direct;
 	tx_queued_callback_t _tx_queued_cb;
 	void *_tx_queued_user_data;
+	wake_callback_t _wake_cb;
+	void *_wake_user_data;
 
 	void processRecvPacket(Packet *pkt);
 
@@ -125,6 +133,15 @@ public:
 	void setTxQueuedCallback(tx_queued_callback_t cb, void *user_data) {
 		_tx_queued_cb = cb;
 		_tx_queued_user_data = user_data;
+	}
+	void setWakeCallback(wake_callback_t cb, void *user_data) {
+		_wake_cb = cb;
+		_wake_user_data = user_data;
+	}
+	/* Safe from any thread: the callback only posts an event.  Public because
+	 * off-main C callbacks (e.g. the SNTP hook) are not class members. */
+	void notifyWake() {
+		if (_wake_cb) _wake_cb(_wake_user_data);
 	}
 	bool millisHasNowPassed(uint32_t timestamp) const;
 	uint32_t futureMillis(int millis_from_now) const;

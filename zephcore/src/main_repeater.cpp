@@ -105,7 +105,8 @@ static const struct gpio_dt_spec led1 = GPIO_DT_SPEC_GET(LED1_NODE, gpios);
 #define MESH_EVENT_TX_DRAIN      BIT(5)  /* Outbound packet delay expired, run checkSend */
 #define MESH_EVENT_RTC_SAVE      BIT(6)  /* Hardware-RTC write requested off-main */
 #define MESH_EVENT_INIT_ADVERT   BIT(7)  /* Deferred boot advert — send on main thread */
-#define MESH_EVENT_ALL           (MESH_EVENT_LORA_RX | MESH_EVENT_LORA_TX_DONE | MESH_EVENT_CLI_RX | MESH_EVENT_MAINTENANCE | MESH_EVENT_GPS_ACTION | MESH_EVENT_TX_DRAIN | MESH_EVENT_RTC_SAVE | MESH_EVENT_INIT_ADVERT)
+#define MESH_EVENT_WAKE          BIT(8)  /* Off-main state set; run loop() promptly */
+#define MESH_EVENT_ALL           (MESH_EVENT_LORA_RX | MESH_EVENT_LORA_TX_DONE | MESH_EVENT_CLI_RX | MESH_EVENT_MAINTENANCE | MESH_EVENT_GPS_ACTION | MESH_EVENT_TX_DRAIN | MESH_EVENT_RTC_SAVE | MESH_EVENT_INIT_ADVERT | MESH_EVENT_WAKE)
 
 /* Maintenance is deadline-driven, not periodic: after every pass the loop asks
  * the mesh when its soonest pending deadline is (msUntilNextMaintenance) and
@@ -298,10 +299,11 @@ static void maintenance_timer_fn(struct k_timer *timer)
 static void arm_maintenance_wake(void)
 {
 	uint32_t delay = MAINTENANCE_BACKSTOP_MS;
+	uint32_t next = MAINTENANCE_BACKSTOP_MS;
 
 #ifdef ZEPHCORE_LORA
 	if (repeater_mesh_ptr) {
-		uint32_t next = repeater_mesh_ptr->msUntilNextMaintenance();
+		next = repeater_mesh_ptr->msUntilNextMaintenance();
 
 		if (next < delay) {
 			delay = next;
@@ -312,6 +314,15 @@ static void arm_maintenance_wake(void)
 	if (delay < MAINTENANCE_MIN_MS) {
 		delay = MAINTENANCE_MIN_MS;
 	}
+
+	/* Both figures, because which one is binding is the whole diagnosis:
+	 *   next=15000 armed=15000  — a real deadline won; working as intended
+	 *   next=15000 armed=5000   — the backstop is clamping (it must stay
+	 *                             above the noise-floor/CAD intervals)
+	 *   next=0     armed=50     — a deadline reports due but its state is
+	 *                             not advancing; repeated = spin
+	 * mesh::MAINTENANCE_IDLE (0x7FFFFFFF) as `next` means nothing pending. */
+	LOG_DBG("maint: next=%u armed=%u", (unsigned)next, (unsigned)delay);
 
 	k_timer_start(&maintenance_timer, K_MSEC(delay), K_NO_WAIT);
 }
@@ -353,6 +364,15 @@ static void tx_queued_callback(uint32_t delay_ms, void *user_data)
 {
 	ARG_UNUSED(user_data);
 	k_work_reschedule(&tx_drain_work, K_MSEC(delay_ms));
+}
+
+/* Off-main code (MQTT CONNACK, SNTP) set state that loop() must drain.  Post
+ * only — this runs on the MQTT publisher / WiFi thread, and k_event_post is
+ * the sole thing safe to do from there. */
+static void wake_callback(void *user_data)
+{
+	ARG_UNUSED(user_data);
+	k_event_post(&mesh_events, MESH_EVENT_WAKE);
 }
 #endif
 
@@ -495,23 +515,44 @@ static void repeater_event_loop(void)
 		/* Packet processing — only on radio/CLI/TX events */
 		if (repeater_mesh_ptr &&
 		    (events & (MESH_EVENT_LORA_RX | MESH_EVENT_LORA_TX_DONE |
-			       MESH_EVENT_CLI_RX | MESH_EVENT_TX_DRAIN))) {
+			       MESH_EVENT_CLI_RX | MESH_EVENT_TX_DRAIN |
+			       MESH_EVENT_WAKE))) {
 			repeater_mesh_ptr->loop();
 		}
 #endif
 
-		/* A maintenance deadline came due — run the pass. */
+#ifdef ZEPHCORE_LORA
+		/* Radio maintenance runs OPPORTUNISTICALLY, on every pass, whatever
+		 * woke us — not only when its own timer fired.
+		 *
+		 * Every item inside is deadline-gated internally, so this is nearly
+		 * free when nothing is due.  The point is what it does to a busy
+		 * node: a hilltop repeater is already waking constantly for packets,
+		 * so maintenance rides along on those wakes, its deadlines advance,
+		 * and arm_maintenance_wake() below keeps pushing the timer out — the
+		 * maintenance timer then almost never fires and costs no wakes at
+		 * all.  Running it only on its own event (as this did originally)
+		 * inverted that: the busiest nodes, which can least afford it, paid
+		 * the full timer cadence on top of their packet wakes, and every
+		 * blocked sample burned a retry against a channel that is busy for
+		 * sustained reasons (real traffic in isReceiving(), the RSSI
+		 * prefilter) rather than the transient duty-cycle sleep window the
+		 * retries were sized for.
+		 *
+		 * Ordering matters: this sits AFTER packet processing so an inbound
+		 * frame is handled before we spend SPI time on an RSSI sweep. */
+		if (repeater_mesh_ptr) {
+			repeater_mesh_ptr->maintenanceLoop();
+		}
+#endif
+
+		/* A maintenance deadline came due — run the time-based work too. */
 		if (events & MESH_EVENT_MAINTENANCE) {
 #ifdef ZEPHCORE_LORA
-			/* Radio maintenance: noise floor calibration, AGC reset,
-			 * RX watchdog.  Separated from loop() so these never run
-			 * on packet-driven events. */
+			/* Drive loop() so time-based actions (advert timers,
+			 * tempradio set/revert, contacts flush, uplink status)
+			 * still fire when no LoRa/CLI traffic wakes the loop. */
 			if (repeater_mesh_ptr) {
-				repeater_mesh_ptr->maintenanceLoop();
-				/* Also drive loop() so time-based actions (advert
-				 * timers, tempradio set/revert, contacts flush,
-				 * uplink status) still fire when no LoRa/CLI
-				 * traffic wakes the event loop. */
 				repeater_mesh_ptr->loop();
 			}
 #endif
@@ -641,6 +682,7 @@ int main(void)
 	lora_radio.setRxCallback(lora_rx_callback, nullptr);
 	lora_radio.setTxDoneCallback(lora_tx_done_callback, nullptr);
 	repeater_mesh.setTxQueuedCallback(tx_queued_callback, nullptr);
+	repeater_mesh.setWakeCallback(wake_callback, nullptr);
 
 	/* Load or generate identity BEFORE begin(). First-boot keygen runs
 	 * the layered entropy mixer + Ed25519 derive + reserved-prefix
@@ -689,7 +731,7 @@ int main(void)
 	lora_radio.setRxBoost(prefs->rx_boost != 0);
 	lora_radio.enableRxDutyCycle(prefs->rx_duty_cycle != 0);
 	lora_radio.setCadParams(prefs->cad_auto != 0, prefs->cad_offset,
-				prefs->cad_probe_interval, prefs->cad_busycap);
+				prefs->probe_interval, prefs->cad_busycap);
 
 	/* Feed initial UI state from loaded prefs */
 	ui_set_node_name(prefs->node_name);

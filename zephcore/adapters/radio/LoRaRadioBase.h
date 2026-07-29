@@ -200,6 +200,16 @@ protected:
 	 * shorter retry when an attempt is turned away because the radio was
 	 * mid-packet / transmitting / in its duty-cycle sleep window. */
 	int64_t _noise_floor_next_ms;
+	uint8_t _noise_floor_retries;   /* consecutive blocked attempts, capped */
+	/* Shared cadence for every periodic radio measurement (floor sample +
+	 * CAD probe).  Runtime, from the probe.interval pref. */
+	uint32_t _measure_interval_ms;
+	/* Latest floor sample, published for cadMaintenance() so the CAD probe
+	 * shares this measurement instead of taking its own single RSSI read.
+	 * _sample_fresh is true only within the pass that produced it. */
+	int16_t _sample_rssi;
+	bool _sample_channel_quiet;
+	bool _sample_fresh;
 
 	/* Adaptive CAD state */
 	struct CadLevelStats {
@@ -211,7 +221,7 @@ protected:
 	CadLevelStats _cad_stats[CAD_NUM_LEVELS];
 	bool _cad_auto;                 /* staircase acts on the stats */
 	int8_t _cad_offset;             /* operating detPeak offset (levels) */
-	uint16_t _cad_probe_interval_s; /* 0 = probing disabled */
+	uint16_t _probe_interval_s; /* 0 = CAD probing disabled; drives _measure_interval_ms */
 	uint8_t _cad_busycap_pct;       /* airtime cap: max % TX deferred (0 = off) */
 	int64_t _cad_last_probe_ms;
 	int64_t _cad_last_decay_ms;
@@ -219,7 +229,6 @@ protected:
 	 * interval check in cadMaintenance() is against _cad_last_probe_ms,
 	 * which only advances on a probe that actually ran — without this a
 	 * blocked probe would report "due now" forever and spin the wake. */
-	int64_t _cad_retry_ms;
 	uint8_t _cad_probe_rr;          /* round-robin index (sweep) / frontier mix counter */
 
 	int8_t pickCadProbeLevel();

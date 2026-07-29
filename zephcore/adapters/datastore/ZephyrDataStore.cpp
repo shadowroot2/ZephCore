@@ -792,12 +792,12 @@ void ZephyrDataStore::loadPrefs(NodePrefs &prefs)
 		}
 	}
 
-	/* Offset 157: cad_probe_interval (ZephCore extension, seconds; 0 = off).
+	/* Offset 157: probe_interval (ZephCore extension, seconds; 0 = off).
 	 * Absent in pre-existing files → keep the in-RAM default (60). */
 	if (off < len) {
-		prefs.cad_probe_interval = buf[off++];
-		if (prefs.cad_probe_interval != 0 && prefs.cad_probe_interval < 10) {
-			prefs.cad_probe_interval = 10;
+		prefs.probe_interval = buf[off++];
+		if (prefs.probe_interval != 0 && prefs.probe_interval < 10) {
+			prefs.probe_interval = 10;
 		}
 	}
 
@@ -927,8 +927,8 @@ void ZephyrDataStore::savePrefs(const NodePrefs &prefs)
 	buf[off++] = prefs.cad_auto;
 	/* Offset 156: cad_offset (ZephCore extension, signed) */
 	buf[off++] = (uint8_t)prefs.cad_offset;
-	/* Offset 157: cad_probe_interval (ZephCore extension, seconds) */
-	buf[off++] = prefs.cad_probe_interval;
+	/* Offset 157: probe_interval (ZephCore extension, seconds) */
+	buf[off++] = prefs.probe_interval;
 	/* Offset 158: cad_busycap (ZephCore extension, percent) */
 	buf[off++] = prefs.cad_busycap;
 	/* Offset 159: ADC multiplier (float LE, 0 = board default). */

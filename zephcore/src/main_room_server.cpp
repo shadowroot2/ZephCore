@@ -631,7 +631,7 @@ int main(void)
 	lora_radio.setRxBoost(prefs->rx_boost != 0);
 	lora_radio.enableRxDutyCycle(prefs->rx_duty_cycle != 0);
 	lora_radio.setCadParams(prefs->cad_auto != 0, prefs->cad_offset,
-				prefs->cad_probe_interval, prefs->cad_busycap);
+				prefs->probe_interval, prefs->cad_busycap);
 
 	/* Feed initial UI state from loaded prefs */
 	ui_set_node_name(prefs->node_name);

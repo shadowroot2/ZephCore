@@ -90,7 +90,9 @@ struct NodePrefs {
 	uint8_t meshtimesync;           // 1 = mesh time-sync clock correction on (default off)
 	uint8_t cad_auto;               // 1 = adaptive-CAD staircase acts on probe stats (default off = dry-run)
 	int8_t cad_offset;              // operating detPeak offset from family base (-4..4)
-	uint8_t cad_probe_interval;     // seconds between CAD probes (0 = probing off, default 60)
+	uint8_t probe_interval;         // seconds between periodic radio measurements:
+	                                // one noise-floor sample, and the CAD probe that
+	                                // consumes it (0 = CAD probing off, default 15)
 	uint8_t cad_busycap;            // airtime-protection: max % of TX attempts deferred before backing off detPeak (0 = off, default 25)
 
 	/* ---- Companion-only fields ---- */
@@ -167,7 +169,7 @@ static inline void initNodePrefs(NodePrefs* prefs) {
 	prefs->_reserved_apc_margin = 0;  // reserved (was APC), see NodePrefs
 	prefs->cad_auto = 1;              // Default ON — adaptive staircase acts on probe stats
 	prefs->cad_offset = 0;            // Start at family base detPeak (SF+13 on SX126x)
-	prefs->cad_probe_interval = 15;   // 15 s → staircase responds to change in ~1-2 h
+	prefs->probe_interval = 15;       // floor sample + CAD probe; staircase responds in ~1-2 h
 	prefs->cad_busycap = 25;          // back off detPeak once >25% of TX attempts are deferred
 	prefs->wake_on_msg = 1;           // Default ON — wake display when message arrives
 	prefs->v_contact_enabled = 1;     // Default ON — v-contact loopback admin chat (companion)

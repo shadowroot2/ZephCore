@@ -43,6 +43,8 @@ Dispatcher::Dispatcher(Radio &radio, MillisecondClock &ms, PacketManager &mgr)
 	n_recv_flood = n_recv_direct = 0;
 	_tx_queued_cb = nullptr;
 	_tx_queued_user_data = nullptr;
+	_wake_cb = nullptr;
+	_wake_user_data = nullptr;
 }
 
 void Dispatcher::begin()

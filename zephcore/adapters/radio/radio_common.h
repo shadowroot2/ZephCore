@@ -37,6 +37,8 @@
  * rather than the exception — a shorter retry there can push the wake rate
  * ABOVE the fixed tick this conversion replaced, inverting the whole point. */
 #define NOISE_FLOOR_RETRY_MS             5000
+/* Blocked attempts allowed before standing down to the next full interval. */
+#define NOISE_FLOOR_MAX_RETRIES          2
 
 /* --- Adaptive CAD (LBT detPeak calibration) ---
  * Housekeeping-tick CAD probes accumulate per-level busy/free statistics;
@@ -85,11 +87,11 @@
 #define CAD_BUSY_DEFER_HYST_PERMILLE 100  /* descend only if frontier busy <= cap-10% */
 #define CAD_PROBE_RSSI_GUARD     7     /* dB above floor = channel visibly busy, skip probe */
 #define CAD_STATS_DECAY_MS       (6UL * 3600UL * 1000UL)  /* halve counters every 6 h */
-/* Retry deadline for a due probe turned away by the idle-RX guards or the
- * RSSI prefilter.  Those paths leave _cad_last_probe_ms untouched (by design —
- * a skipped probe is not a probe), so the deadline query needs its own marker
- * to avoid reporting "due now" on every wake. */
-#define CAD_PROBE_RETRY_MS       2000
+/* NOTE: the probe has no retry deadline and no wake of its own.  It runs off
+ * the noise-floor sampler's measurement (LoRaRadioBase::cadMaintenance), which
+ * already applies the idle-RX guards and yields a median-of-8.  Consequently
+ * the effective probe rate is quantised to NOISE_FLOOR_INTERVAL_MS: setting
+ * probe_interval below that just gets one probe per floor sample. */
 
 /* --- RX ring buffer --- */
 #define RX_RING_SIZE 8  /* ~2 KB; buffers burst arrivals at SF7/BW500 */
@@ -143,6 +145,39 @@ static inline enum lora_signal_bandwidth bw_khz_to_enum(uint16_t bw_khz)
 	case 250: return BW_250_KHZ;
 	case 500: return BW_500_KHZ;
 	default:  return BW_125_KHZ;
+	}
+}
+
+/* Lowest physically-possible noise floor for a given bandwidth, in dBm.
+ *
+ * This is raw thermal noise — kTB at 290 K, with NO noise-figure term:
+ *     -174 dBm/Hz + 10*log10(BW_Hz)
+ * A passive receiver cannot read below it, so it is the one place a sanity
+ * clamp belongs: anything under this line is a bad RSSI read, not a quiet
+ * site.  Adding a receiver noise figure here would clamp ABOVE what the
+ * hardware can legitimately report and manufacture a floor — which is exactly
+ * what the old fixed -120 rail did to BW 62.5 kHz, pinning it on every EMA
+ * update because -120 happens to be that preset's kTB+NF.
+ *
+ * Bandwidth is the only term that moves.  SF changes the SNR the demodulator
+ * can decode at, not the noise power in the channel, so it must NOT appear.
+ *
+ * For reference, a typical SX126x (NF ~6 dB) reads about 6 dB above these:
+ * BW 62.5 kHz measures ~-120 dBm on a quiet site against a -126 kTB limit. */
+static inline int16_t noise_floor_min_dbm(uint16_t bw_khz)
+{
+	switch (bw_khz) {
+	case 7:   return -135;   /* 10*log10(7800)   = 38.9 */
+	case 10:  return -134;   /* 10*log10(10400)  = 40.2 */
+	case 15:  return -132;   /* 10*log10(15600)  = 41.9 */
+	case 20:  return -131;   /* 10*log10(20800)  = 43.2 */
+	case 31:  return -129;   /* 10*log10(31250)  = 45.0 */
+	case 41:  return -128;   /* 10*log10(41700)  = 46.2 */
+	case 62:  return -126;   /* 10*log10(62500)  = 48.0 */
+	case 125: return -123;   /* 10*log10(125000) = 51.0 */
+	case 250: return -120;   /* 10*log10(250000) = 54.0 */
+	case 500: return -117;   /* 10*log10(500000) = 57.0 */
+	default:  return -123;   /* matches bw_khz_to_enum's 125 kHz fallback */
 	}
 }
 

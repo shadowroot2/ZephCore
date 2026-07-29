@@ -59,6 +59,8 @@ static void uplink_time_sync_cb(uint32_t unix_ts)
 	if (s_uplink_mesh) {
 		s_uplink_mesh->getRTCClock()->setCurrentTime(unix_ts);
 		atomic_set(&s_uplink_sntp_pending, 1);
+		/* Wake the main loop rather than waiting for its next deadline. */
+		s_uplink_mesh->notifyWake();
 	}
 }
 #endif
@@ -1049,6 +1051,11 @@ void RepeaterMesh::begin(RepeaterDataStore* store) {
              * loop via an atomic flag drained in maintenanceLoop(). */
             if (s_uplink_mesh) {
                 atomic_set(&s_uplink_mesh->_uplink_connect_pending, 1);
+                /* Wake the main loop so "online" publishes immediately.
+                 * Without this the flag waits for whatever deadline fires
+                 * next — up to UPLINK_STATUS_INTERVAL_MS (5 min) on an idle
+                 * repeater, since maintenance no longer ticks every 5 s. */
+                s_uplink_mesh->notifyWake();
             }
         });
         _uplink_next_status_at = futureMillis(UPLINK_STATUS_INTERVAL_MS);
