@@ -20,6 +20,58 @@
 #define NOISE_FLOOR_SAMPLING_THRESHOLD   14  /* dB above floor to reject as interference */
 #define DEFAULT_NOISE_FLOOR              0   /* sentinel: seed from first sample */
 
+/* --- RSSI read timing (SX1261/2 DS rev 2.2 Table 13-82) ---
+ *
+ * The median-of-N above only rejects outliers if the N reads are actually
+ * independent.  The chip updates RSSI once per "averaging window"; reads
+ * issued faster than that return the same underlying sample repeatedly, and
+ * the median degenerates into one read with extra SPI traffic.
+ *
+ * The published table is indexed by GFSK channel-filter bandwidth.  Across
+ * all 19 rows the product window_us * BW_kHz lands in 921..938, so
+ * 936 / BW_kHz reproduces every published value to within a microsecond.
+ * The separate "RSSI delay" column (BUSY falling edge -> first valid sample)
+ * is 12x to 15x the window across the same rows.
+ *
+ * CAVEAT: Semtech documents this for GFSK only and publishes no LoRa
+ * equivalent.  The RSSI path is the same analog/AGC chain, so these are used
+ * as the best available proxy — not as specified LoRa figures.  `get cad`
+ * reports the measured burst spread so the assumption stays falsifiable on
+ * real hardware.
+ */
+#define RSSI_WINDOW_BW_PRODUCT   936U  /* window_us * BW_kHz, DS Table 13-82 */
+#define RSSI_SETTLE_WINDOWS      16U   /* delay/window is 12..15; round up */
+
+/* Burst-stat rescale point.  The counters behind `get cad`'s sp field are
+ * halved (all three together, so the mean and the zero-spread share are
+ * preserved exactly) once the burst count reaches this.
+ *
+ * Two reasons, and the display one is the hard constraint: the remote CLI
+ * reply is capped at CLI_REMOTE_REPLY_SIZE (161 B) and has to fit the header
+ * plus three level lines, so no field may grow without bound.  At one burst
+ * per 15 s a free-running counter passes 500 000 in three months and would
+ * eat the level rows.  8192 keeps it to four digits forever.
+ *
+ * The second reason is that halving turns the totals into an exponential
+ * forgetting window, so the numbers describe recent conditions instead of
+ * being anchored to whatever the channel was doing at boot.  Same idea as
+ * CAD_STATS_DECAY_MS below, which halves the CAD counters on a timer. */
+#define RSSI_BURST_STATS_CAP     8192U
+
+static inline uint32_t rssi_avg_window_us(uint16_t bw_khz)
+{
+	uint32_t bw = bw_khz ? bw_khz : 1U;
+
+	/* ceil.  Non-zero for every LoRa bandwidth (BW 500 -> 2 us), so no
+	 * zero-spacing guard is needed. */
+	return (RSSI_WINDOW_BW_PRODUCT + bw - 1U) / bw;
+}
+
+static inline uint32_t rssi_settle_delay_us(uint16_t bw_khz)
+{
+	return rssi_avg_window_us(bw_khz) * RSSI_SETTLE_WINDOWS;
+}
+
 /* Sampling cadence.  The sampler used to run once per housekeeping tick and so
  * inherited that 5 s period; owning an explicit interval is what let the
  * periodic tick go away (see mesh/Maintenance.h).  Both the 8-sample warmup and

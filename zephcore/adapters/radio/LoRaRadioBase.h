@@ -210,6 +210,18 @@ protected:
 	int16_t _sample_rssi;
 	bool _sample_channel_quiet;
 	bool _sample_fresh;
+	/* Cycle stamp of the last host-driven RX entry, used to skip a floor
+	 * sample taken before GetRssiInst has settled (DS Table 13-82). */
+	uint32_t _rx_entry_cyc;
+	/* Median-of-N quality accounting, surfaced by `get cad` as sp:<mean>/<%>.
+	 * The median only rejects outliers if the N reads are independent; if
+	 * they land inside one RSSI averaging window they are the same sample
+	 * N times over and the median is decorative.  Spread (max-min of the
+	 * burst) and the share of zero-spread bursts make that visible without
+	 * a debug build. */
+	uint32_t _rssi_bursts;
+	uint32_t _rssi_spread_sum;
+	uint32_t _rssi_degenerate;
 
 	/* Adaptive CAD state */
 	struct CadLevelStats {

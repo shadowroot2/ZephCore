@@ -50,6 +50,8 @@ LoRaRadioBase::LoRaRadioBase(const struct device *lora_dev, MainBoard &board,
 	  _noise_floor_next_ms(0), _noise_floor_retries(0),
 	  _measure_interval_ms(CONFIG_ZEPHCORE_NOISE_FLOOR_INTERVAL_MS),
 	  _sample_rssi(0), _sample_channel_quiet(false), _sample_fresh(false),
+	  _rx_entry_cyc(0),
+	  _rssi_bursts(0), _rssi_spread_sum(0), _rssi_degenerate(0),
 	  _cad_auto(false), _cad_offset(0), _probe_interval_s(0),
 	  _cad_busycap_pct(0),
 	  _cad_last_probe_ms(0), _cad_last_decay_ms(0),
@@ -568,6 +570,7 @@ void LoRaRadioBase::startReceive()
 							   K_USEC(sleep_us),
 							   rxCallbackStatic, this);
 				if (ret == 0) {
+					_rx_entry_cyc = k_cycle_get_32();
 					atomic_set(&_in_recv_mode, 1);
 					return;
 				}
@@ -593,6 +596,7 @@ void LoRaRadioBase::startReceive()
 		atomic_set(&_in_recv_mode, 0);
 		return;
 	}
+	_rx_entry_cyc = k_cycle_get_32();
 	atomic_set(&_in_recv_mode, 1);
 }
 
@@ -818,12 +822,56 @@ void LoRaRadioBase::triggerNoiseFloorCalibrate(int threshold)
 		return;
 	}
 
-	/* Median of multiple RSSI reads (~200 us).  Rejects up to N/2-1
-	 * outliers in either direction without the downward bias of min
-	 * or the spike sensitivity of average.  Insertion sort is fine
-	 * for N=8 (28 comparisons worst case, all in registers). */
+	/* GetRssiInst needs time after RX entry before the first value is
+	 * valid (DS Table 13-82).  isRadioReady() only clears BUSY, and the
+	 * delay is measured *from* the BUSY falling edge, so BUSY alone does
+	 * not prove the reading has settled.  Only host-driven RX entries are
+	 * stamped: under RX duty cycle the sleep->RX wakes are chip-internal
+	 * and invisible to us.  That is acceptable rather than ideal — the
+	 * delay is ~0.25 ms at BW 62.5 against an RX window orders of
+	 * magnitude longer, so the odds of a duty-cycle sample landing inside
+	 * an unsettled window are small, and the median absorbs the odd one. */
+	uint16_t bw_khz = (uint16_t)(getActiveBandwidthKHzX10() / 10);
+	uint32_t since_rx_us =
+		k_cyc_to_us_floor32(k_cycle_get_32() - _rx_entry_cyc);
+
+	if (since_rx_us < rssi_settle_delay_us(bw_khz)) {
+		return;
+	}
+
+	/* Median of multiple RSSI reads: no downward bias of min, no spike
+	 * sensitivity of average.  Insertion sort is fine for N=8 (28
+	 * comparisons worst case, all in registers).
+	 *
+	 * Scope, measured on-air 2026-07-29 (`get cad` sp field, BW 62.5):
+	 * 84-90%% of bursts return N identical values, and the rest average
+	 * ~6 dB of spread.  The reads ARE independent -- the degenerate share
+	 * falls and the spread rises when ambient comes up, exactly as it
+	 * should.  The burst is simply short: ~300 us against a ~200 ms
+	 * SF8/BW62.5 packet, about 0.15%% of one transmission.  So a
+	 * neighbour's packet is either wholly inside the burst or wholly
+	 * outside it, every read sees the same level, and the median returns
+	 * it rather than rejecting it.
+	 *
+	 * What this median actually buys is rejection of sub-300 us glitches
+	 * and single bad SPI reads.  That is worth its ~300 us every 15 s, but
+	 * it is NOT the defence against interference -- that is the
+	 * isReceiving() guard above and the floor + SAMPLING_THRESHOLD filter
+	 * below.  An earlier comment here claimed "rejects up to N/2-1
+	 * outliers", which credited the median with their work.
+	 *
+	 * Reads are spaced by the RSSI averaging window, without which they
+	 * can all fall inside one window and return the same underlying
+	 * sample N times — a median of N copies of one read.  At BW 62.5 the
+	 * spacing (~16 us) is already covered by the SPI transaction itself;
+	 * it matters at the narrow presets, where the window grows past the
+	 * whole burst. */
+	uint32_t window_us = rssi_avg_window_us(bw_khz);
 	int16_t samples[NOISE_FLOOR_SAMPLES_PER_TICK];
 	for (int i = 0; i < NOISE_FLOOR_SAMPLES_PER_TICK; i++) {
+		if (i) {
+			k_busy_wait(window_us);
+		}
 		samples[i] = hwGetCurrentRSSI();
 		if (samples[i] == -128) {
 			/* Chip busy or RSSI read contended — keep the short
@@ -848,6 +896,31 @@ void LoRaRadioBase::triggerNoiseFloorCalibrate(int threshold)
 	}
 	int16_t rssi = (samples[NOISE_FLOOR_SAMPLES_PER_TICK / 2 - 1] +
 			samples[NOISE_FLOOR_SAMPLES_PER_TICK / 2]) / 2;
+
+	/* Burst quality, reported by `get cad`.  Sorted, so max-min is the
+	 * spread.  Kept as running totals rather than an EMA so the numbers
+	 * stay readable and the degenerate share is a true proportion.
+	 *
+	 * Reading it: a high zero-spread share on its own is NOT a fault — a
+	 * quiet or steadily-occupied channel genuinely reads the same value
+	 * N times at integer-dB resolution.  What would indict the sampler is
+	 * a high share together with a mean of 0.0, i.e. no burst ever spans
+	 * anything: that is reads landing inside one RSSI averaging window and
+	 * returning one sample N times over.  A non-zero mean proves the reads
+	 * are independent however high the share climbs. */
+	_rssi_bursts++;
+	_rssi_spread_sum += (uint32_t)(samples[NOISE_FLOOR_SAMPLES_PER_TICK - 1] -
+				       samples[0]);
+	if (samples[NOISE_FLOOR_SAMPLES_PER_TICK - 1] == samples[0]) {
+		_rssi_degenerate++;
+	}
+	/* Rescale together so both derived figures survive untouched, and the
+	 * printed count stays four digits however long the node is up. */
+	if (_rssi_bursts >= RSSI_BURST_STATS_CAP) {
+		_rssi_bursts >>= 1;
+		_rssi_spread_sum >>= 1;
+		_rssi_degenerate >>= 1;
+	}
 
 	/* Publish this sample for cadMaintenance().  The CAD probe needs exactly
 	 * the same fact we just established — "is the channel at its floor right
@@ -1308,16 +1381,59 @@ int LoRaRadioBase::formatCadStatus(char *buf, int cap)
 	}
 
 	/* Terse on purpose — remote replies are capped at ~160 B over LoRa.
-	 * Header:  a:on o:1 pk:22(b21/4s) iv:15s bc:25%
+	 * Header:  a:on o:1 pk:22(b21/4s) sp:0.9/84%(312) bc:25%
 	 *   a  auto on/off   o  offset   pk operating peak
-	 *   b  family base   4s symbols   iv probe interval  bc busy cap
+	 *   b  family base   4s symbols   bc busy cap
+	 *   sp RSSI burst quality: mean spread in dB across the median-of-N
+	 *      reads, the share of bursts whose spread was 0, and the burst
+	 *      count.  The count is not decoration: a share without its
+	 *      denominator cannot be read, and the burst rate is not
+	 *      derivable from uptime because the sampler's guards (TX, mid-RX,
+	 *      duty-cycle sleep) block an unknown fraction of attempts.
 	 * Level:  *+1(22) 22p 18b 16f 2t 72%
-	 *   '*' = operating rung   level(peak)  probes busy fp tp  fp-rate%%. */
+	 *   '*' = operating rung   level(peak)  probes busy fp tp  fp-rate%%.
+	 *
+	 * sp replaced the probe interval here because the interval is a pref
+	 * you already set and can read back with `get probe.interval`, whereas
+	 * burst spread is only observable from inside the sampler.
+	 *
+	 * It answers one question: are the N reads independent?  A non-zero
+	 * mean proves they are, whatever the zero-spread share — a steady
+	 * channel reads identically at integer-dB resolution, which is correct
+	 * rather than broken.  Only mean 0.0 with a high share indicts the
+	 * sampler: that is N copies of one sample from inside a single RSSI
+	 * averaging window (see rssi_avg_window_us() in radio_common.h).
+	 * Measured on-air 2026-07-29 at BW 62.5: 0.6/90% quiet, 0.9/84% with
+	 * the floor at -103 — independent, and responding the right way.
+	 * Mean is tenths of a dB.  Counters halve at RSSI_BURST_STATS_CAP, so
+	 * the count is bounded to four digits and the figures describe a
+	 * recent window rather than everything since boot. */
+	unsigned spread_mean10 = _rssi_bursts
+		? (unsigned)((_rssi_spread_sum * 10U + _rssi_bursts / 2U) /
+			     _rssi_bursts)
+		: 0;
+	unsigned degen_pct = _rssi_bursts
+		? (unsigned)((_rssi_degenerate * 100U + _rssi_bursts / 2U) /
+			     _rssi_bursts)
+		: 0;
+
+	/* The burst count is bench diagnostics, and the header competes with
+	 * the three level rows for a 161 B remote reply — with wide level
+	 * counters the full header pushes the last row into truncation.  So
+	 * print it only into the roomy local-console buffer; a remote reader
+	 * still gets the mean and the share, which is the actual verdict. */
+	bool room_for_count = (cap >= 200);
+
 	n += snprintf(buf + n, cap > n ? cap - n : 0,
-		      "a:%s o:%d pk:%d(b%u/4s) iv:%us bc:%u%%",
+		      "a:%s o:%d pk:%d(b%u/4s) sp:%u.%u/%u%%",
 		      _cad_auto ? "on" : "off", (int)_cad_offset,
 		      (int)base + _cad_offset, base,
-		      (unsigned)_probe_interval_s,
+		      spread_mean10 / 10U, spread_mean10 % 10U, degen_pct);
+	if (room_for_count) {
+		n += snprintf(buf + n, cap > n ? cap - n : 0, "(%u)",
+			      (unsigned)_rssi_bursts);
+	}
+	n += snprintf(buf + n, cap > n ? cap - n : 0, " bc:%u%%",
 		      (unsigned)_cad_busycap_pct);
 
 	/* Only the 3 rungs around the operating offset — the far rungs are mildly
