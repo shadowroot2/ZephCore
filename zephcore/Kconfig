@@ -480,14 +480,16 @@ config ZEPHCORE_MAX_TX_POWER_DBM
 	  Example: Station G2 caps at 19 dBm to stay below PA P1dB (35 dBm).
 
 config ZEPHCORE_SX126X_HELTEC_REG_PATCH
-	bool "Apply undocumented SX126x register 0x8B5 RX improvement (Heltec V4)"
+	bool "Apply undocumented SX126x register 0x8B5 RX improvement (external PA/FEM)"
 	depends on ZEPHCORE_RADIO_NATIVE
 	default n
 	help
 	  Sets the LSB of undocumented register 0x8B5 after the first lora_config().
 	  Described by Heltec engineer @Quency-D in MeshCore PR#1398 — consistently
 	  improves RX reception on boards with GC1109 or KCT8103L PA (Heltec V4/V4.3).
-	  Enable in board.conf for Heltec V4 boards.
+	  Upstream MeshCore also enables it for the RAK3401's SKY66122 FEM, so it is
+	  not Heltec-specific despite the symbol name. Enable in board.conf for boards
+	  with an external PA/FEM in the RX path.
 
 endmenu # Radio Configuration
 
