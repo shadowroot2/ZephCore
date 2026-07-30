@@ -11,6 +11,7 @@
 #include <adapters/radio/LoRaRadioBase.h>
 #include <helpers/MeshcoreJson.h>
 
+#include <zephyr/fs/fs.h>
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(zephcore_observer, CONFIG_ZEPHCORE_OBSERVER_LOG_LEVEL);
 
@@ -56,10 +57,30 @@ void ObserverMesh::begin(RepeaterDataStore *store, struct ObserverCreds *creds)
 	_prefs.tx_power_dbm = 0;   /* observer never TXes anyway */
 	/* freq=867.935, bw=62.5, sf=8 already set by initNodePrefs */
 
+	/* First boot has to be detected BEFORE loadPrefs(): the store is shared
+	 * with the repeater and its no-file branch re-runs initNodePrefs(), applies
+	 * *repeater* defaults over whatever the caller passed in, saves them, and
+	 * returns true.  So the observer values set above are silently discarded on
+	 * a fresh unit and there is no return code that says so.  Probing for the
+	 * file is the only observer-local way to tell — the alternative, changing
+	 * the no-file branch, would alter repeater and room-server behaviour. */
+	char prefs_path[64];
+	struct fs_dirent prefs_ent;
+	snprintf(prefs_path, sizeof(prefs_path), "%s/prefs", _store->getBasePath());
+	const bool first_boot = (fs_stat(prefs_path, &prefs_ent) < 0);
+
 	/* Load persisted prefs (overrides defaults with saved values) */
-	if (!_store->loadPrefs(_prefs)) {
-		/* First boot — save observer defaults */
+	_store->loadPrefs(_prefs);
+
+	if (first_boot) {
+		/* Re-apply the observer defaults the shared no-file branch overwrote,
+		 * then persist them so this runs exactly once.  Only the prefs file is
+		 * rewritten — obs_creds (WiFi/MQTT/IATA/lat/lon) is a separate file and
+		 * is never touched here. */
+		_prefs.cr           = 5;
+		_prefs.tx_power_dbm = 0;
 		_store->savePrefs(_prefs);
+		LOG_INF("First boot — saved observer prefs defaults");
 	}
 
 	/* Load or generate node identity */
@@ -405,14 +426,19 @@ bool ObserverMesh::handleCLI(const char *command, char *reply, int reply_size)
 			float f = (float)atof(val);
 			/* Accept Hz (e.g. 867935000) or MHz (e.g. 867.935) */
 			if (f > 1000000.0f) f /= 1000000.0f;
-			if (f >= 150.0f && f <= 2500.0f) {
+			/* 300..1000 MHz is not the radio's limit — it is what
+			 * RepeaterDataStore::loadPrefs() accepts on the way back in.
+			 * Anything outside it saves fine and is then silently reset to
+			 * defaults on the next boot, taking bw/sf/cr/tx_power with it, so
+			 * refuse it here rather than hand back a value that won't survive. */
+			if (f >= 300.0f && f <= 1000.0f) {
 				_prefs.freq = f;
 				_store->savePrefs(_prefs);
 				((LoRaRadioBase *)_radio)->reconfigureWithParams(
 					_prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr);
 				snprintf(reply, reply_size, "freq=%.3f MHz", (double)_prefs.freq);
 			} else {
-				snprintf(reply, reply_size, "ERR freq out of range");
+				snprintf(reply, reply_size, "ERR freq must be 300-1000 MHz");
 			}
 
 		} else if ((val = find_val(rest, "sf")) != nullptr) {
@@ -438,14 +464,16 @@ bool ObserverMesh::handleCLI(const char *command, char *reply, int reply_size)
 			} else {
 				bw = (float)atof(val);
 			}
-			if (bw > 0.0f) {
+			/* Lower bound 7 kHz mirrors loadPrefs()'s validator — see the freq
+			 * case above for why the CLI must not accept what it will reject. */
+			if (bw >= 7.0f && bw <= 500.0f) {
 				_prefs.bw = bw;
 				_store->savePrefs(_prefs);
 				((LoRaRadioBase *)_radio)->reconfigureWithParams(
 					_prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr);
 				snprintf(reply, reply_size, "bw=%.2f kHz", (double)_prefs.bw);
 			} else {
-				snprintf(reply, reply_size, "ERR invalid bw");
+				snprintf(reply, reply_size, "ERR bw must be 7-500 kHz (or index 0-5)");
 			}
 
 		} else if ((val = find_val(rest, "cr")) != nullptr) {
