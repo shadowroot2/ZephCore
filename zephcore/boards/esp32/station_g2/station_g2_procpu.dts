@@ -41,14 +41,6 @@
 };
 
 /* Reduce CPU clock from 240 MHz to 160 MHz — HAL Kconfig minimum supported */
-&cpu0 {
-	clock-frequency = <DT_FREQ_M(160)>;
-};
-
-&cpu1 {
-	clock-frequency = <DT_FREQ_M(160)>;
-};
-
 &usb_serial {
 	status = "okay";
 };

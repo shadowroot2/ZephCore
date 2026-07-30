@@ -108,14 +108,6 @@
 };
 
 /* Reduce CPU clock from 240 MHz to 160 MHz — saves power, HAL minimum */
-&cpu0 {
-	clock-frequency = <DT_FREQ_M(160)>;
-};
-
-&cpu1 {
-	clock-frequency = <DT_FREQ_M(160)>;
-};
-
 /* I2C sensors — auto-detected at runtime */
 &i2c0 {
 	#include "../../common/sensors-i2c.dtsi"

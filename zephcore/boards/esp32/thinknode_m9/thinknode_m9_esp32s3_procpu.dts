@@ -47,18 +47,25 @@
 	};
 };
 
-/* Reduce CPU clock from 240 MHz to 160 MHz — HAL Kconfig minimum supported */
-&cpu0 {
-	clock-frequency = <DT_FREQ_M(160)>;
-};
-
-&cpu1 {
-	clock-frequency = <DT_FREQ_M(160)>;
-};
-
-&usb_serial {
-	status = "okay";
-};
+/* 240 MHz — matches every other ESP32-S3 board in the tree (xiao_esp32s3,
+ * station_g2, heltec_*).  This was 160 MHz with the comment "HAL Kconfig
+ * minimum supported", which is not correct: hal/espressif/zephyr/Kconfig
+ * derives ESP_DEFAULT_CPU_FREQ_MHZ straight from this DT property and offers
+ * 96/120/160/240 with no floor at 160.  Nothing on this board requires the
+ * lower clock (the octal PSRAM runs at 40 MHz off its own divider, and
+ * station_g2 pairs the same OPI PSRAM with 240 MHz).
+ *
+ * Kept deliberate rather than "faster is better": the node is event-driven and
+ * idles in k_event_wait almost always, so race-to-idle makes the clock a weak
+ * lever on battery life, while the 320x240 colour panel is the one genuinely
+ * CPU-bound consumer.  240 also removes this board's only timing anomaly,
+ * which matters while the CPU-jitter entropy source is under investigation
+ * (jitter health check failed here — see memory/findings.md). */
+/* USB Serial/JTAG stays disabled (SoC default): its PHY pads are GPIO19/20,
+ * and on this board GPIO20 is the keypad's I2C1 SDA. The USJ driver's init
+ * re-attaches the USB pad (usb_serial_jtag_ll_phy_enable_pad) and enables the
+ * D+ pull-up, fighting the keypad bus. Native USB is unbonded from the
+ * connector anyway — see the chosen-node comment. */
 
 &i2c0 {
 	status = "okay";

@@ -379,6 +379,33 @@ endif()
 # ESP32's DRAM by ~10KB. Rather than trim WiFi/heap to an unverifiable margin,
 # the classic ESP32 repeater stays CLI-only on simple boot (handled in build.sh).
 # The ESP32-S3/C-series have the DRAM headroom and keep WiFi OTA.
+# ========== ESP32 CPU clock ==========
+# Espressif parts idle in the tens of mA (WAITI gates the core clock but leaves
+# PLL/peripherals/RAM powered), so CPU frequency is a first-order term in a
+# battery node's draw — unlike nRF52, which already idles at microamps.  Pull
+# every ESP32 build down to 80 MHz, matching what Arduino MeshCore ships.
+# Needs patches/modules/hal-espressif/0002 (upstream omits 80 from its DT map).
+#
+# Observers are the exception and keep the SoC default (240 MHz on S3/classic,
+# 160 MHz on C3/C6): they run a full WiFi + TLS + MQTT stack and are mains- or
+# solar-with-a-big-panel powered, so throughput matters more than current.
+# Implemented as "don't apply the overlay" rather than an override, so the
+# per-SoC maximum is inherited instead of hardcoded here.
+if(ZEPHCORE_PLATFORM_CONF MATCHES "esp32_common" AND NOT EXTRA_CONF_FILE MATCHES "observer")
+    set(ZEPHCORE_ESP32_CPU_OVERLAY
+        "${CMAKE_CURRENT_SOURCE_DIR}/boards/common/esp32_cpu_80mhz.overlay")
+    if(EXISTS ${ZEPHCORE_ESP32_CPU_OVERLAY})
+        if(EXTRA_DTC_OVERLAY_FILE)
+            set(EXTRA_DTC_OVERLAY_FILE
+                "${EXTRA_DTC_OVERLAY_FILE};${ZEPHCORE_ESP32_CPU_OVERLAY}" CACHE STRING "" FORCE)
+        else()
+            set(EXTRA_DTC_OVERLAY_FILE
+                "${ZEPHCORE_ESP32_CPU_OVERLAY}" CACHE STRING "" FORCE)
+        endif()
+        message(STATUS "  ESP32 CPU: 80 MHz (observers keep the SoC maximum)")
+    endif()
+endif()
+
 if(ZEPHCORE_PLATFORM_CONF MATCHES "esp32_common" AND EXTRA_CONF_FILE MATCHES "repeater"
    AND NOT BOARD MATCHES "/esp32/")
     set(ZEPHCORE_WIFI_OTA_CONF "${CMAKE_CURRENT_SOURCE_DIR}/boards/common/wifi_ota.conf")
