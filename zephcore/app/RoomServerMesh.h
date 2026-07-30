@@ -105,6 +105,7 @@ class RoomServerMesh : public mesh::Mesh, public CommonCLICallbacks {
 
     /* Room server: shared-post buffer + push-to-client sync */
     void addPost(ClientInfo* client, const char* postData);
+    void storePost(const mesh::Identity& author, const char* postData);
     void pushPostToClient(ClientInfo* client, PostInfo& post);
     uint8_t getUnsyncedCount(ClientInfo* client);
     bool processAck(const uint8_t* data);
@@ -173,6 +174,9 @@ public:
                  mesh::RNG& rng, mesh::RTCClock& rtc, mesh::MeshTables& tables);
 
     void begin(RepeaterDataStore* store);
+
+    /* Post authored by the server itself (admin "room.post <msg>" command). */
+    void addSystemPost(const char* postData);
 
     /* CommonCLICallbacks */
     const char* getFirmwareVer() override { return FIRMWARE_VERSION; }

@@ -262,7 +262,18 @@ mesh::Packet* RoomServerMesh::createSelfAdvert() {
 /* ---- Room server: shared-post buffer + push-to-client sync ---- */
 
 void RoomServerMesh::addPost(ClientInfo* client, const char* postData) {
-    posts[next_post_idx].author = client->id;
+    storePost(client->id, postData);
+}
+
+/* Post authored by the server itself (admin "room.post" command). */
+void RoomServerMesh::addSystemPost(const char* postData) {
+    if (!postData || postData[0] == 0) return;
+
+    storePost(self_id, postData);
+}
+
+void RoomServerMesh::storePost(const mesh::Identity& author, const char* postData) {
+    posts[next_post_idx].author = author;
     strncpy(posts[next_post_idx].text, postData, MAX_POST_TEXT_LEN);
     posts[next_post_idx].text[MAX_POST_TEXT_LEN] = '\0';
     posts[next_post_idx].post_timestamp = getRTCClock()->getCurrentTimeUnique();
@@ -493,6 +504,13 @@ void RoomServerMesh::onAnonDataRecv(mesh::Packet* packet, const uint8_t* secret,
         memcpy(guest_pw, _prefs.guest_password, strnlen(_prefs.guest_password, sizeof(guest_pw) - 1));
         bool admin_match = mesh::Utils::constantTimeEqual(received, admin_pw, sizeof(received));
         bool guest_match = mesh::Utils::constantTimeEqual(received, guest_pw, sizeof(received));
+
+        /* An empty stored guest password disables guest access (as
+         * CONFIG_ZEPHCORE_GUEST_PASSWORD documents) rather than matching an
+         * empty submitted password and granting read+write to anyone. Both
+         * compares above still run unconditionally, so timing is unchanged.
+         * allow_read_only below remains the intended way to run an open room. */
+        if (_prefs.guest_password[0] == 0) guest_match = false;
 
         uint8_t perms;
         if (admin_match) {
@@ -1061,6 +1079,15 @@ void RoomServerMesh::handleCommand(uint32_t sender_timestamp, char* command, cha
         reply[0] = 0;
     } else if (memcmp(command, "region", 6) == 0) {
         handleRegionCommand(command, reply);
+    } else if (memcmp(command, "room.post", 9) == 0) {
+        char* msg = command + 9;
+        while (*msg == ' ') msg++;
+        if (*msg == 0) {
+            strcpy(reply, "Err - empty message");
+        } else {
+            addSystemPost(msg);
+            strcpy(reply, "OK");
+        }
     } else {
         _cli.handleCommand(sender_timestamp, command, reply);
     }

@@ -4,6 +4,7 @@
  */
 
 #include "AdvertDataHelpers.h"
+#include "UTF8Helpers.h"
 #include <string.h>
 
 uint8_t AdvertDataBuilder::encodeTo(uint8_t app_data[])
@@ -25,10 +26,16 @@ uint8_t AdvertDataBuilder::encodeTo(uint8_t app_data[])
 		memcpy(&app_data[i], &_extra2, 2); i += 2;
 	}
 	if (_name && *_name != 0) {
-		app_data[0] |= ADV_NAME_MASK;
-		const char *sp = _name;
-		while (*sp && i < MAX_ADVERT_DATA_SIZE) {
-			app_data[i++] = *sp++;
+		/* Truncate on a UTF-8 code-point boundary: a byte-wise copy would
+		 * emit a partial multi-byte sequence when a code point straddles
+		 * MAX_ADVERT_DATA_SIZE, producing a mangled name on the wire.
+		 * ADV_NAME_MASK is only set when at least one whole code point
+		 * fits in the remaining space. */
+		size_t name_len = mesh::validUtf8PrefixLength(_name, MAX_ADVERT_DATA_SIZE - i);
+		if (name_len > 0) {
+			app_data[0] |= ADV_NAME_MASK;
+			memcpy(&app_data[i], _name, name_len);
+			i += name_len;
 		}
 	}
 	return i;

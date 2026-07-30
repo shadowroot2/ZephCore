@@ -1477,20 +1477,21 @@ int CompanionMesh::appendSelfTelemetry(uint8_t *reply, uint8_t permissions)
 		}
 	}
 
-	// Environment sensors if authorized and available
+	/* Sensors are read once here.  External temp/humidity/pressure require
+	 * TELEM_PERM_ENVIRONMENT, but the MCU die temperature is reported under
+	 * base permission — matching Arduino MeshCore (15e259c5) and ZephCore's
+	 * own repeater/room-server telemetry, neither of which gates it. */
+	struct env_data env;
+	bool env_ok = (env_sensors_read(&env) == 0);
+	bool temp_reported = false;
+
 	if (permissions & TELEM_PERM_ENVIRONMENT) {
-		struct env_data env;
-		if (env_sensors_read(&env) == 0) {
+		if (env_ok) {
 			if (env.has_temperature) {
+				temp_reported = true;
 				reply[i++] = CH_SELF;
 				reply[i++] = LPP_TEMPERATURE;
 				int16_t temp = (int16_t)(env.temperature_c * 10);
-				reply[i++] = (temp >> 8) & 0xFF;
-				reply[i++] = temp & 0xFF;
-			} else if (env.has_mcu_temperature) {
-				reply[i++] = CH_SELF;
-				reply[i++] = LPP_TEMPERATURE;
-				int16_t temp = (int16_t)(env.mcu_temperature_c * 10);
 				reply[i++] = (temp >> 8) & 0xFF;
 				reply[i++] = temp & 0xFF;
 			}
@@ -1569,6 +1570,16 @@ int CompanionMesh::appendSelfTelemetry(uint8_t *reply, uint8_t permissions)
 		reply[i++] = sats_in_view & 0xFF;
 	}
 #endif
+
+	/* MCU die temperature — reported under base permission, but only when no
+	 * external sensor already supplied a CH_SELF temperature (never emit two). */
+	if (!temp_reported && env_ok && env.has_mcu_temperature) {
+		reply[i++] = CH_SELF;
+		reply[i++] = LPP_TEMPERATURE;
+		int16_t temp = (int16_t)(env.mcu_temperature_c * 10);
+		reply[i++] = (temp >> 8) & 0xFF;
+		reply[i++] = temp & 0xFF;
+	}
 
 	// Trigger GPS wake for fresh fix on next request
 	if (gps_is_available() && gps_is_enabled()) {

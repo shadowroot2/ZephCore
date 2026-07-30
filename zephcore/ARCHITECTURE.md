@@ -395,12 +395,12 @@ isReceiving()
 ```
 
 For SX126x, `hwIsReceiving()` → `sx126x_is_receiving()` reads in this order:
-1. **`data->rx_packet_active`** latch (no SPI). Set by the work handler on `HEADER_VALID`; cleared on every terminal event and RX (re)start. Covers the full payload phase.
+1. **`data->rx_packet_active`** latch (no SPI). Set by the work handler on `HEADER_VALID`; cleared on every terminal event and RX (re)start. Covers the full payload phase. Bounded by a payload deadline: `header_seen_at_ms` is stamped when the latch is promoted, and once `sx126x_max_payload_ms()` (255-byte airtime at the current SF/BW, CR 4/8, LDRO on, +25% +100 ms) has elapsed the latch is released and the sticky PREAMBLE/SYNC/HEADER bits cleared. Continuous RX has no symbol timer, so without this a `HEADER_VALID` whose packet never completes would hold the TX gate closed until reboot; the DC parked-RX watchdog does not cover it (DC-only, and it treats the latch as a legitimate in-flight packet).
 2. **Mutex-busy conservative** — if the SPI mutex is contended and `state == RX`, return true (the work handler is likely mid-`RxDone`).
 3. **`HEADER_VALID` raw bit** — covers the microseconds between DIO1 firing and the work handler running.
 4. **`PREAMBLE_DETECTED` raw bit with SF-aware grace** — `PREAMBLE_DETECTED` is masked off DIO1 (fires on noise), but visible in the IRQ register. On first observation, `is_receiving` records `data->preamble_seen_at_ms`; subsequent calls return true until either `HEADER_VALID` promotes the latch (timestamp reset) or `(preamble_len + 8) × 2^SF / BW` ms elapses — at which point the bit is explicitly cleared and TX is allowed. Grace scales with SF: ~82 ms at SF8, ~786 ms at SF12.
 
-The poll path is otherwise non-destructive — IRQ bits are cleared only by the work-handler bulk clear (on any DIO1 event), explicit `clear_irq_status(IRQ_ALL)` at every RX (re)start, and the grace-expiry one-bit clear for foreign preambles.
+The poll path is otherwise non-destructive — IRQ bits are cleared only by the work-handler bulk clear (on any DIO1 event), explicit `clear_irq_status(IRQ_ALL)` at every RX (re)start, the grace-expiry one-bit clear for foreign preambles, and the payload-deadline clear in step 1.
 
 ### 5.2.2 CAD-Timeout Recovery
 

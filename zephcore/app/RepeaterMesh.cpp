@@ -161,6 +161,12 @@ uint8_t RepeaterMesh::handleLoginReq(const mesh::Identity& sender, const uint8_t
                                                           guest_pw,
                                                           sizeof(received));
 
+        /* An empty stored guest password disables guest access (as
+         * CONFIG_ZEPHCORE_GUEST_PASSWORD documents) rather than matching an
+         * empty submitted password and letting anyone in. Both compares above
+         * still run unconditionally, so timing is unchanged. */
+        if (_prefs.guest_password[0] == 0) guest_match = false;
+
         if (admin_match) {
             perms = PERM_ACL_ADMIN;
         } else if (guest_match) {

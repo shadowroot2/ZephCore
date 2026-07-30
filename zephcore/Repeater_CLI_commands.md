@@ -65,6 +65,16 @@ All commands are sent over USB serial (CDC-ACM). Commands sent remotely over the
 
 > **Password length:** admin and guest passwords are capped at **15 characters** (16-byte storage incl. NUL; same limit as Arduino MeshCore). The login-send path silently truncates anything longer, so a password >15 chars will never authenticate. Applies to `set guest.password` as well.
 
+> **Guest access is off unless a guest password is set.** An empty `guest.password` (the default) disables guest login rather than matching a blank submitted password. To run an open room-server, use `set allow.read.only on` — that grants read-only (`PERM_ACL_GUEST`), not post rights.
+
+---
+
+## Room Server
+
+| Command | Description |
+|---------|-------------|
+| `room.post <message>` | Post a message to the shared room as the server itself (system post). Pushed to clients like any other post. |
+
 ---
 
 ## Region Filtering
