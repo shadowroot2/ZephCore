@@ -967,18 +967,20 @@ static bool companion_sos_finish(bool fresh_fix)
 	return success;
 }
 
-static bool companion_sos_request(char *reply)
+static bool companion_sos_request(char *reply, bool play_confirm = true)
 {
 	if (companion_sos.pending) {
 		strcpy(reply, "SOS: waiting for GPS fix (max 5 min)");
 		return true;
 	}
 
+	if (play_confirm) {
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
 	/* SOS accepted: a short rising acknowledgement. The TX-complete alert
 	 * below remains the Morse SOS melody. */
 	buzzer_play(MELODY_SOS_CONFIRM);
 #endif
+	}
 
 	if (!gps_is_available()) {
 		strcpy(reply, companion_sos_finish(false) ?
@@ -1014,7 +1016,8 @@ static bool companion_sos_request(char *reply)
 extern "C" void companion_sos_request_from_ui(void)
 {
 	char reply[CLI_REPLY_SIZE];
-	companion_sos_request(reply);
+	/* The button path already plays MELODY_SOS when its hold is accepted. */
+	companion_sos_request(reply, false);
 }
 
 static void companion_sos_process(void)
