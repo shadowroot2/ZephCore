@@ -63,6 +63,9 @@ void ui_led_heartbeat_init(void);
  */
 void ui_notify(enum ui_event event);
 
+/** Request a redraw of the current UI state. Safe from the mesh thread. */
+void ui_request_render(void);
+
 /**
  * Update the message count shown on the messages page.
  *

@@ -92,6 +92,7 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 #if !defined(CONFIG_SOC_FAMILY_NORDIC_NRF)
 		"stop ota\r\n"
 #endif
+		"sos\r\n"
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
 		"findme\r\n"
 #endif

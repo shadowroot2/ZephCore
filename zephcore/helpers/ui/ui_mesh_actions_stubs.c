@@ -15,6 +15,7 @@
 
 __attribute__((weak)) void mesh_send_flood_advert(void) {}
 __attribute__((weak)) void mesh_send_zerohop_advert(void) {}
+__attribute__((weak)) void mesh_send_sos(void) {}
 __attribute__((weak)) void mesh_gps_set_enabled(bool enable) { ARG_UNUSED(enable); }
 __attribute__((weak)) void mesh_ble_set_enabled(bool enable) { ARG_UNUSED(enable); }
 __attribute__((weak)) void mesh_set_buzzer_quiet(bool quiet) { ARG_UNUSED(quiet); }

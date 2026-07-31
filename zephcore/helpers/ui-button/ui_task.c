@@ -14,6 +14,7 @@
  *   KEY_C     → action_gps_toggle()      (4 taps, immediate)
  *   KEY_G     → GPS switch on/off        (hardware toggle, ThinkNode M1)
  *   KEY_POWER / KEY_F → action_deep_sleep() (long press — boards that emit these)
+ *   T-1000E: KEY_1 then KEY_F within 3s → SOS; bare KEY_F → deep sleep
  *   KEY_ENTER → action_page_enter()      (long press — Pocket / Heltec; joystick center Wio)
  *   KEY_RIGHT → action_page_next()       (joystick, Wio Tracker)
  *
@@ -80,8 +81,6 @@ LOG_MODULE_REGISTER(ui_task, CONFIG_ZEPHCORE_BOARD_LOG_LEVEL);
 
 #define MELODY_GPS_ON     "gon:d=16,o=7,b=200:c,p,c,p,c,p,c,p,p,8e"
 #define MELODY_GPS_OFF    "gof:d=16,o=7,b=200:c,p,c,p,c,p,c,p,p,8g5"
-
-
 /* ========== Deep Sleep / System OFF ========== */
 /* On nRF52840, sys_poweroff() = System OFF (~1µA).
  * Wake via reset button → full chip reset → boots fresh. */
@@ -100,6 +99,10 @@ static struct ui_state local_ui_state;
 /* ========== State ========== */
 static bool ui_initialized;
 static bool splash_active;
+#if defined(CONFIG_BOARD_T1000_E)
+#define T1000_SOS_ARM_WINDOW_MS 3000
+static uint32_t t1000_sos_armed_until;
+#endif
 
 /* ========== Doom Easter Egg Activation ========== */
 #ifdef CONFIG_ZEPHCORE_EASTER_EGG_DOOM
@@ -213,6 +216,14 @@ static void schedule_render(void)
 #endif
 }
 
+void ui_request_render(void)
+{
+	if (!ui_initialized) {
+		return;
+	}
+	schedule_render();
+}
+
 /* ========== Button Action Functions ========== */
 /* Each action checks capabilities internally — no #ifdef in the switch. */
 
@@ -234,6 +245,7 @@ static void action_page_prev(void)
 
 /* Forward declarations for page-enter dispatch */
 static void action_flood_advert(void);
+static void action_sos(void);
 static void action_gps_toggle(void);
 static void action_buzzer_toggle(void);
 static void action_leds_toggle(void);
@@ -267,6 +279,10 @@ static void action_page_enter(void)
 			/* First press — start deferred zero-hop */
 			k_work_reschedule(&advert_defer_work, K_MSEC(500));
 		}
+		break;
+
+	case UI_PAGE_SOS:
+		action_sos();
 		break;
 
 	case UI_PAGE_GPS:
@@ -399,6 +415,13 @@ static void action_flood_advert(void)
 #ifdef CONFIG_ZEPHCORE_UI_DISPLAY
 	ui_pages_advert_sent(true);
 #endif
+	schedule_render();
+}
+
+static void action_sos(void)
+{
+	LOG_INF("SOS requested");
+	mesh_send_sos();
 	schedule_render();
 }
 
@@ -664,7 +687,13 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 	/* ===== Multi-tap outputs ===== */
 	case INPUT_KEY_1:
 		/* Single tap (400ms delayed): page next */
+	#if defined(CONFIG_BOARD_T1000_E)
+		/* The T-1000E has no display. A single tap arms its SOS gesture;
+		 * the following >=1 s hold must arrive within three seconds. */
+		t1000_sos_armed_until = k_uptime_get_32() + T1000_SOS_ARM_WINDOW_MS;
+	#else
 		action_page_next();
+	#endif
 		break;
 
 	case INPUT_KEY_B:
@@ -691,6 +720,13 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 	case INPUT_KEY_POWER:
 	case INPUT_KEY_F:
 		/* Long press (≥1s): deep sleep */
+	#if defined(CONFIG_BOARD_T1000_E)
+		if ((int32_t)(t1000_sos_armed_until - k_uptime_get_32()) >= 0) {
+			t1000_sos_armed_until = 0;
+			mesh_send_sos();
+			break;
+		}
+	#endif
 		action_deep_sleep();
 		break;
 

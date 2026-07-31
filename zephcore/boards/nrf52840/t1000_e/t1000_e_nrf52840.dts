@@ -73,7 +73,7 @@
 	};
 
 	/* Input filter: user button multi-tap detection
-	 * 1 tap  (500ms wait) → KEY_1 = page next (no-op without display)
+	 * 1 tap  (500ms wait) → KEY_1 = arms SOS; hold >=1s within 3s sends SOS
 	 * 2 taps (500ms wait) → KEY_B = flood advert
 	 * 3 taps (500ms wait) → KEY_D = buzzer mute toggle
 	 * 4 taps (500ms wait) → KEY_C = GPS on/off

@@ -53,6 +53,7 @@ void mesh_housekeeping_ui_refresh(void);
  */
 void mesh_send_flood_advert(void);
 void mesh_send_zerohop_advert(void);
+void mesh_send_sos(void);
 void mesh_gps_set_enabled(bool enable);
 void mesh_ble_set_enabled(bool enable);
 void mesh_set_buzzer_quiet(bool quiet);

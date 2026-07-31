@@ -38,6 +38,9 @@ LOG_MODULE_REGISTER(zephcore_main, CONFIG_ZEPHCORE_MAIN_LOG_LEVEL);
 #ifdef CONFIG_ZEPHCORE_UI_DISPLAY
 #include "display.h"
 #endif
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY) && IS_ENABLED(CONFIG_ZEPHCORE_UI_DESIGN_BUTTON)
+#include "ui_pages.h"
+#endif
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
 #include "buzzer.h"
 #endif
@@ -111,6 +114,8 @@ extern "C" void bt_ctlr_assert_handle(char *file, uint32_t line)
  * down in the file, so mesh_event_loop() can't reference them directly. */
 static void save_prefs_to_flash(void);
 static void vcontact_battery_alert_check(void);
+static void companion_sos_process(void);
+static void companion_sos_tx_done(void);
 #endif
 
 /* Pending epoch for a deferred zephcore_rtc_save(). gps_fix_callback runs on
@@ -512,12 +517,17 @@ static void mesh_event_loop(void)
 		/* Packet processing — only on radio/BLE/TX events */
 		if (companion_mesh_ptr &&
 		    (events & (MESH_EVENT_LORA_RX | MESH_EVENT_LORA_TX_DONE |
-			       MESH_EVENT_BLE_RX | MESH_EVENT_TX_DRAIN))) {
+		       MESH_EVENT_BLE_RX | MESH_EVENT_TX_DRAIN))) {
 			companion_mesh_ptr->loop();
+		}
+		if (events & MESH_EVENT_LORA_TX_DONE) {
+			companion_sos_tx_done();
 		}
 
 		/* Periodic housekeeping — maintenance + UI refresh */
 		if (events & MESH_EVENT_HOUSEKEEPING) {
+			companion_sos_process();
+
 			/* Radio maintenance: noise floor calibration, AGC reset,
 			 * RX watchdog.  Separated from loop() so these never run
 			 * on packet-driven events. */
@@ -689,12 +699,10 @@ static void format_uptime(uint32_t uptime_ms, char *out, size_t out_len)
 	snprintf(out, out_len, "%ud %uh %um", days, hours, rem_mins);
 }
 
-/* Find the #zephcore group; create its normal public-channel key when the
- * user has not added it yet. This helper is called only from the automatic
- * low-battery shutdown path, never by a manual shutdown action. */
-static bool companion_get_emergency_channel(ChannelDetails &emergency_channel)
+/* Find a public group, creating its normal public-channel key when absent. */
+static bool companion_get_public_channel(const char *channel_name,
+					 ChannelDetails &public_channel)
 {
-	static const char emergency_channel_name[] = "#zephcore";
 	if (!companion_mesh_ptr) {
 		return false;
 	}
@@ -702,8 +710,8 @@ static bool companion_get_emergency_channel(ChannelDetails &emergency_channel)
 	for (int i = 0; i < companion_mesh_ptr->getNumChannels(); i++) {
 		ChannelDetails channel;
 		if (companion_mesh_ptr->getChannel(i, channel) &&
-		    strcmp(channel.name, emergency_channel_name) == 0) {
-			emergency_channel = channel;
+		    strcmp(channel.name, channel_name) == 0) {
+			public_channel = channel;
 			return true;
 		}
 	}
@@ -711,21 +719,24 @@ static bool companion_get_emergency_channel(ChannelDetails &emergency_channel)
 	/* Public #channels use SHA-256(channel name)[0..15] as their PSK. */
 	uint8_t psk[16];
 	mesh::Utils::sha256(psk, sizeof(psk),
-		(const uint8_t *)emergency_channel_name,
-		(int)strlen(emergency_channel_name));
+		(const uint8_t *)channel_name, (int)strlen(channel_name));
 	ChannelDetails *created = companion_mesh_ptr->addChannel(
-		emergency_channel_name, psk, sizeof(psk));
+		channel_name, psk, sizeof(psk));
 	if (!created) {
-		LOG_WRN("auto-shutdown: unable to create #zephcore channel");
+		LOG_WRN("unable to create %s channel", channel_name);
 		return false;
 	}
 
-	emergency_channel = *created;
-	/* Shutdown can follow immediately, so do not rely on the normal lazy
-	 * channel flush; retain the created channel across the power cycle. */
+	public_channel = *created;
+	/* SOS or shutdown can follow immediately, so retain the channel now. */
 	data_store.saveChannels(companion_mesh_ptr);
-	LOG_INF("auto-shutdown: created #zephcore emergency channel");
+	LOG_INF("created public channel %s", channel_name);
 	return true;
+}
+
+static bool companion_get_emergency_channel(ChannelDetails &emergency_channel)
+{
+	return companion_get_public_channel("#zephcore", emergency_channel);
 }
 
 /* Queue the low-battery notice in the #zephcore group. This is
@@ -801,6 +812,206 @@ static bool companion_send_auto_shutdown_emergency(uint16_t battery_mv,
 
 	LOG_INF("auto-shutdown: queued #zephcore emergency message: %s", text);
 	return true;
+}
+
+#define SOS_FIX_TIMEOUT_MS (5U * 60U * 1000U)
+
+struct companion_sos_state {
+	bool pending;
+	bool gps_started_by_sos;
+	uint32_t started_ms;
+	uint32_t saved_gps_duty_sec;
+};
+
+static struct companion_sos_state companion_sos;
+static struct {
+	bool pending;
+	uint32_t after_packets_sent;
+} companion_sos_tone;
+
+static void companion_sos_ui_waiting(void)
+{
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY) && IS_ENABLED(CONFIG_ZEPHCORE_UI_DESIGN_BUTTON)
+	ui_pages_sos_waiting();
+#endif
+	ui_request_render();
+}
+
+static void companion_sos_ui_sent(bool success)
+{
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY) && IS_ENABLED(CONFIG_ZEPHCORE_UI_DESIGN_BUTTON)
+	ui_pages_sos_sent(success);
+#else
+	ARG_UNUSED(success);
+#endif
+	ui_request_render();
+}
+
+static bool companion_send_sos_message(bool allow_coordinates)
+{
+	ChannelDetails sos_channel;
+	if (!companion_get_public_channel("#SOS", sos_channel)) {
+		return false;
+	}
+
+	char temperature[16] = "n/a";
+	char gps[72];
+	char text[160];
+	struct env_data env;
+	bool has_gps = gps_is_available();
+
+	if (env_sensors_read(&env) == 0) {
+		if (env.has_temperature) {
+			snprintf(temperature, sizeof(temperature), "%.1fC", env.temperature_c);
+		} else if (env.has_mcu_temperature) {
+			snprintf(temperature, sizeof(temperature), "%.1fC", env.mcu_temperature_c);
+		}
+	}
+
+	if (has_gps) {
+		struct gps_state_info gsi;
+		struct gps_position pos = {};
+		gps_get_state_info(&gsi);
+		uint16_t sats_in_view = gsi.visible_satellites ?
+			gsi.visible_satellites : gsi.satellites;
+		bool has_fix = gps_get_last_known_position(&pos);
+		bool has_coordinates = pos.latitude_ndeg != 0 && pos.longitude_ndeg != 0;
+
+		if (has_fix && has_coordinates && allow_coordinates) {
+			snprintf(gps, sizeof(gps),
+				 "GPS: fix, sat %u https://maps.google.com/?q=%.5f,%.5f",
+				 sats_in_view, pos.latitude_ndeg / 1e9,
+				 pos.longitude_ndeg / 1e9);
+		} else if (has_fix && allow_coordinates) {
+			snprintf(gps, sizeof(gps), "GPS: fix, sat %u", sats_in_view);
+		} else {
+			snprintf(gps, sizeof(gps), "GPS: no fix, sat %u", sats_in_view);
+		}
+	}
+
+	uint16_t battery_mv = get_battery_mv();
+	if (has_gps) {
+		snprintf(text, sizeof(text),
+			 "SOS! batt %u.%02uV, temp %s; %s",
+			 battery_mv / 1000U, (battery_mv % 1000U) / 10U,
+			 temperature, gps);
+	} else {
+		snprintf(text, sizeof(text), "SOS! batt %u.%02uV, temp %s",
+			 battery_mv / 1000U, (battery_mv % 1000U) / 10U,
+			 temperature);
+	}
+
+	uint32_t packets_before = lora_radio.getPacketsSent();
+	bool tx_was_active = lora_radio.isTxActive();
+	if (!companion_mesh_ptr->sendGroupMessage(rtc_clock.getCurrentTimeUnique(),
+							  sos_channel.channel,
+							  companion_mesh_ptr->prefs.node_name,
+							  text, (int)strlen(text))) {
+		LOG_WRN("SOS: unable to queue #SOS message");
+		return false;
+	}
+
+	LOG_INF("SOS: queued #SOS message: %s", text);
+	/* LoRa runs asynchronously. Play only after this queued packet has left
+	 * the radio, not while it is waiting for channel access. */
+	companion_sos_tone.after_packets_sent = packets_before +
+		(tx_was_active ? 2U : 1U);
+	companion_sos_tone.pending = true;
+	return true;
+}
+
+static bool companion_sos_finish(bool fresh_fix)
+{
+	bool success = companion_send_sos_message(fresh_fix);
+	companion_sos_ui_sent(success);
+
+	if (companion_sos.gps_started_by_sos) {
+		gps_enable(false);
+		gps_set_poll_interval_sec(companion_sos.saved_gps_duty_sec);
+	}
+	memset(&companion_sos, 0, sizeof(companion_sos));
+	return success;
+}
+
+static bool companion_sos_request(char *reply)
+{
+	if (companion_sos.pending) {
+		strcpy(reply, "SOS: waiting for GPS fix (max 5 min)");
+		return true;
+	}
+
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
+	/* SOS accepted: a short rising acknowledgement. The TX-complete alert
+	 * below remains the Morse SOS melody. */
+	buzzer_play(MELODY_SOS_CONFIRM);
+#endif
+
+	if (!gps_is_available()) {
+		strcpy(reply, companion_sos_finish(false) ?
+		       "OK - SOS sent" : "ERROR: SOS send failed");
+		return true;
+	}
+
+	struct gps_position pos = {};
+	bool gps_was_enabled = gps_is_enabled();
+	if (gps_was_enabled && gps_get_last_known_position(&pos) &&
+	    pos.latitude_ndeg != 0 && pos.longitude_ndeg != 0) {
+		strcpy(reply, companion_sos_finish(true) ?
+		       "OK - SOS sent" : "ERROR: SOS send failed");
+		return true;
+	}
+
+	companion_sos.pending = true;
+	companion_sos.started_ms = k_uptime_get_32();
+	companion_sos_ui_waiting();
+	if (!gps_was_enabled) {
+		companion_sos.gps_started_by_sos = true;
+		companion_sos.saved_gps_duty_sec = gps_get_poll_interval_sec();
+		gps_set_poll_interval_sec(0);
+		gps_enable(true);
+	} else {
+		gps_request_fresh_fix();
+	}
+
+	strcpy(reply, "SOS: waiting for GPS fix (max 5 min)");
+	return true;
+}
+
+extern "C" void companion_sos_request_from_ui(void)
+{
+	char reply[CLI_REPLY_SIZE];
+	companion_sos_request(reply);
+}
+
+static void companion_sos_process(void)
+{
+	if (!companion_sos.pending) {
+		return;
+	}
+
+	struct gps_position pos = {};
+	bool fresh_fix = gps_get_last_known_position(&pos) &&
+		pos.latitude_ndeg != 0 && pos.longitude_ndeg != 0 &&
+		(!companion_sos.gps_started_by_sos ||
+		 pos.timestamp_ms > companion_sos.started_ms);
+	uint32_t elapsed_ms = k_uptime_get_32() - companion_sos.started_ms;
+	if (fresh_fix || elapsed_ms >= SOS_FIX_TIMEOUT_MS) {
+		companion_sos_finish(fresh_fix);
+	}
+}
+
+static void companion_sos_tx_done(void)
+{
+	if (!companion_sos_tone.pending ||
+	    lora_radio.getPacketsSent() < companion_sos_tone.after_packets_sent) {
+		return;
+	}
+
+	companion_sos_tone.pending = false;
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
+	/* buzzer_play(), unlike FindMe, obeys the user's buzz on/off setting. */
+	buzzer_play(MELODY_SOS);
+#endif
 }
 
 /* ========== Companion text CLI ==========
@@ -1152,6 +1363,14 @@ static bool handle_vcontact_cli(const char *line, char *reply)
 	return false;
 }
 
+static bool handle_sos_cli(const char *line, char *reply)
+{
+	if (strcmp(line, "sos") != 0) {
+		return false;
+	}
+	return companion_sos_request(reply);
+}
+
 /* Locate this companion with a five-second audible melody.  This explicit
  * request deliberately overrides user mute and the low-battery sound limit. */
 static bool handle_findme_cli(const char *line, char *reply)
@@ -1322,6 +1541,9 @@ static void companion_cli_exec(const char *line, char *reply)
 {
 	reply[0] = '\0';
 	if (handle_local_ui_cli(line, reply)) {
+		return;
+	}
+	if (handle_sos_cli(line, reply)) {
 		return;
 	}
 	if (handle_findme_cli(line, reply)) {

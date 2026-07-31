@@ -143,6 +143,13 @@ extern "C" void ui_notify(enum ui_event event)
 	}
 }
 
+extern "C" void ui_request_render(void)
+{
+	if (s_task) {
+		s_task->notify();
+	}
+}
+
 extern "C" void ui_notify_contact_msg(uint8_t path_len, const char *from_name,
 	const char *text, uint16_t msg_count)
 {

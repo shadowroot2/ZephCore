@@ -31,6 +31,8 @@ WEAK void ui_notify(enum ui_event event)
 	ARG_UNUSED(event);
 }
 
+WEAK void ui_request_render(void) { }
+
 WEAK void ui_set_msg_count(uint16_t count)
 {
 	ARG_UNUSED(count);

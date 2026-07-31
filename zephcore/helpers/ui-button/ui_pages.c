@@ -162,6 +162,7 @@ static const enum ui_page active_pages[] = {
 	UI_PAGE_TRAFFIC,
 	UI_PAGE_BLUETOOTH,
 	UI_PAGE_ADVERT,
+	UI_PAGE_SOS,
 	/* Heltec V3 has no GNSS hardware.  Do not make the user cycle through
 	 * a permanently empty "No GPS" screen on this single-button board. */
 #if !defined(CONFIG_BOARD_HELTEC_WIFI_LORA32_V3)
@@ -558,6 +559,7 @@ static const char *tiny_page_title(enum ui_page p)
 	case UI_PAGE_SENSORS:   return "SENSORS";
 	case UI_PAGE_OFFGRID:   return "OFFGRID";
 	case UI_PAGE_DFU:       return "DFU";
+	case UI_PAGE_SOS:       return "SOS";
 	case UI_PAGE_SHUTDOWN:  return "SHUTDOWN";
 	case UI_PAGE_STATUS:    return "STATUS";
 	default:                return "";
@@ -1132,6 +1134,56 @@ static void render_advert(void)
 	render_advert_mono();
 }
 
+static void render_sos_mono(void)
+{
+	uint32_t now = k_uptime_get_32();
+	bool recent = state.sos_sent_time > 0 &&
+		(now - state.sos_sent_time) < 2000;
+
+	draw_centered(centered_row(0, 2), "Send SOS");
+	if (state.sos_waiting_fix) {
+		draw_centered(centered_row(1, 2), "Waiting fix (5m max)");
+	} else if (recent) {
+		draw_centered(centered_row(1, 2),
+			      state.sos_send_failed ? "SOS failed" : ">>> SOS Sent! <<<");
+	} else {
+		draw_centered(centered_row(1, 2), "Press to Send");
+	}
+}
+
+#if MC_DISPLAY_COLOR_PANEL
+static void render_sos_color(void)
+{
+	uint32_t now = k_uptime_get_32();
+	bool recent = state.sos_sent_time > 0 &&
+		(now - state.sos_sent_time) < 2000;
+	int y = CONTENT_Y;
+
+	draw_badge(0, y, "SOS", state.sos_waiting_fix ? UI_COLOR_WARN : UI_COLOR_ERROR);
+	mc_display_color_text(32, y, "Emergency message", UI_COLOR_VALUE);
+	y += LINE_H + 2;
+	if (state.sos_waiting_fix) {
+		draw_centered_color(y, "Waiting fix (5m max)", UI_COLOR_WARN);
+	} else if (recent) {
+		draw_centered_color(y, state.sos_send_failed ? "SOS failed" : "SOS sent",
+				    state.sos_send_failed ? UI_COLOR_ERROR : UI_COLOR_OK);
+	} else {
+		draw_centered_color(y, "Press to send", UI_COLOR_VALUE);
+	}
+}
+#endif /* MC_DISPLAY_COLOR_PANEL */
+
+static void render_sos(void)
+{
+#if MC_DISPLAY_COLOR_PANEL
+	if (mc_display_has_color()) {
+		render_sos_color();
+		return;
+	}
+#endif
+	render_sos_mono();
+}
+
 /* Format seconds into compact time string: "3m20s", "1h05m", "12s" */
 static void fmt_duration(char *buf, size_t len, uint32_t secs)
 {
@@ -1692,6 +1744,7 @@ static const page_render_fn renderers[] = {
 	[UI_PAGE_SENSORS]   = render_sensors,
 	[UI_PAGE_OFFGRID]   = render_offgrid,
 	[UI_PAGE_DFU]       = render_dfu,
+	[UI_PAGE_SOS]       = render_sos,
 	[UI_PAGE_SHUTDOWN]  = render_shutdown,
 	[UI_PAGE_STATUS]    = render_status,
 };
@@ -1833,4 +1886,18 @@ void ui_pages_advert_sent(bool flood)
 {
 	state.advert_sent_time = k_uptime_get_32();
 	state.advert_was_flood = flood;
+}
+
+void ui_pages_sos_waiting(void)
+{
+	state.sos_waiting_fix = true;
+	state.sos_sent_time = 0;
+	state.sos_send_failed = false;
+}
+
+void ui_pages_sos_sent(bool success)
+{
+	state.sos_waiting_fix = false;
+	state.sos_sent_time = k_uptime_get_32();
+	state.sos_send_failed = !success;
 }
