@@ -862,6 +862,12 @@ static struct {
 	bool pending;
 	uint32_t after_packets_sent;
 } companion_sos_tone;
+static struct {
+	bool pending;
+	bool gps_started_by_sos;
+	uint32_t saved_gps_duty_sec;
+	uint32_t after_packets_sent;
+} companion_sos_restore;
 
 static void companion_sos_ui_waiting(void)
 {
@@ -954,16 +960,32 @@ static bool companion_send_sos_message(bool allow_coordinates)
 	return true;
 }
 
+static void companion_sos_restore_gps(void)
+{
+	gps_set_poll_interval_sec(companion_sos_restore.saved_gps_duty_sec);
+	if (companion_sos_restore.gps_started_by_sos) {
+		gps_enable(false);
+	}
+	memset(&companion_sos_restore, 0, sizeof(companion_sos_restore));
+}
+
 static bool companion_sos_finish(bool fresh_fix)
 {
 	bool success = companion_send_sos_message(fresh_fix);
 	companion_sos_ui_sent(success);
 
-	/* SOS temporarily forces continuous acquisition. Restore the configured
-	 * duty cycle even when GPS was already enabled before the request. */
-	gps_set_poll_interval_sec(companion_sos.saved_gps_duty_sec);
-	if (companion_sos.gps_started_by_sos) {
-		gps_enable(false);
+	if (success) {
+		/* Keep continuous acquisition until this SOS packet actually leaves
+		 * the radio; LoRa transmission is asynchronous. */
+		companion_sos_restore.pending = true;
+		companion_sos_restore.gps_started_by_sos = companion_sos.gps_started_by_sos;
+		companion_sos_restore.saved_gps_duty_sec = companion_sos.saved_gps_duty_sec;
+		companion_sos_restore.after_packets_sent = companion_sos_tone.after_packets_sent;
+	} else {
+		/* Nothing was queued, so there is no transmission to wait for. */
+		companion_sos_restore.gps_started_by_sos = companion_sos.gps_started_by_sos;
+		companion_sos_restore.saved_gps_duty_sec = companion_sos.saved_gps_duty_sec;
+		companion_sos_restore_gps();
 	}
 	memset(&companion_sos, 0, sizeof(companion_sos));
 	return success;
@@ -971,8 +993,9 @@ static bool companion_sos_finish(bool fresh_fix)
 
 static bool companion_sos_request(char *reply, bool play_confirm = true)
 {
-	if (companion_sos.pending) {
-		strcpy(reply, "SOS: waiting for GPS fix (max 5 min)");
+	if (companion_sos.pending || companion_sos_restore.pending) {
+		strcpy(reply, companion_sos.pending ?
+		       "SOS: waiting for GPS fix (max 5 min)" : "SOS: sending");
 		return true;
 	}
 
@@ -1035,16 +1058,19 @@ static void companion_sos_process(void)
 
 static void companion_sos_tx_done(void)
 {
-	if (!companion_sos_tone.pending ||
-	    lora_radio.getPacketsSent() < companion_sos_tone.after_packets_sent) {
-		return;
-	}
-
-	companion_sos_tone.pending = false;
+	uint32_t packets_sent = lora_radio.getPacketsSent();
+	if (companion_sos_tone.pending &&
+	    packets_sent >= companion_sos_tone.after_packets_sent) {
+		companion_sos_tone.pending = false;
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
-	/* buzzer_play(), unlike FindMe, obeys the user's buzz on/off setting. */
-	buzzer_play(MELODY_SOS);
+		/* buzzer_play(), unlike FindMe, obeys the user's buzz on/off setting. */
+		buzzer_play(MELODY_SOS);
 #endif
+	}
+	if (companion_sos_restore.pending &&
+	    packets_sent >= companion_sos_restore.after_packets_sent) {
+		companion_sos_restore_gps();
+	}
 }
 
 /* ========== Companion text CLI ==========
