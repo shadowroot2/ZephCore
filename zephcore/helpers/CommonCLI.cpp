@@ -373,6 +373,19 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
         command = norm;
     }
 
+    if (strcmp(_callbacks->getRole(), "companion") == 0 &&
+        (strcmp(command, "get int.thresh") == 0 ||
+         strncmp(command, "set int.thresh ", 15) == 0 ||
+         strcmp(command, "get agc.reset.interval") == 0 ||
+         strncmp(command, "set agc.reset.interval ", 23) == 0 ||
+         strcmp(command, "get backoff.multiplier") == 0 ||
+         strncmp(command, "set backoff.multiplier ", 23) == 0 ||
+         strcmp(command, "get loop.detect") == 0 ||
+         strncmp(command, "set loop.detect ", 16) == 0)) {
+        strcpy(reply, "Error: not supported on companion");
+        return;
+    }
+
     if (strcmp(command, "start dfu") == 0) {
         /* Reboot into UF2 bootloader for firmware update */
         strcpy(reply, "OK - rebooting to UF2 DFU");
