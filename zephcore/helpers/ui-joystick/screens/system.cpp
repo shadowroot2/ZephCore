@@ -9,6 +9,9 @@
 #include "screen_helpers.h"
 #include <adapters/gps/ZephyrGPSManager.h>
 #include <helpers/time_sync.h>
+#ifdef CONFIG_ZEPHCORE_UI_BUZZER
+#include <helpers/ui/buzzer.h>
+#endif
 #include <helpers/ui/ui_mesh_actions.h>
 #include <zephyr/kernel.h>
 #include <zephyr/random/random.h>
@@ -240,10 +243,12 @@ bool SystemScreen::handleInput(char c)
 			switch (_selected) {
 			case SYSPWR_REBOOT:   _task->showAlert("Rebooting...", 1500);  _task->shutdown(true);  return true;
 			case SYSPWR_SOS: {
-				struct gps_position pos = {};
-				bool waiting = gps_is_available() &&
-					(!gps_is_enabled() || !gps_get_last_known_position(&pos) ||
-					 pos.latitude_ndeg == 0 || pos.longitude_ndeg == 0);
+				/* SOS always requests a fresh fix now, even if a cached
+				 * position exists. Match the button/CLI acknowledgement. */
+				bool waiting = gps_is_available();
+				#ifdef CONFIG_ZEPHCORE_UI_BUZZER
+				buzzer_play(MELODY_SOS_CONFIRM);
+				#endif
 				mesh_send_sos();
 				_task->showAlert(waiting ? "Waiting fix (5m max)" : "SOS sent", 2000);
 				return true;
