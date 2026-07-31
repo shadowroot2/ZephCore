@@ -195,7 +195,7 @@ int RoomServerMesh::handleRequest(ClientInfo* sender, uint32_t sender_timestamp,
          * field on the self channel so existing client UIs show a value.
          * T1000-E is excluded: its physical light sensor reports real lux. */
 #if !defined(CONFIG_BOARD_T1000_E)
-        if (gps_is_available()) {
+        if (sender->isAdmin() && gps_is_available()) {
             struct gps_state_info gsi;
             gps_get_state_info(&gsi);
             lpp.addLuminosity(CH_SELF, gsi.satellites);
