@@ -726,9 +726,9 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 		if ((int32_t)(t1000_sos_armed_until - k_uptime_get_32()) >= 0) {
 			t1000_sos_armed_until = 0;
 		#ifdef CONFIG_ZEPHCORE_UI_BUZZER
-			/* The tone is immediate confirmation that the hold was accepted,
-			 * so the user can release the button before LoRa transmission. */
-			buzzer_play(MELODY_SOS);
+			/* Match the CLI acknowledgement; the full SOS melody is played
+			 * after the queued message is transmitted. */
+			buzzer_play(MELODY_SOS_CONFIRM);
 		#endif
 			mesh_send_sos();
 			break;
