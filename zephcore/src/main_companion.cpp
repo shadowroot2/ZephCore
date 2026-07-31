@@ -1013,8 +1013,8 @@ static bool companion_sos_request(char *reply, bool play_confirm = true)
 extern "C" void companion_sos_request_from_ui(void)
 {
 	char reply[CLI_REPLY_SIZE];
-	/* The button path already plays MELODY_SOS when its hold is accepted. */
-	companion_sos_request(reply, false);
+	/* UI and CLI share the same acknowledgement and SOS state machine. */
+	companion_sos_request(reply);
 }
 
 static void companion_sos_process(void)

@@ -725,11 +725,7 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 	#if defined(CONFIG_BOARD_T1000_E)
 		if ((int32_t)(t1000_sos_armed_until - k_uptime_get_32()) >= 0) {
 			t1000_sos_armed_until = 0;
-		#ifdef CONFIG_ZEPHCORE_UI_BUZZER
-			/* Match the CLI acknowledgement; the full SOS melody is played
-			 * after the queued message is transmitted. */
-			buzzer_play(MELODY_SOS_CONFIRM);
-		#endif
+			/* The companion main loop plays the same acknowledgement as CLI. */
 			mesh_send_sos();
 			break;
 		}
