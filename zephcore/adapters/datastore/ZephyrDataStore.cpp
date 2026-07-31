@@ -813,24 +813,37 @@ void ZephyrDataStore::loadPrefs(NodePrefs &prefs)
 		}
 	}
 
-	/* Offset 159: UI timezone in signed minutes (2 bytes LE). */
-	if (off + 2 <= len) {
+	/* Legacy local layout (162 bytes): timezone at 159 and emergency flag at
+	 * 161. Master v1.16.6 instead used 159..162 for adc_multiplier. New files
+	 * append the local fields after that multiplier (166 bytes), so all deployed
+	 * layouts can be identified unambiguously by total length. */
+	if (len == 162) {
 		prefs.ui_timezone_offset_minutes = (int16_t)((uint16_t)buf[off] |
 			((uint16_t)buf[off + 1] << 8));
-		off += 2;
 		if (prefs.ui_timezone_offset_minutes < -1439 ||
 			prefs.ui_timezone_offset_minutes > 1439) {
 			prefs.ui_timezone_offset_minutes = CONFIG_ZEPHCORE_UI_TIMEZONE_OFFSET_MINUTES;
 		}
-	}
-
-	/* Offset 161: send the low-battery emergency notice before automatic shutdown.
-	 * Older prefs blobs stop at the timezone field; preserve the previous
-	 * behavior for them by defaulting this new extension to enabled. */
-	if (off < len) {
-		prefs.auto_shutdown_emergency = buf[off++] ? 1 : 0;
+		prefs.auto_shutdown_emergency = buf[off + 2] ? 1 : 0;
 	} else {
-		prefs.auto_shutdown_emergency = 1;
+		if (off + sizeof(float) <= len) {
+			memcpy(&prefs.adc_multiplier, &buf[off], sizeof(float));
+			off += sizeof(float);
+			if (prefs.adc_multiplier != prefs.adc_multiplier ||
+			    prefs.adc_multiplier < 0.0f || prefs.adc_multiplier > 30000.0f) {
+				prefs.adc_multiplier = 0.0f;
+			}
+		}
+		if (off + 2 <= len) {
+			prefs.ui_timezone_offset_minutes = (int16_t)((uint16_t)buf[off] |
+				((uint16_t)buf[off + 1] << 8));
+			off += 2;
+			if (prefs.ui_timezone_offset_minutes < -1439 ||
+			    prefs.ui_timezone_offset_minutes > 1439) {
+				prefs.ui_timezone_offset_minutes = CONFIG_ZEPHCORE_UI_TIMEZONE_OFFSET_MINUTES;
+			}
+		}
+		prefs.auto_shutdown_emergency = off < len ? (buf[off] ? 1 : 0) : 1;
 	}
 }
 
@@ -921,12 +934,15 @@ void ZephyrDataStore::savePrefs(const NodePrefs &prefs)
 	buf[off++] = prefs.cad_probe_interval;
 	/* Offset 158: cad_busycap (ZephCore extension, percent) */
 	buf[off++] = prefs.cad_busycap;
-	/* Offset 159: UI timezone in signed minutes (2 bytes LE) */
+	/* Offset 159: ADC multiplier (float LE, 0 = board default). */
+	memcpy(&buf[off], &prefs.adc_multiplier, sizeof(float));
+	off += sizeof(float);
+	/* Offset 163: UI timezone in signed minutes (2 bytes LE). */
 	buf[off++] = (uint16_t)prefs.ui_timezone_offset_minutes & 0xFF;
 	buf[off++] = ((uint16_t)prefs.ui_timezone_offset_minutes >> 8) & 0xFF;
-	/* Offset 161: auto-shutdown emergency notice enabled */
+	/* Offset 165: auto-shutdown emergency notice enabled. */
 	buf[off++] = prefs.auto_shutdown_emergency ? 1 : 0;
-	/* Total: 162 bytes */
+	/* Total: 166 bytes. */
 
 	bool ok = atomicReplaceFile(PREFS_FILE, buf, off);
 	LOG_DBG("savePrefs: wrote %s, ok=%d (%d bytes), name='%.16s'",
