@@ -80,8 +80,8 @@ LOG_MODULE_REGISTER(ui_task, CONFIG_ZEPHCORE_BOARD_LOG_LEVEL);
 #define MELODY_BEEP_2     "b2:d=16,o=7,b=200:c,p,c"
 #define MELODY_BEEP_5     "b5:d=16,o=7,b=200:c,p,c,p,c,p,c,p,c"
 
-#define MELODY_GPS_ON     "gon:d=16,o=7,b=200:c,p,c,p,c,p,c"
-#define MELODY_GPS_OFF    "gof:d=16,o=7,b=200:c,p,c,p,c,p,c"
+#define MELODY_GPS_ON     "gon:d=16,o=7,b=200:c,p,c,p,c,p,e"
+#define MELODY_GPS_OFF    "gof:d=16,o=7,b=200:c,p,c,p,c,p,g5"
 /* ========== Deep Sleep / System OFF ========== */
 /* On nRF52840, sys_poweroff() = System OFF (~1µA).
  * Wake via reset button → full chip reset → boots fresh. */

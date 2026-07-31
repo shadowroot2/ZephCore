@@ -23,10 +23,10 @@ extern "C" {
 #define MELODY_MSG_CONTACT "MsgRcv3:d=4,o=6,b=200:32e,32g,32b,16c7"
 #define MELODY_MSG_CHANNEL "kerplop:d=16,o=6,b=120:32g#,32c#"
 #define MELODY_ACK         "ack:d=32,o=8,b=120:c"
-#define MELODY_BUZZER_ON   "bon:d=16,o=7,b=200:c,p,c,p,c"
-#define MELODY_BUZZER_OFF  "bof:d=16,o=7,b=200:c,p,c,p,c"
-#define MELODY_LED_ON      "lon:d=16,o=7,b=200:c,p,c"
-#define MELODY_LED_OFF     "lof:d=16,o=7,b=200:c,p,c"
+#define MELODY_BUZZER_ON   "bon:d=16,o=7,b=200:c,p,c,p,e"
+#define MELODY_BUZZER_OFF  "bof:d=16,o=7,b=200:c,p,c,p,g5"
+#define MELODY_LED_ON      "lon:d=16,o=7,b=200:c,p,e"
+#define MELODY_LED_OFF     "lof:d=16,o=7,b=200:c,p,g5"
 #define MELODY_SOS_CONFIRM "sok:d=16,o=7,b=200:c,p,e,p,g"
 /* Morse "ZEPHCORE" (unit = 62.5 ms, total = 5.06 s). */
 #define MELODY_FINDME      "FindMe:d=32,o=5,b=120:" \
