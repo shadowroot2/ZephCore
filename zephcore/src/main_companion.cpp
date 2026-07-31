@@ -959,9 +959,11 @@ static bool companion_sos_finish(bool fresh_fix)
 	bool success = companion_send_sos_message(fresh_fix);
 	companion_sos_ui_sent(success);
 
+	/* SOS temporarily forces continuous acquisition. Restore the configured
+	 * duty cycle even when GPS was already enabled before the request. */
+	gps_set_poll_interval_sec(companion_sos.saved_gps_duty_sec);
 	if (companion_sos.gps_started_by_sos) {
 		gps_enable(false);
-		gps_set_poll_interval_sec(companion_sos.saved_gps_duty_sec);
 	}
 	memset(&companion_sos, 0, sizeof(companion_sos));
 	return success;
@@ -988,22 +990,17 @@ static bool companion_sos_request(char *reply, bool play_confirm = true)
 		return true;
 	}
 
-	struct gps_position pos = {};
 	bool gps_was_enabled = gps_is_enabled();
-	if (gps_was_enabled && gps_get_last_known_position(&pos) &&
-	    pos.latitude_ndeg != 0 && pos.longitude_ndeg != 0) {
-		strcpy(reply, companion_sos_finish(true) ?
-		       "OK - SOS sent" : "ERROR: SOS send failed");
-		return true;
-	}
-
 	companion_sos.pending = true;
 	companion_sos.started_ms = k_uptime_get_32();
+	companion_sos.gps_started_by_sos = !gps_was_enabled;
+	companion_sos.saved_gps_duty_sec = gps_get_poll_interval_sec();
 	companion_sos_ui_waiting();
+
+	/* SOS always starts a new, continuous acquisition. A cached coordinate
+	 * must not bypass the five-minute fresh-fix window. */
+	gps_set_poll_interval_sec(0);
 	if (!gps_was_enabled) {
-		companion_sos.gps_started_by_sos = true;
-		companion_sos.saved_gps_duty_sec = gps_get_poll_interval_sec();
-		gps_set_poll_interval_sec(0);
 		gps_enable(true);
 	} else {
 		gps_request_fresh_fix();
@@ -1029,8 +1026,7 @@ static void companion_sos_process(void)
 	struct gps_position pos = {};
 	bool fresh_fix = gps_get_last_known_position(&pos) &&
 		pos.latitude_ndeg != 0 && pos.longitude_ndeg != 0 &&
-		(!companion_sos.gps_started_by_sos ||
-		 pos.timestamp_ms > companion_sos.started_ms);
+		pos.timestamp_ms > companion_sos.started_ms;
 	uint32_t elapsed_ms = k_uptime_get_32() - companion_sos.started_ms;
 	if (fresh_fix || elapsed_ms >= SOS_FIX_TIMEOUT_MS) {
 		companion_sos_finish(fresh_fix);
