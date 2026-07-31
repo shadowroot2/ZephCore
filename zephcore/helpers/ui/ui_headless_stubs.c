@@ -31,6 +31,8 @@ WEAK void ui_notify(enum ui_event event)
 	ARG_UNUSED(event);
 }
 
+WEAK void ui_request_render(void) { }
+
 WEAK void ui_set_msg_count(uint16_t count)
 {
 	ARG_UNUSED(count);
@@ -127,6 +129,11 @@ WEAK void ui_set_buzzer_quiet(bool quiet)
 WEAK void ui_set_leds_disabled(bool disabled)
 {
 	ARG_UNUSED(disabled);
+}
+
+WEAK bool ui_leds_disabled(void)
+{
+	return true;
 }
 
 WEAK void ui_set_heartbeat_led(bool enabled)

@@ -30,7 +30,7 @@ enum SysDspItem { SYSDSP_BRIGHT=0, SYSDSP_SCROFF, SYSDSP_BATT, SYSDSP_WAKE, SYSD
 /* Info submenu items */
 enum SysInfoItem { SYSINFO_TIME=0, SYSINFO_STATS, SYSINFO_RADIO, SYSINFO_COUNT };
 /* Power submenu items */
-enum SysPwrItem  { SYSPWR_REBOOT=0, SYSPWR_SHUTDOWN, SYSPWR_COUNT };
+enum SysPwrItem  { SYSPWR_REBOOT=0, SYSPWR_SOS, SYSPWR_SHUTDOWN, SYSPWR_COUNT };
 
 static void renderSubMenu(JoystickDisplay &display, const char *title,
 		int selected, const char * const *items, int count)
@@ -101,7 +101,7 @@ int SystemScreen::render(JoystickDisplay &display)
 		return 500;
 	}
 	if (_mode == SYSMODE_POWER) {
-		static const char * const kItems[SYSPWR_COUNT] = { "Reboot", "Shutdown" };
+		static const char * const kItems[SYSPWR_COUNT] = { "Reboot", "SOS", "Shutdown" };
 		renderSubMenu(display, "Power", _selected, kItems, SYSPWR_COUNT);
 		return 500;
 	}
@@ -239,6 +239,15 @@ bool SystemScreen::handleInput(char c)
 		if (c == KEY_ENTER) {
 			switch (_selected) {
 			case SYSPWR_REBOOT:   _task->showAlert("Rebooting...", 1500);  _task->shutdown(true);  return true;
+			case SYSPWR_SOS: {
+				struct gps_position pos = {};
+				bool waiting = gps_is_available() &&
+					(!gps_is_enabled() || !gps_get_last_known_position(&pos) ||
+					 pos.latitude_ndeg == 0 || pos.longitude_ndeg == 0);
+				mesh_send_sos();
+				_task->showAlert(waiting ? "Waiting fix (5m max)" : "SOS sent", 2000);
+				return true;
+			}
 			case SYSPWR_SHUTDOWN: _task->showAlert("Shutting down...", 1500); _task->shutdown(false); return true;
 			default: return false;
 			}

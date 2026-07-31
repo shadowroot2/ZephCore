@@ -23,6 +23,26 @@ extern "C" {
 #define MELODY_MSG_CONTACT "MsgRcv3:d=4,o=6,b=200:32e,32g,32b,16c7"
 #define MELODY_MSG_CHANNEL "kerplop:d=16,o=6,b=120:32g#,32c#"
 #define MELODY_ACK         "ack:d=32,o=8,b=120:c"
+#define MELODY_BUZZER_ON   "bon:d=16,o=7,b=200:c,p,c,p,c,p,p,8e"
+#define MELODY_BUZZER_OFF  "bof:d=16,o=7,b=200:c,p,c,p,c,p,p,8g5"
+#define MELODY_LED_ON      "lon:d=16,o=7,b=200:c,p,c,p,c,p,c,p,c,p,p,8e"
+#define MELODY_LED_OFF     "lof:d=16,o=7,b=200:c,p,c,p,c,p,c,p,c,p,p,8g5"
+#define MELODY_SOS_CONFIRM "sok:d=16,o=7,b=200:c,p,e,p,g"
+/* Morse "ZEPHCORE" (unit = 62.5 ms, total = 5.06 s). */
+#define MELODY_FINDME      "FindMe:d=32,o=5,b=120:" \
+                           "16c6.,p,16c6.,p,c6,p,c6,p,p,p," /* Z --.. */ \
+                           "c6,p,p,p,"                     /* E . */ \
+                           "c6,p,16c6.,p,16c6.,p,c6,p,p,p," /* P .--. */ \
+                           "c6,p,c6,p,c6,p,c6,p,p,p,"       /* H .... */ \
+                           "16c6.,p,c6,p,16c6.,p,c6,p,p,p," /* C -.-. */ \
+                           "16c6.,p,16c6.,p,16c6.,p,p,p,"   /* O --- */ \
+                           "c6,p,16c6.,p,c6,p,p,p,"          /* R .-. */ \
+                           "c6"                              /* E . */
+/* Morse "SOS" (... --- ...), played after the message is transmitted. */
+#define MELODY_SOS         "SOS:d=32,o=6,b=120:" \
+                           "c6,p,c6,p,c6,p,p,p,"              /* S ... */ \
+                           "16c6.,p,16c6.,p,16c6.,p,p,p,"     /* O --- */ \
+                           "c6,p,c6,p,c6"                      /* S ... */
 
 /**
  * Initialize buzzer from devicetree ('buzzer' alias → pwm-leds).
@@ -36,6 +56,12 @@ int buzzer_init(void);
  * No-op if quiet. String must remain valid until melody completes.
  */
 void buzzer_play(const char *rtttl);
+
+/**
+ * Play a melody regardless of user mute and the temporary low-battery mute.
+ * Intended only for an explicitly requested physical-location alert.
+ */
+void buzzer_play_force(const char *rtttl);
 
 /** Stop current melody and silence the buzzer. */
 void buzzer_stop(void);

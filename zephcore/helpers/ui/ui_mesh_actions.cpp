@@ -44,6 +44,9 @@ LOG_MODULE_REGISTER(zephcore_ui_actions, CONFIG_ZEPHCORE_UI_ACTIONS_LOG_LEVEL);
 #define UI_ACTION_SCREEN_OFF_SAVE   BIT(10)
 #define UI_ACTION_PATH_HASH_MODE_SAVE BIT(11)
 #define UI_ACTION_GPS_DUTY_SAVE     BIT(12)
+#define UI_ACTION_SOS               BIT(13)
+
+extern "C" void companion_sos_request_from_ui(void);
 
 /* Module-local pointers, set by init */
 static CompanionMesh *s_mesh;
@@ -97,6 +100,12 @@ extern "C" void mesh_send_flood_advert(void)
 extern "C" void mesh_send_zerohop_advert(void)
 {
 	atomic_or(&pending_ui_actions, UI_ACTION_ZEROHOP_ADVERT);
+	k_event_post(s_mesh_events, s_mesh_event_ui_action);
+}
+
+extern "C" void mesh_send_sos(void)
+{
+	atomic_or(&pending_ui_actions, UI_ACTION_SOS);
 	k_event_post(s_mesh_events, s_mesh_event_ui_action);
 }
 
@@ -235,6 +244,10 @@ extern "C" void mesh_handle_ui_actions(void)
 			LOG_INF("%s advert sent (button)",
 				flood ? "flood" : "zero-hop");
 		}
+	}
+
+	if (actions & UI_ACTION_SOS) {
+		companion_sos_request_from_ui();
 	}
 
 	/* Save prefs if any toggle action changed them */

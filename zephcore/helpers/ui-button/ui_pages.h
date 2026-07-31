@@ -32,6 +32,7 @@ enum ui_page {
 	UI_PAGE_SENSORS,        /* Environment sensor data */
 	UI_PAGE_OFFGRID,        /* Offgrid mode (client repeat) toggle */
 	UI_PAGE_DFU,            /* BLE DFU bootloader entry */
+	UI_PAGE_SOS,            /* Send SOS group message */
 	UI_PAGE_SHUTDOWN,       /* Hibernate / power off */
 	UI_PAGE_STATUS,         /* Repeater status (uptime, time, packets) */
 	UI_PAGE_COUNT
@@ -116,6 +117,9 @@ struct ui_state {
 	/* Transient feedback (shown briefly after action) */
 	uint32_t advert_sent_time;   /* uptime ms when advert was sent (0=idle) */
 	bool     advert_was_flood;   /* true if last advert was flood */
+	uint32_t sos_sent_time;      /* uptime ms when SOS was queued (0=idle) */
+	bool     sos_waiting_fix;    /* SOS is waiting for a GPS fix */
+	bool     sos_send_failed;    /* last SOS queue attempt failed */
 	uint32_t offgrid_confirm_time; /* uptime ms when offgrid toggle confirm started (0=idle) */
 	uint32_t dfu_confirm_time;   /* uptime ms when DFU confirm started (0=idle) */
 	uint32_t shutdown_confirm_time; /* uptime ms when shutdown confirm started (0=idle) */
@@ -126,6 +130,10 @@ struct ui_state {
  * @param flood true if flood advert, false if zero-hop
  */
 void ui_pages_advert_sent(bool flood);
+
+/** SOS status feedback for the SOS page. */
+void ui_pages_sos_waiting(void);
+void ui_pages_sos_sent(bool success);
 
 /**
  * Get the global UI state for updating from main app.

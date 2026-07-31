@@ -63,6 +63,9 @@ void ui_led_heartbeat_init(void);
  */
 void ui_notify(enum ui_event event);
 
+/** Request a redraw of the current UI state. Safe from the mesh thread. */
+void ui_request_render(void);
+
 /**
  * Update the message count shown on the messages page.
  *
@@ -176,6 +179,9 @@ void ui_set_buzzer_quiet(bool quiet);
  */
 void ui_set_leds_disabled(bool disabled);
 
+/** Return the current LED heartbeat state. */
+bool ui_leds_disabled(void);
+
 /**
  * Enable or disable the heartbeat LED.
  */
@@ -287,6 +293,10 @@ void ui_set_shutdown_hook(ui_shutdown_fn fn);
  * ui_prepare_for_system_off() + sys_poweroff().
  */
 void ui_auto_shutdown_check(void);
+
+/** True after auto-shutdown has committed; UI renderers must not overwrite
+ * the terminal low-battery screen while a queued emergency message drains. */
+bool ui_shutdown_in_progress(void);
 
 /**
  * Drop the battery-refresh freshness timestamp. The next
