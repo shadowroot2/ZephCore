@@ -78,9 +78,10 @@ LOG_MODULE_REGISTER(ui_task, CONFIG_ZEPHCORE_BOARD_LOG_LEVEL);
  * ON tail:  high E7 (~2637Hz) = "enabled"
  * OFF tail: low G5 (~784Hz)   = "disabled"  */
 #define MELODY_BEEP_2     "b2:d=16,o=7,b=200:c,p,c"
+#define MELODY_BEEP_5     "b5:d=16,o=7,b=200:c,p,c,p,c,p,c,p,c"
 
-#define MELODY_GPS_ON     "gon:d=16,o=7,b=200:c,p,c,p,c,p,c,p,p,8e"
-#define MELODY_GPS_OFF    "gof:d=16,o=7,b=200:c,p,c,p,c,p,c,p,p,8g5"
+#define MELODY_GPS_ON     "gon:d=16,o=7,b=200:c,p,c,p,c,p,8e"
+#define MELODY_GPS_OFF    "gof:d=16,o=7,b=200:c,p,c,p,c,p,8g5"
 /* ========== Deep Sleep / System OFF ========== */
 /* On nRF52840, sys_poweroff() = System OFF (~1µA).
  * Wake via reset button → full chip reset → boots fresh. */
@@ -244,7 +245,7 @@ static void action_page_prev(void)
 }
 
 /* Forward declarations for page-enter dispatch */
-static void action_flood_advert(void);
+static void action_flood_advert(unsigned int feedback_beeps);
 static void action_sos(void);
 static void action_gps_toggle(void);
 static void action_buzzer_toggle(void);
@@ -274,7 +275,7 @@ static void action_page_enter(void)
 		if (k_work_delayable_is_pending(&advert_defer_work)) {
 			/* Second press — cancel deferred zero-hop, send flood */
 			k_work_cancel_delayable(&advert_defer_work);
-			action_flood_advert();
+			action_flood_advert(2);
 		} else {
 			/* First press — start deferred zero-hop */
 			k_work_reschedule(&advert_defer_work, K_MSEC(500));
@@ -405,11 +406,11 @@ static void action_page_enter(void)
 #endif
 }
 
-static void action_flood_advert(void)
+static void action_flood_advert(unsigned int feedback_beeps)
 {
 	LOG_INF("flood advert requested");
 #ifdef CONFIG_ZEPHCORE_UI_BUZZER
-	buzzer_play(MELODY_BEEP_2);
+	buzzer_play(feedback_beeps == 5 ? MELODY_BEEP_5 : MELODY_BEEP_2);
 #endif
 	mesh_send_flood_advert();
 #ifdef CONFIG_ZEPHCORE_UI_DISPLAY
@@ -697,23 +698,23 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 		break;
 
 	case INPUT_KEY_B:
-		/* Double tap (400ms delayed): toggle LED heartbeat */
+		/* Double tap: toggle LED heartbeat */
 		action_leds_toggle();
 		break;
 
 	case INPUT_KEY_D:
-		/* Triple tap (400ms delayed): toggle buzzer mute */
+		/* Triple tap: toggle buzzer mute */
 		action_buzzer_toggle();
 		break;
 
 	case INPUT_KEY_C:
-		/* Quadruple tap (400ms delayed): toggle GPS */
+		/* Quadruple tap: toggle GPS */
 		action_gps_toggle();
 		break;
 
 	case INPUT_KEY_E:
 		/* Quintuple tap (immediate): flood advert */
-		action_flood_advert();
+		action_flood_advert(5);
 		break;
 
 	/* ===== Longpress output ===== */
@@ -745,7 +746,7 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 		/* Some one-button boards map double tap to KEY_LEFT. On the Advert
 		 * page that gesture means flood advert, not page-back. */
 		if (ui_pages_current() == UI_PAGE_ADVERT) {
-			action_flood_advert();
+			action_flood_advert(2);
 			break;
 		}
 #endif
