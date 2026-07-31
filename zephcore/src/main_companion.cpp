@@ -101,7 +101,7 @@ extern "C" void bt_ctlr_assert_handle(char *file, uint32_t line)
 #define MESH_EVENT_LORA_RX       BIT(0)  /* LoRa packet received */
 #define MESH_EVENT_LORA_TX_DONE  BIT(1)  /* LoRa TX complete (event-driven!) */
 #define MESH_EVENT_BLE_RX        BIT(2)  /* BLE frame received */
-#define MESH_EVENT_HOUSEKEEPING  BIT(3)  /* Periodic housekeeping (noise floor, etc.) */
+#define MESH_EVENT_MAINTENANCE   BIT(3)  /* A maintenance deadline came due */
 #define MESH_EVENT_UI_ACTION     BIT(4)  /* Button action from UI (deferred to mesh thread) */
 #define MESH_EVENT_GPS_ACTION    BIT(5)  /* GPS state change (must run on main thread!) */
 #define MESH_EVENT_TX_DRAIN      BIT(6)  /* Outbound packet delay expired, run checkSend */
@@ -127,7 +127,7 @@ static void companion_sos_tx_done(void);
 static atomic_t pending_rtc_epoch = ATOMIC_INIT(0);
 
 #define MESH_EVENT_BASE          (MESH_EVENT_LORA_RX | MESH_EVENT_LORA_TX_DONE | \
-	MESH_EVENT_BLE_RX | MESH_EVENT_HOUSEKEEPING | MESH_EVENT_UI_ACTION |  \
+	MESH_EVENT_BLE_RX | MESH_EVENT_MAINTENANCE | MESH_EVENT_UI_ACTION |  \
 	MESH_EVENT_GPS_ACTION | MESH_EVENT_TX_DRAIN | MESH_EVENT_PREFS_DIRTY | \
 	MESH_EVENT_RTC_SAVE | MESH_EVENT_CONTACT_ITER)
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_DESIGN_JOYSTICK)
@@ -137,8 +137,10 @@ static atomic_t pending_rtc_epoch = ATOMIC_INIT(0);
 #define MESH_EVENT_ALL           MESH_EVENT_BASE
 #endif
 
-/* Housekeeping interval - infrequent to preserve power savings */
-#define HOUSEKEEPING_INTERVAL_MS CONFIG_ZEPHCORE_HOUSEKEEPING_INTERVAL_MS
+/* Companion-only battery and UI maintenance needs a 30-second upper bound.
+ * Radio deadlines may wake earlier; the timer is always one-shot. */
+#define MAINTENANCE_BACKSTOP_MS 30000
+#define MAINTENANCE_MIN_MS      50
 
 /* Event-driven mesh loop - k_event for signaling from ISR/callbacks */
 static struct k_event mesh_events;
@@ -156,7 +158,7 @@ static void request_rtc_save(uint32_t epoch)
 /* Work items for event-driven processing */
 static void process_companion_rx(void);   /* runs on MAIN thread (see ble_on_rx_frame) */
 static void run_contact_iteration(void);  /* runs on MAIN thread (see MESH_EVENT_CONTACT_ITER) */
-static void housekeeping_timer_fn(struct k_timer *timer);
+static void maintenance_timer_fn(struct k_timer *timer);
 #if ZEPHCORE_USB_STACK
 static void companion_cli_run(const char *line);  /* main-thread text-CLI exec */
 #endif
@@ -197,15 +199,26 @@ static void usb_on_tx_drain(void)
 }
 #endif
 
-/* Housekeeping timer for periodic tasks (noise floor calibration, etc.)
- * Fires every 5 seconds to wake event loop for maintenance without
- * compromising event-driven power savings. */
-K_TIMER_DEFINE(housekeeping_timer, housekeeping_timer_fn, NULL);
+K_TIMER_DEFINE(maintenance_timer, maintenance_timer_fn, NULL);
 
 /* Forward declarations */
 #ifdef ZEPHCORE_LORA
 static CompanionMesh *companion_mesh_ptr;
 #endif
+
+static void arm_maintenance_wake(void)
+{
+	uint32_t delay = MAINTENANCE_BACKSTOP_MS;
+
+#ifdef ZEPHCORE_LORA
+	if (companion_mesh_ptr) {
+		uint32_t next = companion_mesh_ptr->msUntilNextMaintenance();
+		if (next < delay) delay = next;
+	}
+#endif
+	if (delay < MAINTENANCE_MIN_MS) delay = MAINTENANCE_MIN_MS;
+	k_timer_start(&maintenance_timer, K_MSEC(delay), K_NO_WAIT);
+}
 
 /* ========== BLE callbacks → main ========== */
 
@@ -462,15 +475,14 @@ static void run_contact_iteration(void)
 /*
  * Event-driven mesh loop - runs in main thread context.
  * Wakes on actual events: LoRa RX, LoRa TX done, BLE RX.
- * Plus a 5-second housekeeping timer for noise floor calibration, etc.
+ * Maintenance wakes at the nearest radio deadline, with a 30-second
+ * companion-only backstop for battery checks and UI state.
  */
 static void mesh_event_loop(void)
 {
 	LOG_INF("starting event-driven loop");
 
-	/* Start housekeeping timer for periodic maintenance tasks */
-	k_timer_start(&housekeeping_timer, K_MSEC(HOUSEKEEPING_INTERVAL_MS),
-		      K_MSEC(HOUSEKEEPING_INTERVAL_MS));
+	arm_maintenance_wake();
 
 	for (;;) {
 		/* Wait for any mesh event - blocks until signaled */
@@ -524,8 +536,8 @@ static void mesh_event_loop(void)
 			companion_sos_tx_done();
 		}
 
-		/* Periodic housekeeping — maintenance + UI refresh */
-		if (events & MESH_EVENT_HOUSEKEEPING) {
+		/* Deadline-driven maintenance plus Companion's 30-second battery/UI pass. */
+		if (events & MESH_EVENT_MAINTENANCE) {
 			companion_sos_process();
 
 			/* Radio maintenance: noise floor calibration, AGC reset,
@@ -533,6 +545,7 @@ static void mesh_event_loop(void)
 			 * on packet-driven events. */
 			if (companion_mesh_ptr) {
 				companion_mesh_ptr->maintenanceLoop();
+				companion_mesh_ptr->loop();
 			}
 
 			/* Contact-dump watchdog — the dump is pumped solely by the
@@ -611,14 +624,17 @@ static void mesh_event_loop(void)
 			joystick_ui_task.loop();
 		}
 #endif
+
+		/* Recompute after every event: RX, CLI and GPS activity may add or
+		 * clear a radio deadline. */
+		arm_maintenance_wake();
 	}
 }
 
-/* Housekeeping timer callback - signals event to wake mesh loop periodically */
-static void housekeeping_timer_fn(struct k_timer *timer)
+static void maintenance_timer_fn(struct k_timer *timer)
 {
 	ARG_UNUSED(timer);
-	k_event_post(&mesh_events, MESH_EVENT_HOUSEKEEPING);
+	k_event_post(&mesh_events, MESH_EVENT_MAINTENANCE);
 }
 
 #ifdef ZEPHCORE_LORA
