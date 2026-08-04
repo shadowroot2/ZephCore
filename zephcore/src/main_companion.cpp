@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 #include <zephyr/kernel.h>
 #include <zephyr/sys/util.h>
 
@@ -116,6 +117,7 @@ static void save_prefs_to_flash(void);
 static void vcontact_battery_alert_check(void);
 static void companion_sos_process(void);
 static void companion_sos_tx_done(void);
+static void companion_tracking_process(void);
 #endif
 
 /* Pending epoch for a deferred zephcore_rtc_save(). gps_fix_callback runs on
@@ -539,6 +541,7 @@ static void mesh_event_loop(void)
 		/* Deadline-driven maintenance plus Companion's 30-second battery/UI pass. */
 		if (events & MESH_EVENT_MAINTENANCE) {
 			companion_sos_process();
+			companion_tracking_process();
 
 			/* Radio maintenance: noise floor calibration, AGC reset,
 			 * RX watchdog.  Separated from loop() so these never run
@@ -884,7 +887,7 @@ static void companion_sos_ui_sent(bool success)
 static bool companion_send_sos_message(bool allow_coordinates)
 {
 	ChannelDetails sos_channel;
-	if (!companion_get_public_channel("#SOS", sos_channel)) {
+	if (!companion_get_public_channel("#sos", sos_channel)) {
 		return false;
 	}
 
@@ -941,11 +944,11 @@ static bool companion_send_sos_message(bool allow_coordinates)
 							  sos_channel.channel,
 							  companion_mesh_ptr->prefs.node_name,
 							  text, (int)strlen(text))) {
-		LOG_WRN("SOS: unable to queue #SOS message");
+		LOG_WRN("SOS: unable to queue #sos message");
 		return false;
 	}
 
-	LOG_INF("SOS: queued #SOS message: %s", text);
+	LOG_INF("SOS: queued #sos message: %s", text);
 	/* LoRa runs asynchronously. Play only after this queued packet has left
 	 * the radio, not while it is waiting for channel access. */
 	companion_sos_tone.after_packets_sent = packets_before +
@@ -1046,6 +1049,180 @@ static void companion_sos_tx_done(void)
 	}
 }
 
+#define TRACKING_MIN_INTERVAL_MIN 5U
+#define TRACKING_MOVEMENT_METERS 10.0
+
+struct companion_tracking_state {
+	bool enabled;
+	bool gps_started_by_tracking;
+	uint32_t saved_gps_duty_sec;
+	uint32_t started_ms;
+	uint32_t next_report_ms;
+	bool has_last_sent_position;
+	int64_t last_sent_lat_ndeg;
+	int64_t last_sent_lon_ndeg;
+};
+
+static struct companion_tracking_state companion_tracking;
+
+static uint32_t companion_tracking_interval_ms(void)
+{
+	return (uint32_t)companion_mesh.prefs.tracking_interval_minutes * 60000U;
+}
+
+static void companion_tracking_ui_update(void)
+{
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY) && IS_ENABLED(CONFIG_ZEPHCORE_UI_DESIGN_BUTTON)
+	ui_pages_set_tracking(companion_tracking.enabled,
+		companion_mesh.prefs.tracking_interval_minutes);
+#endif
+	ui_request_render();
+}
+
+static bool companion_tracking_moved_10m(const struct gps_position &pos)
+{
+	if (!companion_tracking.has_last_sent_position) {
+		return true;
+	}
+
+	const double deg_to_rad = 0.017453292519943295;
+	double lat0 = companion_tracking.last_sent_lat_ndeg / 1e9;
+	double lat1 = pos.latitude_ndeg / 1e9;
+	double lat_delta = (lat1 - lat0) * deg_to_rad;
+	double lon_delta = (pos.longitude_ndeg / 1e9 -
+		companion_tracking.last_sent_lon_ndeg / 1e9) * deg_to_rad;
+	double x = lon_delta * cos((lat0 + lat1) * 0.5 * deg_to_rad);
+	double y = lat_delta;
+	double distance_sq = (6371000.0 * x) * (6371000.0 * x) +
+		(6371000.0 * y) * (6371000.0 * y);
+
+	return distance_sq >= TRACKING_MOVEMENT_METERS * TRACKING_MOVEMENT_METERS;
+}
+
+static bool companion_send_tracking_message(const struct gps_position &pos)
+{
+	ChannelDetails tracks_channel;
+	if (!companion_get_public_channel("#tracks", tracks_channel)) {
+		return false;
+	}
+
+	char text[160];
+	snprintf(text, sizeof(text), "🐾 https://maps.google.com/?q=%.5f,%.5f",
+		 pos.latitude_ndeg / 1e9, pos.longitude_ndeg / 1e9);
+	if (!companion_mesh_ptr->sendGroupMessage(rtc_clock.getCurrentTimeUnique(),
+						  tracks_channel.channel,
+						  companion_mesh.prefs.node_name,
+						  text, (int)strlen(text))) {
+		LOG_WRN("tracking: unable to queue #tracks message");
+		return false;
+	}
+
+	LOG_INF("tracking: queued #tracks message: %s", text);
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
+	buzzer_play(MELODY_TRACKING_SENT);
+#endif
+	return true;
+}
+
+static bool companion_tracking_set_enabled(bool enabled, char *reply)
+{
+	if (enabled == companion_tracking.enabled) {
+		snprintf(reply, CLI_REPLY_SIZE, "tracking: %s (%u min)",
+			 enabled ? "on" : "off",
+			 companion_mesh.prefs.tracking_interval_minutes);
+		return true;
+	}
+
+	if (enabled) {
+		if (!gps_is_available()) {
+			strcpy(reply, "ERROR: GPS unavailable");
+			return false;
+		}
+		bool gps_was_enabled = gps_is_enabled();
+		companion_tracking.enabled = true;
+		companion_tracking.gps_started_by_tracking = !gps_was_enabled;
+		companion_tracking.saved_gps_duty_sec = gps_get_poll_interval_sec();
+		companion_tracking.started_ms = k_uptime_get_32();
+		companion_tracking.next_report_ms = companion_tracking.started_ms +
+			companion_tracking_interval_ms();
+		gps_set_poll_interval_sec(0);
+		if (!gps_was_enabled) {
+			gps_enable(true);
+		} else {
+			gps_request_fresh_fix();
+		}
+		companion_tracking_ui_update();
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
+		buzzer_play(MELODY_TRACKING_ON);
+#endif
+		snprintf(reply, CLI_REPLY_SIZE, "OK - tracking on (%u min)",
+			 companion_mesh.prefs.tracking_interval_minutes);
+		return true;
+	}
+
+	if (companion_sos.pending) {
+		strcpy(reply, "ERROR: SOS is waiting for GPS fix");
+		return false;
+	}
+	gps_set_poll_interval_sec(companion_tracking.saved_gps_duty_sec);
+	if (companion_tracking.gps_started_by_tracking) {
+		gps_enable(false);
+	}
+	memset(&companion_tracking, 0, sizeof(companion_tracking));
+	companion_tracking_ui_update();
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
+	buzzer_play(MELODY_TRACKING_OFF);
+#endif
+	strcpy(reply, "OK - tracking off");
+	return true;
+}
+
+extern "C" void companion_tracking_toggle_from_ui(void)
+{
+	char reply[CLI_REPLY_SIZE];
+	companion_tracking_set_enabled(!companion_tracking.enabled, reply);
+}
+
+extern "C" bool companion_tracking_gps_control_allowed(void)
+{
+	return !companion_tracking.enabled;
+}
+
+static void companion_tracking_process(void)
+{
+	if (!companion_tracking.enabled) {
+		return;
+	}
+
+	uint32_t now = k_uptime_get_32();
+	if ((int32_t)(now - companion_tracking.next_report_ms) < 0) {
+		return;
+	}
+	/* A delayed maintenance pass still begins the next full interval now. */
+	companion_tracking.next_report_ms = now + companion_tracking_interval_ms();
+
+	struct gps_position pos = {};
+	struct gps_state_info gsi;
+	gps_get_state_info(&gsi);
+	bool has_fresh_coordinates = gps_get_last_known_position(&pos) &&
+		pos.latitude_ndeg != 0 && pos.longitude_ndeg != 0 &&
+		pos.timestamp_ms > companion_tracking.started_ms &&
+		gsi.last_fix_age_s <= 30;
+	if (!has_fresh_coordinates) {
+		LOG_INF("tracking: interval skipped (no GPS fix)");
+		return;
+	}
+	if (!companion_tracking_moved_10m(pos)) {
+		LOG_INF("tracking: interval skipped (movement under 10 m)");
+		return;
+	}
+	if (companion_send_tracking_message(pos)) {
+		companion_tracking.has_last_sent_position = true;
+		companion_tracking.last_sent_lat_ndeg = pos.latitude_ndeg;
+		companion_tracking.last_sent_lon_ndeg = pos.longitude_ndeg;
+	}
+}
+
 /* ========== Companion text CLI ==========
  * One CommonCLI instance shared by two front-ends: the USB CDC text sideband
  * (its '<' sync byte separates binary V3 frames from text; BLE NUS has no
@@ -1130,6 +1307,9 @@ public:
 	bool setGpsEnabled(bool enabled) override {
 		if (!gps_is_available()) return false;
 		gps_enable(enabled);
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
+		buzzer_play(enabled ? MELODY_GPS_ON : MELODY_GPS_OFF);
+#endif
 		return true;
 	}
 	bool isGpsEnabled() const override {
@@ -1382,6 +1562,62 @@ static bool handle_sos_cli(const char *line, char *reply)
 	return companion_sos_request(reply);
 }
 
+static bool handle_tracking_cli(const char *line, char *reply)
+{
+	if (companion_tracking.enabled &&
+		(strcmp(line, "gps off") == 0 ||
+		 strncmp(line, "set gps duty ", 13) == 0)) {
+		strcpy(reply, "ERROR: tracking is active; use tracking off");
+		return true;
+	}
+	if (strcmp(line, "tracking") == 0) {
+		snprintf(reply, CLI_REPLY_SIZE, "tracking: %s (%u min)",
+			 companion_tracking.enabled ? "on" : "off",
+			 companion_mesh.prefs.tracking_interval_minutes);
+		return true;
+	}
+	if (strcmp(line, "tracking on") == 0) {
+		(void)companion_tracking_set_enabled(true, reply);
+		return true;
+	}
+	if (strcmp(line, "tracking off") == 0) {
+		(void)companion_tracking_set_enabled(false, reply);
+		return true;
+	}
+	if (strcmp(line, "get tracking.interval") == 0) {
+		snprintf(reply, CLI_REPLY_SIZE, "tracking.interval: %u min",
+			 companion_mesh.prefs.tracking_interval_minutes);
+		return true;
+	}
+	if (strncmp(line, "set tracking.interval ", 22) == 0) {
+		const char *arg = line + 22;
+		while (*arg == ' ') {
+			arg++;
+		}
+		char *end = NULL;
+		unsigned long minutes = strtoul(arg, &end, 10);
+		while (*end == ' ' || *end == '\r' || *end == '\n' || *end == '\t') {
+			end++;
+		}
+		if (arg[0] < '0' || arg[0] > '9' || *end != '\0' ||
+			minutes < TRACKING_MIN_INTERVAL_MIN || minutes > UINT16_MAX) {
+			snprintf(reply, CLI_REPLY_SIZE, "ERROR: interval must be %u minutes or more",
+				 TRACKING_MIN_INTERVAL_MIN);
+			return true;
+		}
+		companion_mesh.prefs.tracking_interval_minutes = (uint16_t)minutes;
+		if (companion_tracking.enabled) {
+			companion_tracking.next_report_ms = k_uptime_get_32() +
+				companion_tracking_interval_ms();
+		}
+		k_event_post(&mesh_events, MESH_EVENT_PREFS_DIRTY);
+		companion_tracking_ui_update();
+		snprintf(reply, CLI_REPLY_SIZE, "OK - tracking.interval %lu min", minutes);
+		return true;
+	}
+	return false;
+}
+
 /* Locate this companion with a five-second audible melody.  This explicit
  * request deliberately overrides user mute and the low-battery sound limit. */
 static bool handle_findme_cli(const char *line, char *reply)
@@ -1525,6 +1761,9 @@ static void companion_cli_exec(const char *line, char *reply)
 		return;
 	}
 	if (handle_sos_cli(line, reply)) {
+		return;
+	}
+	if (handle_tracking_cli(line, reply)) {
 		return;
 	}
 	if (handle_findme_cli(line, reply)) {
@@ -1999,6 +2238,11 @@ int main(void)
 	ui_set_battery(zephyr_board.getBattMilliVolts(), 0);
 	ui_set_gps_available(gps_is_available());
 	ui_set_gps_enabled(companion_mesh.prefs.gps_enabled != 0);
+
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY) && IS_ENABLED(CONFIG_ZEPHCORE_UI_DESIGN_BUTTON)
+	/* Tracking is deliberately not restored: every reboot begins OFF. */
+	ui_pages_set_tracking(false, companion_mesh.prefs.tracking_interval_minutes);
+#endif
 	ui_set_ble_enabled(companion_mesh.prefs.ble_disabled != 1);  /* BLE starts advertising at boot */
 
 	/* Restore offgrid mode (client repeat) state from persisted prefs */

@@ -822,6 +822,7 @@ void ZephyrDataStore::loadPrefs(NodePrefs &prefs)
 			prefs.ui_timezone_offset_minutes = CONFIG_ZEPHCORE_UI_TIMEZONE_OFFSET_MINUTES;
 		}
 		prefs.auto_shutdown_emergency = buf[off + 2] ? 1 : 0;
+		return;
 	} else {
 		if (off + sizeof(float) <= len) {
 			memcpy(&prefs.adc_multiplier, &buf[off], sizeof(float));
@@ -840,7 +841,17 @@ void ZephyrDataStore::loadPrefs(NodePrefs &prefs)
 				prefs.ui_timezone_offset_minutes = CONFIG_ZEPHCORE_UI_TIMEZONE_OFFSET_MINUTES;
 			}
 		}
-		prefs.auto_shutdown_emergency = off < len ? (buf[off] ? 1 : 0) : 1;
+		prefs.auto_shutdown_emergency = off < len ? (buf[off++] ? 1 : 0) : 1;
+	}
+
+	/* Offset 166: companion tracking interval in whole minutes. Tracking state
+	 * itself is deliberately volatile and always starts OFF after boot. */
+	if (off + 2 <= len) {
+		prefs.tracking_interval_minutes = (uint16_t)buf[off] |
+			((uint16_t)buf[off + 1] << 8);
+		if (prefs.tracking_interval_minutes < 5) {
+			prefs.tracking_interval_minutes = 5;
+		}
 	}
 }
 
@@ -939,7 +950,10 @@ void ZephyrDataStore::savePrefs(const NodePrefs &prefs)
 	buf[off++] = ((uint16_t)prefs.ui_timezone_offset_minutes >> 8) & 0xFF;
 	/* Offset 165: auto-shutdown emergency notice enabled. */
 	buf[off++] = prefs.auto_shutdown_emergency ? 1 : 0;
-	/* Total: 166 bytes. */
+	/* Offset 166: companion tracking interval in whole minutes. */
+	buf[off++] = prefs.tracking_interval_minutes & 0xFF;
+	buf[off++] = (prefs.tracking_interval_minutes >> 8) & 0xFF;
+	/* Total: 168 bytes. */
 
 	bool ok = atomicReplaceFile(PREFS_FILE, buf, off);
 	LOG_DBG("savePrefs: wrote %s, ok=%d (%d bytes), name='%.16s'",

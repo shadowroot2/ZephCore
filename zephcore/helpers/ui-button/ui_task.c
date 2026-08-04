@@ -7,14 +7,15 @@
  * All event-driven via Zephyr input subsystem + k_work.
  *
  * Input flow (after longpress + multi-tap filter chain):
- *   KEY_1     → action_page_next()       (1 tap; T1000-E arms SOS, 500ms delayed)
+ *   KEY_1     → action_page_next()       (1 tap; headless nodes arm SOS)
  *   KEY_LEFT  → action_page_prev()       (2 taps — RAK4631 / Pocket / Heltec V3–V4.3)
- *   KEY_B     → action_leds_toggle()     (2 taps on extended multitap overlays)
+ *   KEY_B     → action_leds_toggle()     (2 taps)
  *   KEY_D     → action_buzzer_toggle()   (3 taps)
  *   KEY_C     → action_gps_toggle()      (4 taps)
+ *   KEY_H     → tracking toggle           (6 taps on configured headless nodes)
  *   KEY_G     → GPS switch on/off        (hardware toggle, ThinkNode M1)
  *   KEY_POWER / KEY_F → ui_shutdown() (long press — boards that emit these)
- *   T-1000E: KEY_1 then KEY_F within 3s → SOS melody + send; bare KEY_F → deep sleep
+ *   Headless: KEY_1 then long → SOS; bare long → deep sleep
  *   KEY_ENTER → action_page_enter()      (long press — Pocket / Heltec; joystick center Wio)
  *   KEY_RIGHT → action_page_next()       (joystick, Wio Tracker)
  *
@@ -81,8 +82,6 @@ LOG_MODULE_REGISTER(ui_task, CONFIG_ZEPHCORE_BOARD_LOG_LEVEL);
 /* Five presses: five count beeps, a word break, then "ad-vert". */
 #define MELODY_BEEP_5     "adv:d=16,o=7,b=200:c,p,c,p,c,p,c,p,c,p,p,16a,16d,8g"
 
-#define MELODY_GPS_ON     "gon:d=16,o=7,b=200:c,p,c,p,c,p,c,p,p,8e"
-#define MELODY_GPS_OFF    "gof:d=16,o=7,b=200:c,p,c,p,c,p,c,p,p,8g5"
 /* ========== Deep Sleep / System OFF ========== */
 /* On nRF52840, sys_poweroff() = System OFF (~1µA).
  * Wake via reset button → full chip reset → boots fresh. */
@@ -101,9 +100,9 @@ static struct ui_state local_ui_state;
 /* ========== State ========== */
 static bool ui_initialized;
 static bool splash_active;
-#if defined(CONFIG_BOARD_T1000_E)
-#define T1000_SOS_ARM_WINDOW_MS 3000
-static uint32_t t1000_sos_armed_until;
+#if !IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
+#define HEADLESS_GESTURE_ARM_WINDOW_MS 3000
+static uint32_t headless_sos_armed_until;
 #endif
 
 /* ========== Doom Easter Egg Activation ========== */
@@ -279,6 +278,11 @@ static void action_page_enter(void)
 			/* First press — start deferred zero-hop */
 			k_work_reschedule(&advert_defer_work, K_MSEC(500));
 		}
+		break;
+
+	case UI_PAGE_TRACKING:
+		mesh_tracking_toggle();
+		schedule_render();
 		break;
 
 	case UI_PAGE_SOS:
@@ -687,10 +691,10 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 	/* ===== Multi-tap outputs ===== */
 	case INPUT_KEY_1:
 		/* Single tap: page next, except the T1000-E SOS arm gesture. */
-	#if defined(CONFIG_BOARD_T1000_E)
-		/* The T-1000E has no display. A single tap arms its SOS gesture;
-		 * the following >=1 s hold must arrive within three seconds. */
-		t1000_sos_armed_until = k_uptime_get_32() + T1000_SOS_ARM_WINDOW_MS;
+	#if !IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
+		/* A headless node uses a single tap to arm SOS; the following >=1 s hold
+		 * must arrive within three seconds. */
+		headless_sos_armed_until = k_uptime_get_32() + HEADLESS_GESTURE_ARM_WINDOW_MS;
 	#else
 		action_page_next();
 	#endif
@@ -712,17 +716,25 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 		break;
 
 	case INPUT_KEY_E:
-		/* Quintuple tap (immediate): flood advert */
+		/* Quintuple tap: flood advert */
 		action_flood_advert(5);
+		break;
+
+	case INPUT_KEY_H:
+		/* Six short presses directly toggle Tracking on headless nodes. */
+	#if !IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
+		mesh_tracking_toggle();
+	#endif
 		break;
 
 	/* ===== Longpress output ===== */
 	case INPUT_KEY_POWER:
 	case INPUT_KEY_F:
 		/* Long press (≥1s): deep sleep */
-	#if defined(CONFIG_BOARD_T1000_E)
-		if ((int32_t)(t1000_sos_armed_until - k_uptime_get_32()) >= 0) {
-			t1000_sos_armed_until = 0;
+	#if !IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
+		if (headless_sos_armed_until != 0 &&
+		    (int32_t)(headless_sos_armed_until - k_uptime_get_32()) >= 0) {
+			headless_sos_armed_until = 0;
 			/* The companion main loop plays the same acknowledgement as CLI. */
 			mesh_send_sos();
 			break;

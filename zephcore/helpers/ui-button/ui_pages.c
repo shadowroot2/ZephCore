@@ -177,12 +177,13 @@ static const enum ui_page active_pages[] = {
 	UI_PAGE_TRAFFIC,
 	UI_PAGE_BLUETOOTH,
 	UI_PAGE_ADVERT,
-	UI_PAGE_SOS,
 	/* Heltec V3 has no GNSS hardware.  Do not make the user cycle through
 	 * a permanently empty "No GPS" screen on this single-button board. */
 #if !defined(CONFIG_BOARD_HELTEC_WIFI_LORA32_V3)
 	UI_PAGE_GPS,
+	UI_PAGE_TRACKING,
 #endif
+	UI_PAGE_SOS,
 #ifdef CONFIG_ZEPHCORE_UI_BUZZER
 	UI_PAGE_BUZZER,
 #endif
@@ -574,6 +575,7 @@ static const char *tiny_page_title(enum ui_page p)
 	case UI_PAGE_SENSORS:   return "SENSORS";
 	case UI_PAGE_OFFGRID:   return "OFFGRID";
 	case UI_PAGE_DFU:       return "DFU";
+	case UI_PAGE_TRACKING:  return "TRACKING";
 	case UI_PAGE_SOS:       return "SOS";
 	case UI_PAGE_SHUTDOWN:  return "SHUTDOWN";
 	case UI_PAGE_STATUS:    return "STATUS";
@@ -1167,6 +1169,65 @@ static void render_sos(void)
 	render_sos_mono();
 }
 
+static void render_tracking_mono(void)
+{
+	char buf[32];
+	int y = CONTENT_Y;
+
+	if (!state.gps_available) {
+		draw_centered(centered_row(0, 2), "Tracking unavailable");
+		draw_centered(centered_row(1, 2), "No GPS");
+		return;
+	}
+
+	snprintf(buf, sizeof(buf), "Tracking: %s",
+		 state.tracking_enabled ? "on" : "off");
+	mc_display_text(0, y, buf, false);
+	y += LINE_H;
+	snprintf(buf, sizeof(buf), "Interval: %um",
+		 state.tracking_interval_minutes);
+	mc_display_text(0, y, buf, false);
+	y += LINE_H;
+	draw_centered(y + 8, state.tracking_enabled ?
+		      "Press to Disable" : "Press to Enable");
+}
+
+#if MC_DISPLAY_COLOR_PANEL
+static void render_tracking_color(void)
+{
+	char buf[32];
+	int y = CONTENT_Y;
+
+	if (!state.gps_available) {
+		draw_centered_color(y, "No GPS", UI_COLOR_WARN);
+		return;
+	}
+	snprintf(buf, sizeof(buf), "Tracking: %s",
+		 state.tracking_enabled ? "on" : "off");
+	mc_display_color_text(0, y, buf,
+		state.tracking_enabled ? UI_COLOR_OK : UI_COLOR_LABEL);
+	y += LINE_H;
+	snprintf(buf, sizeof(buf), "Interval: %um",
+		 state.tracking_interval_minutes);
+	mc_display_color_text(0, y, buf, UI_COLOR_LABEL);
+	y += LINE_H;
+	draw_centered_color(y + 8,
+			    state.tracking_enabled ? "Press to Disable" : "Press to Enable",
+			    UI_COLOR_VALUE);
+}
+#endif /* MC_DISPLAY_COLOR_PANEL */
+
+static void render_tracking(void)
+{
+#if MC_DISPLAY_COLOR_PANEL
+	if (mc_display_has_color()) {
+		render_tracking_color();
+		return;
+	}
+#endif
+	render_tracking_mono();
+}
+
 /* Format seconds into compact time string: "3m20s", "1h05m", "12s" */
 static void fmt_duration(char *buf, size_t len, uint32_t secs)
 {
@@ -1727,6 +1788,7 @@ static const page_render_fn renderers[] = {
 	[UI_PAGE_SENSORS]   = render_sensors,
 	[UI_PAGE_OFFGRID]   = render_offgrid,
 	[UI_PAGE_DFU]       = render_dfu,
+	[UI_PAGE_TRACKING]  = render_tracking,
 	[UI_PAGE_SOS]       = render_sos,
 	[UI_PAGE_SHUTDOWN]  = render_shutdown,
 	[UI_PAGE_STATUS]    = render_status,
@@ -1883,4 +1945,10 @@ void ui_pages_sos_sent(bool success)
 	state.sos_waiting_fix = false;
 	state.sos_sent_time = k_uptime_get_32();
 	state.sos_send_failed = !success;
+}
+
+void ui_pages_set_tracking(bool enabled, uint16_t interval_minutes)
+{
+	state.tracking_enabled = enabled;
+	state.tracking_interval_minutes = interval_minutes;
 }
