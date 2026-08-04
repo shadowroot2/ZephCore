@@ -216,6 +216,9 @@ void ui_led_confirm_state(bool enabled);
  */
 void ui_led_flash_shutdown(void);
 
+/** Execute the same user-initiated shutdown path as a long button press. */
+void ui_shutdown(void);
+
 /**
  * Set offgrid mode (client repeat) state for display page.
  */

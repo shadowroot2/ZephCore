@@ -120,7 +120,11 @@ static const struct gpio_dt_spec s_led_enable =
 #define LED_CYCLE_MS                 5000  /* Heartbeat period */
 #define LED_ON_MS                      20  /* Normal pulse width */
 #define LED_ON_MSG_MS                 200  /* Pulse width when unread messages */
+#if defined(ZEPHCORE_REPEATER)
+#define LED_LOW_BATT_THRESHOLD_PCT     15
+#else
 #define LED_LOW_BATT_THRESHOLD_PCT     25
+#endif
 #define LED_LOW_BATT_BLINK_MS           80
 #define LED_LOW_BATT_BLINKS              3
 #if defined(CONFIG_BOARD_T1000_E)

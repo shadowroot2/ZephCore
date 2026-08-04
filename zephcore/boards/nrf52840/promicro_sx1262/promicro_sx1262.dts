@@ -54,7 +54,9 @@
 	pwmbuzzer {
 		compatible = "pwm-leds";
 		buzzer: buzzer {
-			pwms = <&pwm0 0 PWM_MSEC(20) PWM_POLARITY_NORMAL>;
+			/* Meshtastic's Easy E22 target drives this passive piezo from
+			 * nRF PWM2 through the T1 low-side MOSFET. */
+			pwms = <&pwm2 0 PWM_MSEC(20) PWM_POLARITY_NORMAL>;
 		};
 	};
 
@@ -83,7 +85,7 @@
 		/* KEY_A is emitted by the longpress pseudo-device. */
 		input-codes = <INPUT_KEY_A>;
 		tap-codes = <INPUT_KEY_1 INPUT_KEY_LEFT>;
-		tap-delay-ms = <400>;
+		tap-delay-ms = <500>;
 	};
 
 	/* 3V3 enable — must be HIGH to power E22-900M30S module */
@@ -151,10 +153,10 @@
 	};
 };
 
-&pwm0 {
+&pwm2 {
 	status = "okay";
-	pinctrl-0 = <&pwm0_default>;
-	pinctrl-1 = <&pwm0_sleep>;
+	pinctrl-0 = <&pwm2_default>;
+	pinctrl-1 = <&pwm2_sleep>;
 	pinctrl-names = "default", "sleep";
 };
 

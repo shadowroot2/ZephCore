@@ -4,6 +4,8 @@
  */
 
 #include "RepeaterMesh.h"
+
+#include <zephyr/devicetree.h>
 #include <mesh/Utils.h>
 #include <helpers/AdvertDataHelpers.h>
 #include <helpers/TxtDataHelpers.h>
@@ -971,6 +973,7 @@ RepeaterMesh::RepeaterMesh(mesh::MainBoard& board, mesh::Radio& radio, mesh::Mil
     set_radio_at = revert_radio_at = 0;
     _logging = false;
     region_load_active = false;
+    _local_command_handler = nullptr;
     recv_pkt_region = nullptr;
     memset(default_scope.key, 0, sizeof(default_scope.key));
     pending_discover_tag = 0;
@@ -1295,6 +1298,93 @@ void RepeaterMesh::resetDutyCycleTimeoutRestarts() {
 /* Region-def CLI (handleRegionLoadLine / handleRegionCommand) and its static
  * parser helpers live in app/RepeaterRegionCLI.cpp. */
 
+static const char *repeater_remote_help(const char *command)
+{
+	static const char page1[] =
+		"Help 1/12: ver; board; advert; advert.zerohop; clock [sync]; time <epoch>; gps [on|off|setloc|advert]"
+#if DT_NODE_HAS_PROP(DT_ALIAS(led0), gpios) || DT_NODE_HAS_PROP(DT_ALIAS(led1), gpios)
+		"; leds [on|off]"
+#endif
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
+		"; buzz [on|off]"
+#endif
+		". help 2";
+	static const char page2[] =
+		"Help 2/12: password <value>; clear stats. help 3";
+	static const char page3[] =
+		"Help 3/12: get <key> | set <key> <value>. Keys: dutycycle, af, int.thresh, multi.acks. help 4";
+	static const char page4[] =
+		"Help 4/12: get/set keys: flood.advert.interval, advert.interval, name, repeat. set prv.key <key>. help 5";
+	static const char page5[] =
+		"Help 5/12: get/set keys: lat, lon, radio, radio.rxgain, flood.max.advert, flood.max.unscoped, flood.max. help 6";
+	static const char page6[] =
+		"Help 6/12: get/set keys: owner.info, path.hash.mode, tx, freq, adc.multiplier, gps duty, meshtimesync, tz. help 7";
+	static const char page7[] =
+		"Help 7/12: get: public.key, role, bootloader.ver, dc.restarts, tx apc, cad. help 8";
+	static const char page8[] =
+		"Help 8/12: set cad.auto|cad.offset|cad.busycap|cad.reset; set probe.interval. help 9";
+	static const char page9[] =
+		"Help 9/12: repeater keys: allow.read.only, guest.password, backoff.multiplier, loop.detect, rxduty. help 10";
+	static const char page10[] =
+		"Help 10/12: neighbors; neighbor.remove <pubkey>; discover.neighbors. help 11";
+#if IS_ENABLED(CONFIG_ZEPHCORE_REPEATER_UPLINK) && IS_ENABLED(CONFIG_MQTT_LIB)
+	static const char page11[] =
+		"Help 11/12: region def|get|put|remove|list|load|save; region allowf|denyf|home|default; tempradio <freq> <bw> <sf> <cr> <minutes>. help 12";
+	static const char page12[] =
+		"Help 12/12: setperm <permissions> <pubkey>; start dfu; reboot; clkreboot; shutdown [y]. Uplink: help uplink.";
+#else
+	static const char page11[] =
+		"Help 11/12: region def|get|put|remove|list|load|save; region allowf|denyf|home|default; tempradio <freq> <bw> <sf> <cr> <minutes>. help 12";
+	static const char page12[] =
+		"Help 12/12: setperm <permissions> <pubkey>; start dfu; reboot; clkreboot; shutdown [y].";
+#endif
+#if IS_ENABLED(CONFIG_ZEPHCORE_REPEATER_UPLINK) && IS_ENABLED(CONFIG_MQTT_LIB)
+	static const char uplink1[] =
+		"Uplink 1/2: get/set uplink.enable; get/set uplink.wifi.ssid; set uplink.wifi.psk <password>; get/set uplink.mqtt.host|port|tls. help uplink 2";
+	static const char uplink2[] =
+		"Uplink 2/2: get/set uplink.mqtt.user|iata; set uplink.mqtt.password <password>; get uplink.status.";
+#endif
+
+	static_assert(sizeof(page1) <= CLI_REMOTE_REPLY_SIZE - 3);
+	static_assert(sizeof(page2) <= CLI_REMOTE_REPLY_SIZE - 3);
+	static_assert(sizeof(page3) <= CLI_REMOTE_REPLY_SIZE - 3);
+	static_assert(sizeof(page4) <= CLI_REMOTE_REPLY_SIZE - 3);
+	static_assert(sizeof(page5) <= CLI_REMOTE_REPLY_SIZE - 3);
+	static_assert(sizeof(page6) <= CLI_REMOTE_REPLY_SIZE - 3);
+	static_assert(sizeof(page7) <= CLI_REMOTE_REPLY_SIZE - 3);
+	static_assert(sizeof(page8) <= CLI_REMOTE_REPLY_SIZE - 3);
+	static_assert(sizeof(page9) <= CLI_REMOTE_REPLY_SIZE - 3);
+	static_assert(sizeof(page10) <= CLI_REMOTE_REPLY_SIZE - 3);
+	static_assert(sizeof(page11) <= CLI_REMOTE_REPLY_SIZE - 3);
+	static_assert(sizeof(page12) <= CLI_REMOTE_REPLY_SIZE - 3);
+#if IS_ENABLED(CONFIG_ZEPHCORE_REPEATER_UPLINK) && IS_ENABLED(CONFIG_MQTT_LIB)
+	static_assert(sizeof(uplink1) <= CLI_REMOTE_REPLY_SIZE - 3);
+	static_assert(sizeof(uplink2) <= CLI_REMOTE_REPLY_SIZE - 3);
+#endif
+
+	if (strcmp(command, "help") == 0 || strcmp(command, "?") == 0 ||
+	    strcmp(command, "help 1") == 0 || strcmp(command, "? 1") == 0) return page1;
+	if (strcmp(command, "help 2") == 0 || strcmp(command, "? 2") == 0) return page2;
+	if (strcmp(command, "help 3") == 0 || strcmp(command, "? 3") == 0) return page3;
+	if (strcmp(command, "help 4") == 0 || strcmp(command, "? 4") == 0) return page4;
+	if (strcmp(command, "help 5") == 0 || strcmp(command, "? 5") == 0) return page5;
+	if (strcmp(command, "help 6") == 0 || strcmp(command, "? 6") == 0) return page6;
+	if (strcmp(command, "help 7") == 0 || strcmp(command, "? 7") == 0) return page7;
+	if (strcmp(command, "help 8") == 0 || strcmp(command, "? 8") == 0) return page8;
+	if (strcmp(command, "help 9") == 0 || strcmp(command, "? 9") == 0) return page9;
+	if (strcmp(command, "help 10") == 0 || strcmp(command, "? 10") == 0) return page10;
+	if (strcmp(command, "help 11") == 0 || strcmp(command, "? 11") == 0) return page11;
+	if (strcmp(command, "help 12") == 0 || strcmp(command, "? 12") == 0) return page12;
+#if IS_ENABLED(CONFIG_ZEPHCORE_REPEATER_UPLINK) && IS_ENABLED(CONFIG_MQTT_LIB)
+	if (strcmp(command, "help uplink") == 0) return uplink1;
+	if (strcmp(command, "help uplink 2") == 0) return uplink2;
+#endif
+	if (strncmp(command, "help", 4) == 0 || command[0] == '?') {
+		return "ERR: use help or help 2..12";
+	}
+	return nullptr;
+}
+
 void RepeaterMesh::handleCommand(uint32_t sender_timestamp, char* command, char* reply) {
     if (region_load_active) {
         handleRegionLoadLine(command, reply);
@@ -1307,6 +1397,16 @@ void RepeaterMesh::handleCommand(uint32_t sender_timestamp, char* command, char*
         memcpy(reply, command, 3);
         reply += 3;
         command += 3;
+    }
+
+    const char *help = repeater_remote_help(command);
+    if (help != nullptr) {
+        strcpy(reply, help);
+        return;
+    }
+
+    if (_local_command_handler && _local_command_handler(command, reply)) {
+        return;
     }
 
 #if IS_ENABLED(CONFIG_ZEPHCORE_REPEATER_UPLINK) && IS_ENABLED(CONFIG_MQTT_LIB)

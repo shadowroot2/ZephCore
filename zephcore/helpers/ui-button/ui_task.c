@@ -13,7 +13,7 @@
  *   KEY_D     → action_buzzer_toggle()   (3 taps)
  *   KEY_C     → action_gps_toggle()      (4 taps)
  *   KEY_G     → GPS switch on/off        (hardware toggle, ThinkNode M1)
- *   KEY_POWER / KEY_F → action_deep_sleep() (long press — boards that emit these)
+ *   KEY_POWER / KEY_F → ui_shutdown() (long press — boards that emit these)
  *   T-1000E: KEY_1 then KEY_F within 3s → SOS melody + send; bare KEY_F → deep sleep
  *   KEY_ENTER → action_page_enter()      (long press — Pocket / Heltec; joystick center Wio)
  *   KEY_RIGHT → action_page_next()       (joystick, Wio Tracker)
@@ -255,8 +255,6 @@ static void action_leds_toggle(void);
 static void action_ble_toggle(void);
 static void action_enter_dfu(void);
 #endif
-static void action_deep_sleep(void);
-
 static void action_page_enter(void)
 {
 #ifdef CONFIG_ZEPHCORE_UI_DISPLAY
@@ -348,7 +346,7 @@ static void action_page_enter(void)
 		if (st->shutdown_confirm_time != 0 &&
 			(now - st->shutdown_confirm_time) <= CONFIG_ZEPHCORE_UI_CONFIRM_WINDOW_MS) {
 			/* Confirmed — shut down */
-			action_deep_sleep();
+			ui_shutdown();
 		} else {
 			/* First press — enter confirmation state */
 			st->shutdown_confirm_time = now;
@@ -532,7 +530,7 @@ static void action_enter_dfu(void)
 }
 #endif /* CONFIG_ZEPHCORE_UI_DISPLAY */
 
-static void action_deep_sleep(void)
+void ui_shutdown(void)
 {
 #ifdef CONFIG_POWEROFF
 	LOG_INF("deep sleep: shutting down...");
@@ -730,7 +728,7 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 			break;
 		}
 	#endif
-		action_deep_sleep();
+		ui_shutdown();
 		break;
 
 	/* ===== Joystick (Wio Tracker) ===== */

@@ -81,6 +81,8 @@ struct RepeaterStats {
     uint32_t n_recv_errors;
 };
 
+typedef bool (*RepeaterLocalCommandHandler)(const char *command, char *reply);
+
 class RepeaterMesh : public mesh::Mesh, public CommonCLICallbacks {
     mesh::MainBoard& _board;
     RepeaterDataStore* _store;
@@ -104,6 +106,7 @@ class RepeaterMesh : public mesh::Mesh, public CommonCLICallbacks {
     unsigned long pending_discover_until;
     bool region_load_active;
     unsigned long dirty_contacts_expiry;
+    RepeaterLocalCommandHandler _local_command_handler;
 #if MAX_NEIGHBOURS > 0
     NeighbourInfo neighbours[MAX_NEIGHBOURS];
 #endif
@@ -221,6 +224,10 @@ public:
                  mesh::RNG& rng, mesh::RTCClock& rtc, mesh::MeshTables& tables);
 
     void begin(RepeaterDataStore* store);
+
+    void setLocalCommandHandler(RepeaterLocalCommandHandler handler) {
+        _local_command_handler = handler;
+    }
 
     void sendNodeDiscoverReq();
 

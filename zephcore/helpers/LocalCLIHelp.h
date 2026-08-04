@@ -97,11 +97,45 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 #endif
 		"reboot\r\n"
 #if IS_ENABLED(CONFIG_POWEROFF)
-		"shutdown\r\n"
+		"shutdown [y]\r\n"
 #endif
 		"clkreboot\r\nerase\r\nhelp";
 	static const char repeater[] =
 		"CLI repeater:\r\n"
+		"ver\r\nboard\r\nadvert\r\nadvert.zerohop\r\n"
+		"clock [sync]\r\ntime <epoch>\r\ngps [on|off|setloc|advert]\r\n"
+#if DT_NODE_HAS_PROP(DT_ALIAS(led0), gpios) || DT_NODE_HAS_PROP(DT_ALIAS(led1), gpios)
+		"leds [on|off]\r\n"
+#endif
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
+		"buzz [on|off]\r\n"
+#endif
+		"password <value>\r\nclear stats\r\n"
+		"stats-packets\r\nstats-radio\r\nstats-core\r\n"
+		"get/set dutycycle\r\nget/set af\r\nget/set int.thresh\r\n"
+		"get/set multi.acks\r\n"
+		"get/set flood.advert.interval\r\nget/set advert.interval\r\n"
+		"get/set prv.key\r\nget/set name\r\nget/set repeat\r\n"
+		"get/set lat\r\nget/set lon\r\nget/set radio\r\n"
+		"get/set radio.rxgain\r\n"
+		"get/set flood.max.advert\r\n"
+		"get/set flood.max.unscoped\r\nget/set flood.max\r\n"
+		"get/set owner.info\r\nget/set path.hash.mode\r\n"
+		"get/set tx\r\nget/set freq\r\n"
+		"get/set adc.multiplier\r\n"
+		"get/set gps duty\r\nget/set meshtimesync\r\nget/set tz\r\n"
+		"get public.key\r\nget role\r\nget bootloader.ver\r\n"
+		"get dc.restarts\r\nget tx apc\r\nget cad\r\n"
+		"set cad.auto\r\nset cad.offset\r\nset probe.interval\r\n"
+		"set cad.busycap\r\nset cad.reset\r\n"
+		"get/set allow.read.only\r\nget/set guest.password\r\n"
+		"get/set backoff.multiplier\r\nget/set loop.detect\r\n"
+		"get/set rxduty\r\n"
+		"neighbors\r\nneighbor.remove <pubkey>\r\n"
+		"discover.neighbors\r\n"
+		"region def|get|put|remove|list|load|save\r\n"
+		"region allowf|denyf|home|default\r\n"
+		"tempradio <freq> <bw> <sf> <cr> <minutes>\r\n"
 		"setperm <permissions> <pubkey>\r\n"
 #if IS_ENABLED(CONFIG_ZEPHCORE_REPEATER_UPLINK) && IS_ENABLED(CONFIG_MQTT_LIB)
 		"get/set uplink.enable\r\nget/set uplink.wifi.ssid\r\n"
@@ -111,35 +145,8 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"set uplink.mqtt.password <password>\r\n"
 		"get/set uplink.mqtt.iata\r\nget uplink.status\r\n"
 #endif
-		"ver\r\nboard\r\nadvert\r\nadvert.zerohop\r\n"
-		"clock [sync]\r\ntime <epoch>\r\ngps [on|off|setloc|advert]\r\n"
-		"neighbors\r\nneighbor.remove <pubkey>\r\n"
-		"discover.neighbors\r\n"
-		"region def|get|put|remove|list|load|save\r\n"
-		"region allowf|denyf|home|default\r\n"
-		"tempradio <freq> <bw> <sf> <cr> <minutes>\r\n"
-		"password <value>\r\nclear stats\r\n"
-		"stats-packets\r\nstats-radio\r\nstats-core\r\n"
-		"get/set dutycycle\r\nget/set af\r\nget/set int.thresh\r\n"
-		"get/set agc.reset.interval\r\nget/set multi.acks\r\n"
-		"get/set allow.read.only\r\nget/set flood.advert.interval\r\n"
-		"get/set advert.interval\r\nget/set guest.password\r\n"
-		"get/set prv.key\r\nget/set name\r\nget/set repeat\r\n"
-		"get/set lat\r\nget/set lon\r\nget/set radio\r\n"
-		"get/set radio.rxgain\r\n"
-		"get/set apc.margin\r\nget/set flood.max.advert\r\n"
-		"get/set flood.max.unscoped\r\nget/set flood.max\r\n"
-		"get/set backoff.multiplier\r\n"
-		"get/set owner.info\r\nget/set path.hash.mode\r\n"
-		"get/set loop.detect\r\nget/set tx\r\nget/set freq\r\n"
-		"get/set adc.multiplier\r\nget/set rxduty\r\n"
-		"get/set gps duty\r\nget/set meshtimesync\r\nget/set tz\r\n"
-		"get public.key\r\nget role\r\nget bootloader.ver\r\n"
-		"get dc.restarts\r\nget tx apc\r\nget cad\r\n"
-		"set cad.auto\r\nset cad.offset\r\nset cad.probe.interval\r\n"
-		"set cad.busycap\r\nset cad.reset\r\n"
 		"start dfu\r\n"
-		"reboot\r\nclkreboot\r\nerase\r\nhelp";
+		"reboot\r\nclkreboot\r\nerase\r\nshutdown [y]\r\nhelp";
 	static const char room_server[] =
 		"CLI room server:\r\n"
 		"setperm <permissions> <pubkey>\r\nget acl\r\n"

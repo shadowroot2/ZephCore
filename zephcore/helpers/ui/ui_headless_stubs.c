@@ -17,6 +17,9 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <zephyr/kernel.h>
+#ifdef CONFIG_POWEROFF
+#include <zephyr/sys/poweroff.h>
+#endif
 
 #include "ui_task.h"
 
@@ -139,6 +142,14 @@ WEAK void ui_set_heartbeat_led(bool enabled)
 
 WEAK void ui_led_force_tx(void) { }
 WEAK void ui_led_confirm_state(bool enabled) { ARG_UNUSED(enabled); }
+
+WEAK void ui_shutdown(void)
+{
+#ifdef CONFIG_POWEROFF
+	ui_prepare_for_system_off();
+	sys_poweroff();
+#endif
+}
 
 WEAK void ui_set_offgrid_mode(bool enabled)
 {

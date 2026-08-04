@@ -1399,47 +1399,17 @@ static bool handle_findme_cli(const char *line, char *reply)
 	return true;
 }
 
-/* Local controls use the same preference and hardware paths as their menus. */
-static void companion_manual_shutdown(void)
-{
-#ifdef CONFIG_POWEROFF
-	LOG_INF("CLI: shutting down");
-#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
-	buzzer_play(MELODY_SHUTDOWN);
-	while (buzzer_is_playing()) {
-		k_sleep(K_MSEC(50));
-	}
-	buzzer_stop();
-	if (buzzer_is_quiet()) {
-		ui_led_flash_shutdown();
-	}
-#endif
-#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
-	mc_display_on();
-	mc_display_clear();
-	const char *power_off = "Power OFF";
-	uint8_t fw = mc_display_font_width();
-	uint8_t fh = mc_display_font_height();
-	int x = (fw && mc_display_width())
-		? ((int)mc_display_width() - (int)strlen(power_off) * fw) / 2 : 0;
-	int y = (fh && mc_display_height())
-		? ((int)mc_display_height() - fh) / 2 : 0;
-	mc_display_text(x < 0 ? 0 : x, y < 0 ? 0 : y, power_off, false);
-	mc_display_finalize();
-	if (!mc_display_is_epd()) {
-		k_sleep(K_MSEC(1000));
-	}
-#endif
-	ui_prepare_for_system_off();
-	sys_poweroff();
-#endif
-}
-
 static bool handle_local_ui_cli(const char *line, char *reply)
 {
 	if (strcmp(line, "shutdown") == 0) {
+		strcpy(reply, "To confirm use with y");
+		return true;
+	}
+
+	if (strcmp(line, "shutdown y") == 0) {
 #ifdef CONFIG_POWEROFF
-		companion_manual_shutdown();
+		strcpy(reply, "Shutting down");
+		ui_shutdown();
 #else
 		strcpy(reply, "ERROR: power-off unavailable");
 #endif
