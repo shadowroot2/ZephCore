@@ -240,10 +240,9 @@ bool SystemScreen::handleInput(char c)
 			switch (_selected) {
 			case SYSPWR_REBOOT:   _task->showAlert("Rebooting...", 1500);  _task->shutdown(true);  return true;
 			case SYSPWR_SOS: {
-				struct gps_position pos = {};
-				bool waiting = gps_is_available() &&
-					(!gps_is_enabled() || !gps_get_last_known_position(&pos) ||
-					 pos.latitude_ndeg == 0 || pos.longitude_ndeg == 0);
+				/* SOS always requests a fresh fix now, even if a cached
+				 * position exists. The main loop plays the CLI acknowledgement. */
+				bool waiting = gps_is_available();
 				mesh_send_sos();
 				_task->showAlert(waiting ? "Waiting fix (5m max)" : "SOS sent", 2000);
 				return true;

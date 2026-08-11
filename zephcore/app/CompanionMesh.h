@@ -188,31 +188,6 @@ public:
 	 *  at CMD_APP_START, CMD_SET_DEVICE_TIME, and GPS time sync. */
 	void vcontactClockSynced();
 
-#ifdef CONFIG_ZEPHCORE_APC
-	/* Adaptive Power Control hooks used by the USB text CLI. */
-	int8_t getAPCReduction() const {
-		return getPowerController().getPowerReduction();
-	}
-	float getAPCMargin() const {
-		return getPowerController().getMarginEstimate();
-	}
-	bool isAPCEnabled() const {
-		return getPowerController().isEnabled();
-	}
-	void setAPCEnabled(bool en) {
-		getPowerController().setEnabled(en);
-		if (!en) {
-			_radio->setTxPowerReduction(0);
-		}
-	}
-	uint8_t getAPCTargetMargin() const {
-		return getPowerController().getTargetMargin();
-	}
-	void setAPCTargetMargin(uint8_t margin_db) {
-		getPowerController().setTargetMargin(margin_db);
-	}
-#endif
-
 	/**
 	 * Continue contact iteration (call each main loop iteration).
 	 * Returns true if contacts are still being sent.
@@ -220,16 +195,16 @@ public:
 	bool continueContactIteration();
 
 	/**
-	 * Reset contact iterator (call when new command received).
-	 * Sends PACKET_CONTACT_END if iteration was in progress.
-	 */
-	void resetContactIterator();
-
-	/**
 	 * Cancel contact iteration silently (no frame sent).
 	 * Call on BLE disconnect — there's nobody to send CONTACT_END to.
 	 */
 	void cancelContactIterator() { _contact_iter_active = false; }
+
+	/** True while a contact dump is in progress (drives the stall watchdog). */
+	bool isContactIterActive() const { return _contact_iter_active; }
+
+	/** Dump progress cursor — the watchdog re-kicks only if this stops moving. */
+	int getContactIterIdx() const { return _contact_iter_idx; }
 
 	/**
 	 * Cancel pending message sync. Un-ACKed message stays in queue.
@@ -389,6 +364,12 @@ private:
 	/* Contact iteration state */
 	bool _contact_iter_active;
 	int _contact_iter_idx;
+	/* Table bound and v-contact inclusion are snapshotted at PACKET_CONTACT_START
+	 * so the dump can never stream more entries than the total it promised: the
+	 * table grows from inbound adverts mid-dump, and vcontactReady() flips false
+	 * ->true the moment a cold-booted clock goes valid (CMD_SET_DEVICE_TIME). */
+	int _contact_iter_num;
+	bool _contact_iter_vc;
 	uint32_t _contact_iter_lastmod;
 	uint32_t _contact_iter_since;  /* Filter: only send contacts with lastmod > this */
 

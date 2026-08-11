@@ -47,12 +47,17 @@ LoRaRadioBase::LoRaRadioBase(const struct device *lora_dev, MainBoard &board,
 	  _last_rssi(0), _last_snr(0),
 	  _rx_head(0), _rx_tail(0),
 	  _noise_floor(DEFAULT_NOISE_FLOOR), _calibration_threshold(0), _ema_unguarded(0),
-	  _cad_auto(false), _cad_offset(0), _cad_probe_interval_s(0),
+	  _noise_floor_next_ms(0), _noise_floor_retries(0),
+	  _measure_interval_ms(CONFIG_ZEPHCORE_NOISE_FLOOR_INTERVAL_MS),
+	  _sample_rssi(0), _sample_channel_quiet(false), _sample_fresh(false),
+	  _rx_entry_cyc(0),
+	  _rssi_bursts(0), _rssi_spread_sum(0), _rssi_degenerate(0),
+	  _cad_auto(false), _cad_offset(0), _probe_interval_s(0),
 	  _cad_busycap_pct(0),
-	  _cad_last_probe_ms(0), _cad_last_decay_ms(0), _cad_probe_rr(0),
+	  _cad_last_probe_ms(0), _cad_last_decay_ms(0),
+	  _cad_probe_rr(0),
 	  _rx_duty_cycle_enabled(IS_ENABLED(CONFIG_ZEPHCORE_LORA_RX_DUTY_CYCLE)),
 	  _rx_boost_enabled(true),
-	  _tx_power_reduction_db(0),
 	  _dc_last_rx_us(0), _dc_last_sleep_us(0),
 	  _config_cached(false),
 	  _has_radio_override(false),
@@ -236,8 +241,6 @@ void LoRaRadioBase::buildModemConfig(struct lora_modem_config &cfg, bool tx)
 		cfg.tx_power = CONFIG_ZEPHCORE_MAX_TX_POWER_DBM;
 	}
 #endif
-	/* APC reduction (applied after all clamps) */
-	cfg.tx_power -= _tx_power_reduction_db;
 	if (cfg.tx_power < -9) cfg.tx_power = -9;
 
 	cfg.tx = tx;
@@ -310,16 +313,6 @@ int8_t LoRaRadioBase::getConfiguredTxPower() const
 		power = CONFIG_ZEPHCORE_MAX_TX_POWER_DBM;
 	}
 #endif
-	if (power < -9) {
-		power = -9;
-	}
-	return (int8_t)power;
-}
-
-int8_t LoRaRadioBase::getEffectiveTxPower() const
-{
-	int power = (int)getConfiguredTxPower() - (int)_tx_power_reduction_db;
-
 	if (power < -9) {
 		power = -9;
 	}
@@ -547,8 +540,23 @@ void LoRaRadioBase::startReceive()
 			const uint32_t sym_us = (uint32_t)
 				(((uint64_t)(1U << sf) * 1000000ULL) / bw_hz);
 			const uint32_t trans_us = hwWakeupTimeUs();
-			const uint32_t deaf_us =
+
+			/* Theoretical per-cycle deaf budget, then derate by
+			 * CONFIG_..._MARGIN_PCT.  The budget assumes the sleep
+			 * clock and wake transition are exact; in reality the
+			 * chip sleep timer runs on an RC oscillator that drifts
+			 * several % over temperature and the wake transition is a
+			 * "may vary" datasheet figure.  Either overshoot pushes
+			 * real deaf time past the budget and drops phase-edge
+			 * packets (strength-independent DC loss).  Deraging the
+			 * whole budget is slightly stricter than deraging sleep
+			 * alone, which is the safe direction. */
+			const uint32_t deaf_budget_us =
 				(uint32_t)(P - 2 * D - 1) * sym_us;
+			const uint32_t deaf_us = deaf_budget_us -
+				(uint32_t)(((uint64_t)deaf_budget_us *
+					    CONFIG_ZEPHCORE_LORA_DC_MARGIN_PCT) /
+					   100U);
 
 			if (deaf_us > trans_us + 2000) {
 				const uint32_t sleep_us = deaf_us - trans_us;
@@ -577,6 +585,7 @@ void LoRaRadioBase::startReceive()
 							   K_USEC(sleep_us),
 							   rxCallbackStatic, this);
 				if (ret == 0) {
+					_rx_entry_cyc = k_cycle_get_32();
 					atomic_set(&_in_recv_mode, 1);
 					return;
 				}
@@ -602,6 +611,7 @@ void LoRaRadioBase::startReceive()
 		atomic_set(&_in_recv_mode, 0);
 		return;
 	}
+	_rx_entry_cyc = k_cycle_get_32();
 	atomic_set(&_in_recv_mode, 1);
 }
 
@@ -784,6 +794,34 @@ void LoRaRadioBase::triggerNoiseFloorCalibrate(int threshold)
 {
 	_calibration_threshold = threshold;
 
+	/* Own the sampling cadence rather than inheriting the caller's.  Early
+	 * calls are a no-op, so this is safe to invoke from any wake. */
+	int64_t now = k_uptime_get();
+
+	/* Invalidate first: "fresh" must mean a sample landed in THIS pass, not
+	 * merely at some point in the past.  cadMaintenance() runs immediately
+	 * after us and treats the verdict as current-channel ground truth, so a
+	 * carried-over sample would let it probe on a reading taken a full
+	 * interval ago — on a different channel state entirely. */
+	_sample_fresh = false;
+
+	if (_noise_floor_next_ms != 0 && now < _noise_floor_next_ms) {
+		return;
+	}
+
+	/* Due.  Any bail-out below is a blocked attempt, not a completed one —
+	 * push the deadline out by the retry so msUntilNextMaintenance() cannot
+	 * report "due now" on a loop.  Bounded for the same reason as the CAD
+	 * probe: an unbounded retry grid makes the retry period the de-facto
+	 * wake period whenever the radio is persistently busy. */
+	if (_noise_floor_retries >= NOISE_FLOOR_MAX_RETRIES) {
+		_noise_floor_retries = 0;
+		_noise_floor_next_ms = now + _measure_interval_ms;
+		return;
+	}
+	_noise_floor_retries++;
+	_noise_floor_next_ms = now + NOISE_FLOOR_RETRY_MS;
+
 	if (!atomic_get(&_in_recv_mode) || atomic_get(&_tx_active)) {
 		return;
 	}
@@ -799,18 +837,68 @@ void LoRaRadioBase::triggerNoiseFloorCalibrate(int threshold)
 		return;
 	}
 
-	/* Median of multiple RSSI reads (~200 us).  Rejects up to N/2-1
-	 * outliers in either direction without the downward bias of min
-	 * or the spike sensitivity of average.  Insertion sort is fine
-	 * for N=8 (28 comparisons worst case, all in registers). */
+	/* GetRssiInst needs time after RX entry before the first value is
+	 * valid (DS Table 13-82).  isRadioReady() only clears BUSY, and the
+	 * delay is measured *from* the BUSY falling edge, so BUSY alone does
+	 * not prove the reading has settled.  Only host-driven RX entries are
+	 * stamped: under RX duty cycle the sleep->RX wakes are chip-internal
+	 * and invisible to us.  That is acceptable rather than ideal — the
+	 * delay is ~0.25 ms at BW 62.5 against an RX window orders of
+	 * magnitude longer, so the odds of a duty-cycle sample landing inside
+	 * an unsettled window are small, and the median absorbs the odd one. */
+	uint16_t bw_khz = (uint16_t)(getActiveBandwidthKHzX10() / 10);
+	uint32_t since_rx_us =
+		k_cyc_to_us_floor32(k_cycle_get_32() - _rx_entry_cyc);
+
+	if (since_rx_us < rssi_settle_delay_us(bw_khz)) {
+		return;
+	}
+
+	/* Median of multiple RSSI reads: no downward bias of min, no spike
+	 * sensitivity of average.  Insertion sort is fine for N=8 (28
+	 * comparisons worst case, all in registers).
+	 *
+	 * Scope, measured on-air 2026-07-29 (`get cad` sp field, BW 62.5):
+	 * 84-90%% of bursts return N identical values, and the rest average
+	 * ~6 dB of spread.  The reads ARE independent -- the degenerate share
+	 * falls and the spread rises when ambient comes up, exactly as it
+	 * should.  The burst is simply short: ~300 us against a ~200 ms
+	 * SF8/BW62.5 packet, about 0.15%% of one transmission.  So a
+	 * neighbour's packet is either wholly inside the burst or wholly
+	 * outside it, every read sees the same level, and the median returns
+	 * it rather than rejecting it.
+	 *
+	 * What this median actually buys is rejection of sub-300 us glitches
+	 * and single bad SPI reads.  That is worth its ~300 us every 15 s, but
+	 * it is NOT the defence against interference -- that is the
+	 * isReceiving() guard above and the floor + SAMPLING_THRESHOLD filter
+	 * below.  An earlier comment here claimed "rejects up to N/2-1
+	 * outliers", which credited the median with their work.
+	 *
+	 * Reads are spaced by the RSSI averaging window, without which they
+	 * can all fall inside one window and return the same underlying
+	 * sample N times — a median of N copies of one read.  At BW 62.5 the
+	 * spacing (~16 us) is already covered by the SPI transaction itself;
+	 * it matters at the narrow presets, where the window grows past the
+	 * whole burst. */
+	uint32_t window_us = rssi_avg_window_us(bw_khz);
 	int16_t samples[NOISE_FLOOR_SAMPLES_PER_TICK];
 	for (int i = 0; i < NOISE_FLOOR_SAMPLES_PER_TICK; i++) {
+		if (i) {
+			k_busy_wait(window_us);
+		}
 		samples[i] = hwGetCurrentRSSI();
 		if (samples[i] == -128) {
-			/* Chip busy or RSSI read contended — retry next tick. */
+			/* Chip busy or RSSI read contended — keep the short
+			 * retry deadline set above and try again shortly. */
 			return;
 		}
 	}
+
+	/* A full sample landed: next one is a full interval away. */
+	_noise_floor_next_ms = now + _measure_interval_ms;
+	_noise_floor_retries = 0;
+
 	/* Insertion sort — tiny array, branch-friendly on Cortex-M */
 	for (int i = 1; i < NOISE_FLOOR_SAMPLES_PER_TICK; i++) {
 		int16_t key = samples[i];
@@ -824,10 +912,56 @@ void LoRaRadioBase::triggerNoiseFloorCalibrate(int threshold)
 	int16_t rssi = (samples[NOISE_FLOOR_SAMPLES_PER_TICK / 2 - 1] +
 			samples[NOISE_FLOOR_SAMPLES_PER_TICK / 2]) / 2;
 
-	/* First sample after reset (DEFAULT_NOISE_FLOOR == 0): seed directly. */
+	/* Burst quality, reported by `get cad`.  Sorted, so max-min is the
+	 * spread.  Kept as running totals rather than an EMA so the numbers
+	 * stay readable and the degenerate share is a true proportion.
+	 *
+	 * Reading it: a high zero-spread share on its own is NOT a fault — a
+	 * quiet or steadily-occupied channel genuinely reads the same value
+	 * N times at integer-dB resolution.  What would indict the sampler is
+	 * a high share together with a mean of 0.0, i.e. no burst ever spans
+	 * anything: that is reads landing inside one RSSI averaging window and
+	 * returning one sample N times over.  A non-zero mean proves the reads
+	 * are independent however high the share climbs. */
+	_rssi_bursts++;
+	_rssi_spread_sum += (uint32_t)(samples[NOISE_FLOOR_SAMPLES_PER_TICK - 1] -
+				       samples[0]);
+	if (samples[NOISE_FLOOR_SAMPLES_PER_TICK - 1] == samples[0]) {
+		_rssi_degenerate++;
+	}
+	/* Rescale together so both derived figures survive untouched, and the
+	 * printed count stays four digits however long the node is up. */
+	if (_rssi_bursts >= RSSI_BURST_STATS_CAP) {
+		_rssi_bursts >>= 1;
+		_rssi_spread_sum >>= 1;
+		_rssi_degenerate >>= 1;
+	}
+
+	/* Publish this sample for cadMaintenance().  The CAD probe needs exactly
+	 * the same fact we just established — "is the channel at its floor right
+	 * now?" — and used to answer it with its own single hwGetCurrentRSSI() on
+	 * its own deadline.  That cost a second wake per interval (measured: two
+	 * 15 s grids ~3 s apart) and made the worse decision, since one raw read
+	 * is precisely what the median-of-8 exists to defend against.
+	 *
+	 * The verdict is taken against the floor BEFORE this sample is folded in,
+	 * so it compares a new observation to the established floor rather than
+	 * to one already dragged toward it. */
+	_sample_rssi = rssi;
+	_sample_channel_quiet = (_noise_floor == DEFAULT_NOISE_FLOOR) ||
+				(rssi <= _noise_floor + CAD_PROBE_RSSI_GUARD);
+	_sample_fresh = true;
+
+	/* First sample after reset (DEFAULT_NOISE_FLOOR == 0): seed directly.
+	 * The lower clamp tracks the active bandwidth — thermal noise is
+	 * 10*log10(BW) so a fixed rail pins narrow-BW presets several dB high
+	 * (BW 31.25 kHz sits ~3 dB below BW 62.5) and never engages at all on
+	 * wide ones. */
+	int16_t floor_min = noise_floor_min_dbm(getActiveBandwidthKHzX10() / 10);
+
 	if (_noise_floor == DEFAULT_NOISE_FLOOR) {
 		_noise_floor = rssi;
-		if (_noise_floor < -120) _noise_floor = -120;
+		if (_noise_floor < floor_min) _noise_floor = floor_min;
 		if (_noise_floor > -50) _noise_floor = -50;
 		_ema_unguarded = 0;
 		LOG_DBG("noise_floor_cal: seed=%d", _noise_floor);
@@ -864,40 +998,11 @@ void LoRaRadioBase::triggerNoiseFloorCalibrate(int threshold)
 	int half = W / 2;                                      /* 4 */
 	int step = (diff + (diff > 0 ? half : -half)) / W;
 	_noise_floor += step;
-	if (_noise_floor < -120) _noise_floor = -120;
+	if (_noise_floor < floor_min) _noise_floor = floor_min;
 	if (_noise_floor > -50) _noise_floor = -50;
 
 	LOG_DBG("noise_floor_cal: rssi=%d, floor=%d, tick=%u",
 		rssi, _noise_floor, _ema_unguarded - 1);
-}
-
-void LoRaRadioBase::resetAGC()
-{
-	/* Don't reset AGC while transmitting or receiving — warm sleep would
-	 * abort the TX or corrupt the incoming packet.  maintenanceLoop()
-	 * will retry next housekeeping cycle.
-	 * Also skip if the chip is in its duty-cycle sleep phase: hwResetAGC()
-	 * holds the SPI mutex with K_FOREVER and would hang for 3 s. */
-	if (atomic_get(&_tx_active) || isReceiving()) {
-		return;
-	}
-	if (_rx_duty_cycle_enabled && hwIsChipBusy()) {
-		return;
-	}
-
-	hwResetAGC();
-
-	/* Warm sleep + calibrate leaves the radio in STANDBY.
-	 * Restart receive if we were in RX mode. */
-	if (atomic_get(&_in_recv_mode)) {
-		startReceive();
-	}
-
-	/* Reset noise floor so it reconverges from scratch (seed + warmup).
-	 * Without this, a stuck _noise_floor of -120 makes the sampling threshold
-	 * too low to accept normal samples, self-reinforcing the stuck value. */
-	_noise_floor = DEFAULT_NOISE_FLOOR;
-	_ema_unguarded = 0;
 }
 
 bool LoRaRadioBase::isReceiving()
@@ -956,12 +1061,25 @@ void LoRaRadioBase::setCadParams(bool auto_enabled, int8_t offset,
 
 	_cad_auto = auto_enabled;
 	_cad_offset = offset;
-	_cad_probe_interval_s = probe_interval_s;
+	_probe_interval_s = probe_interval_s;
 	_cad_busycap_pct = busycap_pct;
+
+	/* One interval governs every periodic radio measurement, because there
+	 * is only one measurement: the noise-floor sampler takes a median-of-8
+	 * and the CAD probe consumes that same reading (see cadMaintenance).
+	 * Splitting them into two knobs could only ever express a rate the
+	 * hardware does not actually run at.
+	 *
+	 * 0 means "CAD probing off" — the floor sampler still has to run, so it
+	 * falls back to the build-time default. */
+	_measure_interval_ms = probe_interval_s
+			       ? (uint32_t)probe_interval_s * 1000U
+			       : (uint32_t)CONFIG_ZEPHCORE_NOISE_FLOOR_INTERVAL_MS;
+
 	hwCadSetPeakOffset(_cad_offset);
 
-	LOG_INF("cad: auto=%d offset=%d probe_interval=%us busycap=%u%%",
-		(int)auto_enabled, (int)offset, (unsigned)probe_interval_s,
+	LOG_INF("cad: auto=%d offset=%d measure_interval=%ums busycap=%u%%",
+		(int)auto_enabled, (int)offset, (unsigned)_measure_interval_ms,
 		(unsigned)busycap_pct);
 }
 
@@ -1097,7 +1215,7 @@ void LoRaRadioBase::cadStaircaseStep()
 
 void LoRaRadioBase::cadMaintenance()
 {
-	if (_cad_probe_interval_s == 0) {
+	if (_probe_interval_s == 0) {
 		return;
 	}
 
@@ -1111,31 +1229,30 @@ void LoRaRadioBase::cadMaintenance()
 		_cad_last_decay_ms = now;
 	}
 
-	if (now - _cad_last_probe_ms < (int64_t)_cad_probe_interval_s * 1000) {
-		return;
-	}
+	/* No separate probe-interval check: the probe interval IS the measurement
+	 * interval (setCadParams derives _measure_interval_ms from it), so a
+	 * fresh sample means a probe is due by construction. */
 
-	/* Same guards as the noise-floor calibrator: only probe from idle
-	 * continuous/duty-cycle RX, never during TX or an active packet,
-	 * never while the chip is in its duty-cycle sleep (BUSY) phase. */
-	if (!atomic_get(&_in_recv_mode) || atomic_get(&_tx_active)) {
+	/* Ride on the noise-floor sampler rather than measuring independently.
+	 *
+	 * A fresh sample means the sampler ran THIS pass, which already proves
+	 * everything the probe needs: the radio was idle in RX, not transmitting,
+	 * not mid-packet, and out of its duty-cycle sleep window — the sampler
+	 * applies exactly those guards before it reads.  So there is nothing left
+	 * to re-check, no separate deadline, and no retry budget: if no sample
+	 * landed this pass, the probe simply waits for the next one.
+	 *
+	 * This is what makes the wake cost one per interval instead of two.  It
+	 * also upgrades the ground-truth prefilter from a single raw RSSI read to
+	 * the sampler's median-of-8 — the probe is trying to establish that the
+	 * channel is quiet, and a busy verdict taken over real traffic teaches
+	 * nothing about false positives, so the outlier rejection matters here. */
+	if (!_sample_fresh) {
 		return;
 	}
-	if (!isRadioReady() || isReceiving()) {
-		return;
-	}
+	_sample_fresh = false;
 
-	/* Ground-truth prefilter: skip when the channel is visibly busy —
-	 * a busy verdict against strong traffic teaches us nothing about
-	 * false positives.  (Below-noise-floor LoRa can't be excluded here;
-	 * the post-probe RX check below handles that side.) */
-	int16_t rssi = hwGetCurrentRSSI();
-
-	if (rssi == -128) {
-		return;
-	}
-	if (_noise_floor != DEFAULT_NOISE_FLOOR &&
-	    rssi > _noise_floor + CAD_PROBE_RSSI_GUARD) {
+	if (!_sample_channel_quiet) {
 		return;
 	}
 
@@ -1221,6 +1338,54 @@ void LoRaRadioBase::cadMaintenance()
 	}
 }
 
+/* int64 uptime delta → the uint32 "ms from now" the maintenance contract wants.
+ * Already-passed deadlines saturate at 0 (due now), far-future ones at IDLE. */
+static uint32_t clampDeadline(int64_t remaining_ms)
+{
+	if (remaining_ms <= 0) {
+		return 0;
+	}
+	if (remaining_ms >= (int64_t)mesh::MAINTENANCE_IDLE) {
+		return mesh::MAINTENANCE_IDLE;
+	}
+	return (uint32_t)remaining_ms;
+}
+
+/* When does this radio next need a maintenance call?  Two independent items:
+ * the noise floor sampler (always running) and the CAD calibrator (only when
+ * probing is enabled).  Both hold absolute uptime deadlines, so this is a pure
+ * read — it must not touch the chip, since the event loop calls it on every
+ * wake to decide how long it may sleep. */
+uint32_t LoRaRadioBase::msUntilNextMaintenance()
+{
+	int64_t now = k_uptime_get();
+	uint32_t next = mesh::MAINTENANCE_IDLE;
+
+	/* Noise floor.  A zero deadline means "never sampled yet" — due now. */
+	if (_noise_floor_next_ms == 0) {
+		return 0;
+	}
+	next = clampDeadline(_noise_floor_next_ms - now);
+
+	if (_probe_interval_s == 0) {
+		return next;
+	}
+
+	/* The CAD probe deliberately contributes NO deadline of its own.  It runs
+	 * off the noise-floor sampler's measurement (see cadMaintenance), so its
+	 * wake is already accounted for above.  Giving it a second deadline is
+	 * what produced two independent 15 s grids ~3 s apart — one extra wake
+	 * per interval, forever, on every repeater. */
+
+	/* Stats decay. _cad_last_decay_ms == 0 means the first call latches it
+	 * rather than decaying, so treat that as due now. */
+	if (_cad_last_decay_ms == 0) {
+		return 0;
+	}
+	return mesh::maintenanceSooner(
+		next, clampDeadline(_cad_last_decay_ms + (int64_t)CAD_STATS_DECAY_MS - now));
+}
+
 int LoRaRadioBase::formatCadStatus(char *buf, int cap)
 {
 	uint8_t base = hwCadBasePeak();
@@ -1231,16 +1396,59 @@ int LoRaRadioBase::formatCadStatus(char *buf, int cap)
 	}
 
 	/* Terse on purpose — remote replies are capped at ~160 B over LoRa.
-	 * Header:  a:on o:1 pk:22(b21/4s) iv:15s bc:25%
+	 * Header:  a:on o:1 pk:22(b21/4s) sp:0.9/84%(312) bc:25%
 	 *   a  auto on/off   o  offset   pk operating peak
-	 *   b  family base   4s symbols   iv probe interval  bc busy cap
+	 *   b  family base   4s symbols   bc busy cap
+	 *   sp RSSI burst quality: mean spread in dB across the median-of-N
+	 *      reads, the share of bursts whose spread was 0, and the burst
+	 *      count.  The count is not decoration: a share without its
+	 *      denominator cannot be read, and the burst rate is not
+	 *      derivable from uptime because the sampler's guards (TX, mid-RX,
+	 *      duty-cycle sleep) block an unknown fraction of attempts.
 	 * Level:  *+1(22) 22p 18b 16f 2t 72%
-	 *   '*' = operating rung   level(peak)  probes busy fp tp  fp-rate%%. */
+	 *   '*' = operating rung   level(peak)  probes busy fp tp  fp-rate%%.
+	 *
+	 * sp replaced the probe interval here because the interval is a pref
+	 * you already set and can read back with `get probe.interval`, whereas
+	 * burst spread is only observable from inside the sampler.
+	 *
+	 * It answers one question: are the N reads independent?  A non-zero
+	 * mean proves they are, whatever the zero-spread share — a steady
+	 * channel reads identically at integer-dB resolution, which is correct
+	 * rather than broken.  Only mean 0.0 with a high share indicts the
+	 * sampler: that is N copies of one sample from inside a single RSSI
+	 * averaging window (see rssi_avg_window_us() in radio_common.h).
+	 * Measured on-air 2026-07-29 at BW 62.5: 0.6/90% quiet, 0.9/84% with
+	 * the floor at -103 — independent, and responding the right way.
+	 * Mean is tenths of a dB.  Counters halve at RSSI_BURST_STATS_CAP, so
+	 * the count is bounded to four digits and the figures describe a
+	 * recent window rather than everything since boot. */
+	unsigned spread_mean10 = _rssi_bursts
+		? (unsigned)((_rssi_spread_sum * 10U + _rssi_bursts / 2U) /
+			     _rssi_bursts)
+		: 0;
+	unsigned degen_pct = _rssi_bursts
+		? (unsigned)((_rssi_degenerate * 100U + _rssi_bursts / 2U) /
+			     _rssi_bursts)
+		: 0;
+
+	/* The burst count is bench diagnostics, and the header competes with
+	 * the three level rows for a 161 B remote reply — with wide level
+	 * counters the full header pushes the last row into truncation.  So
+	 * print it only into the roomy local-console buffer; a remote reader
+	 * still gets the mean and the share, which is the actual verdict. */
+	bool room_for_count = (cap >= 200);
+
 	n += snprintf(buf + n, cap > n ? cap - n : 0,
-		      "a:%s o:%d pk:%d(b%u/4s) iv:%us bc:%u%%",
+		      "a:%s o:%d pk:%d(b%u/4s) sp:%u.%u/%u%%",
 		      _cad_auto ? "on" : "off", (int)_cad_offset,
 		      (int)base + _cad_offset, base,
-		      (unsigned)_cad_probe_interval_s,
+		      spread_mean10 / 10U, spread_mean10 % 10U, degen_pct);
+	if (room_for_count) {
+		n += snprintf(buf + n, cap > n ? cap - n : 0, "(%u)",
+			      (unsigned)_rssi_bursts);
+	}
+	n += snprintf(buf + n, cap > n ? cap - n : 0, " bc:%u%%",
 		      (unsigned)_cad_busycap_pct);
 
 	/* Only the 3 rungs around the operating offset — the far rungs are mildly

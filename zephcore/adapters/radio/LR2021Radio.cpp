@@ -73,11 +73,6 @@ void LR2021Radio::hwSetRxBoost(bool enable)
 	lr20xx_set_rx_boost(_dev, enable);
 }
 
-void LR2021Radio::hwResetAGC()
-{
-	lr20xx_reset_agc(_dev);
-}
-
 int LR2021Radio::hwCadProbe(int8_t level)
 {
 	return lr20xx_cad_probe(_dev, level);

@@ -114,7 +114,7 @@
 		compatible = "zephcore,input-multi-tap";
 		input-codes = <INPUT_KEY_A>;
 		tap-codes = <INPUT_KEY_1 INPUT_KEY_LEFT>;
-		tap-delay-ms = <400>;
+		tap-delay-ms = <500>;
 	};
 
 	/* ---- Backlight touch input (P0.11) ----

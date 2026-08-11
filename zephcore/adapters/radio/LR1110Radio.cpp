@@ -73,12 +73,6 @@ void LR1110Radio::hwSetRxBoost(bool enable)
 	lr11xx_set_rx_boost(_dev, enable);
 }
 
-void LR1110Radio::hwResetAGC()
-{
-	/* Warm sleep → Calibrate(ALL) → re-calibrate image → re-apply RX boost */
-	lr11xx_reset_agc(_dev);
-}
-
 uint32_t LR1110Radio::hwWakeupTimeUs()
 {
 	return lr11xx_get_wakeup_time_us(_dev);

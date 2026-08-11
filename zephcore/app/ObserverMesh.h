@@ -12,7 +12,6 @@
 #include <mesh/Dispatcher.h>
 #include <mesh/StaticPoolPacketManager.h>
 #include <mesh/Identity.h>
-#include <mesh/RNG.h>
 #include <mesh/RTC.h>
 #include <helpers/MeshTimeSync.h>
 #include <helpers/NodePrefs.h>
@@ -45,7 +44,6 @@ class ObserverMesh : public Dispatcher {
 	NodePrefs         _prefs;
 	RepeaterDataStore *_store;
 	struct ObserverCreds *_creds;
-	RNG               *_rng;
 	RTCClock          *_rtc;
 
 	/* Pre-built MQTT topic strings (set in begin()) */
@@ -73,7 +71,7 @@ protected:
 	DispatcherAction onRecvPacket(Packet *pkt) override;
 
 public:
-	ObserverMesh(Radio &radio, MillisecondClock &ms, RNG &rng, RTCClock &rtc);
+	ObserverMesh(Radio &radio, MillisecondClock &ms, RTCClock &rtc);
 
 	/* Initialize: load/generate identity, load/init prefs, start radio RX. */
 	void begin(RepeaterDataStore *store, struct ObserverCreds *creds);

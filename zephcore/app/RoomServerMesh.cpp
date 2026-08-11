@@ -195,29 +195,35 @@ int RoomServerMesh::handleRequest(ClientInfo* sender, uint32_t sender_timestamp,
          * field on the self channel so existing client UIs show a value.
          * T1000-E is excluded: its physical light sensor reports real lux. */
 #if !defined(CONFIG_BOARD_T1000_E)
-        if (gps_is_available()) {
+        if (sender->isAdmin() && gps_is_available()) {
             struct gps_state_info gsi;
             gps_get_state_info(&gsi);
             lpp.addLuminosity(CH_SELF, gsi.satellites);
         }
 #endif
 
-        /* GPS precise position — only shared via telemetry, not adverts */
-        struct gps_position gpos;
-        if (gps_get_last_known_position(&gpos)) {
-            lpp.addGPS(CH_SELF,
-                (float)(gpos.latitude_ndeg / 1e9),
-                (float)(gpos.longitude_ndeg / 1e9),
-                gpos.altitude_mm / 1000.0f);
-        }
+        /* GPS precise position — admin-only, and only via telemetry, never
+         * adverts. Guests get the rest of the LPP payload but no position:
+         * adverts already publish the operator-set prefs coordinates, so
+         * there is no reason to hand a guest login the live fix as well. */
+        if (sender->isAdmin()) {
+            struct gps_position gpos;
+            if (gps_get_last_known_position(&gpos)) {
+                lpp.addGPS(CH_SELF,
+                    (float)(gpos.latitude_ndeg / 1e9),
+                    (float)(gpos.longitude_ndeg / 1e9),
+                    gpos.altitude_mm / 1000.0f);
+            }
 
-        /* Wake GPS / extend acquire window so the next telemetry poll has
-         * a fresher fix. In repeater mode GPS is normally off between the
-         * 48h time-sync cycles — this opportunistically rearms acquire
-         * when someone actually cares about our position. No-op if GPS
-         * is disabled in prefs. */
-        if (gps_is_available() && gps_is_enabled()) {
-            gps_request_fresh_fix();
+            /* Wake GPS / extend acquire window so the next telemetry poll has
+             * a fresher fix. In repeater mode GPS is normally off between the
+             * 48h time-sync cycles — this opportunistically rearms acquire
+             * when someone actually cares about our position. No-op if GPS
+             * is disabled in prefs. Gated with the position itself so a guest
+             * can't hold the GPS awake by polling. */
+            if (gps_is_available() && gps_is_enabled()) {
+                gps_request_fresh_fix();
+            }
         }
 
         return 4 + lpp.getSize();
@@ -256,7 +262,18 @@ mesh::Packet* RoomServerMesh::createSelfAdvert() {
 /* ---- Room server: shared-post buffer + push-to-client sync ---- */
 
 void RoomServerMesh::addPost(ClientInfo* client, const char* postData) {
-    posts[next_post_idx].author = client->id;
+    storePost(client->id, postData);
+}
+
+/* Post authored by the server itself (admin "room.post" command). */
+void RoomServerMesh::addSystemPost(const char* postData) {
+    if (!postData || postData[0] == 0) return;
+
+    storePost(self_id, postData);
+}
+
+void RoomServerMesh::storePost(const mesh::Identity& author, const char* postData) {
+    posts[next_post_idx].author = author;
     strncpy(posts[next_post_idx].text, postData, MAX_POST_TEXT_LEN);
     posts[next_post_idx].text[MAX_POST_TEXT_LEN] = '\0';
     posts[next_post_idx].post_timestamp = getRTCClock()->getCurrentTimeUnique();
@@ -487,6 +504,13 @@ void RoomServerMesh::onAnonDataRecv(mesh::Packet* packet, const uint8_t* secret,
         memcpy(guest_pw, _prefs.guest_password, strnlen(_prefs.guest_password, sizeof(guest_pw) - 1));
         bool admin_match = mesh::Utils::constantTimeEqual(received, admin_pw, sizeof(received));
         bool guest_match = mesh::Utils::constantTimeEqual(received, guest_pw, sizeof(received));
+
+        /* An empty stored guest password disables guest access (as
+         * CONFIG_ZEPHCORE_GUEST_PASSWORD documents) rather than matching an
+         * empty submitted password and granting read+write to anyone. Both
+         * compares above still run unconditionally, so timing is unchanged.
+         * allow_read_only below remains the intended way to run an open room. */
+        if (_prefs.guest_password[0] == 0) guest_match = false;
 
         uint8_t perms;
         if (admin_match) {
@@ -783,11 +807,6 @@ void RoomServerMesh::begin(RepeaterDataStore* store) {
      * Mesh::begin() → Dispatcher::begin() → Radio::begin(). */
     mesh::Mesh::begin();
     _contention.setBackoffMultiplier(_prefs.backoff_multiplier);
-#ifdef CONFIG_ZEPHCORE_APC
-    _power_ctrl.setSF(_prefs.sf);
-    _power_ctrl.setTargetMargin(_prefs.apc_margin);
-    _power_ctrl.setEnabled(_prefs.apc_enabled != 0);
-#endif
     acl.load(_store->getAclPath(), self_id);
     region_map.load(_store->getRegionsPath());
 
@@ -1060,6 +1079,15 @@ void RoomServerMesh::handleCommand(uint32_t sender_timestamp, char* command, cha
         reply[0] = 0;
     } else if (memcmp(command, "region", 6) == 0) {
         handleRegionCommand(command, reply);
+    } else if (memcmp(command, "room.post", 9) == 0) {
+        char* msg = command + 9;
+        while (*msg == ' ') msg++;
+        if (*msg == 0) {
+            strcpy(reply, "Err - empty message");
+        } else {
+            addSystemPost(msg);
+            strcpy(reply, "OK");
+        }
     } else {
         _cli.handleCommand(sender_timestamp, command, reply);
     }

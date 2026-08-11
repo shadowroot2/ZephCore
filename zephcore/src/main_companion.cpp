@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 #include <zephyr/kernel.h>
 #include <zephyr/sys/util.h>
 
@@ -101,7 +102,7 @@ extern "C" void bt_ctlr_assert_handle(char *file, uint32_t line)
 #define MESH_EVENT_LORA_RX       BIT(0)  /* LoRa packet received */
 #define MESH_EVENT_LORA_TX_DONE  BIT(1)  /* LoRa TX complete (event-driven!) */
 #define MESH_EVENT_BLE_RX        BIT(2)  /* BLE frame received */
-#define MESH_EVENT_HOUSEKEEPING  BIT(3)  /* Periodic housekeeping (noise floor, etc.) */
+#define MESH_EVENT_MAINTENANCE   BIT(3)  /* A maintenance deadline came due */
 #define MESH_EVENT_UI_ACTION     BIT(4)  /* Button action from UI (deferred to mesh thread) */
 #define MESH_EVENT_GPS_ACTION    BIT(5)  /* GPS state change (must run on main thread!) */
 #define MESH_EVENT_TX_DRAIN      BIT(6)  /* Outbound packet delay expired, run checkSend */
@@ -116,6 +117,7 @@ static void save_prefs_to_flash(void);
 static void vcontact_battery_alert_check(void);
 static void companion_sos_process(void);
 static void companion_sos_tx_done(void);
+static void companion_tracking_process(void);
 #endif
 
 /* Pending epoch for a deferred zephcore_rtc_save(). gps_fix_callback runs on
@@ -127,7 +129,7 @@ static void companion_sos_tx_done(void);
 static atomic_t pending_rtc_epoch = ATOMIC_INIT(0);
 
 #define MESH_EVENT_BASE          (MESH_EVENT_LORA_RX | MESH_EVENT_LORA_TX_DONE | \
-	MESH_EVENT_BLE_RX | MESH_EVENT_HOUSEKEEPING | MESH_EVENT_UI_ACTION |  \
+	MESH_EVENT_BLE_RX | MESH_EVENT_MAINTENANCE | MESH_EVENT_UI_ACTION |  \
 	MESH_EVENT_GPS_ACTION | MESH_EVENT_TX_DRAIN | MESH_EVENT_PREFS_DIRTY | \
 	MESH_EVENT_RTC_SAVE | MESH_EVENT_CONTACT_ITER)
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_DESIGN_JOYSTICK)
@@ -137,8 +139,10 @@ static atomic_t pending_rtc_epoch = ATOMIC_INIT(0);
 #define MESH_EVENT_ALL           MESH_EVENT_BASE
 #endif
 
-/* Housekeeping interval - infrequent to preserve power savings */
-#define HOUSEKEEPING_INTERVAL_MS CONFIG_ZEPHCORE_HOUSEKEEPING_INTERVAL_MS
+/* Companion-only battery and UI maintenance needs a 30-second upper bound.
+ * Radio deadlines may wake earlier; the timer is always one-shot. */
+#define MAINTENANCE_BACKSTOP_MS 30000
+#define MAINTENANCE_MIN_MS      50
 
 /* Event-driven mesh loop - k_event for signaling from ISR/callbacks */
 static struct k_event mesh_events;
@@ -156,7 +160,7 @@ static void request_rtc_save(uint32_t epoch)
 /* Work items for event-driven processing */
 static void process_companion_rx(void);   /* runs on MAIN thread (see ble_on_rx_frame) */
 static void run_contact_iteration(void);  /* runs on MAIN thread (see MESH_EVENT_CONTACT_ITER) */
-static void housekeeping_timer_fn(struct k_timer *timer);
+static void maintenance_timer_fn(struct k_timer *timer);
 #if ZEPHCORE_USB_STACK
 static void companion_cli_run(const char *line);  /* main-thread text-CLI exec */
 #endif
@@ -197,15 +201,26 @@ static void usb_on_tx_drain(void)
 }
 #endif
 
-/* Housekeeping timer for periodic tasks (noise floor calibration, etc.)
- * Fires every 5 seconds to wake event loop for maintenance without
- * compromising event-driven power savings. */
-K_TIMER_DEFINE(housekeeping_timer, housekeeping_timer_fn, NULL);
+K_TIMER_DEFINE(maintenance_timer, maintenance_timer_fn, NULL);
 
 /* Forward declarations */
 #ifdef ZEPHCORE_LORA
 static CompanionMesh *companion_mesh_ptr;
 #endif
+
+static void arm_maintenance_wake(void)
+{
+	uint32_t delay = MAINTENANCE_BACKSTOP_MS;
+
+#ifdef ZEPHCORE_LORA
+	if (companion_mesh_ptr) {
+		uint32_t next = companion_mesh_ptr->msUntilNextMaintenance();
+		if (next < delay) delay = next;
+	}
+#endif
+	if (delay < MAINTENANCE_MIN_MS) delay = MAINTENANCE_MIN_MS;
+	k_timer_start(&maintenance_timer, K_MSEC(delay), K_NO_WAIT);
+}
 
 /* ========== BLE callbacks → main ========== */
 
@@ -387,10 +402,10 @@ static void process_companion_rx(void)
 	/* Process all queued frames */
 	while (k_msgq_get(zephcore_ble_get_recv_queue(), &f, K_NO_WAIT) == 0) {
 #ifdef ZEPHCORE_LORA
-		/* handleProtocolFrame() resets the contact iterator internally
-		 * (line 1229) for any non-CMD_GET_CONTACTS command — no need
-		 * to call resetContactIterator() here.  Doing so sent a stale
-		 * PACKET_CONTACT_END before the command was even processed. */
+		/* An in-flight contact dump deliberately survives commands parsed
+		 * here — it is only cancelled by CMD_APP_START (new session) or by
+		 * disconnect.  Do not abort it on inbound traffic: the app talks to
+		 * us mid-sync, and truncating the dump left it waiting forever. */
 		if (!companion_mesh_ptr->handleProtocolFrame(f.buf, f.len)) {
 			LOG_DBG("rx_process: unknown cmd 0x%02x len=%u", f.buf[0], (unsigned)f.len);
 			uint8_t err_rsp[] = { 0x01, 0x01 };  /* PACKET_ERROR, ERR_UNSUPPORTED */
@@ -462,15 +477,14 @@ static void run_contact_iteration(void)
 /*
  * Event-driven mesh loop - runs in main thread context.
  * Wakes on actual events: LoRa RX, LoRa TX done, BLE RX.
- * Plus a 5-second housekeeping timer for noise floor calibration, etc.
+ * Maintenance wakes at the nearest radio deadline, with a 30-second
+ * companion-only backstop for battery checks and UI state.
  */
 static void mesh_event_loop(void)
 {
 	LOG_INF("starting event-driven loop");
 
-	/* Start housekeeping timer for periodic maintenance tasks */
-	k_timer_start(&housekeeping_timer, K_MSEC(HOUSEKEEPING_INTERVAL_MS),
-		      K_MSEC(HOUSEKEEPING_INTERVAL_MS));
+	arm_maintenance_wake();
 
 	for (;;) {
 		/* Wait for any mesh event - blocks until signaled */
@@ -524,15 +538,35 @@ static void mesh_event_loop(void)
 			companion_sos_tx_done();
 		}
 
-		/* Periodic housekeeping — maintenance + UI refresh */
-		if (events & MESH_EVENT_HOUSEKEEPING) {
+		/* Deadline-driven maintenance plus Companion's 30-second battery/UI pass. */
+		if (events & MESH_EVENT_MAINTENANCE) {
 			companion_sos_process();
+			companion_tracking_process();
 
 			/* Radio maintenance: noise floor calibration, AGC reset,
 			 * RX watchdog.  Separated from loop() so these never run
 			 * on packet-driven events. */
 			if (companion_mesh_ptr) {
 				companion_mesh_ptr->maintenanceLoop();
+				companion_mesh_ptr->loop();
+			}
+
+			/* Contact-dump watchdog — the dump is pumped solely by the
+			 * BLE/USB tx-idle callback, so a single lost kick strands it
+			 * silently and the app waits for contacts that never arrive.
+			 * Only re-kick when the cursor has not moved across a whole
+			 * tick: a large dump legitimately spans several ticks, and
+			 * back-pressure resolves itself. */
+			static int wd_last_iter_idx = -1;
+			if (companion_mesh_ptr && companion_mesh_ptr->isContactIterActive()) {
+				int idx = companion_mesh_ptr->getContactIterIdx();
+				if (idx == wd_last_iter_idx) {
+					LOG_WRN("contact dump watchdog: no progress at %d, resuming", idx);
+					k_event_post(&mesh_events, MESH_EVENT_CONTACT_ITER);
+				}
+				wd_last_iter_idx = idx;
+			} else {
+				wd_last_iter_idx = -1;
 			}
 
 			/* BLE advertising watchdog — if bt_le_adv_start failed
@@ -593,14 +627,17 @@ static void mesh_event_loop(void)
 			joystick_ui_task.loop();
 		}
 #endif
+
+		/* Recompute after every event: RX, CLI and GPS activity may add or
+		 * clear a radio deadline. */
+		arm_maintenance_wake();
 	}
 }
 
-/* Housekeeping timer callback - signals event to wake mesh loop periodically */
-static void housekeeping_timer_fn(struct k_timer *timer)
+static void maintenance_timer_fn(struct k_timer *timer)
 {
 	ARG_UNUSED(timer);
-	k_event_post(&mesh_events, MESH_EVENT_HOUSEKEEPING);
+	k_event_post(&mesh_events, MESH_EVENT_MAINTENANCE);
 }
 
 #ifdef ZEPHCORE_LORA
@@ -850,7 +887,7 @@ static void companion_sos_ui_sent(bool success)
 static bool companion_send_sos_message(bool allow_coordinates)
 {
 	ChannelDetails sos_channel;
-	if (!companion_get_public_channel("#SOS", sos_channel)) {
+	if (!companion_get_public_channel("#sos", sos_channel)) {
 		return false;
 	}
 
@@ -907,11 +944,11 @@ static bool companion_send_sos_message(bool allow_coordinates)
 							  sos_channel.channel,
 							  companion_mesh_ptr->prefs.node_name,
 							  text, (int)strlen(text))) {
-		LOG_WRN("SOS: unable to queue #SOS message");
+		LOG_WRN("SOS: unable to queue #sos message");
 		return false;
 	}
 
-	LOG_INF("SOS: queued #SOS message: %s", text);
+	LOG_INF("SOS: queued #sos message: %s", text);
 	/* LoRa runs asynchronously. Play only after this queued packet has left
 	 * the radio, not while it is waiting for channel access. */
 	companion_sos_tone.after_packets_sent = packets_before +
@@ -925,26 +962,30 @@ static bool companion_sos_finish(bool fresh_fix)
 	bool success = companion_send_sos_message(fresh_fix);
 	companion_sos_ui_sent(success);
 
+	/* SOS temporarily forces continuous acquisition. Restore the configured
+	 * duty cycle and enabled state after the message is queued. */
+	gps_set_poll_interval_sec(companion_sos.saved_gps_duty_sec);
 	if (companion_sos.gps_started_by_sos) {
 		gps_enable(false);
-		gps_set_poll_interval_sec(companion_sos.saved_gps_duty_sec);
 	}
 	memset(&companion_sos, 0, sizeof(companion_sos));
 	return success;
 }
 
-static bool companion_sos_request(char *reply)
+static bool companion_sos_request(char *reply, bool play_confirm = true)
 {
 	if (companion_sos.pending) {
 		strcpy(reply, "SOS: waiting for GPS fix (max 5 min)");
 		return true;
 	}
 
+	if (play_confirm) {
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
 	/* SOS accepted: a short rising acknowledgement. The TX-complete alert
 	 * below remains the Morse SOS melody. */
 	buzzer_play(MELODY_SOS_CONFIRM);
 #endif
+	}
 
 	if (!gps_is_available()) {
 		strcpy(reply, companion_sos_finish(false) ?
@@ -952,22 +993,17 @@ static bool companion_sos_request(char *reply)
 		return true;
 	}
 
-	struct gps_position pos = {};
 	bool gps_was_enabled = gps_is_enabled();
-	if (gps_was_enabled && gps_get_last_known_position(&pos) &&
-	    pos.latitude_ndeg != 0 && pos.longitude_ndeg != 0) {
-		strcpy(reply, companion_sos_finish(true) ?
-		       "OK - SOS sent" : "ERROR: SOS send failed");
-		return true;
-	}
-
 	companion_sos.pending = true;
 	companion_sos.started_ms = k_uptime_get_32();
+	companion_sos.gps_started_by_sos = !gps_was_enabled;
+	companion_sos.saved_gps_duty_sec = gps_get_poll_interval_sec();
 	companion_sos_ui_waiting();
+
+	/* SOS always starts a new, continuous acquisition. A cached coordinate
+	 * must not bypass the five-minute fresh-fix window. */
+	gps_set_poll_interval_sec(0);
 	if (!gps_was_enabled) {
-		companion_sos.gps_started_by_sos = true;
-		companion_sos.saved_gps_duty_sec = gps_get_poll_interval_sec();
-		gps_set_poll_interval_sec(0);
 		gps_enable(true);
 	} else {
 		gps_request_fresh_fix();
@@ -980,6 +1016,7 @@ static bool companion_sos_request(char *reply)
 extern "C" void companion_sos_request_from_ui(void)
 {
 	char reply[CLI_REPLY_SIZE];
+	/* UI and CLI share the same acknowledgement and SOS state machine. */
 	companion_sos_request(reply);
 }
 
@@ -992,8 +1029,7 @@ static void companion_sos_process(void)
 	struct gps_position pos = {};
 	bool fresh_fix = gps_get_last_known_position(&pos) &&
 		pos.latitude_ndeg != 0 && pos.longitude_ndeg != 0 &&
-		(!companion_sos.gps_started_by_sos ||
-		 pos.timestamp_ms > companion_sos.started_ms);
+		pos.timestamp_ms > companion_sos.started_ms;
 	uint32_t elapsed_ms = k_uptime_get_32() - companion_sos.started_ms;
 	if (fresh_fix || elapsed_ms >= SOS_FIX_TIMEOUT_MS) {
 		companion_sos_finish(fresh_fix);
@@ -1002,16 +1038,189 @@ static void companion_sos_process(void)
 
 static void companion_sos_tx_done(void)
 {
-	if (!companion_sos_tone.pending ||
-	    lora_radio.getPacketsSent() < companion_sos_tone.after_packets_sent) {
+	uint32_t packets_sent = lora_radio.getPacketsSent();
+	if (companion_sos_tone.pending &&
+	    packets_sent >= companion_sos_tone.after_packets_sent) {
+		companion_sos_tone.pending = false;
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
+		/* buzzer_play(), unlike FindMe, obeys the user's buzz on/off setting. */
+		buzzer_play(MELODY_SOS);
+#endif
+	}
+}
+
+#define TRACKING_MIN_INTERVAL_MIN 5U
+#define TRACKING_MOVEMENT_METERS 10.0
+
+struct companion_tracking_state {
+	bool enabled;
+	bool gps_started_by_tracking;
+	uint32_t saved_gps_duty_sec;
+	uint32_t started_ms;
+	uint32_t next_report_ms;
+	bool has_last_sent_position;
+	int64_t last_sent_lat_ndeg;
+	int64_t last_sent_lon_ndeg;
+};
+
+static struct companion_tracking_state companion_tracking;
+
+static uint32_t companion_tracking_interval_ms(void)
+{
+	return (uint32_t)companion_mesh.prefs.tracking_interval_minutes * 60000U;
+}
+
+static void companion_tracking_ui_update(void)
+{
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY) && IS_ENABLED(CONFIG_ZEPHCORE_UI_DESIGN_BUTTON)
+	ui_pages_set_tracking(companion_tracking.enabled,
+		companion_mesh.prefs.tracking_interval_minutes);
+#endif
+	ui_request_render();
+}
+
+static bool companion_tracking_moved_10m(const struct gps_position &pos)
+{
+	if (!companion_tracking.has_last_sent_position) {
+		return true;
+	}
+
+	const double deg_to_rad = 0.017453292519943295;
+	double lat0 = companion_tracking.last_sent_lat_ndeg / 1e9;
+	double lat1 = pos.latitude_ndeg / 1e9;
+	double lat_delta = (lat1 - lat0) * deg_to_rad;
+	double lon_delta = (pos.longitude_ndeg / 1e9 -
+		companion_tracking.last_sent_lon_ndeg / 1e9) * deg_to_rad;
+	double x = lon_delta * cos((lat0 + lat1) * 0.5 * deg_to_rad);
+	double y = lat_delta;
+	double distance_sq = (6371000.0 * x) * (6371000.0 * x) +
+		(6371000.0 * y) * (6371000.0 * y);
+
+	return distance_sq >= TRACKING_MOVEMENT_METERS * TRACKING_MOVEMENT_METERS;
+}
+
+static bool companion_send_tracking_message(const struct gps_position &pos)
+{
+	ChannelDetails tracks_channel;
+	if (!companion_get_public_channel("#tracks", tracks_channel)) {
+		return false;
+	}
+
+	char text[160];
+	snprintf(text, sizeof(text), "🐾 https://maps.google.com/?q=%.5f,%.5f",
+		 pos.latitude_ndeg / 1e9, pos.longitude_ndeg / 1e9);
+	if (!companion_mesh_ptr->sendGroupMessage(rtc_clock.getCurrentTimeUnique(),
+						  tracks_channel.channel,
+						  companion_mesh.prefs.node_name,
+						  text, (int)strlen(text))) {
+		LOG_WRN("tracking: unable to queue #tracks message");
+		return false;
+	}
+
+	LOG_INF("tracking: queued #tracks message: %s", text);
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
+	buzzer_play(MELODY_TRACKING_SENT);
+#endif
+	return true;
+}
+
+static bool companion_tracking_set_enabled(bool enabled, char *reply)
+{
+	if (enabled == companion_tracking.enabled) {
+		snprintf(reply, CLI_REPLY_SIZE, "tracking: %s (%u min)",
+			 enabled ? "on" : "off",
+			 companion_mesh.prefs.tracking_interval_minutes);
+		return true;
+	}
+
+	if (enabled) {
+		if (!gps_is_available()) {
+			strcpy(reply, "ERROR: GPS unavailable");
+			return false;
+		}
+		bool gps_was_enabled = gps_is_enabled();
+		companion_tracking.enabled = true;
+		companion_tracking.gps_started_by_tracking = !gps_was_enabled;
+		companion_tracking.saved_gps_duty_sec = gps_get_poll_interval_sec();
+		companion_tracking.started_ms = k_uptime_get_32();
+		companion_tracking.next_report_ms = companion_tracking.started_ms +
+			companion_tracking_interval_ms();
+		gps_set_poll_interval_sec(0);
+		if (!gps_was_enabled) {
+			gps_enable(true);
+		} else {
+			gps_request_fresh_fix();
+		}
+		companion_tracking_ui_update();
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
+		buzzer_play(MELODY_TRACKING_ON);
+#endif
+		snprintf(reply, CLI_REPLY_SIZE, "OK - tracking on (%u min)",
+			 companion_mesh.prefs.tracking_interval_minutes);
+		return true;
+	}
+
+	if (companion_sos.pending) {
+		strcpy(reply, "ERROR: SOS is waiting for GPS fix");
+		return false;
+	}
+	gps_set_poll_interval_sec(companion_tracking.saved_gps_duty_sec);
+	if (companion_tracking.gps_started_by_tracking) {
+		gps_enable(false);
+	}
+	memset(&companion_tracking, 0, sizeof(companion_tracking));
+	companion_tracking_ui_update();
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
+	buzzer_play(MELODY_TRACKING_OFF);
+#endif
+	strcpy(reply, "OK - tracking off");
+	return true;
+}
+
+extern "C" void companion_tracking_toggle_from_ui(void)
+{
+	char reply[CLI_REPLY_SIZE];
+	companion_tracking_set_enabled(!companion_tracking.enabled, reply);
+}
+
+extern "C" bool companion_tracking_gps_control_allowed(void)
+{
+	return !companion_tracking.enabled;
+}
+
+static void companion_tracking_process(void)
+{
+	if (!companion_tracking.enabled) {
 		return;
 	}
 
-	companion_sos_tone.pending = false;
-#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
-	/* buzzer_play(), unlike FindMe, obeys the user's buzz on/off setting. */
-	buzzer_play(MELODY_SOS);
-#endif
+	uint32_t now = k_uptime_get_32();
+	if ((int32_t)(now - companion_tracking.next_report_ms) < 0) {
+		return;
+	}
+	/* A delayed maintenance pass still begins the next full interval now. */
+	companion_tracking.next_report_ms = now + companion_tracking_interval_ms();
+
+	struct gps_position pos = {};
+	struct gps_state_info gsi;
+	gps_get_state_info(&gsi);
+	bool has_fresh_coordinates = gps_get_last_known_position(&pos) &&
+		pos.latitude_ndeg != 0 && pos.longitude_ndeg != 0 &&
+		pos.timestamp_ms > companion_tracking.started_ms &&
+		gsi.last_fix_age_s <= 30;
+	if (!has_fresh_coordinates) {
+		LOG_INF("tracking: interval skipped (no GPS fix)");
+		return;
+	}
+	if (!companion_tracking_moved_10m(pos)) {
+		LOG_INF("tracking: interval skipped (movement under 10 m)");
+		return;
+	}
+	if (companion_send_tracking_message(pos)) {
+		companion_tracking.has_last_sent_position = true;
+		companion_tracking.last_sent_lat_ndeg = pos.latitude_ndeg;
+		companion_tracking.last_sent_lon_ndeg = pos.longitude_ndeg;
+	}
 }
 
 /* ========== Companion text CLI ==========
@@ -1063,33 +1272,12 @@ public:
 	void applyCadPrefs() override {
 		lora_radio.setCadParams(companion_mesh.prefs.cad_auto != 0,
 					companion_mesh.prefs.cad_offset,
-					companion_mesh.prefs.cad_probe_interval,
+					companion_mesh.prefs.probe_interval,
 					companion_mesh.prefs.cad_busycap);
 	}
 	void resetCadStats() override {
 		lora_radio.resetCadStats();
 	}
-
-#ifdef CONFIG_ZEPHCORE_APC
-	int8_t getAPCReduction() const override {
-		return companion_mesh.getAPCReduction();
-	}
-	float getAPCMargin() const override {
-		return companion_mesh.getAPCMargin();
-	}
-	bool isAPCEnabled() const override {
-		return companion_mesh.isAPCEnabled();
-	}
-	void setAPCEnabled(bool en) override {
-		companion_mesh.setAPCEnabled(en);
-	}
-	uint8_t getAPCTargetMargin() const override {
-		return companion_mesh.getAPCTargetMargin();
-	}
-	void setAPCTargetMargin(uint8_t margin_db) override {
-		companion_mesh.setAPCTargetMargin(margin_db);
-	}
-#endif
 
 	mesh::LocalIdentity& getSelfId() override { return companion_mesh.self_id; }
 
@@ -1119,6 +1307,9 @@ public:
 	bool setGpsEnabled(bool enabled) override {
 		if (!gps_is_available()) return false;
 		gps_enable(enabled);
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
+		buzzer_play(enabled ? MELODY_GPS_ON : MELODY_GPS_OFF);
+#endif
 		return true;
 	}
 	bool isGpsEnabled() const override {
@@ -1371,6 +1562,62 @@ static bool handle_sos_cli(const char *line, char *reply)
 	return companion_sos_request(reply);
 }
 
+static bool handle_tracking_cli(const char *line, char *reply)
+{
+	if (companion_tracking.enabled &&
+		(strcmp(line, "gps off") == 0 ||
+		 strncmp(line, "set gps duty ", 13) == 0)) {
+		strcpy(reply, "ERROR: tracking is active; use tracking off");
+		return true;
+	}
+	if (strcmp(line, "tracking") == 0) {
+		snprintf(reply, CLI_REPLY_SIZE, "tracking: %s (%u min)",
+			 companion_tracking.enabled ? "on" : "off",
+			 companion_mesh.prefs.tracking_interval_minutes);
+		return true;
+	}
+	if (strcmp(line, "tracking on") == 0) {
+		(void)companion_tracking_set_enabled(true, reply);
+		return true;
+	}
+	if (strcmp(line, "tracking off") == 0) {
+		(void)companion_tracking_set_enabled(false, reply);
+		return true;
+	}
+	if (strcmp(line, "get tracking.interval") == 0) {
+		snprintf(reply, CLI_REPLY_SIZE, "tracking.interval: %u min",
+			 companion_mesh.prefs.tracking_interval_minutes);
+		return true;
+	}
+	if (strncmp(line, "set tracking.interval ", 22) == 0) {
+		const char *arg = line + 22;
+		while (*arg == ' ') {
+			arg++;
+		}
+		char *end = NULL;
+		unsigned long minutes = strtoul(arg, &end, 10);
+		while (*end == ' ' || *end == '\r' || *end == '\n' || *end == '\t') {
+			end++;
+		}
+		if (arg[0] < '0' || arg[0] > '9' || *end != '\0' ||
+			minutes < TRACKING_MIN_INTERVAL_MIN || minutes > UINT16_MAX) {
+			snprintf(reply, CLI_REPLY_SIZE, "ERROR: interval must be %u minutes or more",
+				 TRACKING_MIN_INTERVAL_MIN);
+			return true;
+		}
+		companion_mesh.prefs.tracking_interval_minutes = (uint16_t)minutes;
+		if (companion_tracking.enabled) {
+			companion_tracking.next_report_ms = k_uptime_get_32() +
+				companion_tracking_interval_ms();
+		}
+		k_event_post(&mesh_events, MESH_EVENT_PREFS_DIRTY);
+		companion_tracking_ui_update();
+		snprintf(reply, CLI_REPLY_SIZE, "OK - tracking.interval %lu min", minutes);
+		return true;
+	}
+	return false;
+}
+
 /* Locate this companion with a five-second audible melody.  This explicit
  * request deliberately overrides user mute and the low-battery sound limit. */
 static bool handle_findme_cli(const char *line, char *reply)
@@ -1388,47 +1635,17 @@ static bool handle_findme_cli(const char *line, char *reply)
 	return true;
 }
 
-/* Local controls use the same preference and hardware paths as their menus. */
-static void companion_manual_shutdown(void)
-{
-#ifdef CONFIG_POWEROFF
-	LOG_INF("CLI: shutting down");
-#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
-	buzzer_play(MELODY_SHUTDOWN);
-	while (buzzer_is_playing()) {
-		k_sleep(K_MSEC(50));
-	}
-	buzzer_stop();
-	if (buzzer_is_quiet()) {
-		ui_led_flash_shutdown();
-	}
-#endif
-#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
-	mc_display_on();
-	mc_display_clear();
-	const char *power_off = "Power OFF";
-	uint8_t fw = mc_display_font_width();
-	uint8_t fh = mc_display_font_height();
-	int x = (fw && mc_display_width())
-		? ((int)mc_display_width() - (int)strlen(power_off) * fw) / 2 : 0;
-	int y = (fh && mc_display_height())
-		? ((int)mc_display_height() - fh) / 2 : 0;
-	mc_display_text(x < 0 ? 0 : x, y < 0 ? 0 : y, power_off, false);
-	mc_display_finalize();
-	if (!mc_display_is_epd()) {
-		k_sleep(K_MSEC(1000));
-	}
-#endif
-	ui_prepare_for_system_off();
-	sys_poweroff();
-#endif
-}
-
 static bool handle_local_ui_cli(const char *line, char *reply)
 {
 	if (strcmp(line, "shutdown") == 0) {
+		strcpy(reply, "To confirm use with y");
+		return true;
+	}
+
+	if (strcmp(line, "shutdown y") == 0) {
 #ifdef CONFIG_POWEROFF
-		companion_manual_shutdown();
+		strcpy(reply, "Shutting down");
+		ui_shutdown();
 #else
 		strcpy(reply, "ERROR: power-off unavailable");
 #endif
@@ -1544,6 +1761,9 @@ static void companion_cli_exec(const char *line, char *reply)
 		return;
 	}
 	if (handle_sos_cli(line, reply)) {
+		return;
+	}
+	if (handle_tracking_cli(line, reply)) {
 		return;
 	}
 	if (handle_findme_cli(line, reply)) {
@@ -1903,10 +2123,9 @@ int main(void)
 	 * its proper default. A hand-maintained subset here silently drifts: any
 	 * field not listed defaults to 0, and on upgrade the past-EOF read in
 	 * loadPrefs then keeps that 0 instead of the real default (this is what
-	 * zeroed cad_probe_interval / cad_auto and, earlier, the GPS settings). */
+	 * zeroed probe_interval / cad_auto and, earlier, the GPS settings). */
 	initNodePrefs(&companion_mesh.prefs);
 	/* Companion-specific overrides vs. initNodePrefs defaults: */
-	companion_mesh.prefs.apc_margin = 20;       /* mobile: more conservative than the 16 default */
 	companion_mesh.prefs.auto_shutdown_mv = CONFIG_ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS; /* low-batt cutoff (0=off) */
 	companion_mesh.prefs.gps_interval = CONFIG_ZEPHCORE_GPS_POLL_INTERVAL_SEC; /* 5-min duty cycle (0=always-on) */
 
@@ -2006,36 +2225,24 @@ int main(void)
 		lora_radio.getActiveCodingRate(),
 		lora_radio.getConfiguredTxPower(),
 		lora_radio.getNoiseFloor());
-#ifdef CONFIG_ZEPHCORE_APC
 	ui_set_radio_runtime(
-		lora_radio.getEffectiveTxPower(),
-		companion_mesh.isAPCEnabled(),
-		companion_mesh.getAPCReduction(),
-		(int16_t)(companion_mesh.getAPCMargin() * 10.0f),
-		companion_mesh.getAPCTargetMargin(),
 		lora_radio.getActiveSyncWord(),
 		lora_radio.getActivePreambleLength(),
 		lora_radio.isRxDutyCycleEnabled(),
 		lora_radio.isRadioReady(),
 		lora_radio.isInRecvMode(),
 		lora_radio.isTxActive());
-#else
-	ui_set_radio_runtime(
-		lora_radio.getEffectiveTxPower(),
-		false, 0, 0, companion_mesh.prefs.apc_margin,
-		lora_radio.getActiveSyncWord(),
-		lora_radio.getActivePreambleLength(),
-		lora_radio.isRxDutyCycleEnabled(),
-		lora_radio.isRadioReady(),
-		lora_radio.isInRecvMode(),
-		lora_radio.isTxActive());
-#endif
 	ui_set_radio_stats(lora_radio.getPacketsRecv(),
 			   lora_radio.getPacketsSent(),
 			   lora_radio.getPacketsRecvErrors());
 	ui_set_battery(zephyr_board.getBattMilliVolts(), 0);
 	ui_set_gps_available(gps_is_available());
 	ui_set_gps_enabled(companion_mesh.prefs.gps_enabled != 0);
+
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY) && IS_ENABLED(CONFIG_ZEPHCORE_UI_DESIGN_BUTTON)
+	/* Tracking is deliberately not restored: every reboot begins OFF. */
+	ui_pages_set_tracking(false, companion_mesh.prefs.tracking_interval_minutes);
+#endif
 	ui_set_ble_enabled(companion_mesh.prefs.ble_disabled != 1);  /* BLE starts advertising at boot */
 
 	/* Restore offgrid mode (client repeat) state from persisted prefs */
@@ -2085,32 +2292,15 @@ int main(void)
 	lora_radio.enableRxDutyCycle(companion_mesh.prefs.rx_duty_cycle != 0);
 	lora_radio.setCadParams(companion_mesh.prefs.cad_auto != 0,
 				companion_mesh.prefs.cad_offset,
-				companion_mesh.prefs.cad_probe_interval,
+				companion_mesh.prefs.probe_interval,
 				companion_mesh.prefs.cad_busycap);
-#ifdef CONFIG_ZEPHCORE_APC
 	ui_set_radio_runtime(
-		lora_radio.getEffectiveTxPower(),
-		companion_mesh.isAPCEnabled(),
-		companion_mesh.getAPCReduction(),
-		(int16_t)(companion_mesh.getAPCMargin() * 10.0f),
-		companion_mesh.getAPCTargetMargin(),
 		lora_radio.getActiveSyncWord(),
 		lora_radio.getActivePreambleLength(),
 		lora_radio.isRxDutyCycleEnabled(),
 		lora_radio.isRadioReady(),
 		lora_radio.isInRecvMode(),
 		lora_radio.isTxActive());
-#else
-	ui_set_radio_runtime(
-		lora_radio.getEffectiveTxPower(),
-		false, 0, 0, companion_mesh.prefs.apc_margin,
-		lora_radio.getActiveSyncWord(),
-		lora_radio.getActivePreambleLength(),
-		lora_radio.isRxDutyCycleEnabled(),
-		lora_radio.isRadioReady(),
-		lora_radio.isInRecvMode(),
-		lora_radio.isTxActive());
-#endif
 
 	/* Restore runtime ADC multiplier override (0 = keep DT default) */
 	zephyr_board.setAdcMultiplier(companion_mesh.prefs.adc_multiplier);

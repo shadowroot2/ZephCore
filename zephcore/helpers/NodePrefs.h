@@ -62,7 +62,10 @@ struct NodePrefs {
 	uint8_t flood_max_unscoped;     // hop limit for un-scoped (ROUTE_TYPE_FLOOD) floods
 	uint8_t flood_max_advert;       // hop limit for ADVERT floods (curbs advert churn)
 	uint8_t interference_threshold;
-	uint8_t agc_reset_interval;     // stored as secs / 4
+	uint8_t agc_reset_interval;     // RETIRED: read/written for on-disk layout
+	                                // compatibility only, never acted on.
+	                                // "set agc.reset.interval" replies
+	                                // "use rxduty instead".
 	// Power saving
 	uint8_t powersaving_enabled;
 	// GPS settings
@@ -74,12 +77,22 @@ struct NodePrefs {
 	char owner_info[120];
 	uint8_t rx_boost;               // 1 = boosted RX gain (+3dB), 0 = power save
 	uint8_t rx_duty_cycle;          // 1 = RX duty cycle, 0 = continuous RX
-	uint8_t apc_enabled;            // 1 = APC on, 0 = fixed TX power
-	uint8_t apc_margin;             // APC target link margin dB (6-30)
+	/* RESERVED — formerly apc_enabled / apc_margin (Adaptive Power Control,
+	 * removed in 1.16.6). These two bytes are still read and written at their
+	 * original offsets in all three prefs serializers (companion new_prefs 94/95,
+	 * repeater prefs 292/293, RepeaterDataStore) because every field after them
+	 * is positional: dropping them would shift the rest of the layout and make
+	 * every already-deployed node misparse its saved prefs on upgrade.
+	 * Do not reuse for a new setting — an upgraded node still has the old APC
+	 * values sitting in these bytes. */
+	uint8_t _reserved_apc_enabled;
+	uint8_t _reserved_apc_margin;
 	uint8_t meshtimesync;           // 1 = mesh time-sync clock correction on (default off)
 	uint8_t cad_auto;               // 1 = adaptive-CAD staircase acts on probe stats (default off = dry-run)
 	int8_t cad_offset;              // operating detPeak offset from family base (-4..4)
-	uint8_t cad_probe_interval;     // seconds between CAD probes (0 = probing off, default 60)
+	uint8_t probe_interval;         // seconds between periodic radio measurements:
+	                                // one noise-floor sample, and the CAD probe that
+	                                // consumes it (0 = CAD probing off, default 15)
 	uint8_t cad_busycap;            // airtime-protection: max % of TX attempts deferred before backing off detPeak (0 = off, default 25)
 
 	/* ---- Companion-only fields ---- */
@@ -106,6 +119,7 @@ struct NodePrefs {
 	uint16_t v_battery_alert_mv;    // 0 = alert off; 0xFFFF = board default (auto_shutdown+200); else mV
 	int16_t ui_timezone_offset_minutes; // UI-only timezone offset; RTC/protocol stay UTC
 	uint8_t auto_shutdown_emergency; // 1 = send #zephcore emergency notice before automatic low-battery shutdown
+	uint16_t tracking_interval_minutes; // Companion: periodic #tracks position report interval (minimum 5)
 };
 
 /* Default prefs -- must match LoRaConfig.h defaults for radio interop. */
@@ -152,15 +166,16 @@ static inline void initNodePrefs(NodePrefs* prefs) {
 	prefs->adc_multiplier = 0.0f;
 	prefs->rx_boost = 1;              // Default to boosted RX for better sensitivity
 	prefs->rx_duty_cycle = 0;         // Default OFF — continuous RX for best reliability
-	prefs->apc_enabled = 0;           // Default OFF — fixed TX power
-	prefs->apc_margin = 16;           // Default 16 dB target link margin
+	prefs->_reserved_apc_enabled = 0; // reserved (was APC), see NodePrefs
+	prefs->_reserved_apc_margin = 0;  // reserved (was APC), see NodePrefs
 	prefs->cad_auto = 1;              // Default ON — adaptive staircase acts on probe stats
 	prefs->cad_offset = 0;            // Start at family base detPeak (SF+13 on SX126x)
-	prefs->cad_probe_interval = 15;   // 15 s → staircase responds to change in ~1-2 h
+	prefs->probe_interval = 15;       // floor sample + CAD probe; staircase responds in ~1-2 h
 	prefs->cad_busycap = 25;          // back off detPeak once >25% of TX attempts are deferred
 	prefs->wake_on_msg = 1;           // Default ON — wake display when message arrives
 	prefs->v_contact_enabled = 1;     // Default ON — v-contact loopback admin chat (companion)
 	prefs->v_battery_alert_mv = 0xFFFF; // Sentinel: derive from board auto-shutdown threshold
 	prefs->ui_timezone_offset_minutes = CONFIG_ZEPHCORE_UI_TIMEZONE_OFFSET_MINUTES;
 	prefs->auto_shutdown_emergency = 1; // Default ON — send the low-battery emergency notice
+	prefs->tracking_interval_minutes = 10;
 }

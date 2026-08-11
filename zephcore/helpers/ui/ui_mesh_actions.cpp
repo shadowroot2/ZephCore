@@ -45,8 +45,11 @@ LOG_MODULE_REGISTER(zephcore_ui_actions, CONFIG_ZEPHCORE_UI_ACTIONS_LOG_LEVEL);
 #define UI_ACTION_PATH_HASH_MODE_SAVE BIT(11)
 #define UI_ACTION_GPS_DUTY_SAVE     BIT(12)
 #define UI_ACTION_SOS               BIT(13)
+#define UI_ACTION_TRACKING_TOGGLE   BIT(14)
 
 extern "C" void companion_sos_request_from_ui(void);
+extern "C" void companion_tracking_toggle_from_ui(void);
+extern "C" bool companion_tracking_gps_control_allowed(void);
 
 /* Module-local pointers, set by init */
 static CompanionMesh *s_mesh;
@@ -109,8 +112,18 @@ extern "C" void mesh_send_sos(void)
 	k_event_post(s_mesh_events, s_mesh_event_ui_action);
 }
 
+extern "C" void mesh_tracking_toggle(void)
+{
+	atomic_or(&pending_ui_actions, UI_ACTION_TRACKING_TOGGLE);
+	k_event_post(s_mesh_events, s_mesh_event_ui_action);
+}
+
 extern "C" void mesh_gps_set_enabled(bool enable)
 {
+	if (!companion_tracking_gps_control_allowed()) {
+		LOG_WRN("GPS change ignored while tracking is active");
+		return;
+	}
 	/* Toggle GPS hardware immediately (lightweight, no flash) */
 	gps_enable(enable);
 
@@ -164,6 +177,10 @@ extern "C" void mesh_save_path_hash_mode(uint8_t mode)
 
 extern "C" void mesh_save_gps_duty_sec(uint32_t sec)
 {
+	if (!companion_tracking_gps_control_allowed()) {
+		LOG_WRN("GPS duty change ignored while tracking is active");
+		return;
+	}
 	/* Apply immediately (lightweight, no flash) — same split as mesh_gps_set_enabled. */
 	gps_set_poll_interval_sec(sec);
 
@@ -248,6 +265,9 @@ extern "C" void mesh_handle_ui_actions(void)
 
 	if (actions & UI_ACTION_SOS) {
 		companion_sos_request_from_ui();
+	}
+	if (actions & UI_ACTION_TRACKING_TOGGLE) {
+		companion_tracking_toggle_from_ui();
 	}
 
 	/* Save prefs if any toggle action changed them */
@@ -353,31 +373,13 @@ extern "C" void mesh_housekeeping_ui_refresh(void)
 		s_lora_radio->getActiveCodingRate(),
 		s_lora_radio->getConfiguredTxPower(),
 		s_lora_radio->getNoiseFloor());
-	{
-		bool apc_enabled = false;
-		int8_t apc_reduction = 0;
-		int16_t apc_margin_x10 = 0;
-		uint8_t apc_target = s_mesh->prefs.apc_margin;
-
-#ifdef CONFIG_ZEPHCORE_APC
-		apc_enabled = s_mesh->isAPCEnabled();
-		apc_reduction = s_mesh->getAPCReduction();
-		apc_margin_x10 = (int16_t)(s_mesh->getAPCMargin() * 10.0f);
-		apc_target = s_mesh->getAPCTargetMargin();
-#endif
-		ui_set_radio_runtime(
-			s_lora_radio->getEffectiveTxPower(),
-			apc_enabled,
-			apc_reduction,
-			apc_margin_x10,
-			apc_target,
-			s_lora_radio->getActiveSyncWord(),
-			s_lora_radio->getActivePreambleLength(),
-			s_lora_radio->isRxDutyCycleEnabled(),
-			s_lora_radio->isRadioReady(),
-			s_lora_radio->isInRecvMode(),
-			s_lora_radio->isTxActive());
-	}
+	ui_set_radio_runtime(
+		s_lora_radio->getActiveSyncWord(),
+		s_lora_radio->getActivePreambleLength(),
+		s_lora_radio->isRxDutyCycleEnabled(),
+		s_lora_radio->isRadioReady(),
+		s_lora_radio->isInRecvMode(),
+		s_lora_radio->isTxActive());
 	ui_set_radio_stats(
 		s_lora_radio->getPacketsRecv(),
 		s_lora_radio->getPacketsSent(),

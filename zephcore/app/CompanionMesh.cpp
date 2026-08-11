@@ -178,6 +178,8 @@ CompanionMesh::CompanionMesh(mesh::Radio &radio, mesh::MillisecondClock &ms, mes
 	_pin_change_cb = nullptr;
 	_contact_iter_active = false;
 	_contact_iter_idx = 0;
+	_contact_iter_num = 0;
+	_contact_iter_vc = false;
 	_contact_iter_lastmod = 0;
 	_contact_iter_since = 0;
 	_offline_queue_head = 0;
@@ -237,11 +239,6 @@ void CompanionMesh::begin()
 	if (vcontactClockValid()) {
 		_vcontact_lastmod = (uint32_t)getRTCClock()->getCurrentTime();
 	}
-#ifdef CONFIG_ZEPHCORE_APC
-	_power_ctrl.setSF(prefs.sf);
-	_power_ctrl.setTargetMargin(prefs.apc_margin);
-	_power_ctrl.setEnabled(prefs.apc_enabled != 0);
-#endif
 }
 
 bool CompanionMesh::allowPacketForward(const mesh::Packet *packet)
@@ -589,24 +586,14 @@ void CompanionMesh::confirmOfflineMessage()
 	_offline_queue_count--;
 }
 
-void CompanionMesh::resetContactIterator()
-{
-	if (_contact_iter_active) {
-		// Send contact end if interrupted
-		uint8_t rsp[5];
-		rsp[0] = PACKET_CONTACT_END;
-		put_le32(&rsp[1], _contact_iter_lastmod);
-		writeFrame(rsp, sizeof(rsp));
-	}
-	_contact_iter_active = false;
-}
-
 bool CompanionMesh::continueContactIteration()
 {
 	if (!_contact_iter_active) return false;
 
-	if (_contact_iter_idx < getNumContacts()) {
+	if (_contact_iter_idx < _contact_iter_num) {
 		ContactInfo c;
+		/* getContactByIdx bounds-checks against the live table, so a slot that
+		 * disappeared under us is skipped rather than read stale. */
 		if (getContactByIdx(_contact_iter_idx, c)) {
 			// Skip transient/anon contacts (ADV_TYPE_NONE) — never synced to the app.
 			// Apply 'since' filter - only send contacts modified after the timestamp
@@ -623,11 +610,11 @@ bool CompanionMesh::continueContactIteration()
 		}
 		_contact_iter_idx++;
 		return true;
-	} else if (_contact_iter_idx == getNumContacts()) {
+	} else if (_contact_iter_idx == _contact_iter_num) {
 		// Virtual tail entry: the v-contact (never in the real table).
-		// vcontactReady() implies lastmod != 0 — deferred (clock-invalid)
+		// _contact_iter_vc implies lastmod != 0 — deferred (clock-invalid)
 		// state is excluded so the app never sees a 1970 timestamp.
-		if (vcontactReady() && _vcontact_lastmod > _contact_iter_since) {
+		if (_contact_iter_vc && _vcontact_lastmod > _contact_iter_since) {
 			if (_vcontact_lastmod > _contact_iter_lastmod) {
 				_contact_iter_lastmod = _vcontact_lastmod;
 			}
@@ -1085,6 +1072,24 @@ bool CompanionMesh::vcontactHandleFrame(const uint8_t *data, size_t len)
 			}
 
 			if (!dup) {
+				/* Phone keyboards autocapitalize the first letter of a
+				 * chat line, so a v-contact command arrives as "Get cad".
+				 * Fold character 0 only.
+				 *
+				 * Safe by construction: character 0 is always inside the
+				 * command verb -- no CLI command takes an argument at
+				 * position 0 -- so this cannot alter a value.  Deliberately
+				 * NOT generalized beyond one character: the previous attempt
+				 * folded the first two whitespace-delimited tokens and
+				 * silently lowercased admin passwords (see the comment above
+				 * CommonCLI::handleCommand in helpers/CommonCLI.cpp).
+				 *
+				 * Must stay after the delivery-ack hash above, which covers
+				 * the original text the app will match against. */
+				if (line[0] >= 'A' && line[0] <= 'Z') {
+					line[0] = (char)(line[0] - 'A' + 'a');
+				}
+
 				LOG_INF("vcontact CLI: '%s'", line);
 				const char *help = _vcontact_help_cb ? _vcontact_help_cb(line) : nullptr;
 				if (help != nullptr) {
@@ -1490,20 +1495,21 @@ int CompanionMesh::appendSelfTelemetry(uint8_t *reply, uint8_t permissions)
 		}
 	}
 
-	// Environment sensors if authorized and available
+	/* Sensors are read once here.  External temp/humidity/pressure require
+	 * TELEM_PERM_ENVIRONMENT, but the MCU die temperature is reported under
+	 * base permission — matching Arduino MeshCore (15e259c5) and ZephCore's
+	 * own repeater/room-server telemetry, neither of which gates it. */
+	struct env_data env;
+	bool env_ok = (env_sensors_read(&env) == 0);
+	bool temp_reported = false;
+
 	if (permissions & TELEM_PERM_ENVIRONMENT) {
-		struct env_data env;
-		if (env_sensors_read(&env) == 0) {
+		if (env_ok) {
 			if (env.has_temperature) {
+				temp_reported = true;
 				reply[i++] = CH_SELF;
 				reply[i++] = LPP_TEMPERATURE;
 				int16_t temp = (int16_t)(env.temperature_c * 10);
-				reply[i++] = (temp >> 8) & 0xFF;
-				reply[i++] = temp & 0xFF;
-			} else if (env.has_mcu_temperature) {
-				reply[i++] = CH_SELF;
-				reply[i++] = LPP_TEMPERATURE;
-				int16_t temp = (int16_t)(env.mcu_temperature_c * 10);
 				reply[i++] = (temp >> 8) & 0xFF;
 				reply[i++] = temp & 0xFF;
 			}
@@ -1582,6 +1588,16 @@ int CompanionMesh::appendSelfTelemetry(uint8_t *reply, uint8_t permissions)
 		reply[i++] = sats_in_view & 0xFF;
 	}
 #endif
+
+	/* MCU die temperature — reported under base permission, but only when no
+	 * external sensor already supplied a CH_SELF temperature (never emit two). */
+	if (!temp_reported && env_ok && env.has_mcu_temperature) {
+		reply[i++] = CH_SELF;
+		reply[i++] = LPP_TEMPERATURE;
+		int16_t temp = (int16_t)(env.mcu_temperature_c * 10);
+		reply[i++] = (temp >> 8) & 0xFF;
+		reply[i++] = temp & 0xFF;
+	}
 
 	// Trigger GPS wake for fresh fix on next request
 	if (gps_is_available() && gps_is_enabled()) {
@@ -2068,10 +2084,12 @@ bool CompanionMesh::handleProtocolFrame(const uint8_t *data, size_t len)
 	/* Debug: log all incoming commands */
 	LOG_DBG("CMD: 0x%02x len=%u", data[0], (unsigned)len);
 
-	// Reset contact iterator when any new command is received (except during iteration)
-	if (data[0] != CMD_GET_CONTACTS && _contact_iter_active) {
-		resetContactIterator();
-	}
+	/* An active contact dump survives interleaved commands — the app is free to
+	 * talk to us mid-sync and does (it sets the clock on a cold boot, and
+	 * pipelines CMD_GET_CHANNEL bursts).  Aborting the iterator here truncated
+	 * the dump with a premature PACKET_CONTACT_END after whatever had streamed,
+	 * so the app waited forever for the rest.  Upstream interleaves the same way
+	 * (MyMesh::checkSerialInterface); CMD_APP_START remains the only reset. */
 
 	/* V-contact interception — must run before any contact lookup so a frame
 	 * addressed to the loopback contact can never create a radio packet. */
@@ -2146,12 +2164,14 @@ bool CompanionMesh::handleProtocolFrame(const uint8_t *data, size_t len)
 
 			// Send PACKET_CONTACT_START with total count (unfiltered, but excluding
 			// transient anon slots -- continueContactIteration() never streams those)
+			_contact_iter_num = getNumContacts();
+			_contact_iter_vc = vcontactReady();  /* virtual tail entry (post time sync) */
 			uint32_t total = 0;
-			for (int i = 0; i < getNumContacts(); i++) {
+			for (int i = 0; i < _contact_iter_num; i++) {
 				ContactInfo c;
 				if (getContactByIdx(i, c) && c.type != ADV_TYPE_NONE) total++;
 			}
-			if (vcontactReady()) total++;  /* virtual tail entry (post time sync) */
+			if (_contact_iter_vc) total++;
 			uint8_t rsp[5];
 			rsp[0] = PACKET_CONTACT_START;
 			put_le32(&rsp[1], total);
@@ -2627,9 +2647,6 @@ bool CompanionMesh::handleProtocolFrame(const uint8_t *data, size_t len)
 				prefs.cr = cr;
 				prefs.client_repeat = repeat;
 				_store->savePrefs(prefs);
-#ifdef CONFIG_ZEPHCORE_APC
-				_power_ctrl.setSF(sf);
-#endif
 				if (_radio_reconfig_cb) _radio_reconfig_cb();
 				LOG_INF("SET_RADIO_PARAMS: client_repeat=%d", repeat);
 				sendPacketOk();

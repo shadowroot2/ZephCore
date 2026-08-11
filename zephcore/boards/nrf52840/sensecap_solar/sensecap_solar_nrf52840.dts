@@ -78,7 +78,7 @@
 		compatible = "zephcore,input-multi-tap";
 		input-codes = <INPUT_KEY_A>;
 		tap-codes = <INPUT_KEY_1 INPUT_KEY_B INPUT_KEY_D INPUT_KEY_C INPUT_KEY_E>;
-		tap-delay-ms = <400>;
+		tap-delay-ms = <500>;
 	};
 
 	/* P0.14 LOW enables battery divider (MeshCore SenseCapSolarBoard) */
@@ -162,8 +162,15 @@
 	pinctrl-1 = <&uart0_sleep>;
 	pinctrl-names = "default", "sleep";
 
+	/* L76K is CASIC/Air530Z-family silicon — same PCAS command set as the
+	 * Wio Tracker L1 / T-Echo / ThinkNode M6 modules, so use the air530z
+	 * driver (constellation via PCAS04, fix rate via PCAS02).
+	 * on-off-gpios shares P1.05 with the gps-enable alias (T-Echo pattern):
+	 * driver powers the module for its init conversation, ZephyrGPSManager
+	 * drives the same pin for duty cycling. */
 	gnss: gnss {
-		compatible = "gnss-nmea-generic";
+		compatible = "luatos,air530z";
+		on-off-gpios = <&gpio1 5 GPIO_ACTIVE_HIGH>;
 	};
 };
 

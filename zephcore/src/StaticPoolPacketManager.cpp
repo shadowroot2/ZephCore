@@ -113,7 +113,6 @@ struct PacketQueue {
 static Packet _packet_pool[POOL_SIZE];
 static PacketQueue _unused;
 static PacketQueue _send_queue;
-static PacketQueue _rx_queue;
 static bool _initialized = false;
 
 static void init_pool() {
@@ -200,20 +199,6 @@ bool StaticPoolPacketManager::rescheduleOutbound(int i, uint32_t new_scheduled_f
 uint8_t StaticPoolPacketManager::peekNextOutboundPriority(uint32_t now) const
 {
 	return _send_queue.peekPriority(now);
-}
-
-void StaticPoolPacketManager::queueInbound(Packet *packet, uint32_t scheduled_for)
-{
-	if (!_rx_queue.add(packet, 0, scheduled_for)) {
-		LOG_WRN("queueInbound: FULL (%d entries) — dropping type=%d",
-			_rx_queue.count(), packet->getPayloadType());
-		free(packet);
-	}
-}
-
-Packet *StaticPoolPacketManager::getNextInbound(uint32_t now)
-{
-	return _rx_queue.get(now);
 }
 
 } /* namespace mesh */

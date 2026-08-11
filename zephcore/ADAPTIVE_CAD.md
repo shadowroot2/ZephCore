@@ -90,7 +90,7 @@ caveat noted at the end, viewed through the strong/faint lens.)
 
 ## How it works
 
-Every `cad.probe.interval` seconds (default 15), when the radio is idle
+Every `probe.interval` seconds (default 15), when the radio is idle
 in receive mode, the firmware runs one **calibration CAD probe** and
 immediately re-arms RX. A probe takes one CAD duration — about 4 ms at
 SF7/250 kHz, up to ~130 ms at SF12/125 kHz — so the added radio deaf time
@@ -204,14 +204,54 @@ get cad
 Compact output (kept short so it survives a truncated LoRa reply):
 
 ```
-> a:on o:-1 pk:20(b21/4s) iv:15s bc:25%
+> a:on o:-1 pk:20(b21/4s) sp:0.9/84%(312) bc:25%
  -2(19) 241p 9b 7f 2t 3%
 *-1(20) 900p 5b 3f 2t 0%
  +0(21) 300p 2b 0f 2t 0%
 ```
 
 Header: `a` auto on/off · `o` operating offset · `pk` operating detPeak ·
-`b` family base · `4s` 4 symbols · `iv` probe interval · `bc` busy cap.
+`b` family base · `4s` 4 symbols · `sp` RSSI burst quality · `bc` busy cap.
+
+**`sp` — are the noise-floor sampler's reads independent?** The floor
+sampler takes a median of 8 RSSI reads. The chip refreshes RSSI only once
+per averaging window (~16 µs at BW 62.5, ~134 µs at BW 7.8); reads issued
+faster than that return the same underlying value repeatedly and the median
+collapses to a single read. `sp` reports mean spread (max−min) across a
+burst, the share of bursts whose spread was 0, and the burst count.
+
+Read it this way:
+
+- **A non-zero mean proves the reads are independent**, however high the
+  zero-spread share climbs. A quiet or steadily-occupied channel genuinely
+  reads the same value 8 times at integer-dB resolution — that is correct,
+  not broken.
+- **Mean 0.0 with a high share is the fault signature**: no burst ever
+  spans anything, i.e. 8 copies of one sample.
+- The count matters. The burst rate is not derivable from uptime, because
+  the sampler's guards (TX, mid-RX, duty-cycle sleep) block an unknown
+  fraction of attempts, so a share without its denominator is unreadable.
+  It appears on the local USB console only — a remote reply is capped at
+  161 B and the three level rows have first claim on it. All three
+  counters halve together at 8192 bursts, so the count stays four digits
+  and the figures describe a recent window rather than everything since
+  boot.
+
+Measured on-air at BW 62.5: `0.6/90%` on a quiet channel, `0.9/84%` with
+the floor at −103 dBm. The share falls and the spread rises as ambient
+comes up — independent reads, responding the right way.
+
+Note what this median does and does not do. The burst spans ~300 µs against
+a ~200 ms SF8/BW62.5 packet — about 0.15% of one transmission — so a
+neighbour's packet is either wholly inside the burst or wholly outside it,
+every read sees the same level, and the median returns it rather than
+rejecting it. The median rejects sub-300 µs glitches and bad SPI reads.
+Interference is handled by the mid-receive guard and the +14 dB threshold
+filter, not here.
+
+The probe interval used to sit in this slot; it moved out because it is a
+pref you set, readable with `get probe.interval`, whereas burst spread is
+only observable from inside the sampler.
 Then a **three-rung window** centred on the operating offset (`*` marks
 it): the frontier (one step more sensitive), the operating level, and one
 step less sensitive — exactly the three rungs the staircase reads to judge
@@ -248,7 +288,7 @@ any time with `set cad.auto on`. Offset changes (manual or automatic)
 appear in the log as `cad: step down/up -> offset N`.
 
 To collect dry-run data faster, drop the interval (probing is temporary
-then): `set cad.probe.interval 10`. At the default 15 s, allow ~a day for
+then): `set probe.interval 10`. At the default 15 s, allow ~a day for
 a knee to resolve clearly, longer to capture day/night variation.
 
 ## Command reference
@@ -258,7 +298,7 @@ a knee to resolve clearly, longer to capture day/night variation.
 | `get cad` | | Status + per-level statistics (see above). |
 | `set cad.auto <on\|off>` | **on** | Staircase controller acts on the stats. Off = observe/hand-tune. |
 | `set cad.offset <n>` | 0 | Operating offset, −8…12. Negative = more sensitive. Applied live. |
-| `set cad.probe.interval <sec>` | 15 | Probe cadence; 0 disables probing (and freezes auto), 10–255 otherwise. |
+| `set probe.interval <sec>` | 15 | Shared cadence for the noise-floor sample and the CAD probe that consumes it; 0 disables probing (and freezes auto), 10–255 otherwise. |
 | `set cad.busycap <pct>` | 25 | Faint-tolerance / airtime cap: raise detPeak once more than this % of (quiet-moment) probes trip on faint signals. Lower = reject faint/echo harder (busy backbones); 0 = off. 10–90 otherwise. |
 | `set cad.reset` | | Clear accumulated statistics (RAM only). |
 

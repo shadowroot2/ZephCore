@@ -9,8 +9,10 @@
 #include <mesh/Utils.h>
 #include <mesh/LoRaConfig.h>
 #include <adapters/radio/LoRaRadioBase.h>
+#include <adapters/rng/ZephyrRNG.h>   /* generateFirstBootIdentity (hardened keygen) */
 #include <helpers/MeshcoreJson.h>
 
+#include <zephyr/fs/fs.h>
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(zephcore_observer, CONFIG_ZEPHCORE_OBSERVER_LOG_LEVEL);
 
@@ -32,10 +34,10 @@ namespace mesh {
 
 /* ========== Construction ========== */
 
-ObserverMesh::ObserverMesh(Radio &radio, MillisecondClock &ms, RNG &rng, RTCClock &rtc)
+ObserverMesh::ObserverMesh(Radio &radio, MillisecondClock &ms, RTCClock &rtc)
 	: Dispatcher(radio, ms, _pkt_mgr),
 	  _last_rssi(0.0f), _last_score(0.0f), _last_raw_len(0),
-	  _store(nullptr), _creds(nullptr), _rng(&rng), _rtc(&rtc), _start_uptime_secs(0)
+	  _store(nullptr), _creds(nullptr), _rtc(&rtc), _start_uptime_secs(0)
 {
 	memset(_pubkey_hex, 0, sizeof(_pubkey_hex));
 	memset(_packets_topic, 0, sizeof(_packets_topic));
@@ -56,21 +58,45 @@ void ObserverMesh::begin(RepeaterDataStore *store, struct ObserverCreds *creds)
 	_prefs.tx_power_dbm = 0;   /* observer never TXes anyway */
 	/* freq=867.935, bw=62.5, sf=8 already set by initNodePrefs */
 
+	/* First boot has to be detected BEFORE loadPrefs(): the store is shared
+	 * with the repeater and its no-file branch re-runs initNodePrefs(), applies
+	 * *repeater* defaults over whatever the caller passed in, saves them, and
+	 * returns true.  So the observer values set above are silently discarded on
+	 * a fresh unit and there is no return code that says so.  Probing for the
+	 * file is the only observer-local way to tell — the alternative, changing
+	 * the no-file branch, would alter repeater and room-server behaviour. */
+	char prefs_path[64];
+	struct fs_dirent prefs_ent;
+	snprintf(prefs_path, sizeof(prefs_path), "%s/prefs", _store->getBasePath());
+	const bool first_boot = (fs_stat(prefs_path, &prefs_ent) < 0);
+
 	/* Load persisted prefs (overrides defaults with saved values) */
-	if (!_store->loadPrefs(_prefs)) {
-		/* First boot — save observer defaults */
+	_store->loadPrefs(_prefs);
+
+	if (first_boot) {
+		/* Re-apply the observer defaults the shared no-file branch overwrote,
+		 * then persist them so this runs exactly once.  Only the prefs file is
+		 * rewritten — obs_creds (WiFi/MQTT/IATA/lat/lon) is a separate file and
+		 * is never touched here. */
+		_prefs.cr           = 5;
+		_prefs.tx_power_dbm = 0;
 		_store->savePrefs(_prefs);
+		LOG_INF("First boot — saved observer prefs defaults");
 	}
 
-	/* Load or generate node identity */
+	/* Load or generate node identity.
+	 *
+	 * Use ZephyrRNG::generateFirstBootIdentity — the SAME hardened path the
+	 * companion and repeater use (bootloader_random-seeded HWRNG + two-clock
+	 * beat, conditioned via AES-256-CTR) — NOT LocalIdentity(_rng). The old
+	 * form drew straight from ZephyrRNG::random() / sys_csrand_get, which on
+	 * an ESP32 observer is unseeded (BLE never comes up to seed WDEV_RANDOM),
+	 * so it derived a permanent key from a weak PRNG. generateFirstBootIdentity
+	 * also owns the reserved-prefix retry (100 attempts + panic backstop),
+	 * replacing the weaker 10-try loop that silently kept a reserved prefix. */
 	if (!_store->loadIdentity(_self_id)) {
 		LOG_INF("No identity found — generating new keypair");
-		int attempts = 0;
-		do {
-			_self_id = LocalIdentity(_rng);
-			attempts++;
-		} while (attempts < 10 &&
-			 (_self_id.pub_key[0] == 0x00 || _self_id.pub_key[0] == 0xFF));
+		mesh::ZephyrRNG::generateFirstBootIdentity(_self_id);
 		_store->saveIdentity(_self_id);
 		LOG_INF("New observer identity saved");
 	}
@@ -405,14 +431,19 @@ bool ObserverMesh::handleCLI(const char *command, char *reply, int reply_size)
 			float f = (float)atof(val);
 			/* Accept Hz (e.g. 867935000) or MHz (e.g. 867.935) */
 			if (f > 1000000.0f) f /= 1000000.0f;
-			if (f >= 150.0f && f <= 2500.0f) {
+			/* 300..1000 MHz is not the radio's limit — it is what
+			 * RepeaterDataStore::loadPrefs() accepts on the way back in.
+			 * Anything outside it saves fine and is then silently reset to
+			 * defaults on the next boot, taking bw/sf/cr/tx_power with it, so
+			 * refuse it here rather than hand back a value that won't survive. */
+			if (f >= 300.0f && f <= 1000.0f) {
 				_prefs.freq = f;
 				_store->savePrefs(_prefs);
 				((LoRaRadioBase *)_radio)->reconfigureWithParams(
 					_prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr);
 				snprintf(reply, reply_size, "freq=%.3f MHz", (double)_prefs.freq);
 			} else {
-				snprintf(reply, reply_size, "ERR freq out of range");
+				snprintf(reply, reply_size, "ERR freq must be 300-1000 MHz");
 			}
 
 		} else if ((val = find_val(rest, "sf")) != nullptr) {
@@ -438,14 +469,16 @@ bool ObserverMesh::handleCLI(const char *command, char *reply, int reply_size)
 			} else {
 				bw = (float)atof(val);
 			}
-			if (bw > 0.0f) {
+			/* Lower bound 7 kHz mirrors loadPrefs()'s validator — see the freq
+			 * case above for why the CLI must not accept what it will reject. */
+			if (bw >= 7.0f && bw <= 500.0f) {
 				_prefs.bw = bw;
 				_store->savePrefs(_prefs);
 				((LoRaRadioBase *)_radio)->reconfigureWithParams(
 					_prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr);
 				snprintf(reply, reply_size, "bw=%.2f kHz", (double)_prefs.bw);
 			} else {
-				snprintf(reply, reply_size, "ERR invalid bw");
+				snprintf(reply, reply_size, "ERR bw must be 7-500 kHz (or index 0-5)");
 			}
 
 		} else if ((val = find_val(rest, "cr")) != nullptr) {

@@ -65,6 +65,16 @@ All commands are sent over USB serial (CDC-ACM). Commands sent remotely over the
 
 > **Password length:** admin and guest passwords are capped at **15 characters** (16-byte storage incl. NUL; same limit as Arduino MeshCore). The login-send path silently truncates anything longer, so a password >15 chars will never authenticate. Applies to `set guest.password` as well.
 
+> **Guest access is off unless a guest password is set.** An empty `guest.password` (the default) disables guest login rather than matching a blank submitted password. To run an open room-server, use `set allow.read.only on` — that grants read-only (`PERM_ACL_GUEST`), not post rights.
+
+---
+
+## Room Server
+
+| Command | Description |
+|---------|-------------|
+| `room.post <message>` | Post a message to the shared room as the server itself (system post). Pushed to clients like any other post. |
+
 ---
 
 ## Region Filtering
@@ -180,7 +190,7 @@ All `set uplink.*` changes are saved immediately and only applied after reboot.
 | `get repeat` | Forwarding enabled: `on` or `off` |
 | `get radio` | Radio params: `freq,bw,sf,cr` |
 | `get freq` | Frequency in MHz |
-| `get tx` | TX power: fixed dBm or APC status |
+| `get tx` | TX power in dBm |
 | `get lat` | Stored latitude |
 | `get lon` | Stored longitude |
 | `get dutycycle` | Duty cycle as percentage (e.g. "50.0%") |
@@ -194,12 +204,11 @@ All `set uplink.*` changes are saved immediately and only applied after reboot.
 | `get flood.max.advert` | Max retransmit hops for ADVERT floods |
 | `get flood.advert.interval` | Flood advertisement interval in hours |
 | `get advert.interval` | Local advertisement interval in minutes |
-| `get apc.margin` | Adaptive Power Control target RSSI margin in dB |
 | `get allow.read.only` | Whether read-only clients are allowed |
 | `get guest.password` | Guest access password |
 | `get owner.info` | Owner/contact info (pipes `\|` display as newlines) |
 | `get int.thresh` | Interference threshold |
-| `get agc.reset.interval` | AGC reset interval in ms (stored in 4 s steps) |
+| `get agc.reset.interval` | Removed - replies `use rxduty instead` |
 | `get multi.acks` | Extra ACK transmit count (`0` or `1`) |
 | `get path.hash.mode` | Path hashing algorithm: `0`, `1`, or `2` |
 | `get loop.detect` | Loop detection level: `off`, `minimal`, `moderate`, or `strict` |
@@ -207,8 +216,9 @@ All `set uplink.*` changes are saved immediately and only applied after reboot.
 | `get rxduty` | RX duty cycle mode: `0` or `1` |
 | `get gps duty` | Now-effective GPS duty interval in seconds (`always on (0)` when continuous) |
 | `get meshtimesync` | Mesh time-sync state + live dry-run: on/off, eligible voter count, votes for/against, consensus skew and radius, would-be verdict (`ok`/`in-band`/`step±N`/`abstain (reason)`/`hold (reason)`; a recent clock set — manual or GPS — shows as `hold (suppressed)`, and a backward step a forward-only role would refuse is annotated `(skipped: forward-only)`), step counters, suppression countdown, and a per-sender evidence table (`prefix hops count skew E`, `E` = counted toward the verdict above). Entries that count print first, so a size-capped reply never hides the ones that explain the summary; if the table doesn't fully fit, a trailing `+N more` shows how many were left out. Sensing runs even while off, so this works as a dry-run before enabling. Over remote admin the reply is truncated to the packet size (summary always fits); the full table needs the USB CLI. |
+| `get probe.interval` | Seconds between periodic radio measurements (noise-floor sample + CAD probe). 0 = CAD probing off |
 | `get dc.restarts` | Duty-cycle preamble false-positive re-arm counter (RxTimeout re-arms + parked-RX watchdog recoveries). High values mean the preamble detector is tripping on noise/interference without real packets arriving — inflates RX-on time and drains battery; packets are never lost to it. Reset by `clear stats`. |
-| `get cad` | Adaptive-CAD status: header (`a` auto on/off, `o` operating detPeak offset, `pk` absolute peak with family base, `iv` probe interval, `bc` busy cap), then a 3-rung window around the operating offset (`*` marks it) with probe/busy/fp/tp counts and false-positive rate — the three levels the knee controller reads. Probing runs even while `cad.auto` is off (dry-run), so this is the observation tool for picking a site-appropriate detPeak. See `ADAPTIVE_CAD.md`. Not available on SX127x boards (no hardware CAD). |
+| `get cad` | Adaptive-CAD status: header (`a` auto on/off, `o` operating detPeak offset, `pk` absolute peak with family base, `sp` noise-floor RSSI burst quality as `mean-spread-dB/zero-spread-%` (plus `(burst-count)` on the local USB console, omitted over the air to protect the 161 B reply budget) — a non-zero mean proves the 8 reads are independent however high the share climbs; only mean `0.0` with a high share indicts the sampler. See `ADAPTIVE_CAD.md`. `bc` busy cap), then a 3-rung window around the operating offset (`*` marks it) with probe/busy/fp/tp counts and false-positive rate — the three levels the knee controller reads. Probing runs even while `cad.auto` is off (dry-run), so this is the observation tool for picking a site-appropriate detPeak. See `ADAPTIVE_CAD.md`. Not available on SX127x boards (no hardware CAD). |
 | `get adc.multiplier` | Battery voltage ADC calibration multiplier |
 | `get bootloader.ver` | Bootloader version string |
 | `get public.key` | *(USB only)* Node's public key as hex |
@@ -226,7 +236,7 @@ Changes are persisted immediately unless noted. Some require a reboot.
 | `set repeat <on\|off>` | | Enable or disable packet forwarding |
 | `set radio <freq> <bw> <sf> <cr>` | freq 150–2500, bw 7–500, sf 5–12, cr 5–8 | Set radio params *(reboot required)* |
 | `set freq <mhz>` | 150–2500 *(USB only)* | Set frequency alone *(reboot required)* |
-| `set tx <dbm\|apc>` | −9 to board max (default 30), or `apc` | Set TX power fixed or enable Adaptive Power Control |
+| `set tx <dbm>` | −9 to board max (default 30) | Set TX power |
 | `set lat <latitude>` | | Set stored latitude |
 | `set lon <longitude>` | | Set stored longitude |
 | `set dutycycle <pct>` | 1–100 | Set duty cycle percentage (converted to airtime factor internally) |
@@ -240,12 +250,11 @@ Changes are persisted immediately unless noted. Some require a reboot.
 | `set flood.max.advert <count>` | 0–64 | Hop limit for ADVERT floods only (default 8); curbs advert churn independent of flood.max |
 | `set flood.advert.interval <hours>` | 3–168 | How often the repeater floods its own advertisement |
 | `set advert.interval <mins>` | min–240 | How often the repeater sends local advertisements |
-| `set apc.margin <db>` | 6–30 | Target RSSI margin for Adaptive Power Control |
 | `set allow.read.only <on\|off>` | | Allow or deny read-only client connections |
 | `set guest.password <pwd>` | | Set guest access password |
 | `set owner.info <text>` | Use `\|` for newlines | Owner/contact information |
 | `set int.thresh <value>` | | Interference detection threshold |
-| `set agc.reset.interval <ms>` | Rounded to 4 s | AGC reset interval |
+| `set agc.reset.interval <ms>` | Accepted, ignored | Removed - replies `use rxduty instead` |
 | `set multi.acks <0\|1>` | | Enable extra ACK transmits |
 | `set path.hash.mode <mode>` | 0, 1, or 2 | Path hashing algorithm |
 | `set loop.detect <mode>` | `off`, `minimal`, `moderate`, `strict` | Loop detection sensitivity |
@@ -255,7 +264,7 @@ Changes are persisted immediately unless noted. Some require a reboot.
 | `set meshtimesync <on\|off>` | default **off** | Mesh time sync: automatically correct this node's clock from the consensus of Ed25519-signed advert timestamps heard on the mesh. Steps at most ±1 h per step, one step per 6 h; abstains without a quorum (default 6) of tenured agreeing senders; never overrides a clock set in the last 7 days, whether from GPS (re-armed on every fix) or a manual set. See `MESHTIMESYNC.md`. |
 | `set cad.auto <on\|off>` | default **on** | Adaptive CAD: let the staircase controller move the operating detPeak offset based on probe statistics. On by default (repeaters and companions); at the default 15 s probe interval it responds to environment change in ~1–2 h. Turn off to observe/hand-tune via `get cad` + `set cad.offset`. See `ADAPTIVE_CAD.md`. |
 | `set cad.offset <n>` | −8 to 12, default 0 | Operating detPeak offset from the chip family's per-SF base (SX126x: SF+13; LR11xx/LR20xx: 56–68 table). Negative = more sensitive LBT (catches weaker signals, risks false busy), positive = less sensitive. Wide range so dense hilltops / quiet valleys can settle far from base. The per-family absolute clamp in the driver (SX126x 15–40, LR 48–90) is a firmware guardrail against a CAD that never/always fires, not a chip limit (`cadDetPeak` is a full `uint8_t`). Applied live; the auto staircase may move it later if `cad.auto` is on. |
-| `set cad.probe.interval <sec>` | 0 (off) or 10–255, default **15** | Seconds between calibration CAD probes. Default 15 s → ~1–2 h staircase response. 0 disables probing entirely (also freezes auto adaptation). |
+| `set probe.interval <sec>` | 0 (off) or 10–255, default **15** | Seconds between periodic radio measurements. ONE reading serves both: the noise-floor RSSI sample (median of 8) and the CAD calibration probe, which consumes that same reading rather than measuring separately — so this is also the noise-floor sampling rate, and it sets how often an idle repeater wakes. Default 15 s → ~1–2 h CAD staircase response; the floor EMA warms up over 8 samples (~2 min) and its unguarded bypass runs every 16th (~4 min). Longer = fewer wakes, slower to track a changing RF environment. 0 disables CAD probing entirely (also freezes auto adaptation); the floor sampler then falls back to its build-time default. |
 | `set cad.busycap <pct>` | 0 (off) or 10–90, default **25** | Airtime-protection cap: the max percentage of TX attempts the node will let CAD defer before the staircase backs off to a less sensitive detPeak — counting **real** traffic, not just false positives. On a congested hilltop most busy verdicts are distant traffic won on capture anyway, so deferring for all of it starves the node's own airtime. Self-targeting: a quiet node's busy rate never reaches the cap. Shown as `bc:` in `get cad`. 0 disables the cap (pure knee-seeking). |
 | `set cad.reset` | | Clear the accumulated per-level CAD probe statistics (RAM only; also cleared automatically on any radio parameter change). |
 | `set prv.key <hex>` | 64-char hex (32-byte key) | Replace private key; derive new identity *(reboot to apply)* |

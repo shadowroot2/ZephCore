@@ -70,7 +70,13 @@
 /* LittleFS auto-mount — standard /lfs mount point */
 #include "../../common/filesystem.dtsi"
 
-/* USB OTG companion transport. Consoles over USB Serial/JTAG (shares D+/D-
- * with USB OTG), so the console is rerouted to uart0. */
-#include "../../common/esp32s3_console_uart0.dtsi"
+/* USB OTG companion transport. The node is inert unless the build enables the
+ * USB device stack via boards/common/esp32s3_usb.conf.
+ *
+ * The XIAO consoles over USB Serial/JTAG (stock board DTS), which shares D+/D-
+ * with USB OTG — so the console reroute to uart0 lives in the auto-paired
+ * boards/common/esp32s3_usb.overlay and applies only when that conf is passed.
+ * Do NOT include esp32s3_console_uart0.dtsi here: it would move the console
+ * (and the observer/repeater serial CLI that falls back to it) onto GPIO43/44
+ * in every build of this board, including the ones still using USB Serial/JTAG. */
 #include "../../common/esp32s3_usb_otg.dtsi"

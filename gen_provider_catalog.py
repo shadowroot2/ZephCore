@@ -53,6 +53,7 @@ MAKERS = {
     "uniteng": "UnitEng",
     "Ikoka": "Ikoka",
     "femtofox": "Femtofox",
+    "muziworks": "muzi works",
 }
 
 # Manufacturer per device name.
@@ -70,6 +71,7 @@ MAKER_BY_DEVICE = {
     "Elecrow ThinkNode M1": "elecrow",
     "Elecrow ThinkNode M3": "elecrow",
     "Elecrow ThinkNode M6": "elecrow",
+    "Elecrow ThinkNode M9": "elecrow",
     "Ikoka Nano": "Ikoka",
     "LilyGo T-Echo": "lilygo",
     "LilyGo T-Beam (SX1262)": "lilygo",
@@ -88,6 +90,7 @@ MAKER_BY_DEVICE = {
     "Femtofox (Luckfox Pico Mini)": "femtofox",
     "RAK6421 WisMesh (Raspberry Pi)": "rak",
     "RAK6421 WisMesh (Raspberry Pi 5)": "rak",
+    "muzi works R1 Neo": "muziworks",
 }
 
 DESCRIPTION = (
@@ -146,6 +149,7 @@ BOARDS = [
     dict(stem="heltec_t114",      kind="nrf", device="Heltec T114",
          variant="noscreen", subtitle="No screen"),
     dict(stem="gat562_30s",       kind="nrf", device="GAT-IoT GAT562 30s"),
+    dict(stem="muziworks_r1neo",  kind="nrf", device="muzi works R1 Neo"),
 
     # --- nRF52: new ZephCore-only hardware (own tile) ---------------------
     dict(stem="lilygo_timpulse_plus", kind="nrf", device="LilyGo T-Impulse Plus", new=True, img="lora.svg"),
@@ -159,6 +163,10 @@ BOARDS = [
     dict(stem="heltec_wifi_lora32_v4-esp32s3-procpu", kind="esp32", device="Heltec v4"),
     dict(stem="heltec_wireless_tracker-esp32s3-procpu",    kind="esp32", device="Heltec Wireless Tracker"),
     dict(stem="heltec_wireless_tracker_v2-esp32s3-procpu", kind="esp32", device="Heltec Wireless Tracker v2"),
+    # ThinkNode M9 pulled from the build.sh release matrix 2026-07-22 (bring-up
+    # still in progress — keypad/GPS/battery unverified on hardware). Restore
+    # this line together with the build.sh entry once it's release-ready.
+    # dict(stem="thinknode_m9-esp32s3-procpu",             kind="esp32", device="Elecrow ThinkNode M9"),
     # Classic ESP32 T-Beam: ships -merged.bin (full-flash, 0x0) too.
     dict(stem="ttgo_tbeam-esp32-procpu",           kind="esp32", device="LilyGo T-Beam (SX1262)"),
 
@@ -174,6 +182,21 @@ BOARDS = [
 ]
 
 DEVICE_TYPE = {"nrf": "nrf52", "esp32": "esp32", "linux": "noflash"}
+
+# nRF52 erase package (spec §4a). ZephCore's LittleFS layout differs from MeshCore's,
+# so the official erase would wipe the wrong region — we point `erase` at ZephCore's
+# own formatter tool instead. The formatter is SoftDevice-specific (partition map
+# differs between SD v6 and v7), so each board maps to its SD's formatter .zip.
+# Files are published to firmware-dist by build.sh (stable names, no hash).
+SOFTDEVICE = {
+    "rak4631": 6, "rak3401_1watt": 6, "thinknode_m1": 6, "thinknode_m3": 6,
+    "thinknode_m6": 6, "rak_wismesh_tag": 6, "lilygo_techo": 6,
+    "lilygo_timpulse_plus": 6, "promicro_sx1262": 6, "heltec_t114": 6,
+    "heltec_t096": 6, "gat562_30s": 6, "muziworks_r1neo": 6,
+    "wio_tracker_l1": 7, "t1000_e": 7, "ikoka_nano_30dbm": 7,
+    "sensecap_solar": 7, "xiao_nrf52840": 7,
+}
+FORMATTER_FILE = {6: "SoftDevice_v6_formatter.zip", 7: "SoftDevice_v7_formatter.zip"}
 
 # Companion firmware is a single image that serves both transports (and, on
 # Linux, TCP). Expose it under each applicable role, all pointing at one file.
@@ -241,10 +264,12 @@ def build(assets, url_base, version):
             for (t, name, title) in triples
         ]
 
-    def add_option(dev, role, subtitle, version, triples):
+    def add_option(dev, role, subtitle, version, triples, erase=None):
         opt = {"role": role, "version": {version: {"notes": "", "files": spec_files(triples)}}}
         if subtitle:
             opt["subTitle"] = subtitle
+        if erase:
+            opt["erase"] = erase   # spec §4a: on the firmware option, not the device
         dev["firmware"].append(opt)
         used_roles.add(role)
 
@@ -275,11 +300,16 @@ def build(assets, url_base, version):
             stats["new" if board.get("new") else "fold"] += 1
         dev = devices[name]
 
+        # nRF52 boards get ZephCore's own SoftDevice-specific formatter as `erase`.
+        erase = None
+        if board["kind"] == "nrf":
+            erase = f"{base}/{FORMATTER_FILE[SOFTDEVICE[board['stem']]]}"
+
         if comp:
             for role in COMPANION_ROLES[board["kind"]]:
-                add_option(dev, role, subtitle, version, comp)
+                add_option(dev, role, subtitle, version, comp, erase)
         if repe:
-            add_option(dev, "repeater", subtitle, version, repe)
+            add_option(dev, "repeater", subtitle, version, repe, erase)
 
     catalog = {
         "description": DESCRIPTION,

@@ -51,7 +51,6 @@ zephcore/
 │   ├── Identity.cpp        # Ed25519 key management, ECDH shared secrets
 │   ├── Utils.cpp           # AES-ECB encrypt, HMAC-SHA256, MAC
 │   ├── ContentionTracker.cpp        # Adaptive contention window (EMA, backoff)
-│   ├── PowerController.cpp          # Adaptive Power Control (APC)
 │   ├── StaticPoolPacketManager.cpp  # Fixed-size packet pool (32 slots)
 │   ├── main_companion.cpp  # Companion mode entry point + event loop
 │   ├── main_repeater.cpp   # Repeater mode entry point + event loop
@@ -63,7 +62,6 @@ zephcore/
 │   ├── Radio.h             # Abstract radio interface
 │   ├── Board.h, Clock.h, RNG.h, RTC.h  # HAL interfaces
 │   ├── ContentionTracker.h # Adaptive contention window state
-│   ├── PowerController.h   # APC state machine
 │   ├── LoRaConfig.h        # Default radio parameters
 │   ├── RadioIncludes.h     # Compile-time radio driver selection
 │   ├── SimpleMeshTables.h  # Hash-based packet deduplication
@@ -397,12 +395,12 @@ isReceiving()
 ```
 
 For SX126x, `hwIsReceiving()` → `sx126x_is_receiving()` reads in this order:
-1. **`data->rx_packet_active`** latch (no SPI). Set by the work handler on `HEADER_VALID`; cleared on every terminal event and RX (re)start. Covers the full payload phase.
+1. **`data->rx_packet_active`** latch (no SPI). Set by the work handler on `HEADER_VALID`; cleared on every terminal event and RX (re)start. Covers the full payload phase. Bounded by a payload deadline: `header_seen_at_ms` is stamped when the latch is promoted, and once `sx126x_max_payload_ms()` (255-byte airtime at the current SF/BW, CR 4/8, LDRO on, +25% +100 ms) has elapsed the latch is released and the sticky PREAMBLE/SYNC/HEADER bits cleared. Continuous RX has no symbol timer, so without this a `HEADER_VALID` whose packet never completes would hold the TX gate closed until reboot; the DC parked-RX watchdog does not cover it (DC-only, and it treats the latch as a legitimate in-flight packet).
 2. **Mutex-busy conservative** — if the SPI mutex is contended and `state == RX`, return true (the work handler is likely mid-`RxDone`).
 3. **`HEADER_VALID` raw bit** — covers the microseconds between DIO1 firing and the work handler running.
 4. **`PREAMBLE_DETECTED` raw bit with SF-aware grace** — `PREAMBLE_DETECTED` is masked off DIO1 (fires on noise), but visible in the IRQ register. On first observation, `is_receiving` records `data->preamble_seen_at_ms`; subsequent calls return true until either `HEADER_VALID` promotes the latch (timestamp reset) or `(preamble_len + 8) × 2^SF / BW` ms elapses — at which point the bit is explicitly cleared and TX is allowed. Grace scales with SF: ~82 ms at SF8, ~786 ms at SF12.
 
-The poll path is otherwise non-destructive — IRQ bits are cleared only by the work-handler bulk clear (on any DIO1 event), explicit `clear_irq_status(IRQ_ALL)` at every RX (re)start, and the grace-expiry one-bit clear for foreign preambles.
+The poll path is otherwise non-destructive — IRQ bits are cleared only by the work-handler bulk clear (on any DIO1 event), explicit `clear_irq_status(IRQ_ALL)` at every RX (re)start, the grace-expiry one-bit clear for foreign preambles, and the payload-deadline clear in step 1.
 
 ### 5.2.2 CAD-Timeout Recovery
 
@@ -432,7 +430,7 @@ dBm): it gates on signal *strength* ≈ link budget, blind to distance, so
 raising it means "react to strong signals only, ignore faint/echo". The right
 LBT sensitivity is site-dependent and cannot be derived from the RSSI floor.
 `LoRaRadioBase::cadMaintenance()` (housekeeping tick) runs one calibration CAD
-probe per `cad.probe.interval` (default **15 s**) at a signed **level** relative
+probe per `probe.interval` (default **15 s**) at a signed **level** relative
 to the family's per-SF base detPeak, restarts RX, and classifies busy verdicts
 with a ground-truth filter. **Key property:** the probe is *skipped* when RSSI >
 floor+7 dB, so probes only ever sample the quiet/faint regime — the whole loop
@@ -762,9 +760,14 @@ Shutdown.
 
 Single button; tap-count → key-code mapping comes from the board's devicetree `tap-codes` (up to 5). Typical mapping:
 - 1 tap → Page next
-- 2 taps → Flood advert
+- 2 taps → LED heartbeat toggle
 - 3 taps → Buzzer toggle
-- 4 taps → GPS toggle (immediate, no delay)
+- 4 taps → GPS toggle
+- 5 taps → Flood advert (immediate, no delay)
+
+On T1000-E, one short press arms SOS for three seconds; a following hold of
+at least one second confirms it with the SOS melody. The multitap delay stays
+at 500 ms on that board.
 
 ### 8.4 Buzzer
 
@@ -856,6 +859,7 @@ Build strings and flash methods: `boards/supported_boards.md` and `boards/exampl
 | SenseCAP Solar | nRF52840 | SX1262 | L76K | - | QSPI, battery monitor |
 | XIAO nRF52840 + Wio-SX1262 | nRF52840 | SX1262 | - | - | - |
 | ProMicro SX1262 | nRF52840 | SX1262 (E22-900M30S) | Yes | - | Button, LED, battery ADC |
+| muzi works R1 Neo | nRF52840 | SX1262 | Yes | - | Buzzer, button, RX8130CE RTC, latched-rail power-off |
 | XIAO nRF54L15 | nRF54L15 | SX1262 | - | - | Contacts capped at 450 |
 | XIAO ESP32-C3 | ESP32-C3 | SX1262 | - | - | Contacts capped at 300 |
 | XIAO ESP32-C6 | ESP32-C6 | SX1262 | - | - | - |
@@ -984,7 +988,7 @@ in their shared base fields:
 **Companion `/lfs/new_prefs` (152 bytes)** — `adapters/datastore/ZephyrDataStore.cpp`
 `loadPrefs()`/`savePrefs()` (offset comments inline). Arduino companion layout (name, lat/lon,
 radio params, telemetry modes, BLE pin, GPS, autoadd) plus ZephCore extensions from offset 92:
-rx_boost(92), leds_disabled(93), apc(94-95), default flood scope name/key(96-142),
+rx_boost(92), leds_disabled(93), reserved(94-95, was APC), default flood scope name/key(96-142),
 ble_disabled(143), display/wake/screen-off/auto-shutdown(144-149), rx_duty_cycle(150),
 meshtimesync(151).
 
@@ -992,7 +996,7 @@ meshtimesync(151).
 `loadPrefs()`/`savePrefs()` (same field order as `helpers/CommonCLI.cpp`; offset comments inline).
 Key ranges: name(4-36), radio(72-119), adaptive-delay(80-111, ignored at runtime),
 Arduino-bridge(127-151, read+discarded), GPS(156-161), owner_info(170-290), rx_boost/duty(290-291),
-apc(292-293), flood_max_unscoped/advert(294-295), meshtimesync(296). Older shorter files
+reserved(292-293, was APC), flood_max_unscoped/advert(294-295), meshtimesync(296). Older shorter files
 load cleanly — reads past EOF are no-ops, so newer fields keep their defaults and a one-time
 upgrade block migrates them.
 

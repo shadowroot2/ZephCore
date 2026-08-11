@@ -26,6 +26,7 @@ Supported Boards
 | LilyGo T-Impulse Plus | `west build -b lilygo_timpulse_plus zephcore` | UF2 drag-drop or `west flash` |
 | Heltec T114          | `west build -b heltec_t114 zephcore`      | UF2 drag-drop or `west flash` |
 | Heltec Mesh Node T096 | `west build -b heltec_t096 zephcore`     | UF2 drag-drop or `west flash` |
+| muzi works R1 Neo    | `west build -b muziworks_r1neo zephcore`  | UF2 drag-drop or `west flash` |
 
 **Heltec T114 screenless:** append `boards/nrf52840/heltec_t114/no_display.conf` to `EXTRA_CONF_FILE` for units without the TFT module.
 
@@ -47,6 +48,7 @@ SWD flash: `west flash` (requires J-Link, pyocd, or nrfjprog connected).
 | Heltec Wireless Tracker V1.1 | `west build -b heltec_wireless_tracker/esp32s3/procpu zephcore` | `west flash` |
 | Heltec Wireless Tracker V2 | `west build -b heltec_wireless_tracker_v2/esp32s3/procpu zephcore` | `west flash` |
 | LilyGo T-Beam v1.2     | `west build -b ttgo_tbeam/esp32/procpu zephcore`               | `west flash` |
+| ThinkNode M9           | `west build -b thinknode_m9/esp32s3/procpu zephcore`           | `west flash` |
 
 **Heltec V3 console:** ZephCore routes console/shell to `uart0` on V3. Use the UART serial port for boot logs and CLI.
 
@@ -175,7 +177,8 @@ STM32WL caveats — different from every other ZephCore platform:
   AES tables live in ROM (`MBEDTLS_AES_ROM_TABLES`) to reclaim ~8KB SRAM.
 - **TRNG only (no HW CSPRNG):** the STM32 TRNG is enabled as the entropy source
   and `CSPRNG_ENABLED` auto-resolves on top; `ZephyrRNG` further conditions
-  identity seeds with jitter + AES-CTR.
+  identity seeds with AES-CTR (the timing stages are skipped — SysTick has no
+  independent slow clock — so the TRNG-fed CSPRNG stages carry the seed).
 - **No MCUboot / UF2:** single app partition at flash origin + a LittleFS volume
   (see `board.overlay`). Flash over SWD/ST-Link with `west flash` (OpenOCD).
 
@@ -334,9 +337,6 @@ should ONLY contain settings that can't be inferred from hardware:
     CONFIG_FUEL_GAUGE=y                 Boards with AXP2101 or other I2C fuel gauge
     CONFIG_ZEPHCORE_DEFAULT_TX_POWER_DBM  Boards with external PA
     CONFIG_ZEPHCORE_MAX_TX_POWER_DBM      Boards with external PA
-    CONFIG_ZEPHCORE_APC                   Adaptive Power Control — OFF by default.
-                                          Reduces TX power when echo SNR shows excess margin.
-                                          See apc.md for details on target margin tuning.
 
   AUTO-DETECTED (do NOT set in board.conf):
     CONFIG_PWM                          Auto from DT buzzer nodelabel

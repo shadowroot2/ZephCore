@@ -265,13 +265,12 @@ set(ZEPHCORE_COMMON_CONF "${CMAKE_CURRENT_SOURCE_DIR}/boards/common/zephcore_com
 # Detect platform from board name and add platform-specific common config
 # For boards with qualifiers like "wio_tracker_l1/nrf52840", check both the full BOARD
 # string and the BOARD_QUALIFIERS which contains just the qualifier (e.g., "nrf52840")
-if(BOARD MATCHES ".*nrf52.*" OR BOARD MATCHES "rak4631" OR BOARD MATCHES "rak_wismesh_tag" OR BOARD MATCHES "rak3401_1watt" OR BOARD MATCHES "wio_tracker" OR BOARD MATCHES "ikoka_nano" OR BOARD MATCHES "t1000_e" OR BOARD MATCHES "thinknode_m1" OR BOARD MATCHES "thinknode_m3" OR BOARD MATCHES "thinknode_m6" OR BOARD MATCHES "promicro_lr2021" OR BOARD MATCHES "promicro_sx1262" OR BOARD MATCHES "sensecap_solar" OR BOARD MATCHES "xiao_nrf52840" OR BOARD MATCHES "lilygo_techo" OR BOARD MATCHES "lilygo_timpulse_plus" OR BOARD MATCHES "heltec_t114" OR BOARD MATCHES "heltec_t096" OR BOARD MATCHES "gat562")
+if(BOARD MATCHES ".*nrf52.*" OR BOARD MATCHES "rak4631" OR BOARD MATCHES "rak_wismesh_tag" OR BOARD MATCHES "rak3401_1watt" OR BOARD MATCHES "wio_tracker" OR BOARD MATCHES "ikoka_nano" OR BOARD MATCHES "t1000_e" OR BOARD MATCHES "thinknode_m1" OR BOARD MATCHES "thinknode_m3" OR BOARD MATCHES "thinknode_m6" OR BOARD MATCHES "promicro_lr2021" OR BOARD MATCHES "promicro_sx1262" OR BOARD MATCHES "sensecap_solar" OR BOARD MATCHES "xiao_nrf52840" OR BOARD MATCHES "lilygo_techo" OR BOARD MATCHES "lilygo_timpulse_plus" OR BOARD MATCHES "heltec_t114" OR BOARD MATCHES "heltec_t096" OR BOARD MATCHES "gat562" OR BOARD MATCHES "muziworks_r1neo")
     set(ZEPHCORE_PLATFORM_CONF "${CMAKE_CURRENT_SOURCE_DIR}/boards/common/nrf52_common.conf")
     set(ZEPHCORE_PLATFORM_BLE_CONF "${CMAKE_CURRENT_SOURCE_DIR}/boards/common/nrf52_ble_common.conf")
 elseif(DEFINED BOARD_QUALIFIERS AND BOARD_QUALIFIERS MATCHES ".*nrf52.*")
     set(ZEPHCORE_PLATFORM_CONF "${CMAKE_CURRENT_SOURCE_DIR}/boards/common/nrf52_common.conf")
-    set(ZEPHCORE_PLATFORM_BLE_CONF "${CMAKE_CURRENT_SOURCE_DIR}/boards/common/nrf52_ble_common.conf")
-elseif(BOARD MATCHES ".*esp32.*" OR BOARD MATCHES "station_g2" OR BOARD MATCHES "lilygo_tlora_c6" OR BOARD MATCHES "heltec_wifi_lora32_v3" OR BOARD MATCHES "heltec_wifi_lora32_v4")
+elseif(BOARD MATCHES ".*esp32.*" OR BOARD MATCHES "station_g2" OR BOARD MATCHES "thinknode_m9" OR BOARD MATCHES "lilygo_tlora_c6" OR BOARD MATCHES "heltec_wifi_lora32_v3" OR BOARD MATCHES "heltec_wifi_lora32_v4")
     set(ZEPHCORE_PLATFORM_CONF "${CMAKE_CURRENT_SOURCE_DIR}/boards/common/esp32_common.conf")
     set(ZEPHCORE_PLATFORM_BLE_CONF "${CMAKE_CURRENT_SOURCE_DIR}/boards/common/esp32_ble_common.conf")
 elseif(DEFINED BOARD_QUALIFIERS AND BOARD_QUALIFIERS MATCHES ".*esp32.*")
@@ -380,6 +379,33 @@ endif()
 # ESP32's DRAM by ~10KB. Rather than trim WiFi/heap to an unverifiable margin,
 # the classic ESP32 repeater stays CLI-only on simple boot (handled in build.sh).
 # The ESP32-S3/C-series have the DRAM headroom and keep WiFi OTA.
+# ========== ESP32 CPU clock ==========
+# Espressif parts idle in the tens of mA (WAITI gates the core clock but leaves
+# PLL/peripherals/RAM powered), so CPU frequency is a first-order term in a
+# battery node's draw — unlike nRF52, which already idles at microamps.  Pull
+# every ESP32 build down to 80 MHz, matching what Arduino MeshCore ships.
+# Needs patches/modules/hal-espressif/0002 (upstream omits 80 from its DT map).
+#
+# Observers are the exception and keep the SoC default (240 MHz on S3/classic,
+# 160 MHz on C3/C6): they run a full WiFi + TLS + MQTT stack and are mains- or
+# solar-with-a-big-panel powered, so throughput matters more than current.
+# Implemented as "don't apply the overlay" rather than an override, so the
+# per-SoC maximum is inherited instead of hardcoded here.
+if(ZEPHCORE_PLATFORM_CONF MATCHES "esp32_common" AND NOT EXTRA_CONF_FILE MATCHES "observer")
+    set(ZEPHCORE_ESP32_CPU_OVERLAY
+        "${CMAKE_CURRENT_SOURCE_DIR}/boards/common/esp32_cpu_80mhz.overlay")
+    if(EXISTS ${ZEPHCORE_ESP32_CPU_OVERLAY})
+        if(EXTRA_DTC_OVERLAY_FILE)
+            set(EXTRA_DTC_OVERLAY_FILE
+                "${EXTRA_DTC_OVERLAY_FILE};${ZEPHCORE_ESP32_CPU_OVERLAY}" CACHE STRING "" FORCE)
+        else()
+            set(EXTRA_DTC_OVERLAY_FILE
+                "${ZEPHCORE_ESP32_CPU_OVERLAY}" CACHE STRING "" FORCE)
+        endif()
+        message(STATUS "  ESP32 CPU: 80 MHz (observers keep the SoC maximum)")
+    endif()
+endif()
+
 if(ZEPHCORE_PLATFORM_CONF MATCHES "esp32_common" AND EXTRA_CONF_FILE MATCHES "repeater"
    AND NOT BOARD MATCHES "/esp32/")
     set(ZEPHCORE_WIFI_OTA_CONF "${CMAKE_CURRENT_SOURCE_DIR}/boards/common/wifi_ota.conf")
@@ -497,7 +523,12 @@ add_definitions(-DFIRMWARE_BUILD_EPOCH=${ZEPHCORE_BUILD_EPOCH}u)
 # value; the per-app `#ifndef FIRMWARE_VERSION` fallbacks only apply to builds that
 # bypass this injection. NOTE: the BLE DIS value in boards/common/zephcore_common.conf
 # (CONFIG_BT_DIS_FW_REV_STR) is Kconfig, not C, so it must be bumped here AND there.
-set(ZEPHCORE_FIRMWARE_VERSION "v1.16.5-zephyr")
+# The single source of truth for the firmware version. This exact string is what
+# the device reports, what CONFIG_BT_DIS_FW_REV_STR advertises, what the GitHub
+# release is tagged/named, and what the Mesh America catalog uses as its version
+# key — so the configurator can match a running device against the catalog. Keep
+# all four identical; the release workflow reads this value directly.
+set(ZEPHCORE_FIRMWARE_VERSION "1.16.7-zephcore")
 add_definitions(-DFIRMWARE_VERSION="${ZEPHCORE_FIRMWARE_VERSION}")
 
 add_subdirectory(lib/monocypher)
@@ -524,7 +555,6 @@ target_sources(app PRIVATE
   src/ContentionTracker.cpp
   src/Dispatcher.cpp
   src/Identity.cpp
-  $<$<BOOL:${CONFIG_ZEPHCORE_APC}>:src/PowerController.cpp>
   src/Mesh.cpp
   src/Packet.cpp
   src/StaticPoolPacketManager.cpp
@@ -563,6 +593,56 @@ if(_BOARD_BATTERY_CURVE)
   target_sources(app PRIVATE "${_BOARD_BATTERY_CURVE}")
 else()
   message(STATUS "ZephCore Battery: generic LiPo curve")
+endif()
+
+# ========== I2C keypad (boards whose only input is a keyboard) ==========
+if(CONFIG_INPUT)
+  target_sources_ifdef(CONFIG_ZEPHCORE_UI_DISPLAY app PRIVATE
+    helpers/input/stc8h_keypad.c)
+endif()
+
+# ========== Board-specific startup quirks ==========
+# Optional per-board sd_quiesce.c — boards whose SD slot shares the radio's SPI
+# bus put any inserted card into SPI idle before the radio driver initialises,
+# so it cannot disturb the bus. Registers itself with SYS_INIT; nothing calls
+# into it, so it is simply compiled in when the board provides one.
+file(GLOB_RECURSE _BOARD_SD_QUIESCE
+     "${CMAKE_CURRENT_SOURCE_DIR}/boards/*/${BOARD_BASE}/sd_quiesce.c")
+if(_BOARD_SD_QUIESCE)
+  list(GET _BOARD_SD_QUIESCE 0 _BOARD_SD_QUIESCE)
+  message(STATUS "ZephCore SD: shared-bus quiesce (${_BOARD_SD_QUIESCE})")
+  target_sources(app PRIVATE "${_BOARD_SD_QUIESCE}")
+endif()
+
+# ESP32 pre-RF entropy source (bootloader_random).
+#
+# The ESP32 hardware TRNG (WDEV_RANDOM) is a PRNG that only receives real
+# entropy while WiFi or BT is enabled — see drivers/entropy/entropy_esp32.c.
+# Identity keygen runs long before any of that (and repeaters/room servers
+# never enable RF at all), so sys_csrand_get() contributes nothing there.
+#
+# Espressif's documented remedy is bootloader_random_enable(), which puts the
+# SAR ADC into continuous sampling and mixes its noise into the HWRNG. Its own
+# header endorses this exact use: "Can also be called from app code, if true
+# random numbers are required without initialized RF subsystem."
+# ZephyrRNG::mixIdentitySeed brackets its entropy collection with it.
+#
+# hal/espressif compiles only part of bootloader_support into app builds (the
+# include path is already set up, but not these sources), so pull in the
+# per-SoC implementation explicitly. The generic bootloader_random.c is NOT
+# needed — it only defines these symbols for the bring-up-bypass stub.
+if(CONFIG_SOC_FAMILY_ESPRESSIF_ESP32)
+  set(_ESP_BOOTLOADER_RANDOM
+      "${ZEPHYR_HAL_ESPRESSIF_MODULE_DIR}/components/bootloader_support/src/bootloader_random_${CONFIG_SOC_SERIES}.c")
+  if(EXISTS "${_ESP_BOOTLOADER_RANDOM}")
+    message(STATUS "ZephCore RNG: ESP32 pre-RF entropy (${CONFIG_SOC_SERIES})")
+    target_sources(app PRIVATE "${_ESP_BOOTLOADER_RANDOM}")
+  else()
+    message(WARNING
+      "ZephCore RNG: no bootloader_random source for ${CONFIG_SOC_SERIES} — "
+      "identity keygen will fall back to CPU jitter alone. Check "
+      "hal/espressif components/bootloader_support/src/.")
+  endif()
 endif()
 
 # Native-Linux (native_sim) runtime setup: force real-time clock mode so the

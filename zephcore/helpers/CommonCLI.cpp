@@ -137,31 +137,18 @@ void CommonCLI::loadPrefs(const char* path) {
     ok = ok && prefs_read(&file, _prefs->owner_info, sizeof(_prefs->owner_info));            // 170
     ok = ok && prefs_read(&file, &_prefs->rx_boost, sizeof(_prefs->rx_boost));               // 290
     ok = ok && prefs_read(&file, &_prefs->rx_duty_cycle, sizeof(_prefs->rx_duty_cycle));     // 291
-    ok = ok && prefs_read(&file, &_prefs->apc_enabled, sizeof(_prefs->apc_enabled));         // 292
-    ok = ok && prefs_read(&file, &_prefs->apc_margin, sizeof(_prefs->apc_margin));           // 293
+    /* 292-293: RESERVED — formerly apc_enabled / apc_margin (APC, removed in
+     * 1.16.6). Still read so offset 294 onward stays where deployed nodes
+     * wrote it; the values are ignored. */
+    ok = ok && prefs_read(&file, &_prefs->_reserved_apc_enabled, sizeof(_prefs->_reserved_apc_enabled)); // 292
+    ok = ok && prefs_read(&file, &_prefs->_reserved_apc_margin, sizeof(_prefs->_reserved_apc_margin));   // 293
     ok = ok && prefs_read(&file, &_prefs->flood_max_unscoped, sizeof(_prefs->flood_max_unscoped)); // 294
     ok = ok && prefs_read(&file, &_prefs->flood_max_advert, sizeof(_prefs->flood_max_advert)); // 295
-    if (prefs_size == 298) {
-        uint8_t legacy[2] = { 0, 0 };
-        ok = ok && prefs_read(&file, legacy, sizeof(legacy));
-        int16_t tz = (int16_t)((uint16_t)legacy[0] | ((uint16_t)legacy[1] << 8));
-        if (tz >= -1439 && tz <= 1439 && (legacy[0] > 1 || legacy[1] > 1)) {
-            _prefs->ui_timezone_offset_minutes = tz;
-        } else {
-            _prefs->meshtimesync = legacy[0];
-            _prefs->cad_auto = legacy[1];
-        }
-    } else {
-        ok = ok && prefs_read(&file, &_prefs->meshtimesync, sizeof(_prefs->meshtimesync));
-        ok = ok && prefs_read(&file, &_prefs->cad_auto, sizeof(_prefs->cad_auto));
-        ok = ok && prefs_read(&file, &_prefs->cad_offset, sizeof(_prefs->cad_offset));
-        ok = ok && prefs_read(&file, &_prefs->cad_probe_interval, sizeof(_prefs->cad_probe_interval));
-        ok = ok && prefs_read(&file, &_prefs->cad_busycap, sizeof(_prefs->cad_busycap));
-        if (prefs_size >= 303) {
-            ok = ok && prefs_read(&file, &_prefs->ui_timezone_offset_minutes,
-                                  sizeof(_prefs->ui_timezone_offset_minutes));
-        }
-    }
+    ok = ok && prefs_read(&file, &_prefs->meshtimesync, sizeof(_prefs->meshtimesync));         // 296
+    ok = ok && prefs_read(&file, &_prefs->cad_auto, sizeof(_prefs->cad_auto));                 // 297
+    ok = ok && prefs_read(&file, &_prefs->cad_offset, sizeof(_prefs->cad_offset));             // 298
+    ok = ok && prefs_read(&file, &_prefs->probe_interval, sizeof(_prefs->probe_interval)); // 299
+    ok = ok && prefs_read(&file, &_prefs->cad_busycap, sizeof(_prefs->cad_busycap));            // 300
 
     if (!ok) {
         LOG_WRN("Prefs file %s truncated, some fields use defaults", path);
@@ -203,15 +190,13 @@ void CommonCLI::loadPrefs(const char* path) {
     _prefs->advert_loc_policy = constrain(_prefs->advert_loc_policy, (uint8_t)0, (uint8_t)2);
     _prefs->rx_boost = constrain(_prefs->rx_boost, (uint8_t)0, (uint8_t)1);
     _prefs->rx_duty_cycle = constrain(_prefs->rx_duty_cycle, (uint8_t)0, (uint8_t)1);
-    _prefs->apc_enabled = constrain(_prefs->apc_enabled, (uint8_t)0, (uint8_t)1);
-    _prefs->apc_margin = constrain(_prefs->apc_margin, (uint8_t)6, (uint8_t)30);
     _prefs->flood_max_unscoped = constrain(_prefs->flood_max_unscoped, (uint8_t)0, (uint8_t)64);
     _prefs->flood_max_advert = constrain(_prefs->flood_max_advert, (uint8_t)0, (uint8_t)64);
     _prefs->meshtimesync = constrain(_prefs->meshtimesync, (uint8_t)0, (uint8_t)1);
     _prefs->cad_auto = constrain(_prefs->cad_auto, (uint8_t)0, (uint8_t)1);
     _prefs->cad_offset = constrain(_prefs->cad_offset, (int8_t)CAD_OFFSET_MIN, (int8_t)CAD_OFFSET_MAX);
-    if (_prefs->cad_probe_interval != 0 && _prefs->cad_probe_interval < 10) {
-        _prefs->cad_probe_interval = 10;
+    if (_prefs->probe_interval != 0 && _prefs->probe_interval < 10) {
+        _prefs->probe_interval = 10;
     }
     _prefs->cad_busycap = constrain(_prefs->cad_busycap, (uint8_t)0, (uint8_t)90);
     _prefs->ui_timezone_offset_minutes =
@@ -279,14 +264,15 @@ void CommonCLI::savePrefs(const char* path) {
     fs_write(&file, _prefs->owner_info, sizeof(_prefs->owner_info));
     fs_write(&file, &_prefs->rx_boost, sizeof(_prefs->rx_boost));
     fs_write(&file, &_prefs->rx_duty_cycle, sizeof(_prefs->rx_duty_cycle));
-    fs_write(&file, &_prefs->apc_enabled, sizeof(_prefs->apc_enabled));
-    fs_write(&file, &_prefs->apc_margin, sizeof(_prefs->apc_margin));
+    /* 292-293: RESERVED — formerly APC, written back unchanged. */
+    fs_write(&file, &_prefs->_reserved_apc_enabled, sizeof(_prefs->_reserved_apc_enabled));
+    fs_write(&file, &_prefs->_reserved_apc_margin, sizeof(_prefs->_reserved_apc_margin));
     fs_write(&file, &_prefs->flood_max_unscoped, sizeof(_prefs->flood_max_unscoped));
     fs_write(&file, &_prefs->flood_max_advert, sizeof(_prefs->flood_max_advert));
     fs_write(&file, &_prefs->meshtimesync, sizeof(_prefs->meshtimesync));
     fs_write(&file, &_prefs->cad_auto, sizeof(_prefs->cad_auto));
     fs_write(&file, &_prefs->cad_offset, sizeof(_prefs->cad_offset));
-    fs_write(&file, &_prefs->cad_probe_interval, sizeof(_prefs->cad_probe_interval));
+    fs_write(&file, &_prefs->probe_interval, sizeof(_prefs->probe_interval));
     fs_write(&file, &_prefs->cad_busycap, sizeof(_prefs->cad_busycap));
     fs_write(&file, &_prefs->ui_timezone_offset_minutes, sizeof(_prefs->ui_timezone_offset_minutes));
 
@@ -346,33 +332,34 @@ void CommonCLI::scheduleReboot(uint8_t type)
     k_work_schedule(&_reboot_work, K_SECONDS(2));
 }
 
+/* CLI commands are case-sensitive, matching upstream Arduino MeshCore.
+ *
+ * A case-insensitive normalizer lived here from 2026-07-12 until 2026-07-19.
+ * It lowercased the first two whitespace-delimited tokens before matching, on
+ * the assumption that a value never appears before the third token.  That is
+ * false for "password <value>", whose value IS token 1 -- so any admin
+ * password containing uppercase was silently stored folded to lowercase and
+ * could never be used to log in again.  ("set guest.password <value>" was
+ * unaffected: three tokens.)
+ *
+ * Do not reintroduce input folding here.  Any scheme that rewrites the buffer
+ * before dispatch has to guess where keywords end and arguments begin, and
+ * that guess is what broke.  If case-insensitivity is wanted again, do it at
+ * the comparison sites so argument bytes are never touched.
+ */
 void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, char* reply) {
-    /* Case-insensitive command keywords.  Lowercase only the first two
-     * whitespace-delimited tokens (the verb and the config key) — the value
-     * (3rd token onward) is preserved verbatim, so case-sensitive arguments
-     * like passwords, node names, owner info, and keys are never mangled.
-     * Fixes e.g. "Get cad" / "SET Cad.Auto on" not being recognized. */
-    char norm[CLI_REPLY_SIZE];
-    {
-        int tok = 0;          /* completed tokens so far */
-        bool in_tok = false;
-        size_t j = 0;
-        for (size_t i = 0; command[i] != '\0' && j < sizeof(norm) - 1; i++) {
-            char c = command[i];
-            if (c == ' ' || c == '\t') {
-                if (in_tok) { in_tok = false; tok++; }
-            } else {
-                in_tok = true;
-                if (tok < 2 && c >= 'A' && c <= 'Z') {
-                    c = (char)(c - 'A' + 'a');
-                }
-            }
-            norm[j++] = c;
-        }
-        norm[j] = '\0';
-        command = norm;
+    if (strcmp(_callbacks->getRole(), "companion") == 0 &&
+        (strcmp(command, "get int.thresh") == 0 ||
+         strncmp(command, "set int.thresh ", 15) == 0 ||
+         strcmp(command, "get agc.reset.interval") == 0 ||
+         strncmp(command, "set agc.reset.interval ", 23) == 0 ||
+         strcmp(command, "get backoff.multiplier") == 0 ||
+         strncmp(command, "set backoff.multiplier ", 23) == 0 ||
+         strcmp(command, "get loop.detect") == 0 ||
+         strncmp(command, "set loop.detect ", 16) == 0)) {
+        strcpy(reply, "Error: not supported on companion");
+        return;
     }
-
     if (strcmp(command, "start dfu") == 0) {
         /* Reboot into UF2 bootloader for firmware update */
         strcpy(reply, "OK - rebooting to UF2 DFU");
@@ -507,7 +494,7 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
         } else if (memcmp(config, "int.thresh", 10) == 0) {
             snprintf(reply, CLI_REPLY_SIZE, "> %u", (uint32_t)_prefs->interference_threshold);
         } else if (memcmp(config, "agc.reset.interval", 18) == 0) {
-            snprintf(reply, CLI_REPLY_SIZE, "> %u", ((uint32_t)_prefs->agc_reset_interval) * 4);
+            strcpy(reply, "Removed - use rxduty instead");
         } else if (memcmp(config, "multi.acks", 10) == 0) {
             snprintf(reply, CLI_REPLY_SIZE, "> %u", (uint32_t)_prefs->multi_acks);
         } else if (memcmp(config, "allow.read.only", 15) == 0) {
@@ -544,8 +531,6 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
             float ff = _callbacks->getFloodDelayFactor();
             snprintf(reply, CLI_REPLY_SIZE, "> adaptive (est=%.1f flood=%.2f)",
                      (double)est, (double)ff);
-        } else if (memcmp(config, "apc.margin", 10) == 0) {
-            snprintf(reply, CLI_REPLY_SIZE, "> %d dB", (int)_callbacks->getAPCTargetMargin());
         } else if (memcmp(config, "flood.max.advert", 16) == 0) {
             snprintf(reply, CLI_REPLY_SIZE, "> %u", (uint32_t)_prefs->flood_max_advert);
         } else if (memcmp(config, "flood.max.unscoped", 18) == 0) {
@@ -577,32 +562,9 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
             } else {
                 strcpy(reply, "> strict");
             }
-        } else if (strcmp(config, "tx apc") == 0) {
-            if (_callbacks->isAPCEnabled()) {
-                int8_t apc = _callbacks->getAPCReduction();
-                float margin = _callbacks->getAPCMargin();
-                int effective = (int)_prefs->tx_power_dbm - (int)apc;
-                snprintf(reply, CLI_REPLY_SIZE,
-                         "> apc=on effective=%ddBm max=%d reduction=%d margin=%.1f target=%d",
-                         effective, (int)_prefs->tx_power_dbm, (int)apc, (double)margin,
-                         (int)_callbacks->getAPCTargetMargin());
-            } else {
-                snprintf(reply, CLI_REPLY_SIZE, "> apc=off max=%ddBm target=%d",
-                         (int)_prefs->tx_power_dbm, (int)_callbacks->getAPCTargetMargin());
-            }
         } else if (strcmp(config, "tx") == 0) {
-            if (_callbacks->isAPCEnabled()) {
-                int8_t apc = _callbacks->getAPCReduction();
-                float margin = _callbacks->getAPCMargin();
-                int effective = (int)_prefs->tx_power_dbm - (int)apc;
-                snprintf(reply, CLI_REPLY_SIZE,
-                         "> %ddBm (apc=on max=%d reduction=%d margin=%.1f target=%d)",
-                         effective, (int)_prefs->tx_power_dbm, (int)apc, (double)margin,
-                         (int)_callbacks->getAPCTargetMargin());
-            } else {
-                snprintf(reply, CLI_REPLY_SIZE, "> %ddBm (apc=off)",
-                         (int)_prefs->tx_power_dbm);
-            }
+            /* Plain number, matching upstream Arduino MeshCore's "> %d". */
+            snprintf(reply, CLI_REPLY_SIZE, "> %d", (int)_prefs->tx_power_dbm);
         } else if (memcmp(config, "freq", 4) == 0) {
             snprintf(reply, CLI_REPLY_SIZE, "> %.3f", (double)_prefs->freq);
         } else if (memcmp(config, "public.key", 10) == 0) {
@@ -640,6 +602,11 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
         } else if (memcmp(config, "dc.restarts", 11) == 0) {
             snprintf(reply, CLI_REPLY_SIZE, "> %u",
                      (uint32_t)_callbacks->getDutyCycleTimeoutRestarts());
+        } else if (memcmp(config, "probe.interval", 14) == 0) {
+            /* Seconds between periodic radio measurements — the noise-floor
+             * sample and the CAD probe that consumes it.  0 = probing off. */
+            snprintf(reply, CLI_REPLY_SIZE, "> %u",
+                     (uint32_t)_prefs->probe_interval);
         } else if (memcmp(config, "cad", 3) == 0) {
             /* Runtime state + per-level probe stats live in the radio.
              * Remote replies get the truncated buffer like meshtimesync. */
@@ -697,9 +664,14 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
             savePrefs();
             strcpy(reply, "OK");
         } else if (memcmp(config, "agc.reset.interval ", 19) == 0) {
-            _prefs->agc_reset_interval = atoi(&config[19]) / 4;
-            savePrefs();
-            snprintf(reply, CLI_REPLY_SIZE, "OK - interval rounded to %u", ((uint32_t)_prefs->agc_reset_interval) * 4);
+            /* Periodic AGC recalibration was removed: it reset the noise floor
+             * to its unseeded sentinel on every fire, forcing a fresh seed and
+             * a full EMA warmup, and it was already forced off under RX duty
+             * cycle.  RX duty cycle is the supported way to cut RX current.
+             * The prefs BYTE is retained (read/written, never acted on) — the
+             * on-disk layout is byte-exact and shifting it would corrupt every
+             * existing node's prefs. */
+            strcpy(reply, "Removed - use rxduty instead");
         } else if (memcmp(config, "cad.auto ", 9) == 0) {
             if (memcmp(&config[9], "on", 2) == 0 || memcmp(&config[9], "off", 3) == 0) {
                 _prefs->cad_auto = (config[9] == 'o' && config[10] == 'n') ? 1 : 0;
@@ -720,12 +692,14 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
                 savePrefs();
                 strcpy(reply, "OK");
             }
-        } else if (memcmp(config, "cad.probe.interval ", 19) == 0) {
-            int val = atoi(&config[19]);
+        /* Governs every periodic radio measurement, not just CAD — the
+         * noise-floor sampler and the CAD probe share one reading. */
+        } else if (memcmp(config, "probe.interval ", 15) == 0) {
+            int val = atoi(&config[15]);
             if (val != 0 && (val < 10 || val > 255)) {
-                strcpy(reply, "Error: interval is 0 (off) or 10-255 seconds");
+                strcpy(reply, "Error: interval is 0 (probing off) or 10-255 seconds");
             } else {
-                _prefs->cad_probe_interval = (uint8_t)val;
+                _prefs->probe_interval = (uint8_t)val;
                 _callbacks->applyCadPrefs();
                 savePrefs();
                 strcpy(reply, "OK");
@@ -946,42 +920,21 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
                 savePrefs();
                 strcpy(reply, "OK");
             }
-        } else if (memcmp(config, "apc.margin ", 11) == 0) {
-            int val = atoi(&config[11]);
-            if (val >= 6 && val <= 30) {
-                _prefs->apc_margin = (uint8_t)val;
-                _callbacks->setAPCTargetMargin((uint8_t)val);
-                savePrefs();
-                snprintf(reply, CLI_REPLY_SIZE, "OK - APC target margin=%d dB", val);
-            } else {
-                strcpy(reply, "Error: range 6-30 dB");
-            }
         } else if (memcmp(config, "tx ", 3) == 0) {
-            if (strcmp(&config[3], "apc") == 0) {
-                _prefs->apc_enabled = 1;
-                _callbacks->setAPCEnabled(true);
-                savePrefs();
-                snprintf(reply, CLI_REPLY_SIZE, "OK - tx power=%d dBm (apc=on)",
-                         (int)_prefs->tx_power_dbm);
-            } else {
-                char *end = nullptr;
-                long parsed = strtol(&config[3], &end, 10);
-                int max_tx = 30;
+            char *end = nullptr;
+            long parsed = strtol(&config[3], &end, 10);
+            int max_tx = 30;
 #ifdef CONFIG_ZEPHCORE_MAX_TX_POWER_DBM
-                max_tx = CONFIG_ZEPHCORE_MAX_TX_POWER_DBM;
+            max_tx = CONFIG_ZEPHCORE_MAX_TX_POWER_DBM;
 #endif
-                if (end == &config[3] || *end != '\0' || parsed < -9 || parsed > max_tx) {
-                    snprintf(reply, CLI_REPLY_SIZE, "Error: range -9 to %d dBm, or 'apc'", max_tx);
-                } else {
-                    int val = (int)parsed;
-                    _prefs->apc_enabled = 0;
-                    _prefs->tx_power_dbm = (int8_t)val;
-                    savePrefs();
-                    _callbacks->setAPCEnabled(false);
-                    _callbacks->setTxPower(_prefs->tx_power_dbm);
-                    snprintf(reply, CLI_REPLY_SIZE, "OK - tx power=%d dBm (apc=off)",
-                             (int)_prefs->tx_power_dbm);
-                }
+            if (end == &config[3] || *end != '\0' || parsed < -9 || parsed > max_tx) {
+                snprintf(reply, CLI_REPLY_SIZE, "Error: range -9 to %d dBm", max_tx);
+            } else {
+                _prefs->tx_power_dbm = (int8_t)parsed;
+                savePrefs();
+                _callbacks->setTxPower(_prefs->tx_power_dbm);
+                snprintf(reply, CLI_REPLY_SIZE, "OK - tx power=%d dBm",
+                         (int)_prefs->tx_power_dbm);
             }
         } else if (sender_timestamp == 0 && memcmp(config, "freq ", 5) == 0) {
             float f = atof(&config[5]);

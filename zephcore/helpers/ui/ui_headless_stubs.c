@@ -17,6 +17,9 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <zephyr/kernel.h>
+#ifdef CONFIG_POWEROFF
+#include <zephyr/sys/poweroff.h>
+#endif
 
 #include "ui_task.h"
 
@@ -51,15 +54,11 @@ WEAK void ui_set_radio_params(uint32_t freq_hz, uint8_t sf,
 	ARG_UNUSED(cr); ARG_UNUSED(tx_power); ARG_UNUSED(noise_floor);
 }
 
-WEAK void ui_set_radio_runtime(int8_t effective_tx_power, bool apc_enabled,
-			       int8_t apc_reduction, int16_t apc_margin_x10,
-			       uint8_t apc_target_margin, uint8_t sync_word,
+WEAK void ui_set_radio_runtime(uint8_t sync_word,
 			       uint16_t preamble_len, bool rx_duty_cycle,
 			       bool radio_ready, bool in_rx, bool tx_active)
 {
-	ARG_UNUSED(effective_tx_power); ARG_UNUSED(apc_enabled);
-	ARG_UNUSED(apc_reduction); ARG_UNUSED(apc_margin_x10);
-	ARG_UNUSED(apc_target_margin); ARG_UNUSED(sync_word);
+	ARG_UNUSED(sync_word);
 	ARG_UNUSED(preamble_len); ARG_UNUSED(rx_duty_cycle);
 	ARG_UNUSED(radio_ready); ARG_UNUSED(in_rx); ARG_UNUSED(tx_active);
 }
@@ -143,6 +142,14 @@ WEAK void ui_set_heartbeat_led(bool enabled)
 
 WEAK void ui_led_force_tx(void) { }
 WEAK void ui_led_confirm_state(bool enabled) { ARG_UNUSED(enabled); }
+
+WEAK void ui_shutdown(void)
+{
+#ifdef CONFIG_POWEROFF
+	ui_prepare_for_system_off();
+	sys_poweroff();
+#endif
+}
 
 WEAK void ui_set_offgrid_mode(bool enabled)
 {

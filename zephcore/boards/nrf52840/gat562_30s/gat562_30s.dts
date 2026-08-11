@@ -70,8 +70,8 @@
 	 * back button is a single GPIO whose tap-count/hold is decoded by the
 	 * filters below — same scheme as the Wio Tracker L1:
 	 *   1 tap  -> KEY_1 (back/cancel)   long hold -> KEY_POWER
-	 *   2 taps -> KEY_B (advert)        3 -> KEY_D (buzzer)
-	 *   4 taps -> KEY_C (GPS)           5 -> KEY_E (LED)
+	 *   2 taps -> KEY_B (LED)        3 -> KEY_D (buzzer)
+	 *   4 taps -> KEY_C (GPS)           5 -> KEY_E (advert)
 	 * (NFC pins P0.09/P0.10 are freed for GPIO by nfct-pins-as-gpios above.)
 	 */
 	buttons: buttons {
@@ -130,7 +130,7 @@
 		compatible = "zephcore,input-multi-tap";
 		input-codes = <INPUT_KEY_A>;
 		tap-codes = <INPUT_KEY_1 INPUT_KEY_B INPUT_KEY_D INPUT_KEY_C INPUT_KEY_E>;
-		tap-delay-ms = <400>;
+		tap-delay-ms = <500>;
 	};
 
 	/* Onboard buzzer on P1.01 (PWM0). The official MeshCore variant defines

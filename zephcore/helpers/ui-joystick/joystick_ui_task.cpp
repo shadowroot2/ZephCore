@@ -10,6 +10,7 @@
 #include "joystick_ui_task.h"
 #include "joystick_defs.h"
 #include "joystick_ui_hooks.h"
+#include <helpers/input/zephcore_input_ascii.h>
 #include <helpers/ui/ui_mesh_actions.h>
 #include <helpers/ui/ui_task.h>
 #include <helpers/AdvertDataHelpers.h>
@@ -440,6 +441,20 @@ static void joystick_ui_input_cb(struct input_event *evt, void *user_data)
 	/* All other keys: fire on press, ignore release */
 	if (!evt->value) return;
 
+	/* A keypad reports typed characters offset above the INPUT_KEY_* code
+	 * space (zephcore_input_ascii.h). Unwrap to plain ASCII, which is what
+	 * the key-space contract in joystick_defs.h reserves 0x20-0x7E for.
+	 *
+	 * Testing the raw event code against 0x20-0x7E instead would be wrong:
+	 * INPUT_KEY_LEFT is 105 and INPUT_KEY_RIGHT is 106, so joystick boards
+	 * would see their arrows turn into the letters 'i' and 'j'. */
+	if (ZEPHCORE_INPUT_IS_ASCII(evt->code)) {
+		if (joystick_queue_initialized) {
+			JoystickUITask::enqueueKey(ZEPHCORE_INPUT_TO_ASCII(evt->code));
+		}
+		return;
+	}
+
 	char key = 0;
 	switch (evt->code) {
 	case INPUT_KEY_LEFT:    key = KEY_LEFT;         break;
@@ -447,10 +462,17 @@ static void joystick_ui_input_cb(struct input_event *evt, void *user_data)
 	case INPUT_KEY_BACK:
 	case INPUT_KEY_ESC:     key = KEY_CANCEL;       break;
 	case INPUT_KEY_1:       key = KEY_CANCEL;       break;
+	/* Keypad boards (ThinkNode M9) — the only input those have */
+	case INPUT_KEY_HOME:    key = KEY_HOME;         break;
+	case INPUT_KEY_MENU:    key = KEY_SELECT;       break;
+	case INPUT_KEY_PAGEUP:  key = KEY_PREV;         break;
+	case INPUT_KEY_PAGEDOWN:key = KEY_NEXT;         break;
+	case INPUT_KEY_F2:      key = KEY_ENTER_LONG;   break;
 	/* Multi tap outputs from input_multi_tap filter */
+	case INPUT_KEY_B:       key = KEY_LED_TOGGLE;   break;  /* 2 taps */
 	case INPUT_KEY_D:       key = KEY_BUZZ_TOGGLE;  break;  /* 3 taps */
 	case INPUT_KEY_C:       key = KEY_GPS_TOGGLE;   break;  /* 4 taps */
-	case INPUT_KEY_E:       key = KEY_LED_TOGGLE;   break;  /* 5 taps */
+	case INPUT_KEY_E:       key = KEY_FLOOD_ADVERT; break;  /* 5 taps */
 	default: break;
 	}
 
@@ -856,6 +878,16 @@ void JoystickUITask::loop()
 			consumed = true;
 		} else if (key == KEY_LED_TOGGLE) {
 			toggleLeds();
+			showAlert(isLedsDisabled() ? "LEDs: OFF" : "LEDs: ON", 1000);
+			consumed = true;
+		} else if (key == KEY_FLOOD_ADVERT) {
+			/* Canonical scoped path: honors prefs.path_hash_mode and the
+			 * default transport scope (same as the Advert menu item). */
+			if (_mesh && _mesh->sendSelfAdvert(true)) {
+				showAlert("Advert flood sent", 1000);
+			} else {
+				showAlert("Advert failed", 1000);
+			}
 			consumed = true;
 		}
 		if (!consumed && _curr) {
@@ -1005,7 +1037,11 @@ void JoystickUITask::toggleLeds()
 {
 	bool new_disabled = !isLedsDisabled();
 	if (_prefs) _prefs->leds_disabled = new_disabled ? 1 : 0;
-	ui_set_heartbeat_led(!new_disabled);
+	/* ui_set_leds_disabled (not ui_set_heartbeat_led): it owns the
+	 * s_leds_disabled gate in ui_common.c. Calling only the heartbeat
+	 * helper left that gate at its boot value, so a node booted with
+	 * leds_disabled=1 could never re-enable its LEDs from the UI. */
+	ui_set_leds_disabled(new_disabled);
 	mesh_set_leds_disabled(new_disabled);
 }
 

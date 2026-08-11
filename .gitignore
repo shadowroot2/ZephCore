@@ -48,6 +48,19 @@ rtt_*.log
 *.a
 *.zip
 
+# ...except the prebuilt formatter DFU packages. These are shipped artifacts, not
+# build output: build.sh publishes them as the Mesh America configurator's `erase`
+# packages (see formatter/README.md, PROVIDER_CATALOG.md), so they must be tracked.
+!formatter/*.zip
+
+# ...and the prebuilt LR1110 radio-firmware updaters. Also shipped artifacts:
+# updating an LR1110 needs Semtech's encrypted images compiled in, so handing
+# someone a prebuilt binary is far more practical than asking them to build the
+# tool. See LR1110_updater/README.md.
+!LR1110_updater/
+!LR1110_updater/*.uf2
+!LR1110_updater/*.bin
+
 # OS junk
 .DS_Store
 Thumbs.db
@@ -118,3 +131,12 @@ PATH_HASH_AUDIT_INDEX.md
 MESHTIMESYNC_PLAN.md
 /meshtimesync-sim/
 releasenotes/RELEASE_NOTES_v1.16.4.md
+
+# Older release notes kept local-only. Renamed 2026-07-16 to the
+# RELEASE_NOTES_<version>-zephcore.md convention; these rules follow the rename.
+# NOTE: the notes file for the CURRENT version must stay TRACKED — the release
+# workflow publishes it as the GitHub release body (body_path). Only add a rule
+# here for versions that are already released.
+releasenotes/RELEASE_NOTES_1.16.3-zephcore.md
+releasenotes/RELEASE_NOTES_1.16.4-zephcore.md
+handover_thinknode_m9.md

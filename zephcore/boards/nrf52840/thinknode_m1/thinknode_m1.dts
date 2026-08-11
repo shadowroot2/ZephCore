@@ -94,7 +94,7 @@
 		compatible = "zephcore,input-multi-tap";
 		input-codes = <INPUT_KEY_0>;
 		tap-codes = <INPUT_KEY_1 INPUT_KEY_LEFT>;
-		tap-delay-ms = <400>;
+		tap-delay-ms = <500>;
 	};
 
 	/* ---- Power control ---- */

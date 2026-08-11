@@ -73,18 +73,19 @@
 	};
 
 	/* Input filter: user button multi-tap detection
-	 * 1 tap  (500ms wait) → KEY_1 = arms SOS; hold >=1s within 3s sends SOS
-	 * 2 taps (500ms wait) → KEY_B = flood advert
+	 * 1 tap  (500ms wait) → KEY_1 = arms SOS; hold >=1s within 3s confirms it
+	 * 2 taps (500ms wait) → KEY_B = LED heartbeat toggle
 	 * 3 taps (500ms wait) → KEY_D = buzzer mute toggle
 	 * 4 taps (500ms wait) → KEY_C = GPS on/off
-	 * 5 taps (immediate)  → KEY_E = LED heartbeat toggle */
+	 * 5 taps (500ms wait) → KEY_E = flood advert
+	 * 6 taps (immediate)  → KEY_H = tracking toggle */
 	user_btn_multitap {
 		compatible = "zephcore,input-multi-tap";
 		/* No 'input' phandle — listen to ALL devices.
 		 * KEY_A is emitted by the longpress pseudo-device,
 		 * not by &buttons, so we must not filter by device. */
 		input-codes = <INPUT_KEY_A>;
-		tap-codes = <INPUT_KEY_1 INPUT_KEY_B INPUT_KEY_D INPUT_KEY_C INPUT_KEY_E>;
+		tap-codes = <INPUT_KEY_1 INPUT_KEY_B INPUT_KEY_D INPUT_KEY_C INPUT_KEY_E INPUT_KEY_H>;
 		tap-delay-ms = <500>;
 	};
 

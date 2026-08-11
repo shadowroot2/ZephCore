@@ -167,14 +167,6 @@
 };
 
 /* Reduce CPU clock from 240 MHz to 160 MHz — saves power, HAL minimum */
-&cpu0 {
-	clock-frequency = <DT_FREQ_M(160)>;
-};
-
-&cpu1 {
-	clock-frequency = <DT_FREQ_M(160)>;
-};
-
 &ledc0 {
 	pinctrl-0 = <&ledc0_default>;
 	pinctrl-names = "default";

@@ -120,7 +120,11 @@ static const struct gpio_dt_spec s_led_enable =
 #define LED_CYCLE_MS                 5000  /* Heartbeat period */
 #define LED_ON_MS                      20  /* Normal pulse width */
 #define LED_ON_MSG_MS                 200  /* Pulse width when unread messages */
+#if defined(ZEPHCORE_REPEATER)
+#define LED_LOW_BATT_THRESHOLD_PCT     15
+#else
 #define LED_LOW_BATT_THRESHOLD_PCT     25
+#endif
 #define LED_LOW_BATT_BLINK_MS           80
 #define LED_LOW_BATT_BLINKS              3
 #if defined(CONFIG_BOARD_T1000_E)
@@ -606,6 +610,11 @@ void ui_invalidate_battery_cache(void)
  *
  * Non-nRF platforms skip the SENSE block; they rely on Zephyr's wakeup-source
  * DT property which is honoured by their respective GPIO drivers.
+ *
+ * Boards with a soft-power rail (the MCU latches its own supply on) add a
+ * "zephcore,poweroff-gpios" node; its pins are released last, which cuts the
+ * rail outright instead of leaving it latched through System OFF. Boards
+ * without that node are unaffected — step 6 compiles to nothing.
  */
 void ui_prepare_for_system_off(void)
 {
@@ -668,6 +677,34 @@ void ui_prepare_for_system_off(void)
 #undef _SW0_FLAGS
 	}
 #endif /* CONFIG_SOC_FAMILY_NORDIC_NRF && sw0 */
+
+	/* 6. Release the board power latch — must be dead last.
+	 *
+	 * Only present on soft-power boards (see zephcore,poweroff-gpios). The
+	 * rail is cut here rather than in step 3 because the pins are ordered
+	 * loads-first/latch-last, and because step 5 must have observed the
+	 * button release first: on these boards the button is also the power-on
+	 * input, so dropping the latch while it is still held would let the I/O
+	 * controller re-latch the rail immediately.
+	 *
+	 * On battery this does not return — the supply is gone mid-loop, which
+	 * is the intended outcome. On USB the rail may be held up externally, in
+	 * which case we simply fall through to the caller's sys_poweroff() and
+	 * land in System OFF as before. */
+#if DT_HAS_COMPAT_STATUS_OKAY(zephcore_poweroff_gpios)
+	{
+#define _PWROFF_NODE DT_COMPAT_GET_ANY_STATUS_OKAY(zephcore_poweroff_gpios)
+		static const struct gpio_dt_spec poweroff_gpios[] = {
+			DT_FOREACH_PROP_ELEM_SEP(_PWROFF_NODE, gpios,
+						 GPIO_DT_SPEC_GET_BY_IDX, (,))
+		};
+
+		for (size_t i = 0; i < ARRAY_SIZE(poweroff_gpios); i++) {
+			gpio_pin_configure_dt(&poweroff_gpios[i], GPIO_OUTPUT_INACTIVE);
+		}
+#undef _PWROFF_NODE
+	}
+#endif
 }
 
 /* ========== Low-battery auto-shutdown ==========

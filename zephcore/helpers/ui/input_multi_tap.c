@@ -133,8 +133,8 @@ static int __maybe_unused multi_tap_init(const struct device *dev)
 		     "input-codes must have at least 1 entry");                                    \
 	BUILD_ASSERT(DT_INST_PROP_LEN(inst, tap_codes) >= 1,                                     \
 		     "tap-codes must have at least 1 entry");                                      \
-	BUILD_ASSERT(DT_INST_PROP_LEN(inst, tap_codes) <= 5,                                     \
-		     "tap-codes must have at most 5 entries");                                     \
+	BUILD_ASSERT(DT_INST_PROP_LEN(inst, tap_codes) <= 6,                                     \
+		     "tap-codes must have at most 6 entries");                                     \
                                                                                                    \
 	INPUT_CALLBACK_DEFINE_NAMED(                                                               \
 		COND_CODE_1(DT_INST_NODE_HAS_PROP(inst, input),                                   \

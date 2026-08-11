@@ -1165,9 +1165,14 @@ static void tx_drain_work_fn(struct k_work *work)
 		bt_conn_unref(conn);
 		return;
 	} else {
-		/* Other error - drop frame */
+		/* Other error - drop frame.  Re-kick rather than returning: on_tx_idle
+		 * only fires from the queue-empty path below, and it is the sole re-arm
+		 * for the contact dump — bailing out here stranded the dump forever.
+		 * This terminates: the frame is already off the queue, so each pass
+		 * either drains one or reaches empty and signals idle. */
 		ble_tx_in_progress = false;
 		LOG_WRN("tx_drain[BLE]: send failed err=%d, dropped frame", err);
+		kick_tx_drain();
 		bt_conn_unref(conn);
 		return;
 	}

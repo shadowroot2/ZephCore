@@ -47,6 +47,15 @@ LOG_MODULE_REGISTER(ui_pages, CONFIG_ZEPHCORE_BOARD_LOG_LEVEL);
  *   DOTS_Y..SEP_Y:    Page indicator dots + separator line
  *   CONTENT_Y..end:    Page-specific content
  */
+/* Full-scale end of the radio page's TX power bar.  The board's configured
+ * ceiling when it has one (same symbol CommonCLI clamps "set tx" against),
+ * else the common SX126x/LR11xx maximum. */
+#ifdef CONFIG_ZEPHCORE_MAX_TX_POWER_DBM
+#define TX_POWER_BAR_MAX_DBM  CONFIG_ZEPHCORE_MAX_TX_POWER_DBM
+#else
+#define TX_POWER_BAR_MAX_DBM  22
+#endif
+
 #define FONT_W       mc_display_font_width()
 #define FONT_H       mc_display_font_height()
 #define DISP_W       mc_display_width()
@@ -85,20 +94,26 @@ static inline int ui_content_y(void)
  * mc_display_has_color(); monochrome displays keep the existing CFB path. */
 #define UI_COLOR_BG         MC_COLOR_BLACK
 #define UI_COLOR_HEADER_BG  0x2104  /* dark neutral panel */
-#define UI_COLOR_TITLE      0xffde  /* warm white */
-#define UI_COLOR_LABEL      0x8410  /* muted gray */
+#define UI_COLOR_TITLE      MC_COLOR_LIGHT_GRAY  /* soft white, slightly recessed vs values */
+#define UI_COLOR_LABEL      MC_COLOR_WHITE  /* small-TFT gamma renders mid-gray near-black */
 #define UI_COLOR_VALUE      MC_COLOR_WHITE
-#define UI_COLOR_OK         0x07e0
+#define UI_COLOR_OK         MC_COLOR_GREEN
 #define UI_COLOR_ACTIVE     UI_COLOR_OK
 #define UI_COLOR_WARN       0xffa0
 #define UI_COLOR_ERROR      MC_COLOR_RED
-#define UI_COLOR_DIM        0x4208
-#define UI_COLOR_DISABLED   MC_COLOR_GRAY
+#define UI_COLOR_DIM        MC_COLOR_LIGHT_GRAY  /* small-TFT gamma (T114) crushes anything
+						  * darker toward black — in person this reads
+						  * as a proper gray, not white (PR #62) */
+#define UI_COLOR_DISABLED   UI_COLOR_DIM  /* off/disabled states dimmer than values */
+#define UI_COLOR_FAINT      0x4208  /* dark structural fills (badge bg, separators, bar tracks) —
+				     * decoration, must stay subtle so content pops against it */
 #define UI_COLOR_TX         MC_COLOR_ORANGE
 #define UI_COLOR_RX         UI_COLOR_OK
 
-#define COLOR_FONT_W 6
-#define COLOR_FONT_H 8
+/* Glyph cell of the color renderer (display.c upscales the 6x8 font under
+ * LARGE_FONT) — NOT the CFB font metrics, which can differ (10x16 vs 9x12). */
+#define COLOR_FONT_W  mc_display_color_font_width()
+#define COLOR_FONT_H  mc_display_color_font_height()
 #define ACTIVITY_GRAPH_SAMPLES 16
 
 /* Vertically center `total` rows of text within the content area and
@@ -162,12 +177,13 @@ static const enum ui_page active_pages[] = {
 	UI_PAGE_TRAFFIC,
 	UI_PAGE_BLUETOOTH,
 	UI_PAGE_ADVERT,
-	UI_PAGE_SOS,
 	/* Heltec V3 has no GNSS hardware.  Do not make the user cycle through
 	 * a permanently empty "No GPS" screen on this single-button board. */
 #if !defined(CONFIG_BOARD_HELTEC_WIFI_LORA32_V3)
 	UI_PAGE_GPS,
+	UI_PAGE_TRACKING,
 #endif
+	UI_PAGE_SOS,
 #ifdef CONFIG_ZEPHCORE_UI_BUZZER
 	UI_PAGE_BUZZER,
 #endif
@@ -334,7 +350,7 @@ static void render_page_indicator(void)
 
 	/* Separator line below dots */
 	if (color) {
-		mc_display_color_fill_rect(0, SEP_Y, DISP_W, 1, UI_COLOR_DIM);
+		mc_display_color_fill_rect(0, SEP_Y, DISP_W, 1, UI_COLOR_FAINT);
 	} else {
 		mc_display_hline(0, SEP_Y, DISP_W);
 	}
@@ -368,7 +384,7 @@ static void draw_color_segments_at(int x, int y, const char *label,
 				   const char *value, uint16_t value_color)
 {
 	mc_display_color_text(x, y, label, UI_COLOR_LABEL);
-	x += (int)strlen(label) * 6;
+	x += (int)strlen(label) * COLOR_FONT_W;
 	mc_display_color_text(x, y, value, value_color);
 }
 
@@ -387,7 +403,7 @@ static void draw_badge(int x, int y, const char *text, uint16_t color)
 {
 	int w = color_text_width(text) + 4;
 
-	mc_display_color_fill_rect(x, y - 1, w, COLOR_FONT_H + 2, UI_COLOR_DIM);
+	mc_display_color_fill_rect(x, y - 1, w, COLOR_FONT_H + 2, UI_COLOR_FAINT);
 	mc_display_color_text(x + 2, y, text, color);
 }
 
@@ -409,7 +425,7 @@ static void draw_metric_bar(int x, int y, int w, int h, int value,
 
 	int filled = (w * value) / max_value;
 
-	mc_display_color_fill_rect(x, y, w, h, UI_COLOR_DIM);
+	mc_display_color_fill_rect(x, y, w, h, UI_COLOR_FAINT);
 	if (filled > 0) {
 		mc_display_color_fill_rect(x, y, filled, h, color);
 	}
@@ -498,7 +514,7 @@ static void draw_activity_graph(int x, int y, int w, int h)
 	sample_activity_graph();
 
 	mc_display_color_fill_rect(x, y, w, h, UI_COLOR_BG);
-	mc_display_color_fill_rect(x, mid, w, 1, UI_COLOR_DIM);
+	mc_display_color_fill_rect(x, mid, w, 1, UI_COLOR_FAINT);
 
 	for (int i = 0; i < ACTIVITY_GRAPH_SAMPLES; i++) {
 		uint8_t idx = (uint8_t)((activity_head + 1U + i) %
@@ -559,6 +575,7 @@ static const char *tiny_page_title(enum ui_page p)
 	case UI_PAGE_SENSORS:   return "SENSORS";
 	case UI_PAGE_OFFGRID:   return "OFFGRID";
 	case UI_PAGE_DFU:       return "DFU";
+	case UI_PAGE_TRACKING:  return "TRACKING";
 	case UI_PAGE_SOS:       return "SOS";
 	case UI_PAGE_SHUTDOWN:  return "SHUTDOWN";
 	case UI_PAGE_STATUS:    return "STATUS";
@@ -794,14 +811,11 @@ static void render_radio_mono(void)
 	const char *rx_mode = state.lora_rx_duty_cycle ? "DC" : "CONT";
 
 	if (ui_tiny()) {
-		int tx = state.lora_effective_tx_power > 0
-			 ? state.lora_effective_tx_power : state.lora_tx_power;
-
 		snprintf(buf, sizeof(buf), "%u.%uM", freq_mhz, freq_frac / 100);
 		draw_centered(centered_row(0, 3), buf);
 		snprintf(buf, sizeof(buf), "SF%u BW%u", state.lora_sf, bw_int);
 		draw_centered(centered_row(1, 3), buf);
-		snprintf(buf, sizeof(buf), "P%d %s", tx, rx_mode);
+		snprintf(buf, sizeof(buf), "P%d %s", state.lora_tx_power, rx_mode);
 		draw_centered(centered_row(2, 3), buf);
 		return;
 	}
@@ -822,20 +836,8 @@ static void render_radio_mono(void)
 	mc_display_text(0, y, buf, false);
 	y += LINE_H;
 
-	if (state.lora_apc_enabled) {
-		snprintf(buf, sizeof(buf), "TX:%d/%ddBm APC:on",
-			 state.lora_effective_tx_power, state.lora_tx_power);
-	} else {
-		snprintf(buf, sizeof(buf), "TX:%ddBm APC:off", state.lora_tx_power);
-	}
-	mc_display_text(0, y, buf, false);
-	y += LINE_H;
-
-	snprintf(buf, sizeof(buf), "R%d M%d.%d T%u %s/%s",
-		 state.lora_apc_reduction,
-		 state.lora_apc_margin_x10 / 10,
-		 abs(state.lora_apc_margin_x10 % 10),
-		 state.lora_apc_target_margin, packet_state, rx_mode);
+	snprintf(buf, sizeof(buf), "TX:%ddBm %s/%s",
+		 state.lora_tx_power, packet_state, rx_mode);
 	mc_display_text(0, y, buf, false);
 	y += LINE_H;
 
@@ -858,20 +860,18 @@ static void render_radio_color(void)
 	uint16_t bw_frac = state.lora_bw_khz_x10 % 10;
 	const char *packet_state = radio_state_label();
 	const char *rx_mode = state.lora_rx_duty_cycle ? "DC" : "CONT";
-	uint16_t warn_color = (state.lora_apc_enabled && state.lora_apc_reduction > 0)
-			      ? UI_COLOR_WARN : UI_COLOR_OK;
 
 	{
 		uint16_t state_color = state.lora_tx_active ? UI_COLOR_WARN :
 				       state.lora_in_rx ? UI_COLOR_ACTIVE :
 				       state.lora_radio_ready ? UI_COLOR_OK
 							      : UI_COLOR_DISABLED;
-		uint16_t tx_color = (state.lora_apc_enabled &&
-				     state.lora_apc_reduction > 0)
-				    ? UI_COLOR_WARN : UI_COLOR_OK;
-		int max_tx = state.lora_tx_power > 0 ? state.lora_tx_power : 22;
-		int eff_tx = state.lora_effective_tx_power > 0
-			     ? state.lora_effective_tx_power : state.lora_tx_power;
+		uint16_t tx_color = UI_COLOR_OK;
+		/* Scale the TX bar against the board's hardware ceiling, not
+		 * against the current setting — the old max came from APC
+		 * (effective vs. configured power) and with APC gone both ends
+		 * would be lora_tx_power, pinning the bar permanently full. */
+		int max_tx = TX_POWER_BAR_MAX_DBM;
 		int badge_x;
 
 		mc_display_color_fill_rect(0, y - 1, DISP_W, COLOR_FONT_H + 2,
@@ -900,25 +900,10 @@ static void render_radio_color(void)
 		draw_color_segments(y, "LoRa ", buf, UI_COLOR_VALUE);
 		y += LINE_H;
 
-		if (state.lora_apc_enabled) {
-			snprintf(buf, sizeof(buf), "%d/%ddBm",
-				 state.lora_effective_tx_power, state.lora_tx_power);
-		} else {
-			snprintf(buf, sizeof(buf), "%ddBm", state.lora_tx_power);
-		}
+		snprintf(buf, sizeof(buf), "%ddBm", state.lora_tx_power);
 		draw_color_segments(y, "TX ", buf, tx_color);
-		draw_metric_bar(DISP_W - 50, y + 2, 48, 5, eff_tx, max_tx, tx_color);
-		y += LINE_H;
-
-		snprintf(buf, sizeof(buf), "red %d M%d.%d T%u",
-			 state.lora_apc_reduction,
-			 state.lora_apc_margin_x10 / 10,
-			 abs(state.lora_apc_margin_x10 % 10),
-			 state.lora_apc_target_margin);
-		draw_color_segments(y, "APC ", buf, warn_color);
-		draw_badge(DISP_W - color_text_width("APC") - 4, y, "APC",
-			   !state.lora_apc_enabled ? UI_COLOR_DISABLED :
-			   state.lora_apc_reduction > 0 ? UI_COLOR_WARN : UI_COLOR_OK);
+		draw_metric_bar(DISP_W - 50, y + 2, 48, 5, state.lora_tx_power,
+				max_tx, tx_color);
 		y += LINE_H;
 
 		char rx_count[6];
@@ -1058,7 +1043,7 @@ static void render_bluetooth_color(void)
 			      !state.ble_enabled ? "disabled" :
 			      state.ble_connected ? "connected" : "advertising",
 			      color);
-	y += LINE_H + 4;
+	y += LINE_H + (FONT_H / 4);
 	draw_centered_color(y,
 			    state.ble_enabled ? "Press to disable"
 					      : "Press to enable",
@@ -1109,7 +1094,7 @@ static void render_advert_color(void)
 
 	draw_badge(0, y, "ADV", just_sent ? UI_COLOR_OK : UI_COLOR_ACTIVE);
 	mc_display_color_text(32, y, "Zero-hop advert", UI_COLOR_VALUE);
-	y += LINE_H + 2;
+	y += LINE_H + (FONT_H / 2);
 
 	if (just_sent) {
 		draw_centered_color(y,
@@ -1182,6 +1167,65 @@ static void render_sos(void)
 	}
 #endif
 	render_sos_mono();
+}
+
+static void render_tracking_mono(void)
+{
+	char buf[32];
+	int y = CONTENT_Y;
+
+	if (!state.gps_available) {
+		draw_centered(centered_row(0, 2), "Tracking unavailable");
+		draw_centered(centered_row(1, 2), "No GPS");
+		return;
+	}
+
+	snprintf(buf, sizeof(buf), "Tracking: %s",
+		 state.tracking_enabled ? "on" : "off");
+	mc_display_text(0, y, buf, false);
+	y += LINE_H;
+	snprintf(buf, sizeof(buf), "Interval: %um",
+		 state.tracking_interval_minutes);
+	mc_display_text(0, y, buf, false);
+	y += LINE_H;
+	draw_centered(y + 8, state.tracking_enabled ?
+		      "Press to Disable" : "Press to Enable");
+}
+
+#if MC_DISPLAY_COLOR_PANEL
+static void render_tracking_color(void)
+{
+	char buf[32];
+	int y = CONTENT_Y;
+
+	if (!state.gps_available) {
+		draw_centered_color(y, "No GPS", UI_COLOR_WARN);
+		return;
+	}
+	snprintf(buf, sizeof(buf), "Tracking: %s",
+		 state.tracking_enabled ? "on" : "off");
+	mc_display_color_text(0, y, buf,
+		state.tracking_enabled ? UI_COLOR_OK : UI_COLOR_LABEL);
+	y += LINE_H;
+	snprintf(buf, sizeof(buf), "Interval: %um",
+		 state.tracking_interval_minutes);
+	mc_display_color_text(0, y, buf, UI_COLOR_LABEL);
+	y += LINE_H;
+	draw_centered_color(y + 8,
+			    state.tracking_enabled ? "Press to Disable" : "Press to Enable",
+			    UI_COLOR_VALUE);
+}
+#endif /* MC_DISPLAY_COLOR_PANEL */
+
+static void render_tracking(void)
+{
+#if MC_DISPLAY_COLOR_PANEL
+	if (mc_display_has_color()) {
+		render_tracking_color();
+		return;
+	}
+#endif
+	render_tracking_mono();
 }
 
 /* Format seconds into compact time string: "3m20s", "1h05m", "12s" */
@@ -1744,6 +1788,7 @@ static const page_render_fn renderers[] = {
 	[UI_PAGE_SENSORS]   = render_sensors,
 	[UI_PAGE_OFFGRID]   = render_offgrid,
 	[UI_PAGE_DFU]       = render_dfu,
+	[UI_PAGE_TRACKING]  = render_tracking,
 	[UI_PAGE_SOS]       = render_sos,
 	[UI_PAGE_SHUTDOWN]  = render_shutdown,
 	[UI_PAGE_STATUS]    = render_status,
@@ -1900,4 +1945,10 @@ void ui_pages_sos_sent(bool success)
 	state.sos_waiting_fix = false;
 	state.sos_sent_time = k_uptime_get_32();
 	state.sos_send_failed = !success;
+}
+
+void ui_pages_set_tracking(bool enabled, uint16_t interval_minutes)
+{
+	state.tracking_enabled = enabled;
+	state.tracking_interval_minutes = interval_minutes;
 }

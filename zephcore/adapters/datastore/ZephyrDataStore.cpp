@@ -659,17 +659,14 @@ void ZephyrDataStore::loadPrefs(NodePrefs &prefs)
 		prefs.leds_disabled = 0;  /* Default: LEDs on */
 	}
 
-	/* Offset 94: apc_enabled (ZephCore extension) */
+	/* Offsets 94-95: RESERVED — formerly apc_enabled / apc_margin (APC,
+	 * removed in 1.16.6). Still consumed so offset 96 onward keeps landing
+	 * where already-deployed nodes wrote it. Values are ignored. */
 	if (off < len) {
-		prefs.apc_enabled = buf[off++];
+		prefs._reserved_apc_enabled = buf[off++];
 	}
-
-	/* Offset 95: apc_margin (ZephCore extension) */
 	if (off < len) {
-		prefs.apc_margin = buf[off++];
-		if (prefs.apc_margin < 6 || prefs.apc_margin > 30) {
-			prefs.apc_margin = 20;  /* companion default */
-		}
+		prefs._reserved_apc_margin = buf[off++];
 	}
 
 	/* Offset 96: default_scope_name (31 bytes) — v11 FIRMWARE_VER_CODE */
@@ -795,12 +792,12 @@ void ZephyrDataStore::loadPrefs(NodePrefs &prefs)
 		}
 	}
 
-	/* Offset 157: cad_probe_interval (ZephCore extension, seconds; 0 = off).
+	/* Offset 157: probe_interval (ZephCore extension, seconds; 0 = off).
 	 * Absent in pre-existing files → keep the in-RAM default (60). */
 	if (off < len) {
-		prefs.cad_probe_interval = buf[off++];
-		if (prefs.cad_probe_interval != 0 && prefs.cad_probe_interval < 10) {
-			prefs.cad_probe_interval = 10;
+		prefs.probe_interval = buf[off++];
+		if (prefs.probe_interval != 0 && prefs.probe_interval < 10) {
+			prefs.probe_interval = 10;
 		}
 	}
 
@@ -813,24 +810,48 @@ void ZephyrDataStore::loadPrefs(NodePrefs &prefs)
 		}
 	}
 
-	/* Offset 159: UI timezone in signed minutes (2 bytes LE). */
-	if (off + 2 <= len) {
+	/* Legacy local layout (162 bytes): timezone at 159 and emergency flag at
+	 * 161. Master v1.16.6 instead used 159..162 for adc_multiplier. New files
+	 * append the local fields after that multiplier (166 bytes), so all deployed
+	 * layouts can be identified unambiguously by total length. */
+	if (len == 162) {
 		prefs.ui_timezone_offset_minutes = (int16_t)((uint16_t)buf[off] |
 			((uint16_t)buf[off + 1] << 8));
-		off += 2;
 		if (prefs.ui_timezone_offset_minutes < -1439 ||
 			prefs.ui_timezone_offset_minutes > 1439) {
 			prefs.ui_timezone_offset_minutes = CONFIG_ZEPHCORE_UI_TIMEZONE_OFFSET_MINUTES;
 		}
+		prefs.auto_shutdown_emergency = buf[off + 2] ? 1 : 0;
+		return;
+	} else {
+		if (off + sizeof(float) <= len) {
+			memcpy(&prefs.adc_multiplier, &buf[off], sizeof(float));
+			off += sizeof(float);
+			if (prefs.adc_multiplier != prefs.adc_multiplier ||
+			    prefs.adc_multiplier < 0.0f || prefs.adc_multiplier > 30000.0f) {
+				prefs.adc_multiplier = 0.0f;
+			}
+		}
+		if (off + 2 <= len) {
+			prefs.ui_timezone_offset_minutes = (int16_t)((uint16_t)buf[off] |
+				((uint16_t)buf[off + 1] << 8));
+			off += 2;
+			if (prefs.ui_timezone_offset_minutes < -1439 ||
+			    prefs.ui_timezone_offset_minutes > 1439) {
+				prefs.ui_timezone_offset_minutes = CONFIG_ZEPHCORE_UI_TIMEZONE_OFFSET_MINUTES;
+			}
+		}
+		prefs.auto_shutdown_emergency = off < len ? (buf[off++] ? 1 : 0) : 1;
 	}
 
-	/* Offset 161: send the low-battery emergency notice before automatic shutdown.
-	 * Older prefs blobs stop at the timezone field; preserve the previous
-	 * behavior for them by defaulting this new extension to enabled. */
-	if (off < len) {
-		prefs.auto_shutdown_emergency = buf[off++] ? 1 : 0;
-	} else {
-		prefs.auto_shutdown_emergency = 1;
+	/* Offset 166: companion tracking interval in whole minutes. Tracking state
+	 * itself is deliberately volatile and always starts OFF after boot. */
+	if (off + 2 <= len) {
+		prefs.tracking_interval_minutes = (uint16_t)buf[off] |
+			((uint16_t)buf[off + 1] << 8);
+		if (prefs.tracking_interval_minutes < 5) {
+			prefs.tracking_interval_minutes = 5;
+		}
 	}
 }
 
@@ -882,10 +903,10 @@ void ZephyrDataStore::savePrefs(const NodePrefs &prefs)
 	buf[off++] = prefs.rx_boost;
 	/* Offset 93: leds_disabled (ZephCore extension) */
 	buf[off++] = prefs.leds_disabled;
-	/* Offset 94: apc_enabled (ZephCore extension) */
-	buf[off++] = prefs.apc_enabled;
-	/* Offset 95: apc_margin (ZephCore extension) */
-	buf[off++] = prefs.apc_margin;
+	/* Offsets 94-95: RESERVED — formerly apc_enabled / apc_margin (removed
+	 * in 1.16.6). Written back unchanged to hold the layout. */
+	buf[off++] = prefs._reserved_apc_enabled;
+	buf[off++] = prefs._reserved_apc_margin;
 	/* Offset 96: default_scope_name (31 bytes) — v11 FIRMWARE_VER_CODE */
 	memcpy(&buf[off], prefs.default_scope_name, 31);
 	off += 31;
@@ -917,16 +938,22 @@ void ZephyrDataStore::savePrefs(const NodePrefs &prefs)
 	buf[off++] = prefs.cad_auto;
 	/* Offset 156: cad_offset (ZephCore extension, signed) */
 	buf[off++] = (uint8_t)prefs.cad_offset;
-	/* Offset 157: cad_probe_interval (ZephCore extension, seconds) */
-	buf[off++] = prefs.cad_probe_interval;
+	/* Offset 157: probe_interval (ZephCore extension, seconds) */
+	buf[off++] = prefs.probe_interval;
 	/* Offset 158: cad_busycap (ZephCore extension, percent) */
 	buf[off++] = prefs.cad_busycap;
-	/* Offset 159: UI timezone in signed minutes (2 bytes LE) */
+	/* Offset 159: ADC multiplier (float LE, 0 = board default). */
+	memcpy(&buf[off], &prefs.adc_multiplier, sizeof(float));
+	off += sizeof(float);
+	/* Offset 163: UI timezone in signed minutes (2 bytes LE). */
 	buf[off++] = (uint16_t)prefs.ui_timezone_offset_minutes & 0xFF;
 	buf[off++] = ((uint16_t)prefs.ui_timezone_offset_minutes >> 8) & 0xFF;
-	/* Offset 161: auto-shutdown emergency notice enabled */
+	/* Offset 165: auto-shutdown emergency notice enabled. */
 	buf[off++] = prefs.auto_shutdown_emergency ? 1 : 0;
-	/* Total: 162 bytes */
+	/* Offset 166: companion tracking interval in whole minutes. */
+	buf[off++] = prefs.tracking_interval_minutes & 0xFF;
+	buf[off++] = (prefs.tracking_interval_minutes >> 8) & 0xFF;
+	/* Total: 168 bytes. */
 
 	bool ok = atomicReplaceFile(PREFS_FILE, buf, off);
 	LOG_DBG("savePrefs: wrote %s, ok=%d (%d bytes), name='%.16s'",

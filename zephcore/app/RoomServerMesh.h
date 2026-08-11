@@ -105,6 +105,7 @@ class RoomServerMesh : public mesh::Mesh, public CommonCLICallbacks {
 
     /* Room server: shared-post buffer + push-to-client sync */
     void addPost(ClientInfo* client, const char* postData);
+    void storePost(const mesh::Identity& author, const char* postData);
     void pushPostToClient(ClientInfo* client, PostInfo& post);
     uint8_t getUnsyncedCount(ClientInfo* client);
     bool processAck(const uint8_t* data);
@@ -138,12 +139,6 @@ protected:
     int getInterferenceThreshold() const override {
         return _prefs.interference_threshold;
     }
-    int getAGCResetInterval() const override {
-        if (_prefs.rx_duty_cycle) {
-            return 0;
-        }
-        return ((int)_prefs.agc_reset_interval) * 4000;
-    }
     uint8_t getExtraAckTransmitCount() const override {
         return _prefs.multi_acks;
     }
@@ -154,7 +149,7 @@ protected:
     }
     void applyCadPrefs() override {
         _radio->setCadParams(_prefs.cad_auto != 0, _prefs.cad_offset,
-                             _prefs.cad_probe_interval, _prefs.cad_busycap);
+                             _prefs.probe_interval, _prefs.cad_busycap);
     }
     void resetCadStats() override {
         _radio->resetCadStats();
@@ -179,6 +174,9 @@ public:
                  mesh::RNG& rng, mesh::RTCClock& rtc, mesh::MeshTables& tables);
 
     void begin(RepeaterDataStore* store);
+
+    /* Post authored by the server itself (admin "room.post <msg>" command). */
+    void addSystemPost(const char* postData);
 
     /* CommonCLICallbacks */
     const char* getFirmwareVer() override { return FIRMWARE_VERSION; }
@@ -233,31 +231,6 @@ public:
      * other radios return 0 from the base class). */
     uint32_t getDutyCycleTimeoutRestarts() const override;
     void resetDutyCycleTimeoutRestarts() override;
-
-#ifdef CONFIG_ZEPHCORE_APC
-    /* Adaptive Power Control callbacks */
-    int8_t getAPCReduction() const override {
-        return getPowerController().getPowerReduction();
-    }
-    float getAPCMargin() const override {
-        return getPowerController().getMarginEstimate();
-    }
-    bool isAPCEnabled() const override {
-        return getPowerController().isEnabled();
-    }
-    void setAPCEnabled(bool en) override {
-        getPowerController().setEnabled(en);
-        if (!en) {
-            _radio->setTxPowerReduction(0);
-        }
-    }
-    uint8_t getAPCTargetMargin() const override {
-        return getPowerController().getTargetMargin();
-    }
-    void setAPCTargetMargin(uint8_t margin_db) override {
-        getPowerController().setTargetMargin(margin_db);
-    }
-#endif
 
     void handleCommand(uint32_t sender_timestamp, char* command, char* reply);
     void loop();

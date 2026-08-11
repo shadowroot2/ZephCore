@@ -32,6 +32,7 @@ enum ui_page {
 	UI_PAGE_SENSORS,        /* Environment sensor data */
 	UI_PAGE_OFFGRID,        /* Offgrid mode (client repeat) toggle */
 	UI_PAGE_DFU,            /* BLE DFU bootloader entry */
+	UI_PAGE_TRACKING,       /* Periodic #tracks location reporting */
 	UI_PAGE_SOS,            /* Send SOS group message */
 	UI_PAGE_SHUTDOWN,       /* Hibernate / power off */
 	UI_PAGE_STATUS,         /* Repeater status (uptime, time, packets) */
@@ -66,11 +67,6 @@ struct ui_state {
 	uint8_t  lora_cr;
 	int8_t   lora_tx_power;
 	int16_t  lora_noise_floor;
-	int8_t   lora_effective_tx_power;
-	bool     lora_apc_enabled;
-	int8_t   lora_apc_reduction;
-	int16_t  lora_apc_margin_x10;
-	uint8_t  lora_apc_target_margin;
 	uint8_t  lora_sync_word;
 	uint16_t lora_preamble_len;
 	bool     lora_rx_duty_cycle;
@@ -95,6 +91,10 @@ struct ui_state {
 	uint8_t  gps_state;       /* 0=OFF, 1=STANDBY, 2=ACQUIRING */
 	uint32_t gps_last_fix_age_s;  /* seconds since last fix (UINT32_MAX=never) */
 	uint32_t gps_next_search_s;   /* seconds until next search (0=now/off) */
+
+	/* Tracking page */
+	bool     tracking_enabled;
+	uint16_t tracking_interval_minutes;
 
 	/* Buzzer page */
 	bool     buzzer_quiet;     /* true = muted */
@@ -134,6 +134,7 @@ void ui_pages_advert_sent(bool flood);
 /** SOS status feedback for the SOS page. */
 void ui_pages_sos_waiting(void);
 void ui_pages_sos_sent(bool success);
+void ui_pages_set_tracking(bool enabled, uint16_t interval_minutes);
 
 /**
  * Get the global UI state for updating from main app.

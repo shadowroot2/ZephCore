@@ -81,6 +81,8 @@ struct RepeaterStats {
     uint32_t n_recv_errors;
 };
 
+typedef bool (*RepeaterLocalCommandHandler)(const char *command, char *reply);
+
 class RepeaterMesh : public mesh::Mesh, public CommonCLICallbacks {
     mesh::MainBoard& _board;
     RepeaterDataStore* _store;
@@ -104,6 +106,7 @@ class RepeaterMesh : public mesh::Mesh, public CommonCLICallbacks {
     unsigned long pending_discover_until;
     bool region_load_active;
     unsigned long dirty_contacts_expiry;
+    RepeaterLocalCommandHandler _local_command_handler;
 #if MAX_NEIGHBOURS > 0
     NeighbourInfo neighbours[MAX_NEIGHBOURS];
 #endif
@@ -169,12 +172,6 @@ protected:
     int getInterferenceThreshold() const override {
         return _prefs.interference_threshold;
     }
-    int getAGCResetInterval() const override {
-        if (_prefs.rx_duty_cycle) {
-            return 0;
-        }
-        return ((int)_prefs.agc_reset_interval) * 4000;
-    }
     uint8_t getExtraAckTransmitCount() const override {
         return _prefs.multi_acks;
     }
@@ -185,7 +182,7 @@ protected:
     }
     void applyCadPrefs() override {
         _radio->setCadParams(_prefs.cad_auto != 0, _prefs.cad_offset,
-                             _prefs.cad_probe_interval, _prefs.cad_busycap);
+                             _prefs.probe_interval, _prefs.cad_busycap);
     }
     void resetCadStats() override {
         _radio->resetCadStats();
@@ -227,6 +224,10 @@ public:
                  mesh::RNG& rng, mesh::RTCClock& rtc, mesh::MeshTables& tables);
 
     void begin(RepeaterDataStore* store);
+
+    void setLocalCommandHandler(RepeaterLocalCommandHandler handler) {
+        _local_command_handler = handler;
+    }
 
     void sendNodeDiscoverReq();
 
@@ -285,33 +286,15 @@ public:
     uint32_t getDutyCycleTimeoutRestarts() const override;
     void resetDutyCycleTimeoutRestarts() override;
 
-#ifdef CONFIG_ZEPHCORE_APC
-    /* Adaptive Power Control callbacks */
-    int8_t getAPCReduction() const override {
-        return getPowerController().getPowerReduction();
-    }
-    float getAPCMargin() const override {
-        return getPowerController().getMarginEstimate();
-    }
-    bool isAPCEnabled() const override {
-        return getPowerController().isEnabled();
-    }
-    void setAPCEnabled(bool en) override {
-        getPowerController().setEnabled(en);
-        if (!en) {
-            _radio->setTxPowerReduction(0);
-        }
-    }
-    uint8_t getAPCTargetMargin() const override {
-        return getPowerController().getTargetMargin();
-    }
-    void setAPCTargetMargin(uint8_t margin_db) override {
-        getPowerController().setTargetMargin(margin_db);
-    }
-#endif
-
     void handleCommand(uint32_t sender_timestamp, char* command, char* reply);
     void loop();
+
+    /* Folds this role's own time-based work in loop() — advert timers,
+     * tempradio apply/revert, ACL flush, uplink status, mesh time sync — into
+     * the base maintenance deadline, so the event loop can arm one wake that
+     * covers both loop() and maintenanceLoop().  Every item here is an
+     * absolute deadline already; none of them was ever a poll. */
+    uint32_t msUntilNextMaintenance() override;
 
     bool hasPendingWork() const;
 };

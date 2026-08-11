@@ -398,11 +398,71 @@ endif # ZEPHCORE_ROLE_COMPANION
 
 config ZEPHCORE_HOUSEKEEPING_INTERVAL_MS
 	int "Periodic housekeeping interval (ms)"
+	depends on ZEPHCORE_ROLE_COMPANION || ZEPHCORE_ROLE_ROOM_SERVER
 	default 5000
 	range 1000 60000
 	help
 	  Wake interval for noise floor calibration, battery reads, and UI refresh.
 	  Longer = lower power, less responsive monitoring.
+
+	  Companion and room server only.  Both still run a fixed periodic tick:
+	  the companion's block contains genuine pollers (contact-dump progress,
+	  BLE advertising watchdog) that have no deadline to arm, and the room
+	  server is paced by its own 500 ms push timer regardless.  Repeaters are
+	  deadline-driven instead — see ZEPHCORE_MAINTENANCE_BACKSTOP_MS.
+
+config ZEPHCORE_MAINTENANCE_BACKSTOP_MS
+	int "Repeater maintenance backstop (ms)"
+	depends on ZEPHCORE_ROLE_REPEATER
+	default 60000
+	range 15000 600000
+	help
+	  Hard ceiling on how long a repeater will go without a maintenance pass.
+
+	  main_repeater.cpp arms a one-shot wake at the soonest deadline reported
+	  by msUntilNextMaintenance(), then clamps it to this value.  The clamp is
+	  UNCONDITIONAL, so this is a safety net against a deadline that is missed
+	  or mis-reported — not a value that should ever bind in normal operation.
+
+	  MUST stay above the radio measurement interval ("set probe.interval",
+	  default 15 s; ZEPHCORE_NOISE_FLOOR_INTERVAL_MS when probing is off) —
+	  the shortest recurring deadline on an idle repeater.  Set at or below it
+	  and this silently becomes the wake period, reproducing the old fixed 5 s
+	  tick and making the deadline scheduling a no-op.  That is exactly the bug
+	  the original 5000 default shipped with.
+
+	  Lowering it costs wakes without improving responsiveness — real work is
+	  already scheduled at its own deadline.  Raising it widens the window in
+	  which a scheduling bug goes unnoticed.
+
+config ZEPHCORE_NOISE_FLOOR_INTERVAL_MS
+	int "Default radio measurement interval (ms)"
+	default 15000
+	range 1000 120000
+	help
+	  Fallback cadence for periodic radio measurements — the noise-floor RSSI
+	  sample and the CAD probe that consumes it.
+
+	  This is only the DEFAULT.  At runtime the "probe.interval" pref governs
+	  both (see set probe.interval); this value applies when that pref is 0,
+	  i.e. CAD probing is switched off but the floor sampler still has to run.
+
+	  This used to be implicit: the sampler ran once per housekeeping tick, so
+	  it inherited that 5 s period.  The sampler lives in shared radio code, so
+	  roles that still tick periodically (companion, room server) keep 5000 —
+	  raising it there would change their RF tracking for no power gain, since
+	  their housekeeping timer wakes them at 5 s regardless.
+
+	  Repeaters use 15 s, matching ZEPHCORE_CAD_PROBE_INTERVAL — the only other
+	  recurring radio deadline — so the two do not interleave into separate
+	  wakes any more often than they have to.
+
+	  On a repeater this is one of the two shortest recurring deadlines, so it
+	  bounds how long the SoC can sleep between wakes.  Raising it stretches
+	  EMA warmup (8 samples) and the every-16th-sample unguarded bypass by the
+	  same factor: at 15000 warmup is ~2 min and the bypass ~4 min apart; at
+	  30000, ~4 min and ~8 min.  Past 15000 the CAD probe becomes the binding
+	  deadline instead, so raise both or neither.
 
 menu "Radio Configuration"
 
@@ -480,14 +540,16 @@ config ZEPHCORE_MAX_TX_POWER_DBM
 	  Example: Station G2 caps at 19 dBm to stay below PA P1dB (35 dBm).
 
 config ZEPHCORE_SX126X_HELTEC_REG_PATCH
-	bool "Apply undocumented SX126x register 0x8B5 RX improvement (Heltec V4)"
+	bool "Apply undocumented SX126x register 0x8B5 RX improvement (external PA/FEM)"
 	depends on ZEPHCORE_RADIO_NATIVE
 	default n
 	help
 	  Sets the LSB of undocumented register 0x8B5 after the first lora_config().
 	  Described by Heltec engineer @Quency-D in MeshCore PR#1398 — consistently
 	  improves RX reception on boards with GC1109 or KCT8103L PA (Heltec V4/V4.3).
-	  Enable in board.conf for Heltec V4 boards.
+	  Upstream MeshCore also enables it for the RAK3401's SKY66122 FEM, so it is
+	  not Heltec-specific despite the symbol name. Enable in board.conf for boards
+	  with an external PA/FEM in the RX path.
 
 endmenu # Radio Configuration
 
@@ -609,20 +671,25 @@ config ZEPHCORE_LORA_DC_MIN_SYMBOLS
 	  for extra detection margin on very noisy sites.  SF5/6 adds +4
 	  internally.  Lowering below 8 risks missed packets at low SNR.
 
-config ZEPHCORE_APC
-	bool "Adaptive Power Control (APC)"
-	default y
+config ZEPHCORE_LORA_DC_MARGIN_PCT
+	int "RX duty cycle: sleep-budget safety margin (percent)"
+	range 0 40
+	default 15
 	help
-	  Automatically reduce TX power when echo packets from neighbors
-	  indicate excess SNR margin. Saves battery and reduces channel
-	  congestion. Ramps back to full power within 2 minutes if no
-	  echoes are heard.
-
-	  Uses rogue-filtering: clusters echo SNRs to avoid one badly
-	  placed high-SNR neighbor from over-reducing power.
-
-	  Compiled in by default; disabled at runtime (enable per-node
-	  via CLI "set tx apc" — persisted in prefs).
+	  Percentage the per-cycle deaf-time budget is derated before the
+	  sleep period is programmed.  The theoretical catch budget assumes
+	  the sleep clock and wake transition are exact, but the chip's sleep
+	  timer runs on an internal RC oscillator (RC64k on SX126x, RTC on
+	  LR11xx) that drifts several percent over temperature, and the wake-
+	  transition estimate is a datasheet figure the datasheet itself calls
+	  "not accurate and may vary".  Either overshoot silently pushes real
+	  deaf time past the budget and drops the fraction of packets whose
+	  preamble phase aligns with the window edge — signal-strength-
+	  independent loss that presents as random DC packet drops.  This
+	  margin trades a little radio-off time for that robustness and is
+	  shared by every radio (SX126x / LR11xx / LR20xx).  Set to 0 to
+	  restore the old zero-margin behaviour; 15% is a conservative default,
+	  lower it once you have measured your board's clock+transition on air.
 
 endmenu
 
@@ -897,6 +964,23 @@ config ZEPHCORE_UI_JOYSTICK
 	  D-pad. Not user-selectable; set by the board configuration.
 	  Follows the same pattern as ZEPHCORE_UI_BUTTONS and ZEPHCORE_UI_DISPLAY.
 
+config ZEPHCORE_UI_KEYBOARD
+	bool
+	help
+	  Set by board-level Kconfig when the hardware has a full keyboard
+	  (e.g. ThinkNode M9's STC8H matrix MCU on I2C). Not user-selectable.
+
+	  A keyboard is a superset of a joystick — it supplies arrows, enter
+	  and escape — so it drives the same full companion UI rather than a
+	  separate one. Selecting this makes ZEPHCORE_UI_DESIGN_JOYSTICK
+	  available on a board that has no 5-way stick.
+
+	  Selected by ThinkNode M9. The STC8H driver is helpers/input/
+	  stc8h_keypad.c; the keypad's arrow-key codes are still unknown, so
+	  the driver logs any code it does not recognise (see its header).
+	  The key-space reservation in helpers/ui-joystick/joystick_defs.h is
+	  the groundwork that makes them droppable in later.
+
 config ZEPHCORE_UI_DESIGN_BUTTON
 	bool "Button-based page UI"
 	default y if (ZEPHCORE_UI_BUTTONS || ZEPHCORE_UI_DISPLAY || ZEPHCORE_UI_BUZZER) && !ZEPHCORE_UI_DESIGN_JOYSTICK
@@ -908,14 +992,18 @@ config ZEPHCORE_UI_DESIGN_BUTTON
 	  implementation without touching this Kconfig.
 
 config ZEPHCORE_UI_DESIGN_JOYSTICK
-	bool "Joystick-based companion UI"
-	default y if ZEPHCORE_ROLE_COMPANION && ZEPHCORE_UI_DISPLAY && ZEPHCORE_UI_BUTTONS && ZEPHCORE_UI_JOYSTICK
-	depends on ZEPHCORE_ROLE_COMPANION && ZEPHCORE_UI_DISPLAY && ZEPHCORE_UI_BUTTONS && ZEPHCORE_UI_JOYSTICK
+	bool "Full companion UI (joystick or keyboard driven)"
+	default y if ZEPHCORE_ROLE_COMPANION && ZEPHCORE_UI_DISPLAY && ZEPHCORE_UI_BUTTONS && (ZEPHCORE_UI_JOYSTICK || ZEPHCORE_UI_KEYBOARD)
+	depends on ZEPHCORE_ROLE_COMPANION && ZEPHCORE_UI_DISPLAY && ZEPHCORE_UI_BUTTONS && (ZEPHCORE_UI_JOYSTICK || ZEPHCORE_UI_KEYBOARD)
 	help
-	  Full joystick-driven companion UI (helpers/ui-joystick/). Provides GPS,
-	  contacts, channels, snake game, repeater admin, and all other companion
-	  screens via a 5-way joystick or D-pad. Replaces ZEPHCORE_UI_DESIGN_BUTTON
-	  for companion builds on boards with joystick hardware.
+	  Full companion UI (helpers/ui-joystick/). Provides GPS, contacts,
+	  channels, snake game, repeater admin, and all other companion screens.
+	  Replaces ZEPHCORE_UI_DESIGN_BUTTON for companion builds on boards with
+	  joystick or keyboard hardware.
+
+	  Named "joystick" for the hardware that first drove it; the screens
+	  themselves only consume the abstract key codes in joystick_defs.h, so
+	  any input device supplying arrows/enter/escape can drive them.
 
 endmenu
 

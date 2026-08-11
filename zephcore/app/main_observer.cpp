@@ -159,31 +159,47 @@ static void print_banner(void)
 	cli_println(line);
 
 	cli_println("");
-	cli_println("--- Local CLI ---");
-	cli_println("get role");
-	cli_println("get board");
-	cli_println("get version");
-	cli_println("get public.key");
-	cli_println("get/set name");
-	cli_println("get/set freq");
-	cli_println("set sf <7-12>");
-	cli_println("set bw <idx|kHz>");
-	cli_println("set cr <5-8>");
-	cli_println("get radio");
-	cli_println("get/set meshtimesync");
-	cli_println("get/set wifi.ssid");
-	cli_println("set wifi.psk <password>");
-	cli_println("get wifi.status");
-	cli_println("get/set mqtt.host");
-	cli_println("get/set mqtt.port");
-	cli_println("get/set mqtt.tls");
-	cli_println("get/set mqtt.user");
-	cli_println("set mqtt.password <password>");
-	cli_println("get/set mqtt.iata");
-	cli_println("get mqtt.status");
-	cli_println("get/set lat");
-	cli_println("get/set lon");
-	cli_println("help");
+	cli_println("--- Configure: network ---");
+	cli_println("set wifi.ssid <name>       WiFi network name");
+	cli_println("set wifi.psk  <password>   WiFi password (empty = open)");
+	cli_println("set mqtt.host <hostname>   MQTT broker hostname");
+	cli_println("set mqtt.port <port>       MQTT broker port (default 8883)");
+	cli_println("set mqtt.tls  <0|1>        TLS on/off (default 1)");
+	cli_println("set mqtt.user <username>   MQTT username");
+	cli_println("set mqtt.password <pass>   MQTT password");
+	cli_println("set mqtt.iata <code>       Location code (e.g. BUD BTS VIE SEA)");
+	cli_println("");
+	cli_println("--- Configure: node ---");
+	cli_println("set name      <name>       Node display name");
+	cli_println("set lat       <-90..90>    Latitude, decimal degrees");
+	cli_println("set lon       <-180..180>  Longitude, decimal degrees");
+	cli_println("                           (lat+lon+non-default name = self-advert)");
+	cli_println("set meshtimesync <on|off>  Mesh clock consensus correction");
+	cli_println("");
+	cli_println("--- Configure: radio ---");
+	cli_println("set freq      <MHz|Hz>     300-1000 (e.g. 869.618 or 869618000)");
+	cli_println("set sf        <7-12>       Spreading factor");
+	cli_println("set bw        <idx|kHz>    0=125 1=250 2=500 3=62.5 4=41.7 5=31.25");
+	cli_println("set cr        <5-8>        Coding rate");
+	cli_println("");
+	cli_println("--- Query ---");
+	cli_println("get name                   Node display name");
+	cli_println("get role                   Node role (observer)");
+	cli_println("get board                  Board name");
+	cli_println("get version                Firmware version and build date");
+	cli_println("get public.key             Node public key (hex)");
+	cli_println("get radio                  LoRa radio parameters");
+	cli_println("get lat / get lon          Configured position");
+	cli_println("get wifi.ssid              Configured WiFi network");
+	cli_println("get wifi.status            WiFi connection state");
+	cli_println("get mqtt.status            MQTT connection state");
+	cli_println("get mqtt.host              MQTT broker hostname");
+	cli_println("get mqtt.port              MQTT broker port");
+	cli_println("get mqtt.tls               MQTT TLS on/off");
+	cli_println("get mqtt.user              MQTT username");
+	cli_println("get mqtt.iata              Location code");
+	cli_println("get meshtimesync           Time-sync consensus state (dry-run)");
+	cli_println("help                       Show this screen");
 	cli_println("=========================");
 }
 
@@ -248,11 +264,12 @@ static void time_sync_cb(uint32_t unix_ts)
 
 static mesh::ZephyrBoard    s_board;
 static mesh::ZephyrMillisecondClock s_ms_clock;
-static mesh::ZephyrRNG      s_rng;
 
 static const struct device *const lora_dev = DEVICE_DT_GET(DT_ALIAS(lora0));
 
-/* Radio prefs — observer-specific defaults set in main() */
+/* Static-init placeholder only.  The radio is rebound to the mesh's own
+ * NodePrefs via setPrefs() in main() before observer_mesh.begin() — this object
+ * is not the live radio configuration and is never loaded from flash. */
 static NodePrefs s_radio_prefs;
 
 #if IS_ENABLED(CONFIG_ZEPHCORE_RADIO_LR1110)
@@ -263,7 +280,7 @@ static mesh::SX127xRadio lora_radio(lora_dev, s_board, &s_radio_prefs);
 static mesh::SX126xRadio lora_radio(lora_dev, s_board, &s_radio_prefs);
 #endif
 
-static mesh::ObserverMesh observer_mesh(lora_radio, s_ms_clock, s_rng, s_rtc_clock);
+static mesh::ObserverMesh observer_mesh(lora_radio, s_ms_clock, s_rtc_clock);
 static RepeaterDataStore  data_store;
 
 /* ========== main() ========== */
@@ -304,14 +321,34 @@ int main(void)
 	/* LoRa RX callback — observer never needs TX done */
 	lora_radio.setRxCallback(lora_rx_callback, nullptr);
 
+	/* Bind the radio to the mesh's NodePrefs BEFORE begin().
+	 *
+	 * The radio reads freq/bw/sf/cr through this pointer, both during
+	 * begin() → Dispatcher::begin() → Radio::begin() and on every later
+	 * reconfigure() (LoRaRadioBase::reconfigureWithParams() ignores its
+	 * arguments and re-reads the pointer).  Constructed against
+	 * s_radio_prefs, which is never loaded from flash, the radio stayed on
+	 * the compiled-in defaults forever: `set freq/sf/bw/cr` wrote flash and
+	 * updated the CLI/MQTT readback but never reached the hardware, so the
+	 * setting looked accepted and then "reverted" on reboot.
+	 *
+	 * Binding before begin() is safe and required: begin() calls loadPrefs()
+	 * first and Dispatcher::begin() last, so the object is populated by the
+	 * time the radio reads through it.  Mirrors main_repeater.cpp and
+	 * main_room_server.cpp. */
+	lora_radio.setPrefs(observer_mesh.getNodePrefs());
+
 	/* Initialize and start mesh (loads prefs + identity from flash) */
 	s_mesh_ptr = &observer_mesh;
 	observer_mesh.begin(&data_store, &s_creds);
 
 	/* Generate a default node name based on pubkey if still generic */
 	NodePrefs *prefs = observer_mesh.getNodePrefs();
+	/* "Observer" is deliberately NOT in this list: it is a name a user can set,
+	 * and regenerating it here made `set name Observer` silently revert on every
+	 * reboot.  "Repeater" is the name the shared store writes on first boot, so
+	 * it still counts as unset. */
 	if (strlen(prefs->node_name) == 0 ||
-	    strcmp(prefs->node_name, "Observer") == 0 ||
 	    strcmp(prefs->node_name, "Repeater") == 0) {
 		/* Use first 4 bytes of pubkey for uniqueness */
 		const char *hex = observer_mesh.getPubkeyHex();

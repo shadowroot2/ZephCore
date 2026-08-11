@@ -7,14 +7,15 @@
  * All event-driven via Zephyr input subsystem + k_work.
  *
  * Input flow (after longpress + multi-tap filter chain):
- *   KEY_1     → action_page_next()       (1 tap, 400ms delayed)
+ *   KEY_1     → action_page_next()       (1 tap; headless nodes arm SOS)
  *   KEY_LEFT  → action_page_prev()       (2 taps — RAK4631 / Pocket / Heltec V3–V4.3)
- *   KEY_B     → action_flood_advert()    (2 taps on extended multitap overlays)
+ *   KEY_B     → action_leds_toggle()     (2 taps)
  *   KEY_D     → action_buzzer_toggle()   (3 taps)
- *   KEY_C     → action_gps_toggle()      (4 taps, immediate)
+ *   KEY_C     → action_gps_toggle()      (4 taps)
+ *   KEY_H     → tracking toggle           (6 taps on configured headless nodes)
  *   KEY_G     → GPS switch on/off        (hardware toggle, ThinkNode M1)
- *   KEY_POWER / KEY_F → action_deep_sleep() (long press — boards that emit these)
- *   T-1000E: KEY_1 then KEY_F within 3s → SOS; bare KEY_F → deep sleep
+ *   KEY_POWER / KEY_F → ui_shutdown() (long press — boards that emit these)
+ *   Headless: KEY_1 then long → SOS; bare long → deep sleep
  *   KEY_ENTER → action_page_enter()      (long press — Pocket / Heltec; joystick center Wio)
  *   KEY_RIGHT → action_page_next()       (joystick, Wio Tracker)
  *
@@ -78,9 +79,9 @@ LOG_MODULE_REGISTER(ui_task, CONFIG_ZEPHCORE_BOARD_LOG_LEVEL);
  * ON tail:  high E7 (~2637Hz) = "enabled"
  * OFF tail: low G5 (~784Hz)   = "disabled"  */
 #define MELODY_BEEP_2     "b2:d=16,o=7,b=200:c,p,c"
+/* Five presses: five count beeps, a word break, then "ad-vert". */
+#define MELODY_BEEP_5     "adv:d=16,o=7,b=200:c,p,c,p,c,p,c,p,c,p,p,16a,16d,8g"
 
-#define MELODY_GPS_ON     "gon:d=16,o=7,b=200:c,p,c,p,c,p,c,p,p,8e"
-#define MELODY_GPS_OFF    "gof:d=16,o=7,b=200:c,p,c,p,c,p,c,p,p,8g5"
 /* ========== Deep Sleep / System OFF ========== */
 /* On nRF52840, sys_poweroff() = System OFF (~1µA).
  * Wake via reset button → full chip reset → boots fresh. */
@@ -99,9 +100,9 @@ static struct ui_state local_ui_state;
 /* ========== State ========== */
 static bool ui_initialized;
 static bool splash_active;
-#if defined(CONFIG_BOARD_T1000_E)
-#define T1000_SOS_ARM_WINDOW_MS 3000
-static uint32_t t1000_sos_armed_until;
+#if !IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
+#define HEADLESS_GESTURE_ARM_WINDOW_MS 3000
+static uint32_t headless_sos_armed_until;
 #endif
 
 /* ========== Doom Easter Egg Activation ========== */
@@ -244,7 +245,7 @@ static void action_page_prev(void)
 }
 
 /* Forward declarations for page-enter dispatch */
-static void action_flood_advert(void);
+static void action_flood_advert(unsigned int feedback_beeps);
 static void action_sos(void);
 static void action_gps_toggle(void);
 static void action_buzzer_toggle(void);
@@ -253,8 +254,6 @@ static void action_leds_toggle(void);
 static void action_ble_toggle(void);
 static void action_enter_dfu(void);
 #endif
-static void action_deep_sleep(void);
-
 static void action_page_enter(void)
 {
 #ifdef CONFIG_ZEPHCORE_UI_DISPLAY
@@ -274,11 +273,16 @@ static void action_page_enter(void)
 		if (k_work_delayable_is_pending(&advert_defer_work)) {
 			/* Second press — cancel deferred zero-hop, send flood */
 			k_work_cancel_delayable(&advert_defer_work);
-			action_flood_advert();
+			action_flood_advert(2);
 		} else {
 			/* First press — start deferred zero-hop */
 			k_work_reschedule(&advert_defer_work, K_MSEC(500));
 		}
+		break;
+
+	case UI_PAGE_TRACKING:
+		mesh_tracking_toggle();
+		schedule_render();
 		break;
 
 	case UI_PAGE_SOS:
@@ -346,7 +350,7 @@ static void action_page_enter(void)
 		if (st->shutdown_confirm_time != 0 &&
 			(now - st->shutdown_confirm_time) <= CONFIG_ZEPHCORE_UI_CONFIRM_WINDOW_MS) {
 			/* Confirmed — shut down */
-			action_deep_sleep();
+			ui_shutdown();
 		} else {
 			/* First press — enter confirmation state */
 			st->shutdown_confirm_time = now;
@@ -405,11 +409,11 @@ static void action_page_enter(void)
 #endif
 }
 
-static void action_flood_advert(void)
+static void action_flood_advert(unsigned int feedback_beeps)
 {
 	LOG_INF("flood advert requested");
 #ifdef CONFIG_ZEPHCORE_UI_BUZZER
-	buzzer_play(MELODY_BEEP_2);
+	buzzer_play(feedback_beeps == 5 ? MELODY_BEEP_5 : MELODY_BEEP_2);
 #endif
 	mesh_send_flood_advert();
 #ifdef CONFIG_ZEPHCORE_UI_DISPLAY
@@ -530,7 +534,7 @@ static void action_enter_dfu(void)
 }
 #endif /* CONFIG_ZEPHCORE_UI_DISPLAY */
 
-static void action_deep_sleep(void)
+void ui_shutdown(void)
 {
 #ifdef CONFIG_POWEROFF
 	LOG_INF("deep sleep: shutting down...");
@@ -686,48 +690,57 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 	switch (evt->code) {
 	/* ===== Multi-tap outputs ===== */
 	case INPUT_KEY_1:
-		/* Single tap (400ms delayed): page next */
-	#if defined(CONFIG_BOARD_T1000_E)
-		/* The T-1000E has no display. A single tap arms its SOS gesture;
-		 * the following >=1 s hold must arrive within three seconds. */
-		t1000_sos_armed_until = k_uptime_get_32() + T1000_SOS_ARM_WINDOW_MS;
+		/* Single tap: page next, except the T1000-E SOS arm gesture. */
+	#if !IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
+		/* A headless node uses a single tap to arm SOS; the following >=1 s hold
+		 * must arrive within three seconds. */
+		headless_sos_armed_until = k_uptime_get_32() + HEADLESS_GESTURE_ARM_WINDOW_MS;
 	#else
 		action_page_next();
 	#endif
 		break;
 
 	case INPUT_KEY_B:
-		/* Double tap (400ms delayed): flood advert */
-		action_flood_advert();
+		/* Double tap: toggle LED heartbeat */
+		action_leds_toggle();
 		break;
 
 	case INPUT_KEY_D:
-		/* Triple tap (400ms delayed): toggle buzzer mute */
+		/* Triple tap: toggle buzzer mute */
 		action_buzzer_toggle();
 		break;
 
 	case INPUT_KEY_C:
-		/* Quadruple tap (400ms delayed): toggle GPS */
+		/* Quadruple tap: toggle GPS */
 		action_gps_toggle();
 		break;
 
 	case INPUT_KEY_E:
-		/* Quintuple tap (immediate): toggle LED heartbeat */
-		action_leds_toggle();
+		/* Quintuple tap: flood advert */
+		action_flood_advert(5);
+		break;
+
+	case INPUT_KEY_H:
+		/* Six short presses directly toggle Tracking on headless nodes. */
+	#if !IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
+		mesh_tracking_toggle();
+	#endif
 		break;
 
 	/* ===== Longpress output ===== */
 	case INPUT_KEY_POWER:
 	case INPUT_KEY_F:
 		/* Long press (≥1s): deep sleep */
-	#if defined(CONFIG_BOARD_T1000_E)
-		if ((int32_t)(t1000_sos_armed_until - k_uptime_get_32()) >= 0) {
-			t1000_sos_armed_until = 0;
+	#if !IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
+		if (headless_sos_armed_until != 0 &&
+		    (int32_t)(headless_sos_armed_until - k_uptime_get_32()) >= 0) {
+			headless_sos_armed_until = 0;
+			/* The companion main loop plays the same acknowledgement as CLI. */
 			mesh_send_sos();
 			break;
 		}
 	#endif
-		action_deep_sleep();
+		ui_shutdown();
 		break;
 
 	/* ===== Joystick (Wio Tracker) ===== */
@@ -740,7 +753,7 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 		/* Some one-button boards map double tap to KEY_LEFT. On the Advert
 		 * page that gesture means flood advert, not page-back. */
 		if (ui_pages_current() == UI_PAGE_ADVERT) {
-			action_flood_advert();
+			action_flood_advert(2);
 			break;
 		}
 #endif
@@ -985,30 +998,18 @@ void ui_set_radio_params(uint32_t freq_hz, uint8_t sf, uint16_t bw_khz_x10,
 	}
 }
 
-void ui_set_radio_runtime(int8_t effective_tx_power, bool apc_enabled,
-			  int8_t apc_reduction, int16_t apc_margin_x10,
-			  uint8_t apc_target_margin, uint8_t sync_word,
+void ui_set_radio_runtime(uint8_t sync_word,
 			  uint16_t preamble_len, bool rx_duty_cycle,
 			  bool radio_ready, bool in_rx, bool tx_active)
 {
 	struct ui_state *s = get_state();
-	bool changed = s->lora_effective_tx_power != effective_tx_power ||
-		       s->lora_apc_enabled != apc_enabled ||
-		       s->lora_apc_reduction != apc_reduction ||
-		       s->lora_apc_margin_x10 != apc_margin_x10 ||
-		       s->lora_apc_target_margin != apc_target_margin ||
-		       s->lora_sync_word != sync_word ||
+	bool changed = s->lora_sync_word != sync_word ||
 		       s->lora_preamble_len != preamble_len ||
 		       s->lora_rx_duty_cycle != rx_duty_cycle ||
 		       s->lora_radio_ready != radio_ready ||
 		       s->lora_in_rx != in_rx ||
 		       s->lora_tx_active != tx_active;
 
-	s->lora_effective_tx_power = effective_tx_power;
-	s->lora_apc_enabled = apc_enabled;
-	s->lora_apc_reduction = apc_reduction;
-	s->lora_apc_margin_x10 = apc_margin_x10;
-	s->lora_apc_target_margin = apc_target_margin;
 	s->lora_sync_word = sync_word;
 	s->lora_preamble_len = preamble_len;
 	s->lora_rx_duty_cycle = rx_duty_cycle;

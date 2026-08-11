@@ -88,11 +88,9 @@ void ui_set_radio_params(uint32_t freq_hz, uint8_t sf, uint16_t bw_khz_x10,
 			 uint8_t cr, int8_t tx_power, int16_t noise_floor);
 
 /**
- * Update extended live radio/APC details for display.
+ * Update extended live radio details for display.
  */
-void ui_set_radio_runtime(int8_t effective_tx_power, bool apc_enabled,
-			  int8_t apc_reduction, int16_t apc_margin_x10,
-			  uint8_t apc_target_margin, uint8_t sync_word,
+void ui_set_radio_runtime(uint8_t sync_word,
 			  uint16_t preamble_len, bool rx_duty_cycle,
 			  bool radio_ready, bool in_rx, bool tx_active);
 
@@ -217,6 +215,9 @@ void ui_led_confirm_state(bool enabled);
  * Used when the buzzer is muted — gives visual feedback on power-off.
  */
 void ui_led_flash_shutdown(void);
+
+/** Execute the same user-initiated shutdown path as a long button press. */
+void ui_shutdown(void);
 
 /**
  * Set offgrid mode (client repeat) state for display page.
