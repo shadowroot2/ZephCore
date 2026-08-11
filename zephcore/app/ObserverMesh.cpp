@@ -70,6 +70,18 @@ void ObserverMesh::begin(RepeaterDataStore *store, struct ObserverCreds *creds)
 	snprintf(prefs_path, sizeof(prefs_path), "%s/prefs", _store->getBasePath());
 	const bool first_boot = (fs_stat(prefs_path, &prefs_ent) < 0);
 
+	/* First boot has to be detected BEFORE loadPrefs(): the store is shared
+	 * with the repeater and its no-file branch re-runs initNodePrefs(), applies
+	 * *repeater* defaults over whatever the caller passed in, saves them, and
+	 * returns true.  So the observer values set above are silently discarded on
+	 * a fresh unit and there is no return code that says so.  Probing for the
+	 * file is the only observer-local way to tell — the alternative, changing
+	 * the no-file branch, would alter repeater and room-server behaviour. */
+	char prefs_path[64];
+	struct fs_dirent prefs_ent;
+	snprintf(prefs_path, sizeof(prefs_path), "%s/prefs", _store->getBasePath());
+	const bool first_boot = (fs_stat(prefs_path, &prefs_ent) < 0);
+
 	/* Load persisted prefs (overrides defaults with saved values) */
 	_store->loadPrefs(_prefs);
 

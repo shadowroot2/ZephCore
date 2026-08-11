@@ -188,9 +188,11 @@
 	/* NOTE: buzzer-off gpio-hog REMOVED - buzzer pin is now managed by PWM
 	 * driver. When PWM is not driving, the pin is low (no current draw). */
 
-	/* NOTE: GPS enable hog REMOVED - Feb 6 working version had no GPIO hog
-	 * and GPS worked fine. The L76KB module may have internal pull-up or
-	 * the Arduino bootloader leaves it enabled. */
+	/* NOTE: GPS enable hog REMOVED — GPS works fine without it, and the
+	 * reason is now confirmed rather than guessed: P1.09 is the L76K's
+	 * WAKEUP pin, which the L76K hardware design specifies as active low
+	 * "with pull-up internally". Left unconfigured it floats high and the
+	 * module stays in Continuous mode. */
 };
 
 /* PWM0 for buzzer */
@@ -207,7 +209,8 @@
 /* Quectel L76KB GNSS on UART0 - 9600 baud (PCAS/CASIC protocol)
  * Uses Zephyr luatos,air530z driver (same PCAS command set for
  * constellation config via PCAS04, fix rate via PCAS02, etc.)
- * on-off-gpios = GPS enable pin (P1.09), managed by driver. */
+ * on-off-gpios = P1.09, the module's WAKEUP/standby pin (see &gpio1 note and
+ * board.overlay) — driver drives it high for Continuous, low for Standby. */
 &uart0 {
 	compatible = "nordic,nrf-uarte";
 	status = "okay";

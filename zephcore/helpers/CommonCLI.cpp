@@ -5,6 +5,7 @@
 
 #include "CommonCLI.h"
 #include "battery_curve.h"
+#include "led_gate.h"
 #include <helpers/MeshTimeSync.h>
 #include <helpers/time_sync.h>
 #include <adapters/clock/ZephyrRTCDiscover.h>
@@ -88,6 +89,7 @@ void CommonCLI::loadPrefs(const char* path) {
     }
 
     uint8_t pad[8];
+    uint8_t leds_byte = 0;
     bool ok = true;
 
     /* Read fields in Arduino-compatible binary order.
@@ -114,7 +116,9 @@ void CommonCLI::loadPrefs(const char* path) {
     ok = ok && prefs_read(&file, &_prefs->allow_read_only, sizeof(_prefs->allow_read_only)); // 114
     ok = ok && prefs_read(&file, &_prefs->multi_acks, sizeof(_prefs->multi_acks));           // 115
     ok = ok && prefs_read(&file, &_prefs->bw, sizeof(_prefs->bw));                           // 116
-    ok = ok && prefs_read(&file, &_prefs->agc_reset_interval, sizeof(_prefs->agc_reset_interval)); // 120
+    /* 120: leds_disabled, magic-encoded. Formerly agc_reset_interval — see the
+     * LEDS_PREF_* comment in NodePrefs.h for why this is not a bare 0/1. */
+    ok = ok && prefs_read(&file, &leds_byte, sizeof(leds_byte));                              // 120
     ok = ok && prefs_read(&file, &_prefs->path_hash_mode, sizeof(_prefs->path_hash_mode));    // 121
     ok = ok && prefs_read(&file, &_prefs->loop_detect, sizeof(_prefs->loop_detect));          // 122
     ok = ok && prefs_read(&file, pad, 1);                                                     // 123
@@ -155,6 +159,10 @@ void CommonCLI::loadPrefs(const char* path) {
     }
 
     fs_close(&file);
+
+    /* Only the explicit "off" magic disables LEDs; a legacy AGC interval, an
+     * unwritten byte, or a truncated file all mean "on". */
+    _prefs->leds_disabled = (leds_byte == LEDS_PREF_OFF) ? 1 : 0;
 
     // Sanitise bad pref values
     _prefs->rx_delay_base = constrain(_prefs->rx_delay_base, 0.0f, 20.0f);
@@ -241,7 +249,11 @@ void CommonCLI::savePrefs(const char* path) {
     fs_write(&file, &_prefs->allow_read_only, sizeof(_prefs->allow_read_only));
     fs_write(&file, &_prefs->multi_acks, sizeof(_prefs->multi_acks));
     fs_write(&file, &_prefs->bw, sizeof(_prefs->bw));
-    fs_write(&file, &_prefs->agc_reset_interval, sizeof(_prefs->agc_reset_interval));
+    /* 120: leds_disabled, magic-encoded (was agc_reset_interval). */
+    {
+        uint8_t leds_byte = _prefs->leds_disabled ? LEDS_PREF_OFF : LEDS_PREF_ON;
+        fs_write(&file, &leds_byte, sizeof(leds_byte));
+    }
     fs_write(&file, &_prefs->path_hash_mode, sizeof(_prefs->path_hash_mode));
     fs_write(&file, &_prefs->loop_detect, sizeof(_prefs->loop_detect));
     fs_write(&file, pad, 1);
@@ -493,6 +505,8 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
             snprintf(reply, CLI_REPLY_SIZE, "> %.2f", (double)_prefs->airtime_factor);
         } else if (memcmp(config, "int.thresh", 10) == 0) {
             snprintf(reply, CLI_REPLY_SIZE, "> %u", (uint32_t)_prefs->interference_threshold);
+        } else if (memcmp(config, "leds", 4) == 0) {
+            snprintf(reply, CLI_REPLY_SIZE, "> %s", _prefs->leds_disabled ? "off" : "on");
         } else if (memcmp(config, "agc.reset.interval", 18) == 0) {
             strcpy(reply, "Removed - use rxduty instead");
         } else if (memcmp(config, "multi.acks", 10) == 0) {
@@ -595,6 +609,10 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
             }
         } else if (memcmp(config, "rxduty", 6) == 0) {
             snprintf(reply, CLI_REPLY_SIZE, "> %d", (int)_prefs->rx_duty_cycle);
+        } else if (memcmp(config, "gps diag", 8) == 0) {
+            // What the last module-configuration attempt actually did.
+            reply[0] = '>'; reply[1] = ' ';
+            gps_get_diag_report(reply + 2, CLI_REPLY_SIZE - 2);
         } else if (memcmp(config, "gps duty", 8) == 0) {
             uint32_t s = gps_get_poll_interval_sec();  // now-effective value
             if (s == 0) strcpy(reply, "> always on (0)");
@@ -660,9 +678,37 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
             savePrefs();
             strcpy(reply, "OK");
         } else if (memcmp(config, "int.thresh ", 11) == 0) {
-            _prefs->interference_threshold = atoi(&config[11]);
-            savePrefs();
-            strcpy(reply, "OK");
+            /* Companion runtime never reads this (getInterferenceThreshold is
+             * only overridden in Repeater/RoomServer) — reject instead of a
+             * false OK. */
+            if (strcmp(_callbacks->getRole(), "companion") == 0) {
+                strcpy(reply, "Error: not supported on companion");
+            } else {
+                _prefs->interference_threshold = atoi(&config[11]);
+                savePrefs();
+                strcpy(reply, "OK");
+            }
+        } else if (memcmp(config, "leds ", 5) == 0) {
+            /* Master switch for every LED on the node: heartbeat, unread-message
+             * and LoRa TX activity, plus the message and shutdown flashes. Not
+             * the display backlight — that has its own UI brightness setting. */
+            const char* val = &config[5];
+            int on;
+            if (memcmp(val, "on", 2) == 0 || val[0] == '1') {
+                on = 1;
+            } else if (memcmp(val, "off", 3) == 0 || val[0] == '0') {
+                on = 0;
+            } else {
+                on = -1;
+            }
+            if (on < 0) {
+                strcpy(reply, "Error: must be on or off");
+            } else {
+                _prefs->leds_disabled = on ? 0 : 1;
+                zephcore_leds_set_disabled(_prefs->leds_disabled != 0);
+                savePrefs();
+                strcpy(reply, "OK");
+            }
         } else if (memcmp(config, "agc.reset.interval ", 19) == 0) {
             /* Periodic AGC recalibration was removed: it reset the noise floor
              * to its unseeded sentinel on every fire, forcing a fresh seed and
@@ -871,14 +917,21 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
             savePrefs();
             strcpy(reply, "OK (ignored: direct.txdelay is now adaptive)");
         } else if (memcmp(config, "backoff.multiplier ", 19) == 0) {
-            float f = atof(&config[19]);
-            if (f >= 0.0f && f <= 2.0f) {
-                _prefs->backoff_multiplier = f;
-                _callbacks->setBackoffMultiplier(f);
-                savePrefs();
-                strcpy(reply, "OK");
+            /* Companion's setBackoffMultiplier callback is the base-class
+             * no-op and the value isn't restored at boot — reject instead of
+             * a false OK. */
+            if (strcmp(_callbacks->getRole(), "companion") == 0) {
+                strcpy(reply, "Error: not supported on companion");
             } else {
-                strcpy(reply, "Error, range 0.0-2.0");
+                float f = atof(&config[19]);
+                if (f >= 0.0f && f <= 2.0f) {
+                    _prefs->backoff_multiplier = f;
+                    _callbacks->setBackoffMultiplier(f);
+                    savePrefs();
+                    strcpy(reply, "OK");
+                } else {
+                    strcpy(reply, "Error, range 0.0-2.0");
+                }
             }
         } else if (memcmp(config, "owner.info ", 11) == 0) {
             config += 11;
@@ -901,6 +954,12 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
                 strcpy(reply, "Error, must be 0,1, or 2");
             }
         } else if (memcmp(config, "loop.detect ", 12) == 0) {
+            /* Loop detection runs only in the Repeater/RoomServer forward
+             * path — companions never consult loop_detect. */
+            if (strcmp(_callbacks->getRole(), "companion") == 0) {
+                strcpy(reply, "Error: not supported on companion");
+                return;
+            }
             config += 12;
             uint8_t mode;
             if (memcmp(config, "off", 3) == 0) {
@@ -1051,6 +1110,26 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
                 snprintf(reply, CLI_REPLY_SIZE, "OK - rxduty=%d (reboot to apply)", _prefs->rx_duty_cycle);
             } else {
                 strcpy(reply, "Error: must be 0, 1, on, or off");
+            }
+        } else if (memcmp(config, "gps diag", 8) == 0) {
+            // set gps diag <0|1|on|off> — arm module-configuration reporting.
+            // Not persisted: clears on reboot, by design.
+            const char* arg = config + 8;
+            while (*arg == ' ') arg++;
+            int val = -1;
+            if (memcmp(arg, "on", 2) == 0) val = 1;
+            else if (memcmp(arg, "off", 3) == 0) val = 0;
+            else if (arg[0] == '0' || arg[0] == '1') val = atoi(arg);
+            if (val == 0 || val == 1) {
+                gps_set_diag(val == 1);
+                if (val == 1) {
+                    strcpy(reply, "OK - gps diag on; run 'gps off' then 'gps on', "
+                                  "then 'get gps diag'");
+                } else {
+                    strcpy(reply, "OK - gps diag off");
+                }
+            } else {
+                strcpy(reply, "usage: set gps diag <0|1|on|off>");
             }
         } else if (memcmp(config, "gps duty", 8) == 0) {
             // set gps duty <seconds> | default   (0 = always on)

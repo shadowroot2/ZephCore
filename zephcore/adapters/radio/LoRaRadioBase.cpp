@@ -589,7 +589,20 @@ void LoRaRadioBase::startReceive()
 					atomic_set(&_in_recv_mode, 1);
 					return;
 				}
-				if (ret != -ENOSYS) {
+				if (ret == -EBUSY) {
+					/* A concurrent TX owns the chip. Not the
+					 * CAD-busy case: when the LBT branch of
+					 * send_async restores RX in-driver it
+					 * leaves the chip in RX, and the driver's
+					 * idempotent fast-path (patch 0003)
+					 * re-arms duty cycle from there — AGC
+					 * reset included — rather than refusing.
+					 * So -EBUSY here means the radio is
+					 * genuinely mid-transmit; the fall-through
+					 * to lora_recv_async will fail the same
+					 * way and report it. */
+					LOG_DBG("rxduty: busy (TX in progress) — continuous RX");
+				} else if (ret != -ENOSYS) {
 					LOG_ERR("lora_recv_duty_cycle failed: %d", ret);
 				}
 				/* Fall through to continuous RX */
@@ -684,7 +697,16 @@ bool LoRaRadioBase::startSendRaw(const uint8_t *bytes, int len)
 
 	int ret = hwSendAsync(_tx_buf, (uint32_t)len, &_tx_signal);
 	if (ret < 0) {
-		LOG_ERR("hwSendAsync failed: %d", ret);
+		if (ret == -EBUSY) {
+			/* LBT refused the transmit because the channel is busy
+			 * — the designed outcome, not a fault. The dispatcher
+			 * re-queues and retries. On a busy site this fires
+			 * constantly, and at ERR it buries real faults and
+			 * makes a healthy repeater look broken. */
+			LOG_DBG("hwSendAsync: channel busy (LBT), re-queuing");
+		} else {
+			LOG_ERR("hwSendAsync failed: %d", ret);
+		}
 		_board->onAfterTransmit();
 		atomic_set(&_tx_active, 0);
 		/* startReceive() is safe to call here regardless of failure

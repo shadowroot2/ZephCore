@@ -406,6 +406,40 @@ if(ZEPHCORE_PLATFORM_CONF MATCHES "esp32_common" AND NOT EXTRA_CONF_FILE MATCHES
     endif()
 endif()
 
+# ========== ESP32 light sleep (allowlisted repeater boards) ==========
+# 80 MHz above cuts the idle draw; light sleep is what removes it. See
+# boards/common/pm_esp32.conf for the mechanism and its requirements — this
+# block is only the policy that decides who gets it automatically.
+#
+# REPEATERS ONLY, and the gate is deliberately the same one WiFi OTA uses
+# below: the Espressif HCI driver takes no pm_policy locks, so a companion
+# build would light-sleep mid-advertising or mid-connection. repeater.conf
+# sets CONFIG_BT=n, which removes the problem instead of racing it.
+#
+# BOARD ALLOWLIST, not a platform check. Light sleep is only safe where DIO1
+# can wake the SoC, i.e. an RTC-capable pin (GPIO 0-21 on the S3). Every board
+# below wires DIO1 to GPIO14 and consoles on uart0 through a USB-serial bridge,
+# so both the packet wake and the console flush land correctly. Deliberately
+# ABSENT and must stay absent unless their wiring changes:
+#   xiao_esp32s3 (DIO1=GPIO39), station_g2 (GPIO48), thinknode_m9 (GPIO42),
+#   lilygo_tlora_c6 (GPIO23, outside the C6's LP range 0-7)
+#     -> cannot wake on a received packet; the node would go deaf while
+#        looking excellent on a current meter.
+#   ttgo_lora32 -> SX127x; patches/zephyr/0012 arms DIO1 in the sx126x driver
+#        only, so nothing marks the pin as a wake source.
+# Boards with a native USB Serial/JTAG console are also unsuitable: the USB
+# peripheral drops off the bus in light sleep and there is no USJ wake source
+# in the HAL (only UART0/1/2 and LP-UART).
+if(ZEPHCORE_PLATFORM_CONF MATCHES "esp32_common" AND EXTRA_CONF_FILE MATCHES "repeater"
+   AND BOARD MATCHES "heltec_wifi_lora32_v3|heltec_wifi_lora32_v4|heltec_wireless_tracker")
+    set(ZEPHCORE_PM_CONF "${CMAKE_CURRENT_SOURCE_DIR}/boards/common/pm_esp32.conf")
+    if(EXISTS ${ZEPHCORE_PM_CONF})
+        list(APPEND ZEPHCORE_CONF_FILES ${ZEPHCORE_PM_CONF})
+        zephcore_auto_pair_overlay("${ZEPHCORE_PM_CONF}")
+        message(STATUS "  ESP32 light sleep: auto-enabled (DIO1 wake-capable repeater board)")
+    endif()
+endif()
+
 if(ZEPHCORE_PLATFORM_CONF MATCHES "esp32_common" AND EXTRA_CONF_FILE MATCHES "repeater"
    AND NOT BOARD MATCHES "/esp32/")
     set(ZEPHCORE_WIFI_OTA_CONF "${CMAKE_CURRENT_SOURCE_DIR}/boards/common/wifi_ota.conf")
@@ -546,7 +580,7 @@ add_dependencies(zephcore_build_stamp zephcore_build_stamp_tick)
 # release is tagged/named, and what the Mesh America catalog uses as its version
 # key — so the configurator can match a running device against the catalog. Keep
 # all four identical; the release workflow reads this value directly.
-set(ZEPHCORE_FIRMWARE_VERSION "1.16.7-zephcore")
+set(ZEPHCORE_FIRMWARE_VERSION "1.16.8-zephcore")
 add_definitions(-DFIRMWARE_VERSION="${ZEPHCORE_FIRMWARE_VERSION}")
 
 add_subdirectory(lib/monocypher)
@@ -593,6 +627,9 @@ target_sources(app PRIVATE
   helpers/ui/ui_timezone.c
   helpers/oled_power.c
   helpers/fatal_reboot.c
+  # LED master gate ("set leds on|off"). Always compiled: helpers/ui/ui_common.c
+  # only exists in UI builds, but a headless repeater still drives lora-tx-led.
+  helpers/led_gate.c
 )
 
 # Boot-time hardware-RTC auto-discovery (compact raw-I2C). Always compiled so
@@ -664,6 +701,12 @@ if(CONFIG_SOC_FAMILY_ESPRESSIF_ESP32)
       "identity keygen will fall back to CPU jitter alone. Check "
       "hal/espressif components/bootloader_support/src/.")
   endif()
+endif()
+
+# ESP32 light-sleep console guards — TX flush before sleep + post-boot awake
+# window. Only meaningful when CONFIG_PM is on (boards/common/pm_esp32.conf).
+if(CONFIG_SOC_FAMILY_ESPRESSIF_ESP32 AND CONFIG_PM)
+  target_sources(app PRIVATE helpers/pm_esp32_console.c)
 endif()
 
 # Native-Linux (native_sim) runtime setup: force real-time clock mode so the

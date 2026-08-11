@@ -701,7 +701,7 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 		break;
 
 	case INPUT_KEY_B:
-		/* Double tap: toggle LED heartbeat */
+		/* Double tap (400ms delayed): toggle LED heartbeat */
 		action_leds_toggle();
 		break;
 

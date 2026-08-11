@@ -22,6 +22,7 @@
 #endif
 
 #include "ui_task.h"
+#include "led_gate.h"
 
 #define WEAK __attribute__((weak))
 
@@ -125,9 +126,11 @@ WEAK void ui_set_buzzer_quiet(bool quiet)
 	ARG_UNUSED(quiet);
 }
 
+/* Not a no-op: a headless build still has the LoRa TX LED, and the gate that
+ * governs it lives outside the UI layer precisely so this case works. */
 WEAK void ui_set_leds_disabled(bool disabled)
 {
-	ARG_UNUSED(disabled);
+	zephcore_leds_set_disabled(disabled);
 }
 
 WEAK bool ui_leds_disabled(void)

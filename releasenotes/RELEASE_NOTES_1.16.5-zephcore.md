@@ -1,4 +1,4 @@
-# ZephCore v1.16.5-zephyr
+# ZephCore 1.16.5-zephcore
 
 > [!IMPORTANT]
 > ## Before you upgrade

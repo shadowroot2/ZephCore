@@ -511,7 +511,12 @@ void Dispatcher::checkSend()
 			bool success = _radio->startSendRaw(raw, len);
 			if (!success) {
 				uint32_t retry = getCADFailRetryDelay();
-				LOG_ERR("checkSend: startSendRaw failed! re-queuing delay=%u", retry);
+				/* Almost always LBT refusing a busy channel, which
+				 * is the designed outcome — the packet is
+				 * re-queued below and retried. At ERR this fires
+				 * continuously on a busy site and buries real
+				 * faults. */
+				LOG_DBG("checkSend: startSendRaw refused, re-queuing delay=%u", retry);
 				logTxFail(outbound, outbound->getRawLength());
 				_mgr->queueOutbound(outbound, outbound_priority, futureMillis((int)retry));
 				outbound = nullptr;

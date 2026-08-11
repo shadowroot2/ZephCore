@@ -69,8 +69,16 @@
 	/* ---- Power control ---- */
 
 	/* 3V3_S rail — must be HIGH for GPS and IO-slot peripherals.
-	 * WB_IO2 (P1.02) doubles as GPS_RESET on the RAK1910 slot,
-	 * so it must remain HIGH when GPS is active. */
+	 *
+	 * Never duty-cycle this rail on THIS board: WB_IO2 (P1.02) also gates the
+	 * 5V boost feeding the SKY66122 PA, so dropping it to save GPS power kills
+	 * the 1W transmit path. That is why it is `regulator-boot-on` and is NOT
+	 * wired up as `chosen zephcore,gps-power`.
+	 *
+	 * (This pin also lands on RESET_N of a RAK1910/RAK12500 in Slot A, which is
+	 * why it is sometimes called "GPS reset". It is not one — u-blox specify
+	 * RESET_N as a reset only, not an enable, since the SiP draws significant
+	 * current while held in reset. See MeshCore PR #3051.) */
 	v3v3s_enable: v3v3s-enable {
 		compatible = "regulator-fixed";
 		regulator-name = "v3v3s-enable";

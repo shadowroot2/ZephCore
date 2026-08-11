@@ -32,7 +32,32 @@ struct gps_state_info {
 	uint16_t visible_satellites; /* Satellites currently visible to the receiver (GSV), 0 if unavailable */
 	uint32_t last_fix_age_s;  /* Seconds since last validated fix (UINT32_MAX = never) */
 	uint32_t next_search_s;   /* Seconds until next search (0 = searching now or off) */
+	/* Tracked satellites per constellation, from GSV talker IDs. Populated
+	 * only when CONFIG_ZEPHCORE_GPS_SAT_DIAG is enabled; all zero otherwise.
+	 * Proves whether multi-constellation configuration actually took — a
+	 * module left in its GPS-only default reports sats_gps only. */
+	uint8_t sats_gps;
+	uint8_t sats_glonass;
+	uint8_t sats_galileo;
+	uint8_t sats_beidou;
+	uint8_t sats_other;
 };
+
+/* ===== GPS configuration diagnostics (runtime toggle, RAM only) =====
+ *
+ * Module configuration (PMTK/UBX or the GNSS API) is sent blind at boot and
+ * runs exactly once. With diag on, the next GPS enable re-runs it and records
+ * what actually happened, so an operator can power-cycle the GPS ("gps off"
+ * then "gps on") and read the outcome back over the CLI on a release build —
+ * no debug logging, no reflash.
+ *
+ * Not persisted: a diagnostic, not a setting. Clears on reboot. */
+void gps_set_diag(bool on);
+bool gps_get_diag(void);
+
+/* Render the last configuration attempt as a single CLI line. Always
+ * succeeds; reports "never run" if configuration has not happened yet. */
+void gps_get_diag_report(char *buf, size_t len);
 
 /* GPS enable callback - called when GPS is enabled/disabled (for power management) */
 typedef void (*gps_enable_callback_t)(bool enabled);

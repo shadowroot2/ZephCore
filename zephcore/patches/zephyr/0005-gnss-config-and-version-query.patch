@@ -1,0 +1,479 @@
+diff --git a/drivers/gnss/Kconfig.luatos_air530z b/drivers/gnss/Kconfig.luatos_air530z
+index c5d09261da5..94ff2848b88 100644
+--- a/drivers/gnss/Kconfig.luatos_air530z
++++ b/drivers/gnss/Kconfig.luatos_air530z
+@@ -28,4 +28,39 @@ config GNSS_LUATOS_AIR530Z_SATELLITES_COUNT
+ 	  the device is actually tracking, just how many of those can
+ 	  be reported in the satellites callback.
+ 
++config GNSS_LUATOS_AIR530Z_NAV_MODE
++	int "Navigation dynamic model ($PCAS11)"
++	range -1 7
++	default 3
++	help
++	  Dynamic model sent to the module at init: 0 = portable,
++	  1 = stationary, 2 = pedestrian, 3 = automotive, 4 = sea,
++	  5-7 = airborne. Set -1 to send nothing and leave the module on
++	  whatever it already has.
++
++	  Set this even though it looks like a tuning detail. The dynamic
++	  model is stored IN THE MODULE and survives reflashing the host, so
++	  a board that previously ran other GNSS firmware can arrive stuck in
++	  an airborne or automotive model that quietly degrades fixes for a
++	  stationary node. Repeaters and room servers should use 1.
++
++	  $PCAS11 is not in the L76K protocol specification (which documents
++	  only PCAS01/02/03/04/10); it is an undocumented CASIC command these
++	  parts accept in practice. Mode 1 is confirmed against a published
++	  CASIC command reference.
++
++config GNSS_LUATOS_AIR530Z_VERSION_QUERY
++	bool "Query the module version at init ($PCAS06)"
++	default y
++	help
++	  Send $PCAS06,0 at init and capture the module's identification
++	  string from the $GPTXT reply it sends back in-band.
++
++	  Besides identifying the part, this is the only positive proof
++	  available on this transport that the MCU's TX line actually reaches
++	  the module — every other command in the init script is written
++	  blind, so a module that hears nothing is indistinguishable from one
++	  that hears everything and ignores it. The captured string is
++	  reported by the application's GPS diagnostics.
++
+ endif
+diff --git a/drivers/gnss/gnss_luatos_air530z.c b/drivers/gnss/gnss_luatos_air530z.c
+index 74708edbd62..82320abc125 100644
+--- a/drivers/gnss/gnss_luatos_air530z.c
++++ b/drivers/gnss/gnss_luatos_air530z.c
+@@ -9,7 +9,6 @@
+ #include <zephyr/modem/chat.h>
+ #include <zephyr/modem/backend/uart.h>
+ #include <zephyr/kernel.h>
+-#include <zephyr/pm/device.h>
+ #include <zephyr/drivers/gpio.h>
+ #include <string.h>
+ 
+@@ -28,16 +27,75 @@ LOG_MODULE_REGISTER(luatos_air530z, CONFIG_GNSS_LOG_LEVEL);
+ #define CHAT_RECV_BUF_SZ 256
+ #define CHAT_ARGV_SZ 32
+ 
++/* Inter-command delay. These parts are CASIC silicon on a 9600-baud link and
++ * some commands (constellation selection especially) restart the navigation
++ * engine, so the module needs real settling time between sentences. 10 ms is
++ * not enough — a command issued into a restarting engine is simply lost.
++ */
++#define AIR530Z_CMD_DELAY_MS 250
++
++/* Navigation dynamic model — $PCAS11,<mode>. Undocumented in the L76K
++ * protocol specification (which lists only PCAS01/02/03/04/10) but accepted
++ * by these parts in practice. Mode 1 = stationary is confirmed against a
++ * published CASIC command reference; the remaining values follow the usual
++ * dynamic-model ladder.
++ *
++ * Worth setting explicitly even though it looks like a tuning detail: the
++ * dynamic model PERSISTS IN THE MODULE across firmware flashes, so a board
++ * that previously ran other GNSS firmware can arrive stuck in an airborne or
++ * automotive model that quietly degrades fixes for a stationary node.
++ */
++#if CONFIG_GNSS_LUATOS_AIR530Z_NAV_MODE == 0
++#define AIR530Z_NAV_CMD "$PCAS11,0*1D"
++#elif CONFIG_GNSS_LUATOS_AIR530Z_NAV_MODE == 1
++#define AIR530Z_NAV_CMD "$PCAS11,1*1C"
++#elif CONFIG_GNSS_LUATOS_AIR530Z_NAV_MODE == 2
++#define AIR530Z_NAV_CMD "$PCAS11,2*1F"
++#elif CONFIG_GNSS_LUATOS_AIR530Z_NAV_MODE == 3
++#define AIR530Z_NAV_CMD "$PCAS11,3*1E"
++#elif CONFIG_GNSS_LUATOS_AIR530Z_NAV_MODE == 4
++#define AIR530Z_NAV_CMD "$PCAS11,4*19"
++#elif CONFIG_GNSS_LUATOS_AIR530Z_NAV_MODE == 5
++#define AIR530Z_NAV_CMD "$PCAS11,5*18"
++#elif CONFIG_GNSS_LUATOS_AIR530Z_NAV_MODE == 6
++#define AIR530Z_NAV_CMD "$PCAS11,6*1B"
++#elif CONFIG_GNSS_LUATOS_AIR530Z_NAV_MODE == 7
++#define AIR530Z_NAV_CMD "$PCAS11,7*1A"
++#endif
++
+ MODEM_CHAT_SCRIPT_CMDS_DEFINE(init_script_cmds,
+ #if CONFIG_GNSS_SATELLITES
+ 	/* receive only GGA, RMC and GSV NMEA messages */
+-	MODEM_CHAT_SCRIPT_CMD_RESP_NONE("$PCAS03,1,0,0,1,1,0,0,0,0,0,0,0,0*1F", 10),
++	MODEM_CHAT_SCRIPT_CMD_RESP_NONE("$PCAS03,1,0,0,1,1,0,0,0,0,0,0,0,0*1F",
++					AIR530Z_CMD_DELAY_MS),
+ #else
+ 	/* receive only GGA and RMC NMEA messages */
+-	MODEM_CHAT_SCRIPT_CMD_RESP_NONE("$PCAS03,1,0,0,0,1,0,0,0,0,0,0,0,0*1E", 10),
++	MODEM_CHAT_SCRIPT_CMD_RESP_NONE("$PCAS03,1,0,0,0,1,0,0,0,0,0,0,0,0*1E",
++					AIR530Z_CMD_DELAY_MS),
++#endif
++#ifdef AIR530Z_NAV_CMD
++	MODEM_CHAT_SCRIPT_CMD_RESP_NONE(AIR530Z_NAV_CMD, AIR530Z_CMD_DELAY_MS),
++#endif
++#if IS_ENABLED(CONFIG_GNSS_LUATOS_AIR530Z_VERSION_QUERY)
++	/* Ask the module to identify itself. The reply arrives in-band as an
++	 * ordinary $GPTXT NMEA sentence (see the unsolicited match below), so
++	 * it costs nothing to read and needs no raw access to the UART.
++	 *
++	 * This is the only positive proof available on this transport that the
++	 * MCU's TX line actually reaches the module: every other command here
++	 * is written blind. If configuration appears to have no effect, a
++	 * missing version string says the module never heard any of it.
++	 */
++	MODEM_CHAT_SCRIPT_CMD_RESP_NONE("$PCAS06,0*1B", AIR530Z_CMD_DELAY_MS),
+ #endif
+ );
+ 
++/* NOTE: configuration is deliberately NOT persisted to the module ($PCAS00).
++ * The init script re-sends it on every boot, and a saved configuration is
++ * sticky — including a wrong one, which then survives reflashing and has to
++ * be hunted down on hardware.
++ */
++
+ MODEM_CHAT_SCRIPT_NO_ABORT_DEFINE(init_script, init_script_cmds, NULL, 5);
+ 
+ struct gnss_luatos_air530z_config {
+@@ -73,12 +131,81 @@ struct gnss_luatos_air530z_data {
+ 	struct k_sem lock;
+ };
+ 
++#if IS_ENABLED(CONFIG_GNSS_LUATOS_AIR530Z_VERSION_QUERY)
++/* Module identification string, captured from the $PCAS06 reply.
++ *
++ * $GPTXT,01,01,02,SW=<version>,... — the interesting field is the one
++ * starting "SW=". Stored verbatim (truncated) rather than parsed: this is a
++ * diagnostic, and different parts word the reply differently.
++ */
++static char air530z_version[40];
++
++static void air530z_gptxt_callback(struct modem_chat *chat, char **argv, uint16_t argc,
++				   void *user_data)
++{
++	ARG_UNUSED(chat);
++	ARG_UNUSED(user_data);
++
++	/* Take the first field that looks like a software-version token. */
++	for (uint16_t i = 1; i < argc; i++) {
++		if (strncmp(argv[i], "SW=", 3) == 0) {
++			strncpy(air530z_version, argv[i] + 3, sizeof(air530z_version) - 1);
++			air530z_version[sizeof(air530z_version) - 1] = '\0';
++			LOG_INF("GNSS module version: %s", air530z_version);
++			return;
++		}
++	}
++}
++
++/* Exported for application-level diagnostics. Returns the number of
++ * characters written, or 0 if the module has not identified itself — which
++ * is itself the useful signal (no reply => the module is not receiving).
++ */
++__weak int zephcore_gnss_version_get(char *buf, size_t len)
++{
++	if (buf == NULL || len == 0 || air530z_version[0] == '\0') {
++		return 0;
++	}
++
++	strncpy(buf, air530z_version, len - 1);
++	buf[len - 1] = '\0';
++	return (int)strlen(buf);
++}
++#endif /* CONFIG_GNSS_LUATOS_AIR530Z_VERSION_QUERY */
++
++/* Raw sentence counter — see the equivalent note in gnss_nmea_generic.c.
++ * Non-zero means the module is alive, at the right baud, and emitting
++ * parseable NMEA; zero means nothing is arriving at all. */
++static uint32_t air530z_rx_sentences;
++
++static void air530z_gga_cb(struct modem_chat *chat, char **argv, uint16_t argc,
++			   void *user_data)
++{
++	air530z_rx_sentences++;
++	gnss_nmea0183_match_gga_callback(chat, argv, argc, user_data);
++}
++
++static void air530z_rmc_cb(struct modem_chat *chat, char **argv, uint16_t argc,
++			   void *user_data)
++{
++	air530z_rx_sentences++;
++	gnss_nmea0183_match_rmc_callback(chat, argv, argc, user_data);
++}
++
++__weak uint32_t zephcore_gnss_rx_count(void)
++{
++	return air530z_rx_sentences;
++}
++
+ MODEM_CHAT_MATCHES_DEFINE(unsol_matches,
+-	MODEM_CHAT_MATCH_WILDCARD("$??GGA,", ",*", gnss_nmea0183_match_gga_callback),
+-	MODEM_CHAT_MATCH_WILDCARD("$??RMC,", ",*", gnss_nmea0183_match_rmc_callback),
++	MODEM_CHAT_MATCH_WILDCARD("$??GGA,", ",*", air530z_gga_cb),
++	MODEM_CHAT_MATCH_WILDCARD("$??RMC,", ",*", air530z_rmc_cb),
+ #if CONFIG_GNSS_SATELLITES
+ 	MODEM_CHAT_MATCH_WILDCARD("$??GSV,", ",*", gnss_nmea0183_match_gsv_callback),
+ #endif
++#if IS_ENABLED(CONFIG_GNSS_LUATOS_AIR530Z_VERSION_QUERY)
++	MODEM_CHAT_MATCH_WILDCARD("$??TXT,", ",*", air530z_gptxt_callback),
++#endif
+ );
+ 
+ static void luatos_air530z_lock(const struct device *dev)
+@@ -217,54 +344,11 @@ static int gnss_luatos_air530z_init(const struct device *dev)
+ 	return 0;
+ }
+ 
+-static int luatos_air530z_pm_resume(const struct device *dev)
+-{
+-	struct gnss_luatos_air530z_data *data = dev->data;
+-	int ret;
+-
+-	ret = modem_pipe_open(data->uart_pipe, K_SECONDS(10));
+-	if (ret < 0) {
+-		return ret;
+-	}
+-
+-	ret = modem_chat_attach(&data->chat, data->uart_pipe);
+-	if (ret < 0) {
+-		modem_pipe_close(data->uart_pipe, K_SECONDS(10));
+-		return ret;
+-	}
+-
+-	ret = modem_chat_run_script(&data->chat, &init_script);
+-	if (ret < 0) {
+-		modem_pipe_close(data->uart_pipe, K_SECONDS(10));
+-		return ret;
+-	}
+-
+-	return 0;
+-}
+-
+-static int luatos_air530z_pm_action(const struct device *dev, enum pm_device_action action)
+-{
+-	struct gnss_luatos_air530z_data *data = dev->data;
+-	const struct gnss_luatos_air530z_config *config = dev->config;
+-	int ret = -ENOTSUP;
+-
+-	switch (action) {
+-	case PM_DEVICE_ACTION_SUSPEND:
+-		gpio_pin_set_dt(&config->on_off_gpio, 0);
+-		ret = modem_pipe_close(data->uart_pipe, K_SECONDS(10));
+-		break;
+-
+-	case PM_DEVICE_ACTION_RESUME:
+-		gpio_pin_set_dt(&config->on_off_gpio, 1);
+-		ret = luatos_air530z_pm_resume(dev);
+-		break;
+-
+-	default:
+-		break;
+-	}
+-
+-	return ret;
+-}
++/* PM hooks intentionally removed — the L76K ignores $PMTK161,0 (AT6558-
++ * based, not genuine MediaTek), so PM-driven software sleep can never
++ * work; standby drives the FORCE_ON GPIO and the app suspends the UART
++ * instead (ZephyrGPSManager, main thread only). PM-less also keeps
++ * modem_chat scripts out of PM callbacks (deadlock risk off sysworkq). */
+ 
+ static int luatos_air530z_set_fix_rate(const struct device *dev, uint32_t fix_interval_ms)
+ {
+@@ -356,10 +440,8 @@ static DEVICE_API(gnss, gnss_api) = {
+ 		.dynamic_separators_buf = {',', '*'},						\
+ 	};											\
+ 												\
+-	PM_DEVICE_DT_INST_DEFINE(inst, luatos_air530z_pm_action);				\
+-												\
+ 	DEVICE_DT_INST_DEFINE(inst, gnss_luatos_air530z_init,					\
+-		PM_DEVICE_DT_INST_GET(inst),							\
++		NULL,										\
+ 		&gnss_luatos_air530z_data_##inst,						\
+ 		&gnss_luatos_air530z_cfg_##inst,						\
+ 		POST_KERNEL, CONFIG_GNSS_INIT_PRIORITY, &gnss_api);
+diff --git a/drivers/gnss/gnss_nmea0183.c b/drivers/gnss/gnss_nmea0183.c
+index d4e7b502e39..c8e8f2da2d2 100644
+--- a/drivers/gnss/gnss_nmea0183.c
++++ b/drivers/gnss/gnss_nmea0183.c
+@@ -52,6 +52,14 @@ static int gnss_system_from_gsv_header_args(const struct gsv_header_args *args,
+ 	case 'B':
+ 		*sv_system = GNSS_SYSTEM_BEIDOU;
+ 		break;
++	case 'D':
++		/* "$BDGSV" — the pre-4.10 BeiDou talker, still emitted by CASIC
++		 * receivers (Quectel L76K and relatives) and by u-blox left at
++		 * their default NMEA version. Without this the entire group is
++		 * rejected and BeiDou silently reads as zero satellites.
++		 * 'D' at index 2 is unique to the BD talker. */
++		*sv_system = GNSS_SYSTEM_BEIDOU;
++		break;
+ 	case 'P':
+ 		*sv_system = GNSS_SYSTEM_GPS;
+ 		break;
+diff --git a/drivers/gnss/gnss_nmea_generic.c b/drivers/gnss/gnss_nmea_generic.c
+index bef7989828d..2042c85a2ee 100644
+--- a/drivers/gnss/gnss_nmea_generic.c
++++ b/drivers/gnss/gnss_nmea_generic.c
+@@ -50,11 +50,163 @@ struct gnss_nmea_generic_data {
+ 	uint8_t *chat_argv[CHAT_ARGV_SZ];
+ };
+ 
++/* Module identification, captured from a $GPTXT sentence.
++ *
++ * This driver is a passive listener — every configuration command the
++ * application sends is written blind, and nothing on this transport confirms
++ * the module received any of it. A CASIC part answers a $PCAS06 version query
++ * in-band with $GPTXT, and u-blox emit $GNTXT boot banners unprompted, so a
++ * captured string here is the one positive proof that the MCU's TX line
++ * reaches the module (or, for the u-blox banner, that RX is alive and the
++ * part is identified). Absence is the diagnostic signal.
++ */
++static char nmea_generic_version[40];
++
++static void nmea_generic_txt_callback(struct modem_chat *chat, char **argv, uint16_t argc,
++				      void *user_data)
++{
++	ARG_UNUSED(chat);
++	ARG_UNUSED(user_data);
++
++	/* Only an explicit software-version token counts as an identity. */
++	for (uint16_t i = 1; i < argc; i++) {
++		if (strncmp(argv[i], "SW=", 3) == 0) {
++			strncpy(nmea_generic_version, argv[i] + 3,
++				sizeof(nmea_generic_version) - 1);
++			nmea_generic_version[sizeof(nmea_generic_version) - 1] = '\0';
++			LOG_INF("GNSS module version: %s", nmea_generic_version);
++			return;
++		}
++	}
++
++	/* Deliberately NO generic fallback to "keep the last text field".
++	 * TXT sentences also carry warnings and errors — a module complaining
++	 * about a sentence it did not understand was being captured and then
++	 * reported as though it were the module's identity. A diagnostic that
++	 * invents an answer is worse than one admitting it has none, so an
++	 * unrecognised TXT is ignored and the field reads as no-reply. */
++}
++
++/* u-blox reply to a $PUBX poll. u-blox ignore the CASIC $PCAS06 query, so
++ * without this a u-blox module always reads as "no reply" and the TX-path
++ * proof is unavailable on exactly the boards that most need it. The content
++ * is time/status, not a version — what matters is that a reply arrived at
++ * all, which is what proves the module received our command. */
++static void nmea_generic_pubx_callback(struct modem_chat *chat, char **argv, uint16_t argc,
++				       void *user_data)
++{
++	ARG_UNUSED(chat);
++	ARG_UNUSED(argv);
++	ARG_UNUSED(argc);
++	ARG_UNUSED(user_data);
++
++	if (nmea_generic_version[0] == '\0') {
++		strcpy(nmea_generic_version, "u-blox");
++		LOG_INF("GNSS module replied to $PUBX poll (u-blox family)");
++	}
++}
++
++/* Exported for application-level diagnostics. Returns characters written, or
++ * 0 if the module never identified itself. Weak so a board that also builds
++ * another GNSS driver exporting this symbol still links. */
++__weak int zephcore_gnss_version_get(char *buf, size_t len)
++{
++	if (buf == NULL || len == 0 || nmea_generic_version[0] == '\0') {
++		return 0;
++	}
++
++	strncpy(buf, nmea_generic_version, len - 1);
++	buf[len - 1] = '\0';
++	return (int)strlen(buf);
++}
++
++/* Raw sentence dump for field diagnosis (CONFIG_ZEPHCORE_GPS_NMEA_DUMP).
++ *
++ * Reconstructs the sentence from the parsed argv and logs it. Enabled only
++ * for deliberate debugging: at 1 Hz with multi-GNSS this is a lot of console
++ * traffic, and on a repeater the console is shared with the CLI.
++ *
++ * Matching is first-match-wins, so the ordinary GGA/RMC/GSV matches never
++ * reach a catch-all placed after them — hence the logging lives in the
++ * wrappers as well as in the catch-all, which then covers everything else the
++ * module emits (TXT banners, PUBX replies, sentences we do not parse).
++ */
++#ifdef CONFIG_ZEPHCORE_GPS_NMEA_DUMP
++static void nmea_generic_dump(char **argv, uint16_t argc)
++{
++	char line[128];
++	size_t n = 0;
++
++	for (uint16_t i = 0; i < argc && n < sizeof(line) - 2; i++) {
++		n += (size_t)snprintk(&line[n], sizeof(line) - n, "%s%s",
++				      (i == 0) ? "" : ",", argv[i]);
++	}
++	LOG_INF("NMEA: %s", line);
++}
++
++static void nmea_generic_catchall_cb(struct modem_chat *chat, char **argv, uint16_t argc,
++				     void *user_data)
++{
++	ARG_UNUSED(chat);
++	ARG_UNUSED(user_data);
++	nmea_generic_dump(argv, argc);
++}
++#else
++#define nmea_generic_dump(argv, argc) do { } while (0)
++#endif
++
++/* Raw sentence counter — the only unambiguous "is the module talking to us"
++ * signal available.
++ *
++ * Everything else can be misread. No satellites, a module mute because its
++ * output protocol was disabled, and a module stranded at the wrong baud all
++ * present identically to the application: zero satellites and no fix. Even
++ * the position callback cannot tell them apart, because the NMEA matcher only
++ * publishes once GGA and RMC agree on a valid UTC — so a receiver that is
++ * healthily emitting NMEA while it searches the sky publishes nothing at all.
++ *
++ * Counting parsed sentences separates the cases outright: non-zero means the
++ * module is alive, at the right baud, and emitting NMEA we can parse, so any
++ * remaining problem is signal. Zero means nothing is arriving and no amount
++ * of antenna work will help.
++ */
++static uint32_t nmea_rx_sentences;
++
++static void nmea_generic_gga_cb(struct modem_chat *chat, char **argv, uint16_t argc,
++				void *user_data)
++{
++	nmea_rx_sentences++;
++	nmea_generic_dump(argv, argc);
++	gnss_nmea0183_match_gga_callback(chat, argv, argc, user_data);
++}
++
++static void nmea_generic_rmc_cb(struct modem_chat *chat, char **argv, uint16_t argc,
++				void *user_data)
++{
++	nmea_rx_sentences++;
++	nmea_generic_dump(argv, argc);
++	gnss_nmea0183_match_rmc_callback(chat, argv, argc, user_data);
++}
++
++/* Exported for application-level diagnostics. Weak so boards building another
++ * GNSS driver that also exports it still link. */
++__weak uint32_t zephcore_gnss_rx_count(void)
++{
++	return nmea_rx_sentences;
++}
++
+ MODEM_CHAT_MATCHES_DEFINE(unsol_matches,
+-	MODEM_CHAT_MATCH_WILDCARD("$??GGA,", ",*", gnss_nmea0183_match_gga_callback),
+-	MODEM_CHAT_MATCH_WILDCARD("$??RMC,", ",*", gnss_nmea0183_match_rmc_callback),
++	MODEM_CHAT_MATCH_WILDCARD("$??GGA,", ",*", nmea_generic_gga_cb),
++	MODEM_CHAT_MATCH_WILDCARD("$??RMC,", ",*", nmea_generic_rmc_cb),
+ #if CONFIG_GNSS_SATELLITES
+ 	MODEM_CHAT_MATCH_WILDCARD("$??GSV,", ",*", gnss_nmea0183_match_gsv_callback),
++#endif
++	MODEM_CHAT_MATCH_WILDCARD("$??TXT,", ",*", nmea_generic_txt_callback),
++	MODEM_CHAT_MATCH("$PUBX", ",*", nmea_generic_pubx_callback),
++#ifdef CONFIG_ZEPHCORE_GPS_NMEA_DUMP
++	/* Must stay LAST: a zero-length match matches every line, so anything
++	 * after it would be unreachable. */
++	MODEM_CHAT_MATCH("", ",*", nmea_generic_catchall_cb),
+ #endif
+ );
+ 

@@ -9,7 +9,8 @@
  * - SX1262 LoRa radio on SPI1 (DIO2 RF switch, DIO3 TCXO 3.3V, 22dBm)
  *   NSS=P1.12, DIO1=P1.06, RESET=P1.10, BUSY=P1.11
  * - GPS L76K on UART0 (9600 baud, CASIC/Air530Z — luatos,air530z driver)
- *   Control: GPS_EN=P0.06 (active-HIGH), GPS_STANDBY=P0.30, GPS_PPS=P0.31
+ *   Control: GPS_EN=P0.06 (active-HIGH), GPS_RESET=P0.29 (REINIT — must
+ *            float, see below), GPS_STANDBY=P0.30, GPS_PPS=P0.31
  * - Battery ADC on AIN4 (P0.28), 1.75:1 voltage divider
  *   ADC_CTRL enable pin: P0.11 (gpio-hog, always HIGH)
  * - LEDs: RED=P0.12, BLUE=P0.07 (both active-HIGH, LED_STATE_ON=HIGH)
@@ -148,6 +149,9 @@
 		};
 	};
 
+	/* GPS_RESET (P0.29) is the module's REINIT line and is intentionally left
+	 * floating (unconfigured input) — see the note in &gpio0 below. */
+
 	aliases {
 		led0 = &led_red;
 		led1 = &led_blue;
@@ -160,8 +164,8 @@
 		 * L76K (CASIC/Air530Z) is driven by the luatos,air530z driver via
 		 * on-off-gpios, and exposing those aliases would push M6 down the
 		 * T1000-E GPS sequence in ZephyrGPSManager (HAS_GPS_SLEEP/RESET).
-		 * GPS_STANDBY (P0.30) is held HIGH by a gpio-hog so the receiver
-		 * remains awake; RESET is deliberately left untouched. */
+		 * GPS_STANDBY (P0.30) is hogged HIGH in &gpio0; GPS_RESET (P0.29)
+		 * is left floating — see the note there. */
 		gps-enable = &gps_enable_pin;
 		charge-detect = &charge_detect;
 	};
@@ -206,12 +210,20 @@
 	 * (see the / node) — not hogged HIGH — so the VBAT divider only draws
 	 * current during a battery sample, matching Arduino MeshCore. */
 
-	/* GPS standby held static, mirroring the working board configuration
-	 * (GPS_EN is driven separately by the luatos,air530z on-off-gpios):
-	 *   GPS_STANDBY (P0.30) HIGH — L76K runs, never parked in standby.
+	/* GPS control lines (GPS_EN is driven separately by the luatos,air530z
+	 * on-off-gpios):
+	 *   GPS_STANDBY (P0.30) hogged HIGH — L76K runs, never parked in standby.
+	 *   GPS_RESET   (P0.29) NOT driven — this is the module's REINIT line and
+	 *     must float. Driving it (in particular HIGH, which this board used to
+	 *     do via a gpio-hog on the mistaken premise that HIGH was a de-asserted
+	 *     active-LOW reset) holds the L76K silent: it emits no NMEA at all and
+	 *     GPS is never detected. Upstream MeshCore bench-tested a sealed M6
+	 *     (passive NMEA capture): pin driven HIGH = 0 bytes, floating = full
+	 *     stream — so they set GPS_RESET = -1 (5c534c43). Meshtastic likewise
+	 *     leaves the pin an input.
 	 * M6 has no physical GPS switch; runtime on/off is via GPS_EN
-	 * (gps-enable alias) under software/CLI control. Hogs are used so the
-	 * pins are actively driven at boot without needing a consumer — the
+	 * (gps-enable alias) under software/CLI control. A hog is used for STANDBY
+	 * so the pin is actively driven at boot without needing a consumer — the
 	 * gpio-leds nodes are not bound by any driver in this build. */
 	gps-standby-hog {
 		gpio-hog;
@@ -219,7 +231,6 @@
 		output-high;
 		line-name = "GPS Standby";
 	};
-
 };
 
 &gpio1 {
@@ -233,7 +244,8 @@
  * via on-off-gpios (P0.06 = GPS_EN, shared with the gps-enable alias used for
  * runtime power control in ZephyrGPSManager). No zephyr,deferred-init: the
  * driver powers the module on-off-gpios HIGH at init before opening the pipe.
- * GPS_STANDBY (P0.30) is hogged HIGH in &gpio0; RESET is left untouched. */
+ * GPS_STANDBY (P0.30) is hogged HIGH in &gpio0; GPS_RESET (P0.29) is left
+ * floating (driving it silences the module — see the note there). */
 &uart0 {
 	compatible = "nordic,nrf-uarte";
 	status = "okay";

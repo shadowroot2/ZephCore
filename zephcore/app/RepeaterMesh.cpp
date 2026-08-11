@@ -422,7 +422,6 @@ int RepeaterMesh::handleRequest(ClientInfo* sender, uint32_t sender_timestamp, u
                     (float)(gpos.longitude_ndeg / 1e9),
                     gpos.altitude_mm / 1000.0f);
             }
-
             /* Wake GPS / extend acquire window so the next telemetry poll has
              * a fresher fix. In repeater mode GPS is normally off between the
              * 48h time-sync cycles — this opportunistically rearms acquire
@@ -1138,6 +1137,9 @@ void RepeaterMesh::formatGpsStatsReply(char* reply) {
             "on state=%s sats-in-view=%u no fix",
             state, sats_in_view);
     }
+
+    /* Per-constellation tally is deliberately NOT appended here — "get gps"
+     * has to fit a LoRa reply. It lives in "get gps diag" instead. */
 }
 
 void RepeaterMesh::savePrefs() {

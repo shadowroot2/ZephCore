@@ -22,6 +22,7 @@ LOG_MODULE_REGISTER(zephcore_repeater_main, CONFIG_ZEPHCORE_MAIN_LOG_LEVEL);
 #include <zephyr/drivers/hwinfo.h>
 #include <zephyr/sys/reboot.h>
 #include "oled_power.h"
+#include "led_gate.h"
 
 /* BLE controller assert handler — BT is compiled even for repeater (via zephcore_common.conf) */
 #if IS_ENABLED(CONFIG_BT_CTLR_ASSERT_HANDLER)
@@ -62,6 +63,19 @@ extern "C" void bt_ctlr_assert_handle(char *file, uint32_t line)
 #include "buzzer.h"
 #endif
 #include <helpers/ui/ui_timezone.h>
+
+/* Headless repeaters link the weak no-op ui_* stubs (ui_headless_stubs.c), so
+ * the periodic UI refresh in the maintenance pass is pure work for nothing on
+ * them.  Guard the hot path on a real ui_* implementation being linked; the
+ * one-shot calls at init and in the CLI reply path stay unguarded, matching
+ * the rest of the file.
+ *
+ * This MUST mirror the CMake condition that selects the stubs, not the display
+ * devicetree node: ZEPHCORE_UI_DESIGN_BUTTON is enabled by BUTTONS *or*
+ * DISPLAY *or* BUZZER, so a board with buttons/buzzer and no panel still links
+ * the real UI and still needs these updates. */
+#define ZEPHCORE_HAS_UI (IS_ENABLED(CONFIG_ZEPHCORE_UI_DESIGN_BUTTON) || \
+			 IS_ENABLED(CONFIG_ZEPHCORE_UI_DESIGN_JOYSTICK))
 
 /* Headless repeaters link the weak no-op ui_* stubs (ui_headless_stubs.c), so
  * the periodic UI refresh in the maintenance pass is pure work for nothing on
@@ -714,7 +728,7 @@ static void repeater_event_loop(void)
 		if (repeater_mesh_ptr &&
 		    (events & (MESH_EVENT_LORA_RX | MESH_EVENT_LORA_TX_DONE |
 			       MESH_EVENT_CLI_RX | MESH_EVENT_TX_DRAIN |
-			       MESH_EVENT_WAKE | MESH_EVENT_UI_ACTION))) {
+		       MESH_EVENT_WAKE | MESH_EVENT_UI_ACTION))) {
 			repeater_mesh_ptr->loop();
 		}
 #endif
@@ -864,6 +878,15 @@ int main(void)
 #if !IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
 	oled_sleep();
 #endif
+
+	/* Apply the persisted LED master switch ("set leds on|off"). After ui_init()
+	 * so the heartbeat cycle exists to be stopped; before the radio starts so the
+	 * first transmit already honours it. */
+	{
+		bool leds_off = repeater_mesh.getNodePrefs()->leds_disabled != 0;
+		zephcore_leds_set_disabled(leds_off);
+		LOG_INF("LEDs: %s (from prefs)", leds_off ? "disabled" : "enabled");
+	}
 
 	/* Log environment sensor availability */
 	if (env_sensors_available()) {

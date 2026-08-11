@@ -214,7 +214,6 @@ int RoomServerMesh::handleRequest(ClientInfo* sender, uint32_t sender_timestamp,
                     (float)(gpos.longitude_ndeg / 1e9),
                     gpos.altitude_mm / 1000.0f);
             }
-
             /* Wake GPS / extend acquire window so the next telemetry poll has
              * a fresher fix. In repeater mode GPS is normally off between the
              * 48h time-sync cycles — this opportunistically rearms acquire

@@ -464,6 +464,45 @@ config ZEPHCORE_NOISE_FLOOR_INTERVAL_MS
 	  30000, ~4 min and ~8 min.  Past 15000 the CAD probe becomes the binding
 	  deadline instead, so raise both or neither.
 
+config ZEPHCORE_PM_BOOT_AWAKE_MS
+	int "Block light sleep for this long after boot (ms)"
+	depends on PM && SOC_FAMILY_ESPRESSIF_ESP32
+	default 600000
+	range 0 3600000
+	help
+	  How long after boot the SoC refuses to light-sleep, so the USB console
+	  is guaranteed reachable for a configuration session.
+
+	  This exists because nothing arms a UART wake source on ESP32 — see
+	  helpers/pm_esp32_console.c.  Once the window closes, characters typed at
+	  a sleeping node are DROPPED and the CLI stops answering over USB until
+	  the board resets.  In practice connecting a terminal usually does reset
+	  it (the USB bridge drives EN from DTR), which re-arms the window.
+
+	  0 disables the window entirely — the node may sleep immediately after
+	  boot, and the USB console becomes unusable except in the instants it
+	  happens to be awake.  Do not set 0 on a board you still need to
+	  configure.
+
+	  Raising it costs only the extra awake time at the start of each boot.
+
+config ZEPHCORE_PM_CONSOLE_UART_NUM
+	int "Console UART index flushed before light sleep"
+	depends on PM && SOC_FAMILY_ESPRESSIF_ESP32
+	default 0
+	range 0 2
+	help
+	  Hardware UART index (not a DT node) passed to
+	  esp_rom_uart_tx_wait_idle() before entering light sleep, so a line in
+	  the TX FIFO is not cut off mid-character by the clock stopping.
+
+	  0 is correct for every board this is currently enabled on: their
+	  console is uart0, whether via a USB-serial bridge (Heltec V3/V4/V4.3)
+	  or the ROM-default pads.  Change it only if a board's console is moved
+	  to another hardware UART — a wrong index does not fail the build, it
+	  just silently flushes the wrong peripheral and lets the console
+	  truncate again.
+
 menu "Radio Configuration"
 
 choice ZEPHCORE_RADIO_TYPE
@@ -752,6 +791,70 @@ config ZEPHCORE_REPEATER_GPS_INTERVAL_SEC
 	  0 = always-on (never sleeps). Applied at boot until the operator
 	  overrides it with "set gps duty <sec>" (persisted to flash).
 	  Companions default to ZEPHCORE_GPS_POLL_INTERVAL_SEC (300s) instead.
+
+config ZEPHCORE_GPS_NMEA_DUMP
+	bool "Log every NMEA sentence received from the GNSS module"
+	depends on GNSS
+	help
+	  Print each sentence the GNSS driver parses, plus everything else the
+	  module emits, to the console. For diagnosing a receiver that reports
+	  no satellites: it distinguishes a module that is talking normally
+	  while it searches the sky from one that is silent, at the wrong baud,
+	  or has had its NMEA output disabled — cases that are otherwise
+	  indistinguishable from the application.
+
+	  Verbose: at 1 Hz with multi-GNSS this is a continuous stream, and on
+	  a repeater it shares the console with the CLI. Diagnostic builds only.
+
+config ZEPHCORE_GPS_NAV_MODE
+	int "GNSS navigation dynamic model (CASIC $PCAS11)"
+	range -1 7
+	default 1 if ZEPHCORE_ROLE_REPEATER || ZEPHCORE_ROLE_ROOM_SERVER
+	default 3
+	help
+	  Dynamic model sent to CASIC-family GNSS modules (Quectel L76K/L76KB,
+	  Air530Z) on boards using the generic-NMEA driver: 0 = portable,
+	  1 = stationary, 2 = pedestrian, 3 = automotive, 4 = sea,
+	  5-7 = airborne. -1 sends nothing.
+
+	  Defaults to stationary for fixed roles and automotive otherwise.
+	  Worth setting rather than leaving alone: the model is stored IN THE
+	  MODULE and survives reflashing the host, so a slot module that
+	  previously lived in another device can arrive stuck in an airborne
+	  model that quietly degrades fixes on a fixed site.
+
+	  Boards that always carry a CASIC part use the air530z driver instead
+	  — see CONFIG_GNSS_LUATOS_AIR530Z_NAV_MODE for those.
+
+config ZEPHCORE_GPS_SAT_DIAG
+	bool "GPS per-constellation satellite diagnostics"
+	# Must depend on GNSS, not just select GNSS_SATELLITES: on a board with
+	# no GNSS at all (native Linux, xiao_nrf52840) GNSS is n, and y-selecting
+	# a symbol whose dependencies are unmet is a Kconfig error that aborts the
+	# build — not a warning. The repeater default below would otherwise turn
+	# this on for every GNSS-less repeater target.
+	depends on GNSS
+	select GNSS_SATELLITES
+	default y if ZEPHCORE_ROLE_REPEATER
+	help
+	  Tally tracked satellites per constellation from GSV sentences and
+	  report them in "get gps" as sys=G<n>/R<n>/E<n>/B<n>/?<n>
+	  (GPS / GLONASS / Galileo / BeiDou / other).
+
+	  This is the ground truth for whether the boot-time multi-constellation
+	  configuration (PMTK353 / UBX-CFG-GNSS) actually took: a module still in
+	  its GPS-only default emits only $GPGSV, so every counter but G stays 0.
+	  Satellite count alone cannot prove this — only the talker IDs can.
+
+	  Costs RAM: CONFIG_GNSS_SATELLITES adds 512 bytes to the driver's UART
+	  RX buffer plus a per-satellite array (~770 bytes total, measured on
+	  RAK3401). Default on for repeaters, which have the headroom; off for
+	  companions, which are RAM-bound. Enable it explicitly for a companion
+	  diagnostic build.
+
+	  Independent of "set gps diag", which is a runtime toggle and always
+	  available — this option only adds the per-constellation evidence to
+	  its report.
 
 endmenu
 

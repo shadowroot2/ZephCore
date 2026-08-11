@@ -1588,7 +1588,6 @@ int CompanionMesh::appendSelfTelemetry(uint8_t *reply, uint8_t permissions)
 		reply[i++] = sats_in_view & 0xFF;
 	}
 #endif
-
 	/* MCU die temperature — reported under base permission, but only when no
 	 * external sensor already supplied a CH_SELF temperature (never emit two). */
 	if (!temp_reported && env_ok && env.has_mcu_temperature) {

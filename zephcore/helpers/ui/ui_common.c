@@ -20,6 +20,7 @@
 #include <ZephyrSensorManager.h>   /* gps_power_off_for_shutdown */
 #include "ui_mesh_actions.h"        /* mesh_disable_power_regulators (weak) */
 #include <helpers/battery_curve.h>
+#include "led_gate.h"               /* shared with the LoRa TX LED */
 
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/kernel.h>
@@ -145,7 +146,6 @@ static uint8_t s_msg_blink_phase;
 static uint8_t s_msg_blink_count;
 static bool s_tx_led_active;
 #endif
-static bool s_leds_disabled;
 #if HAS_BLE_STATUS_LED
 static bool s_ble_enabled = true;
 static bool s_ble_connected;
@@ -255,7 +255,7 @@ static void led_on_work_handler(struct k_work *work)
 			LED_LOW_BATT_BLINK_MS : (mc > 0 ? LED_ON_MSG_MS : LED_ON_MS);
 	}
 
-	if (!s_leds_disabled) {
+	if (!zephcore_leds_disabled()) {
 		#if HAS_BLE_STATUS_LED
 		bool ble_waiting = s_ble_enabled && !s_ble_connected;
 		#endif
@@ -312,7 +312,7 @@ static void tx_led_off_work_handler(struct k_work *work)
 	ARG_UNUSED(work);
 	s_tx_led_active = false;
 	heartbeat_led_set(false);
-	if (!s_leds_disabled) {
+	if (!zephcore_leds_disabled()) {
 		k_work_reschedule(&s_led_on_work, K_MSEC(LED_CYCLE_MS));
 	}
 }
@@ -362,7 +362,7 @@ void ui_led_heartbeat_init(void)
 void ui_set_heartbeat_led(bool enabled)
 {
 #if HAS_HEARTBEAT_LED
-	if (enabled && !s_leds_disabled) {
+	if (enabled && !zephcore_leds_disabled()) {
 		if (gpio_is_ready_dt(&s_heartbeat_led)) {
 			k_work_reschedule(&s_led_on_work, K_NO_WAIT);
 		}
@@ -406,10 +406,15 @@ void ui_led_set_ble_enabled(bool enabled)
 #endif
 }
 
-void ui_set_leds_disabled(bool disabled)
+/*
+ * Strong override of the weak hook in led_gate.c: react to a gate change from
+ * anywhere (UI toggle, "set leds", boot). Stops or restarts the heartbeat cycle
+ * and refreshes the UI's LED page. The gate flag itself is already set by the
+ * time we get here — do NOT call back into ui_set_leds_disabled() from here.
+ */
+void zephcore_leds_ui_sync(bool disabled)
 {
 #if HAS_HEARTBEAT_LED
-	s_leds_disabled = disabled;
 	if (disabled) {
 		k_work_cancel_delayable(&s_led_on_work);
 		k_work_cancel_delayable(&s_led_off_work);
@@ -453,7 +458,12 @@ void ui_set_leds_disabled(bool disabled)
 
 bool ui_leds_disabled(void)
 {
-	return s_leds_disabled;
+	return zephcore_leds_disabled();
+}
+
+void ui_set_leds_disabled(bool disabled)
+{
+	zephcore_leds_set_disabled(disabled);
 }
 
 /* Start a short forced flash pattern on T-1000E. */
@@ -489,7 +499,7 @@ void ui_led_flash_msg(void)
 	#if defined(CONFIG_BOARD_T1000_E)
 	if (gpio_is_ready_dt(&s_heartbeat_led)) {
 	#else
-	if (!s_leds_disabled && gpio_is_ready_dt(&s_heartbeat_led)) {
+	if (!zephcore_leds_disabled() && gpio_is_ready_dt(&s_heartbeat_led)) {
 	#endif
 		k_work_cancel_delayable(&s_led_on_work);
 		k_work_cancel_delayable(&s_led_off_work);
@@ -533,11 +543,13 @@ void ui_led_force_tx(void)
 }
 
 /* Flash the heartbeat LED 3 times on shutdown.
- * Used as a visual power-off indicator when the buzzer is muted. */
+ * Used as a visual power-off indicator when the buzzer is muted.
+ * Suppressed by "set leds off" — a node the user asked to keep dark stays dark
+ * even at power-off. */
 void ui_led_flash_shutdown(void)
 {
 #if HAS_HEARTBEAT_LED
-	if (gpio_is_ready_dt(&s_heartbeat_led)) {
+	if (!zephcore_leds_disabled() && gpio_is_ready_dt(&s_heartbeat_led)) {
 		for (int i = 0; i < 3; i++) {
 			heartbeat_led_set(true);
 			k_sleep(K_MSEC(100));

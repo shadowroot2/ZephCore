@@ -5,10 +5,16 @@
  * Battery: AIN7 = P0.31, voltage divider 2:1.
  */
 
-/* GPS power control - P1.09
- * The luatos,air530z driver also manages this pin via on-off-gpios,
- * but we need our own alias so ZephyrSensorManager can toggle power
- * independently (driver PM suspend/resume hangs on modem_pipe ops). */
+/* GPS standby control — P1.09 = the L76K's WAKEUP pin (schematic net
+ * GNSS_WAKEUP). This is NOT a supply switch: per the L76K hardware design the
+ * pin only enters/exits Standby, where the RF is off but the core and I/O
+ * domain stay powered. VCC is never removed, so ephemeris/almanac/RTC are
+ * retained and each wake is a warm start. Active low with an internal
+ * pull-up, which is why the module runs even with this pin unconfigured.
+ *
+ * The luatos,air530z driver also manages this pin via on-off-gpios, but we
+ * need our own alias so ZephyrSensorManager can toggle it independently
+ * (driver PM suspend/resume hangs on modem_pipe ops). */
 / {
 	gps_en: gps-enable {
 		compatible = "gpio-leds";

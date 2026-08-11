@@ -687,9 +687,17 @@ Repeaters and room servers default to `CONFIG_ZEPHCORE_REPEATER_GPS_INTERVAL_SEC
 
 - Battery ADC with optional regulator-gated voltage divider, 8-sample average (boards with `zephyr,user` ADC node; MG24 has no battery divider, ADC disabled)
 - UF2 bootloader entry via GPREGRET magic (0x57 = UF2, 0xA8 = BLE DFU)
-- TX LED bracketing for LoRa transmissions
+- TX LED bracketing for LoRa transmissions (gated by the LED master switch below)
 - Bootloader version detection via flash memory scan
 
+**LED master switch** (`helpers/led_gate.{c,h}`, `set leds on|off`, all roles): one process-wide
+flag every LED driver consults — heartbeat and unread-message LEDs in `helpers/ui/ui_common.c`, the
+`lora-tx-led` in `ZephyrBoard::onBeforeTransmit()`, and the message/shutdown flashes. It lives
+outside the UI layer because `ui_common.c` is only compiled when a UI is enabled, while a headless
+repeater still blinks on every transmit. `ui_common.c` overrides the weak `zephcore_leds_ui_sync()`
+hook so a CLI change also stops a lit heartbeat and refreshes the UI's LEDs page. Persisted in
+`NodePrefs.leds_disabled` (companion offset 93; repeater offset 120, magic-encoded — see §13).
+ Does not cover the display backlight, which has its own UI brightness setting (`display_brightness`).
 ### 7.6 WiFi / MQTT / TCP Transports
 
 - **`adapters/wifi/ZephyrWiFiStation.c`**: WiFi STA client (ESP32) used by observer and repeater uplink
@@ -817,7 +825,7 @@ Applied automatically at CMake configure time; a failed patch aborts the configu
 | 0002-lora-lr20xx-build | LOW | Integrates LR20xx driver into Zephyr LoRa build |
 | 0003-lora-sx126x-native | **HIGH** | DIO1 work queue, duty cycle, RX-busy gating, extension API, errata workarounds |
 | 0004-lora-sx127x-62k5-bandwidth | LOW | Adds 62.5 kHz bandwidth to the loramac-node backend |
-| 0005-gnss-air530z-easy | MEDIUM | EASY ephemeris + removes PM (prevents deadlocks) |
+| 0005-gnss-config-and-version-query | MEDIUM | Air530Z configuration, version query + removes PM (prevents deadlocks) |
 | 0006-blobs-py | LOW | Fix `west blobs fetch` KeyError |
 | 0007-spi-gpio-native-linux | LOW | Wires native-Linux SPI/GPIO drivers into the Zephyr build |
 | 0008-flash-sim-per-node-file | LOW | Flash simulator defaults to per-node settings file (native Linux) |
@@ -995,6 +1003,8 @@ meshtimesync(151).
 **Repeater/room-server `/lfs/repeater/prefs` (297 bytes)** — `app/RepeaterDataStore.cpp`
 `loadPrefs()`/`savePrefs()` (same field order as `helpers/CommonCLI.cpp`; offset comments inline).
 Key ranges: name(4-36), radio(72-119), adaptive-delay(80-111, ignored at runtime),
+leds_disabled(120, magic-encoded `0xA0`/`0xA1` — the byte formerly held `agc_reset_interval`, which
+stored seconds/4, so any other value is a legacy interval and decodes to "LEDs on"),
 Arduino-bridge(127-151, read+discarded), GPS(156-161), owner_info(170-290), rx_boost/duty(290-291),
 reserved(292-293, was APC), flood_max_unscoped/advert(294-295), meshtimesync(296). Older shorter files
 load cleanly — reads past EOF are no-ops, so newer fields keep their defaults and a one-time
