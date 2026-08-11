@@ -57,6 +57,7 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"CLI companion:\r\n"
 		"ver\r\nboard\r\nadvert\r\nadvert.zerohop\r\n"
 		"clock [sync]\r\ntime <epoch>\r\ngps [on|off|setloc|advert]\r\n"
+		"offgrid [on|off]\r\n"
 		"tracking [on|off]\r\n"
 #if DT_NODE_HAS_PROP(DT_ALIAS(led0), gpios) || DT_NODE_HAS_PROP(DT_ALIAS(led1), gpios)
 		"leds [on|off]\r\n"
@@ -88,7 +89,7 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 	CONFIG_ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS > 0
 		"get/set autoshutdown\r\nget/set autoshutdown.emergency\r\n"
 #endif
-		"get/set tracking.interval\r\n"
+		"get/set tracking.interval\r\nget/set tracking.group\r\n"
 		"start dfu\r\nstart ota\r\n"
 #if !defined(CONFIG_SOC_FAMILY_NORDIC_NRF)
 		"stop ota\r\n"

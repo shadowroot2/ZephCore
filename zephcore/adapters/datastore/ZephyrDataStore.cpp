@@ -849,8 +849,20 @@ void ZephyrDataStore::loadPrefs(NodePrefs &prefs)
 	if (off + 2 <= len) {
 		prefs.tracking_interval_minutes = (uint16_t)buf[off] |
 			((uint16_t)buf[off + 1] << 8);
+		off += 2;
 		if (prefs.tracking_interval_minutes < 5) {
 			prefs.tracking_interval_minutes = 5;
+		}
+	}
+
+	/* Offset 168: tracking destination group. Older preference blobs retain
+	 * initNodePrefs()'s #tracks default. */
+	if (off + sizeof(prefs.tracking_group_name) <= len) {
+		memcpy(prefs.tracking_group_name, &buf[off],
+		       sizeof(prefs.tracking_group_name));
+		prefs.tracking_group_name[sizeof(prefs.tracking_group_name) - 1] = '\0';
+		if (prefs.tracking_group_name[0] == '\0') {
+			strcpy(prefs.tracking_group_name, "#tracks");
 		}
 	}
 }
@@ -953,7 +965,10 @@ void ZephyrDataStore::savePrefs(const NodePrefs &prefs)
 	/* Offset 166: companion tracking interval in whole minutes. */
 	buf[off++] = prefs.tracking_interval_minutes & 0xFF;
 	buf[off++] = (prefs.tracking_interval_minutes >> 8) & 0xFF;
-	/* Total: 168 bytes. */
+	/* Offset 168: companion tracking destination group. */
+	memcpy(&buf[off], prefs.tracking_group_name, sizeof(prefs.tracking_group_name));
+	off += sizeof(prefs.tracking_group_name);
+	/* Total: 200 bytes. */
 
 	bool ok = atomicReplaceFile(PREFS_FILE, buf, off);
 	LOG_DBG("savePrefs: wrote %s, ok=%d (%d bytes), name='%.16s'",

@@ -1384,11 +1384,12 @@ static void render_gps(void)
 			}
 		}
 	} else {
-		/* OFF — shouldn't reach here if gps_enabled is true */
+		/* gps_enabled is set synchronously, while the UI state update can
+		 * arrive one render later. Never contradict the enabled status. */
 		if (color) {
-			mc_display_color_text(0, y, "GPS off", UI_COLOR_DISABLED);
+			mc_display_color_text(0, y, "Starting GPS...", UI_COLOR_WARN);
 		} else {
-			mc_display_text(0, y, "GPS off", false);
+			mc_display_text(0, y, "Starting GPS...", false);
 		}
 	}
 }

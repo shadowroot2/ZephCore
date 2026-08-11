@@ -32,16 +32,18 @@ ZephCore — это порт прошивки [MeshCore](https://github.com/mesh
 
 ## Проверочный релиз
 
-Актуальный набор образов: [Shadow ZephCore v20260722.1](firmware/RELEASE_shadow-v20260722.1.md), commit `d359f5c`. Все шесть образов собраны с чистыми build-каталогами. Для ThinkNode M5 и Heltec V3 используйте только полный `-merged.bin` с offset `0x0`.
+Актуальный набор образов: [Shadow ZephCore v20260811.1](firmware/RELEASE_shadow-v20260811.1.md), ветка `dev`. Образы подготовлены для загрузки в GitHub Release. Для Heltec V3 используйте только полный `-merged.bin` с offset `0x0`.
 
 | Файл | Плата | Роль | Формат |
 |------|-------|------|--------|
-| `thinknode_m6-repeater-d359f5c.uf2` | ThinkNode M6 | repeater | UF2 |
-| `thinknode_m5-esp32s3-procpu-companion-d359f5c-merged.bin` | ThinkNode M5 | companion | ESP32-S3 полный образ, flash offset `0x0` |
-| `heltec_v3-companion-d359f5c-merged.bin` | Heltec V3 | serial companion | ESP32-S3 полный образ, flash offset `0x0` |
-| `t1000_e-companion-d359f5c.uf2` | Seeed T1000-E | companion | UF2 |
-| `thinknode_m1-companion-d359f5c.uf2` | ThinkNode M1 | companion | UF2 |
-| `picow-room-server.uf2` | Pico W / Waveshare RP2040 LoRa | room server | UF2 |
+| `thinknode_m1-companion-2026-08-11-14d7d92.uf2` | ThinkNode M1 | companion | UF2 |
+| `thinknode_m5-companion-2026-08-11-14d7d92-merged.bin` | ThinkNode M5 | companion | ESP32-S3 полный образ, flash offset `0x0` |
+| `thinknode_m6-repeater-2026-08-11-14d7d92.uf2` | ThinkNode M6 | repeater | UF2 |
+| `t1000_e-companion-2026-08-11-14d7d92.uf2` | Seeed T1000-E | companion | UF2 |
+| `heltec_v3-companion-2026-08-11-14d7d92-merged.bin` | Heltec V3 | companion | ESP32-S3 полный образ, flash offset `0x0` |
+| `heltec_t114-companion-2026-08-11-14d7d92.uf2` | Heltec T114 | companion | UF2 |
+| `promicro_sx1262-companion-2026-08-11-14d7d92.uf2` | ProMicro SX1262 | companion | UF2 |
+| `xiao_nrf52840-wio_sx1262-repeater-2026-08-11-14d7d92.uf2` | XIAO nRF52840 + Wio-SX1262 | repeater | UF2 |
 
 ## Зачем Zephyr?
 

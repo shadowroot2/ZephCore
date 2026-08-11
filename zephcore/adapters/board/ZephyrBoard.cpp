@@ -46,13 +46,22 @@ static const struct gpio_dt_spec tx_led =
 #define HAS_TX_LED 0
 #endif
 
-/* Optional battery charge-status GPIO. ThinkNode M6 exposes EXT_CHRG_DETECT. */
+/* Optional active-state battery charge-status GPIO. */
 #if DT_NODE_EXISTS(DT_ALIAS(charge_detect))
 static const struct gpio_dt_spec charge_detect =
 	GPIO_DT_SPEC_GET(DT_ALIAS(charge_detect), gpios);
 #define HAS_CHARGE_DETECT 1
 #else
 #define HAS_CHARGE_DETECT 0
+#endif
+
+/* Optional charger current-select GPIO. Active selects the board's 100 mA mode. */
+#if DT_NODE_EXISTS(DT_ALIAS(charge_current_100ma))
+static const struct gpio_dt_spec charge_current_100ma =
+	GPIO_DT_SPEC_GET(DT_ALIAS(charge_current_100ma), gpios);
+#define HAS_CHARGE_CURRENT_100MA 1
+#else
+#define HAS_CHARGE_CURRENT_100MA 0
 #endif
 
 #include <zephyr/logging/log.h>
@@ -65,6 +74,13 @@ LOG_MODULE_REGISTER(zephcore_board, CONFIG_ZEPHCORE_BOARD_LOG_LEVEL);
 #define CHARGE_POWER_MW DT_PROP(ZEPHYR_USER_NODE, charge_power_mw)
 #else
 #define CHARGE_POWER_MW 0
+#endif
+
+#if DT_NODE_EXISTS(ZEPHYR_USER_NODE) && \
+    DT_NODE_HAS_PROP(ZEPHYR_USER_NODE, charge_current_ma)
+#define CHARGE_CURRENT_MA DT_PROP(ZEPHYR_USER_NODE, charge_current_ma)
+#else
+#define CHARGE_CURRENT_MA 0
 #endif
 
 #if DT_NODE_EXISTS(DT_PATH(zephyr_user)) && \
@@ -139,6 +155,17 @@ static int charge_detect_gpio_init(void)
 	return 0;
 }
 SYS_INIT(charge_detect_gpio_init, APPLICATION, 91);
+#endif
+
+#if HAS_CHARGE_CURRENT_100MA
+static int charge_current_gpio_init(void)
+{
+	if (gpio_is_ready_dt(&charge_current_100ma)) {
+		gpio_pin_configure_dt(&charge_current_100ma, GPIO_OUTPUT_ACTIVE);
+	}
+	return 0;
+}
+SYS_INIT(charge_current_gpio_init, APPLICATION, 92);
 #endif
 
 namespace mesh {
@@ -416,6 +443,11 @@ bool ZephyrBoard::isBatteryCharging()
 float ZephyrBoard::getChargePowerWatts()
 {
 	return (float)CHARGE_POWER_MW / 1000.0f;
+}
+
+float ZephyrBoard::getChargeCurrentAmps()
+{
+	return (float)CHARGE_CURRENT_MA / 1000.0f;
 }
 
 } /* namespace mesh */

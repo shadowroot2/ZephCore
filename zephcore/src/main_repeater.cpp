@@ -54,6 +54,7 @@ extern "C" void bt_ctlr_assert_handle(char *file, uint32_t line)
 #include <adapters/clock/ZephyrRTCDiscover.h>
 #include <ZephyrSensorManager.h>
 #include <helpers/LocalCLIHelp.h>
+#include <helpers/battery_curve.h>
 
 /* UI subsystem (display, buttons, buzzer) */
 #include "ui_task.h"
@@ -434,6 +435,46 @@ static uint16_t get_battery_mv(void)
 {
 	return zephyr_board.getBattMilliVolts();
 }
+
+/* P0.17 is the XIAO BQ25101 ~CHG signal.  VBUS gates the indicator so a
+ * fully charged battery does not leave the green LED on after USB is removed. */
+#if defined(CONFIG_BOARD_XIAO_NRF52840) && DT_NODE_HAS_PROP(DT_ALIAS(led1), gpios)
+static void xiao_charge_led_work_fn(struct k_work *work)
+{
+	static bool was_external_powered;
+	static bool battery_full;
+	static uint32_t next_battery_sample_ms;
+	static bool blink_on;
+	bool external_powered = zephyr_board.isExternalPowered();
+	bool charging = external_powered && zephyr_board.isBatteryCharging();
+	uint32_t now = k_uptime_get_32();
+
+	if (external_powered &&
+	    (!was_external_powered || (int32_t)(now - next_battery_sample_ms) >= 0)) {
+		uint16_t mv = zephyr_board.getBattMilliVolts();
+		battery_full = mv != 0 &&
+			battery_curve_lookup(&battery_curve_default, mv) == 100;
+		next_battery_sample_ms = now + 30000U;
+	}
+	was_external_powered = external_powered;
+
+	if (!external_powered || ui_leds_disabled()) {
+		blink_on = false;
+		gpio_pin_set_dt(&led1, 0);
+	} else if (battery_full) {
+		gpio_pin_set_dt(&led1, 1);
+	} else if (charging) {
+		blink_on = !blink_on;
+		gpio_pin_set_dt(&led1, blink_on ? 1 : 0);
+	} else {
+		blink_on = false;
+		gpio_pin_set_dt(&led1, 0);
+	}
+
+	k_work_reschedule(k_work_delayable_from_work(work), K_SECONDS(1));
+}
+K_WORK_DELAYABLE_DEFINE(xiao_charge_led_work, xiao_charge_led_work_fn);
+#endif
 
 /* Radio is constructed with no prefs pointer; main() binds it to
  * repeater_mesh._prefs via setPrefs() before repeater_mesh.begin(). */
@@ -902,6 +943,12 @@ int main(void)
 	ui_set_battery_provider(get_battery_mv);
 	ui_set_battery(zephyr_board.getBattMilliVolts(), 0);
 	ui_set_gps_available(gps_is_available());
+
+#if defined(CONFIG_BOARD_XIAO_NRF52840) && DT_NODE_HAS_PROP(DT_ALIAS(led1), gpios)
+	if (gpio_is_ready_dt(&led1)) {
+		k_work_schedule(&xiao_charge_led_work, K_NO_WAIT);
+	}
+#endif
 
 	/* Defer initial advertisement by 10s — gives GPS time for a quick fix.
 	 * Advert payload (including coords) is built when the work fires. */

@@ -119,7 +119,8 @@ struct NodePrefs {
 	uint16_t v_battery_alert_mv;    // 0 = alert off; 0xFFFF = board default (auto_shutdown+200); else mV
 	int16_t ui_timezone_offset_minutes; // UI-only timezone offset; RTC/protocol stay UTC
 	uint8_t auto_shutdown_emergency; // 1 = send #zephcore emergency notice before automatic low-battery shutdown
-	uint16_t tracking_interval_minutes; // Companion: periodic #tracks position report interval (minimum 5)
+	uint16_t tracking_interval_minutes; // Companion: periodic tracking position report interval (minimum 5)
+	char tracking_group_name[32];       // Companion: destination group, default #tracks
 };
 
 /* Default prefs -- must match LoRaConfig.h defaults for radio interop. */
@@ -178,4 +179,22 @@ static inline void initNodePrefs(NodePrefs* prefs) {
 	prefs->ui_timezone_offset_minutes = CONFIG_ZEPHCORE_UI_TIMEZONE_OFFSET_MINUTES;
 	prefs->auto_shutdown_emergency = 1; // Default ON — send the low-battery emergency notice
 	prefs->tracking_interval_minutes = 10;
+	strcpy(prefs->tracking_group_name, "#tracks");
+
+/* XIAO nRF52840 + Wio-SX1262 repeater profile. Applied only while creating
+ * fresh repeater preferences; saved user settings always take precedence. */
+#if defined(CONFIG_BOARD_XIAO_NRF52840) && defined(CONFIG_ZEPHCORE_ROLE_REPEATER)
+	prefs->freq = 867.935f;
+	prefs->bw = 62.5f;
+	prefs->sf = 8;
+	prefs->cr = 8;
+	prefs->airtime_factor = 1.0f;       /* 100 / (1 + 1) = 50% duty cycle */
+	prefs->advert_interval = 90;        /* stored in two-minute units = 180 min */
+	prefs->flood_advert_interval = 24;  /* hours */
+	prefs->flood_max = 32;
+	prefs->flood_max_unscoped = 32;
+	prefs->flood_max_advert = 32;
+	prefs->path_hash_mode = 1;
+	prefs->multi_acks = 1;
+#endif
 }
