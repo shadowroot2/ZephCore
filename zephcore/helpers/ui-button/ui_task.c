@@ -722,7 +722,7 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 
 	case INPUT_KEY_H:
 		/* Six short presses directly toggle Tracking on headless nodes. */
-	#if !IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
+	#if !IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY) && !defined(ZEPHCORE_REPEATER)
 		mesh_tracking_toggle();
 	#endif
 		break;

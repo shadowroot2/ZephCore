@@ -28,8 +28,10 @@ extern "C" {
 /* Tracking: six count beeps, then the same rising/falling ON/OFF tail. */
 #define MELODY_TRACKING_ON  "ton:d=16,o=7,b=200:c,p,c,p,c,p,c,p,c,p,c,p,p,8e"
 #define MELODY_TRACKING_OFF "tof:d=16,o=7,b=200:c,p,c,p,c,p,c,p,c,p,c,p,p,8g5"
-/* Short rising confirmation for a queued #tracks location report. */
-#define MELODY_TRACKING_SENT "track:d=16,o=6,b=180:16g5,16c,16e,16g,8c7"
+/* Short Morse "TR" (- .-.), played after a location is queued. */
+#define MELODY_TRACKING_SENT "TR:d=32,o=6,b=120:" \
+	"16c6.,p,p,p,"                         /* T - */ \
+	"c6,p,16c6.,p,c6"                     /* R .-. */
 #define MELODY_GPS_ON       "gon:d=16,o=7,b=200:c,p,c,p,c,p,c,p,p,8e"
 #define MELODY_GPS_OFF      "gof:d=16,o=7,b=200:c,p,c,p,c,p,c,p,c,p,p,8g5"
 #define MELODY_LED_ON      "lon:d=16,o=7,b=200:c,p,c,p,8e"

@@ -335,9 +335,15 @@ int RepeaterMesh::handleRequest(ClientInfo* sender, uint32_t sender_timestamp, u
         uint16_t batt_mv = _board.getBattMilliVolts();
         lpp.addVoltage(CH_SELF, batt_mv / 1000.0f);
         float charge_power_w = _board.getChargePowerWatts();
-        if (charge_power_w > 0.0f) {
-            lpp.addPower(CH_SELF,
-                _board.isBatteryCharging() ? charge_power_w : 0.0f);
+        float charge_current_a = _board.getChargeCurrentAmps();
+        if (charge_power_w > 0.0f || charge_current_a > 0.0f) {
+            bool charging = _board.isBatteryCharging();
+            if (charge_power_w > 0.0f) {
+                lpp.addPower(CH_SELF, charging ? charge_power_w : 0.0f);
+            }
+            if (charge_current_a > 0.0f) {
+                lpp.addCurrent(CH_SELF, charging ? charge_current_a : 0.0f);
+            }
         }
 
         /* Environment sensors — prefer external, fallback to MCU die temp. */

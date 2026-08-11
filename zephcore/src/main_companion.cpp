@@ -1050,7 +1050,7 @@ static void companion_sos_tx_done(void)
 }
 
 #define TRACKING_MIN_INTERVAL_MIN 5U
-#define TRACKING_MOVEMENT_METERS 10.0
+#define TRACKING_MOVEMENT_METERS 50.0
 
 struct companion_tracking_state {
 	bool enabled;
@@ -1079,7 +1079,7 @@ static void companion_tracking_ui_update(void)
 	ui_request_render();
 }
 
-static bool companion_tracking_moved_10m(const struct gps_position &pos)
+static bool companion_tracking_moved_min_distance(const struct gps_position &pos)
 {
 	if (!companion_tracking.has_last_sent_position) {
 		return true;
@@ -1102,7 +1102,8 @@ static bool companion_tracking_moved_10m(const struct gps_position &pos)
 static bool companion_send_tracking_message(const struct gps_position &pos)
 {
 	ChannelDetails tracks_channel;
-	if (!companion_get_public_channel("#tracks", tracks_channel)) {
+	const char *group_name = companion_mesh.prefs.tracking_group_name;
+	if (!companion_get_public_channel(group_name, tracks_channel)) {
 		return false;
 	}
 
@@ -1113,11 +1114,11 @@ static bool companion_send_tracking_message(const struct gps_position &pos)
 						  tracks_channel.channel,
 						  companion_mesh.prefs.node_name,
 						  text, (int)strlen(text))) {
-		LOG_WRN("tracking: unable to queue #tracks message");
+		LOG_WRN("tracking: unable to queue %s message", group_name);
 		return false;
 	}
 
-	LOG_INF("tracking: queued #tracks message: %s", text);
+	LOG_INF("tracking: queued %s message: %s", group_name, text);
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
 	buzzer_play(MELODY_TRACKING_SENT);
 #endif
@@ -1212,8 +1213,8 @@ static void companion_tracking_process(void)
 		LOG_INF("tracking: interval skipped (no GPS fix)");
 		return;
 	}
-	if (!companion_tracking_moved_10m(pos)) {
-		LOG_INF("tracking: interval skipped (movement under 10 m)");
+	if (!companion_tracking_moved_min_distance(pos)) {
+		LOG_INF("tracking: interval skipped (movement under 50 m)");
 		return;
 	}
 	if (companion_send_tracking_message(pos)) {
@@ -1589,6 +1590,54 @@ static bool handle_tracking_cli(const char *line, char *reply)
 			 companion_mesh.prefs.tracking_interval_minutes);
 		return true;
 	}
+	if (strcmp(line, "get tracking.group") == 0) {
+		snprintf(reply, CLI_REPLY_SIZE, "tracking.group: %s",
+			 companion_mesh.prefs.tracking_group_name);
+		return true;
+	}
+	if (strncmp(line, "set tracking.group ", 19) == 0) {
+		const char *arg = line + 19;
+		while (*arg == ' ' || *arg == '\t') {
+			arg++;
+		}
+		size_t len = strlen(arg);
+		while (len > 0 && (arg[len - 1] == ' ' || arg[len - 1] == '\t')) {
+			len--;
+		}
+		bool add_hash = len > 0 && arg[0] != '#';
+		if (len == 0 || len + (add_hash ? 1 : 0) >=
+		    sizeof(companion_mesh.prefs.tracking_group_name)) {
+			strcpy(reply, "ERROR: group name must be 1-31 bytes");
+			return true;
+		}
+		for (size_t i = 0; i < len; i++) {
+			if (arg[i] == '\r' || arg[i] == '\n') {
+				strcpy(reply, "ERROR: invalid group name");
+				return true;
+			}
+		}
+		char group_name[sizeof(companion_mesh.prefs.tracking_group_name)] = {};
+		size_t group_len = len;
+		if (add_hash) {
+			group_name[0] = '#';
+			memcpy(&group_name[1], arg, len);
+			group_len++;
+		} else {
+			memcpy(group_name, arg, len);
+		}
+		group_name[group_len] = '\0';
+		ChannelDetails channel;
+		if (!companion_get_public_channel(group_name, channel)) {
+			strcpy(reply, "ERROR: unable to create tracking group");
+			return true;
+		}
+		memcpy(companion_mesh.prefs.tracking_group_name, group_name,
+		       sizeof(group_name));
+		k_event_post(&mesh_events, MESH_EVENT_PREFS_DIRTY);
+		snprintf(reply, CLI_REPLY_SIZE, "OK - tracking.group %s",
+			 companion_mesh.prefs.tracking_group_name);
+		return true;
+	}
 	if (strncmp(line, "set tracking.interval ", 22) == 0) {
 		const char *arg = line + 22;
 		while (*arg == ' ') {
@@ -1616,6 +1665,33 @@ static bool handle_tracking_cli(const char *line, char *reply)
 		return true;
 	}
 	return false;
+}
+
+/* Offgrid is deliberately a runtime switch: a reboot always starts a client
+ * in its normal non-forwarding mode.  The same CLI executor services USB and
+ * vContact, so no separate remote-command implementation is needed. */
+static bool handle_offgrid_cli(const char *line, char *reply)
+{
+	if (strcmp(line, "offgrid") == 0) {
+		snprintf(reply, CLI_REPLY_SIZE, "offgrid: %s",
+			 companion_mesh.prefs.client_repeat ? "on" : "off");
+		return true;
+	}
+
+	bool enable;
+	if (strcmp(line, "offgrid on") == 0) {
+		enable = true;
+	} else if (strcmp(line, "offgrid off") == 0) {
+		enable = false;
+	} else {
+		return false;
+	}
+
+	companion_mesh.prefs.client_repeat = enable ? 1 : 0;
+	ui_set_offgrid_mode(enable);
+	snprintf(reply, CLI_REPLY_SIZE, "OK - offgrid %s (until reboot)",
+		 enable ? "on" : "off");
+	return true;
 }
 
 /* Locate this companion with a five-second audible melody.  This explicit
@@ -1763,6 +1839,9 @@ static void companion_cli_exec(const char *line, char *reply)
 	if (handle_sos_cli(line, reply)) {
 		return;
 	}
+	if (handle_offgrid_cli(line, reply)) {
+		return;
+	}
 	if (handle_tracking_cli(line, reply)) {
 		return;
 	}
@@ -1888,6 +1967,17 @@ static void gps_enable_callback(bool enabled)
 {
 	LOG_INF("GPS %s", enabled ? "enabled" : "disabled");
 	ui_set_gps_enabled(enabled);
+
+	/* gps_enable() changes the manager state before invoking this callback.
+	 * Refresh both UI fields together; otherwise an e-paper redraw can show
+	 * the new "GPS: on" flag with the stale OFF state beneath it. */
+	struct gps_state_info gsi;
+	gps_get_state_info(&gsi);
+	uint16_t display_satellites = gsi.visible_satellites ?
+		gsi.visible_satellites : gsi.satellites;
+	ui_set_gps_state(gsi.state, display_satellites,
+			 gsi.last_fix_age_s, gsi.next_search_s);
+	ui_request_render();
 }
 
 /* GPS event callback - called when GPS work handlers need the main thread
@@ -2245,10 +2335,16 @@ int main(void)
 #endif
 	ui_set_ble_enabled(companion_mesh.prefs.ble_disabled != 1);  /* BLE starts advertising at boot */
 
-	/* Restore offgrid mode (client repeat) state from persisted prefs */
-	ui_set_offgrid_mode(companion_mesh.prefs.client_repeat != 0);
-	LOG_INF("offgrid mode: %s (from prefs)",
-		companion_mesh.prefs.client_repeat ? "on" : "off");
+	/* Offgrid/client repeat is intentionally volatile: never let a prior
+	 * radio-settings transaction silently turn a client into a forwarder after
+	 * a restart.  Flush a previously persisted value once so future boots stay
+	 * clean too. */
+	if (companion_mesh.prefs.client_repeat != 0) {
+		companion_mesh.prefs.client_repeat = 0;
+		data_store.savePrefs(companion_mesh.prefs);
+	}
+	ui_set_offgrid_mode(false);
+	LOG_INF("offgrid mode: off (reset at boot)");
 
 	/* Restore buzzer mute state from persisted prefs, then play
 	 * startup chime only if buzzer is not muted.

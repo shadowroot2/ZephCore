@@ -508,15 +508,33 @@ set(TF_PSA_CRYPTO_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(zephcore)
 
-# Dynamic build date - always current, even without --pristine
-string(TIMESTAMP ZEPHCORE_BUILD_DATE "%Y %b %d" UTC)
-add_definitions(-DFIRMWARE_BUILD_DATE="${ZEPHCORE_BUILD_DATE}")
-
-# Build-time UNIX epoch: mesh time sync's "provably dead clock" floor (a local
-# time below this is impossible for a running build). string(TIMESTAMP) honors
-# SOURCE_DATE_EPOCH for reproducible builds.
+# Keep the mesh time-sync floor from the configure step. The build stamp below
+# takes care of the visible firmware date on every Ninja invocation.
 string(TIMESTAMP ZEPHCORE_BUILD_EPOCH "%s" UTC)
 add_definitions(-DFIRMWARE_BUILD_EPOCH=${ZEPHCORE_BUILD_EPOCH}u)
+
+# Build stamp is generated before every build. It only changes when the local
+# calendar day changes, then its forced include recompiles the application with
+# the matching firmware date.
+set(ZEPHCORE_BUILD_STAMP_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+set(ZEPHCORE_BUILD_STAMP "${ZEPHCORE_BUILD_STAMP_DIR}/zephcore_build_stamp.h")
+set(ZEPHCORE_BUILD_STAMP_TRIGGER "${ZEPHCORE_BUILD_STAMP_DIR}/zephcore_build_stamp.trigger")
+file(MAKE_DIRECTORY "${ZEPHCORE_BUILD_STAMP_DIR}")
+
+add_custom_target(zephcore_build_stamp_tick ALL
+	BYPRODUCTS "${ZEPHCORE_BUILD_STAMP_TRIGGER}"
+	COMMAND "${CMAKE_COMMAND}" -E touch "${ZEPHCORE_BUILD_STAMP_TRIGGER}"
+	VERBATIM)
+add_custom_command(
+	OUTPUT "${ZEPHCORE_BUILD_STAMP}"
+	COMMAND "${CMAKE_COMMAND}"
+		-DZEPHCORE_BUILD_STAMP=${ZEPHCORE_BUILD_STAMP}
+		-P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/UpdateBuildStamp.cmake"
+	DEPENDS "${ZEPHCORE_BUILD_STAMP_TRIGGER}"
+		"${CMAKE_CURRENT_SOURCE_DIR}/cmake/UpdateBuildStamp.cmake"
+	VERBATIM)
+add_custom_target(zephcore_build_stamp DEPENDS "${ZEPHCORE_BUILD_STAMP}")
+add_dependencies(zephcore_build_stamp zephcore_build_stamp_tick)
 
 # Single source of truth for the firmware version string (vMAJOR.MINOR.PATCH-zephyr).
 # Injected globally like FIRMWARE_BUILD_DATE above, so every app TU sees the same
@@ -533,6 +551,9 @@ add_definitions(-DFIRMWARE_VERSION="${ZEPHCORE_FIRMWARE_VERSION}")
 
 add_subdirectory(lib/monocypher)
 target_link_libraries(app PRIVATE monocypher)
+add_dependencies(app zephcore_build_stamp)
+target_sources(app PRIVATE "${ZEPHCORE_BUILD_STAMP}")
+target_compile_options(app PRIVATE "-include${ZEPHCORE_BUILD_STAMP}")
 
 target_include_directories(app PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/include

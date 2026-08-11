@@ -38,15 +38,16 @@
 	leds {
 		compatible = "gpio-leds";
 
-		/* MeshCore LED_STATE_ON 0 → active-low */
+		/* MeshCore LED_STATE_ON 0 → active-low.
+		 * Red is the repeater heartbeat; blue marks LoRa transmission. */
 		led_red: led_0 {
 			gpios = <&gpio0 26 GPIO_ACTIVE_LOW>;
-			label = "LED red (LoRa TX)";
+			label = "LED red (heartbeat)";
 		};
 
 		led_blue: led_1 {
 			gpios = <&gpio0 6 GPIO_ACTIVE_LOW>;
-			label = "LED blue";
+			label = "LED blue (LoRa TX)";
 		};
 
 		led_green: led_2 {
@@ -87,16 +88,39 @@
 		enable-gpios = <&gpio0 14 GPIO_ACTIVE_LOW>;
 	};
 
+	charge_status_gpios: charge-status-gpios {
+		compatible = "gpio-leds";
+
+		/* BQ25101 ~CHG: low while the battery is charging. */
+		charge_detect: charge_detect {
+			gpios = <&gpio0 17 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+			label = "Charge Detect";
+		};
+	};
+
+	charger_config_gpios: charger-config-gpios {
+		compatible = "gpio-leds";
+
+		/* BQ25101 HICHG: low selects 100 mA instead of the 50 mA default. */
+		charge_current_100ma: charge-current-100ma {
+			gpios = <&gpio0 13 GPIO_ACTIVE_LOW>;
+			label = "Charge Current 100mA";
+		};
+	};
+
 	zephyr,user {
 		io-channels = <&adc 7>;
-		/* mV = raw * mult / 4096; mult from two-point DMM calibration (Zephyr SAADC path) */
+		/* mV = raw * mult / 4096; per-board DMM correction: set adc.multiplier target <mV>. */
 		vbat-mv-multiplier = <10911>;
+		charge-current-ma = <100>; /* BQ25101 HICHG active */
 	};
 
 	aliases {
-		led0 = &led_blue;
+		led0 = &led_red;
 		led1 = &led_green;
-		lora-tx-led = &led_red;
+		lora-tx-led = &led_blue;
+		charge-detect = &charge_detect;
+		charge-current-100ma = &charge_current_100ma;
 		sw0 = &user_button;
 		lora0 = &lora;
 		watchdog0 = &wdt0;
