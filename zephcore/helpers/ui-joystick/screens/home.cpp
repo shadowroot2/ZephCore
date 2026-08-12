@@ -208,6 +208,10 @@ bool HomeScreen::handleInput(char c)
 #define FIRMWARE_VERSION "ZephCore"
 #endif
 
+#ifndef FIRMWARE_DISPLAY_VERSION
+#define FIRMWARE_DISPLAY_VERSION FIRMWARE_VERSION
+#endif
+
 #ifndef FIRMWARE_BUILD_DATE
 #define FIRMWARE_BUILD_DATE ""
 #endif
@@ -244,7 +248,7 @@ int SplashScreen::render(JoystickDisplay &display)
 	}
 
 	/* Match the button-UI splash: ZephCore wordmark bitmap centered at top,
-	 * "MeshCore on Zephyr" beneath it, build date and a signature. Logo and
+	 * "MeshCore on Zephyr" beneath it, firmware version, build date and a signature. Logo and
 	 * its dimensions live in helpers/ui/ui_common.c — declared in display.h. */
 	int w = display.width();
 	int fh = display.fontH();
@@ -257,9 +261,11 @@ int SplashScreen::render(JoystickDisplay &display)
 	int cx = w / 2;
 	display.setColor(JoystickDisplay::GREEN);
 	display.drawTextCentered(cx, y + fh / 2, "MeshCore on Zephyr");
-	/* Keep the build version/date one row closer to the product name. */
+	/* Keep the firmware version and build date below the product name. */
 	y += line_h;
 	display.setColor(JoystickDisplay::LIGHT);
+	display.drawTextCentered(cx, y + fh / 2, FIRMWARE_DISPLAY_VERSION);
+	y += line_h;
 	display.drawTextCentered(cx, y + fh / 2, FIRMWARE_BUILD_DATE);
 	int signature_y = display.height() - fh - 2;
 	display.drawTextCentered(cx, signature_y < 0 ? fh / 2 : signature_y + fh / 2,

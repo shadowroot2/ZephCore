@@ -581,7 +581,9 @@ add_dependencies(zephcore_build_stamp zephcore_build_stamp_tick)
 # key — so the configurator can match a running device against the catalog. Keep
 # all four identical; the release workflow reads this value directly.
 set(ZEPHCORE_FIRMWARE_VERSION "1.16.8-zephcore")
+string(REGEX REPLACE "-.*$" "" ZEPHCORE_DISPLAY_VERSION "${ZEPHCORE_FIRMWARE_VERSION}")
 add_definitions(-DFIRMWARE_VERSION="${ZEPHCORE_FIRMWARE_VERSION}")
+add_definitions(-DFIRMWARE_DISPLAY_VERSION="${ZEPHCORE_DISPLAY_VERSION}")
 
 add_subdirectory(lib/monocypher)
 target_link_libraries(app PRIVATE monocypher)

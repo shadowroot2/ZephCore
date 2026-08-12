@@ -248,12 +248,28 @@ LED note:
 
 ## Полезные команды
 
+### ESP-платы: правило выпуска
+
+- Для любой ESP-платы публиковать только полный `-merged.bin`, прошиваемый с
+  адреса `0x0`: MCUboot + подписанное приложение в одном файле.
+- Смещение приложения брать из `slot0_partition` конкретной платы. Для Heltec
+  V3 это `0x10000`; `0x20000` для него неверно и оставляет MCUboot без приложения.
+
 M5 build:
 
 ```sh
 CMAKE_PREFIX_PATH=/Users/shadow/Work/CodeX/ZephCore/zephyr-sdk-1.0.1 \
 CCACHE_DIR=/Users/shadow/Work/CodeX/ZephCore/.ccache \
 ./.venv/bin/west build -b thinknode_m5/esp32s3/procpu zephcore --pristine --sysbuild
+```
+
+M1 companion build:
+
+```sh
+CMAKE_PREFIX_PATH=/Users/shadow/Work/CodeX/ZephCore/zephyr-sdk-1.0.1 \
+CCACHE_DIR=/Users/shadow/Work/CodeX/ZephCore/.ccache \
+./.venv/bin/west build -b thinknode_m1 -d build_thinknode_m1_companion zephcore --pristine
+mv build_thinknode_m1_companion/zephyr/zephyr.uf2 firmware/thinknode_m1-companion-<commit>.uf2
 ```
 
 M5 merged-bin:
@@ -270,6 +286,9 @@ python3 -m esptool --chip esp32s3 merge-bin \
 
 Собранные и сложенные в `firmware/` образы:
 
+- `thinknode_m1-companion-8faf0fd.uf2` — ThinkNode M1 companion после merge
+  upstream 1.16.8; сборка успешна 2026-08-11, FLASH 397032 B (57.02%),
+  RAM 174248 B (66.47%).
 - `shadow-20260715-thinknode-m1-client.uf2` — ThinkNode M1 client/companion.
 - `shadow-20260715-thinknode-m5-client-merged.bin` — ThinkNode M5 client/companion, ESP32-S3 merged-bin, offset `0x0`.
 - `shadow-20260715-thinknode-m6-repeater.uf2` — ThinkNode M6 repeater с GPS fix и solar `6W`.

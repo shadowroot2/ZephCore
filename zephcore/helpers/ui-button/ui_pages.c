@@ -177,12 +177,8 @@ static const enum ui_page active_pages[] = {
 	UI_PAGE_TRAFFIC,
 	UI_PAGE_BLUETOOTH,
 	UI_PAGE_ADVERT,
-	/* Heltec V3 has no GNSS hardware.  Do not make the user cycle through
-	 * a permanently empty "No GPS" screen on this single-button board. */
-#if !defined(CONFIG_BOARD_HELTEC_WIFI_LORA32_V3)
 	UI_PAGE_GPS,
 	UI_PAGE_TRACKING,
-#endif
 	UI_PAGE_SOS,
 #ifdef CONFIG_ZEPHCORE_UI_BUZZER
 	UI_PAGE_BUZZER,
@@ -1861,8 +1857,13 @@ void ui_pages_render_splash(void)
 
 	/* "MeshCore on Zephyr" centered below logo */
 	draw_centered(y, "MeshCore on Zephyr");
-	/* Keep the build version/date one row closer to the product name. */
+	/* Keep the firmware version and build date below the product name. */
 	y += LINE_H;
+
+#ifdef FIRMWARE_DISPLAY_VERSION
+	draw_centered(y, FIRMWARE_DISPLAY_VERSION);
+	y += LINE_H;
+#endif
 
 	/* Build date centered below (format: "2026 Feb 15") */
 #ifdef FIRMWARE_BUILD_DATE
