@@ -28,6 +28,9 @@
 #include <ZephyrWiFiStation.h>
 #include <ZephyrMQTTPublisher.h>
 #endif
+#if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+#include "RepeaterBridge.h"
+#endif
 
 /* Helper to get radio driver for stats — uses LoRaRadioBase (works for SX126x and LR1110) */
 static inline mesh::LoRaRadioBase& getRadioDriver(mesh::Radio* radio) {
@@ -655,6 +658,13 @@ void RepeaterMesh::logRx(mesh::Packet* pkt, int len, float score) {
 #if IS_ENABLED(CONFIG_ZEPHCORE_REPEATER_UPLINK) && IS_ENABLED(CONFIG_MQTT_LIB)
     _uplink_last_score = score;
     publishUplinkPacket(pkt);
+#endif
+#if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+    const uint8_t type = pkt->getPayloadType();
+    if (pkt->isRouteFlood() &&
+        (type == PAYLOAD_TYPE_GRP_TXT || type == PAYLOAD_TYPE_GRP_DATA || type == PAYLOAD_TYPE_ADVERT)) {
+        repeater_bridge_forward_packet(pkt, _radio->getEstAirtimeFor(pkt->getRawLength()));
+    }
 #endif
 }
 
@@ -1309,7 +1319,13 @@ void RepeaterMesh::resetDutyCycleTimeoutRestarts() {
 static const char *repeater_remote_help(const char *command)
 {
 	static const char page1[] =
-		"Help 1/12: ver; board; advert; advert.zerohop; clock [sync]; time <epoch>; gps [on|off|setloc|advert]"
+		"Help 1/12: ver; board; advert; "
+#if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+		"bridge: help 2; "
+#else
+		"advert.zerohop; "
+#endif
+		"clock [sync]; time <epoch>; gps [on|off|setloc|advert]"
 #if DT_NODE_HAS_PROP(DT_ALIAS(led0), gpios) || DT_NODE_HAS_PROP(DT_ALIAS(led1), gpios)
 		"; leds [on|off]"
 #endif
@@ -1317,8 +1333,14 @@ static const char *repeater_remote_help(const char *command)
 		"; buzz [on|off]"
 #endif
 		". help 2";
+#if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+	static const char page2[] =
+		"Help 2/12: bridge [on|off|ping]; get/set bridge.type; get/set bridge.priority (0..7); "
+		"get bridge.delay; get/set bridge.peer; set bridge.key. help 3";
+#else
 	static const char page2[] =
 		"Help 2/12: password <value>; clear stats. help 3";
+#endif
 	static const char page3[] =
 		"Help 3/12: get <key> | set <key> <value>. Keys: dutycycle, af, int.thresh, multi.acks. help 4";
 	static const char page4[] =
@@ -1333,8 +1355,13 @@ static const char *repeater_remote_help(const char *command)
 		"Help 8/12: set cad.auto|cad.offset|cad.busycap|cad.reset; set probe.interval. help 9";
 	static const char page9[] =
 		"Help 9/12: repeater keys: allow.read.only, guest.password, backoff.multiplier, loop.detect, rxduty. help 10";
+#if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+	static const char page10[] =
+		"Help 10/12: neighbors; neighbor.remove <pubkey>; discover.neighbors; password <value>; clear stats. help 11";
+#else
 	static const char page10[] =
 		"Help 10/12: neighbors; neighbor.remove <pubkey>; discover.neighbors. help 11";
+#endif
 #if IS_ENABLED(CONFIG_ZEPHCORE_REPEATER_UPLINK) && IS_ENABLED(CONFIG_MQTT_LIB)
 	static const char page11[] =
 		"Help 11/12: region def|get|put|remove|list|load|save; region allowf|denyf|home|default; tempradio <freq> <bw> <sf> <cr> <minutes>. help 12";
@@ -1417,6 +1444,18 @@ void RepeaterMesh::handleCommand(uint32_t sender_timestamp, char* command, char*
         return;
     }
 
+#if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+	/* The generated key is returned verbatim. Never expose it in a LoRa CLI
+	 * reply, even to an authenticated remote administrator. */
+	if (sender_timestamp != 0 && strcmp(command, "bridge keygen") == 0) {
+		strcpy(reply, "ERR: bridge keygen is local only");
+		return;
+	}
+    if (repeater_bridge_handle_command(command, reply, CLI_REPLY_SIZE)) {
+        return;
+    }
+#endif
+
 #if IS_ENABLED(CONFIG_ZEPHCORE_REPEATER_UPLINK) && IS_ENABLED(CONFIG_MQTT_LIB)
     if (handleUplinkCommand(command, reply)) {
         return;
@@ -1498,6 +1537,10 @@ void RepeaterMesh::handleCommand(uint32_t sender_timestamp, char* command, char*
 
 void RepeaterMesh::loop() {
     mesh::Mesh::loop();
+
+#if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+    repeater_bridge_drain(this);
+#endif
 
     if (next_flood_advert && millisHasNowPassed(next_flood_advert)) {
         mesh::Packet* pkt = createSelfAdvert();
@@ -1588,6 +1631,10 @@ uint32_t RepeaterMesh::msUntilNextMaintenance() {
         next = mesh::maintenanceSooner(
             next, _timesync.msUntilNextEval((uint32_t)(k_uptime_get() / 1000)));
     }
+
+#if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+    next = mesh::maintenanceSooner(next, repeater_bridge_ms_until_next());
+#endif
 
     return next;
 }

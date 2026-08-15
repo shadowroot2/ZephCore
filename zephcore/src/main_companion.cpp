@@ -538,7 +538,6 @@ static void mesh_event_loop(void)
 		if (events & MESH_EVENT_LORA_TX_DONE) {
 			companion_sos_tx_done();
 		}
-
 		/* Deadline-driven maintenance plus Companion's 30-second battery/UI pass. */
 		if (events & MESH_EVENT_MAINTENANCE) {
 			companion_sos_process();
@@ -853,11 +852,14 @@ static bool companion_send_auto_shutdown_emergency(uint16_t battery_mv,
 }
 
 #define SOS_FIX_TIMEOUT_MS (5U * 60U * 1000U)
+#define SOS_FRESH_FIX_MAX_AGE_S 30U
+#define SOS_WAITING_REPEAT_MS 30000U
 
 struct companion_sos_state {
 	bool pending;
 	bool gps_started_by_sos;
 	uint32_t started_ms;
+	uint32_t next_waiting_message_ms;
 	uint32_t saved_gps_duty_sec;
 };
 
@@ -883,6 +885,41 @@ static void companion_sos_ui_sent(bool success)
 	ARG_UNUSED(success);
 #endif
 	ui_request_render();
+}
+
+static bool companion_sos_has_fresh_fix(void)
+{
+	struct gps_position pos = {};
+	struct gps_state_info gsi;
+
+	if (!gps_get_last_known_position(&pos) ||
+	    pos.latitude_ndeg == 0 || pos.longitude_ndeg == 0) {
+		return false;
+	}
+
+	gps_get_state_info(&gsi);
+	return gsi.last_fix_age_s <= SOS_FRESH_FIX_MAX_AGE_S;
+}
+
+static bool companion_send_sos_waiting_message(void)
+{
+	ChannelDetails sos_channel;
+	static const char text[] = "SOS! Waiting GPS fix...";
+
+	if (!companion_get_public_channel("#sos", sos_channel)) {
+		return false;
+	}
+
+	if (!companion_mesh_ptr->sendGroupMessage(rtc_clock.getCurrentTimeUnique(),
+						  sos_channel.channel,
+						  companion_mesh_ptr->prefs.node_name,
+						  text, sizeof(text) - 1U)) {
+		LOG_WRN("SOS: unable to queue waiting message");
+		return false;
+	}
+
+	LOG_INF("SOS: queued #sos waiting message");
+	return true;
 }
 
 static bool companion_send_sos_message(bool allow_coordinates)
@@ -950,18 +987,24 @@ static bool companion_send_sos_message(bool allow_coordinates)
 	}
 
 	LOG_INF("SOS: queued #sos message: %s", text);
-	/* LoRa runs asynchronously. Play only after this queued packet has left
-	 * the radio, not while it is waiting for channel access. */
+	/* Waiting messages are silent. This marker is set only for the final SOS,
+	 * so its alarm plays once after that packet has actually left the radio. */
 	companion_sos_tone.after_packets_sent = packets_before +
 		(tx_was_active ? 2U : 1U);
 	companion_sos_tone.pending = true;
 	return true;
 }
 
+static bool companion_sos_send_now(bool allow_coordinates)
+{
+	bool success = companion_send_sos_message(allow_coordinates);
+	companion_sos_ui_sent(success);
+	return success;
+}
+
 static bool companion_sos_finish(bool fresh_fix)
 {
-	bool success = companion_send_sos_message(fresh_fix);
-	companion_sos_ui_sent(success);
+	bool success = companion_sos_send_now(fresh_fix);
 
 	/* SOS temporarily forces continuous acquisition. Restore the configured
 	 * duty cycle and enabled state after the message is queued. */
@@ -976,7 +1019,26 @@ static bool companion_sos_finish(bool fresh_fix)
 static bool companion_sos_request(char *reply, bool play_confirm = true)
 {
 	if (companion_sos.pending) {
-		strcpy(reply, "SOS: waiting for GPS fix (max 5 min)");
+		/* A second SOS press is an explicit new request, not a no-op. Keep
+		 * the original GPS state saved by the first request, but restart the
+		 * five-minute window and announce the renewed search immediately. */
+		companion_sos.started_ms = k_uptime_get_32();
+		companion_sos_ui_waiting();
+		companion_send_sos_waiting_message();
+		companion_sos.next_waiting_message_ms = companion_sos.started_ms +
+			SOS_WAITING_REPEAT_MS;
+		gps_set_poll_interval_sec(0);
+		if (gps_is_enabled()) {
+			gps_request_fresh_fix();
+		} else {
+			gps_enable(true);
+		}
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
+		if (play_confirm) {
+			buzzer_play(MELODY_SOS_CONFIRM);
+		}
+#endif
+		strcpy(reply, "SOS: GPS search restarted (max 5 min)");
 		return true;
 	}
 
@@ -988,26 +1050,39 @@ static bool companion_sos_request(char *reply, bool play_confirm = true)
 #endif
 	}
 
+	/* No GPS hardware: send the final message immediately. */
 	if (!gps_is_available()) {
-		strcpy(reply, companion_sos_finish(false) ?
+		strcpy(reply, companion_sos_send_now(false) ?
 		       "OK - SOS sent" : "ERROR: SOS send failed");
 		return true;
 	}
 
+	/* A recent validated coordinate is safe to send right now. */
 	bool gps_was_enabled = gps_is_enabled();
+	if (gps_was_enabled && companion_sos_has_fresh_fix()) {
+		strcpy(reply, companion_sos_send_now(true) ?
+		       "OK - SOS sent with GPS" : "ERROR: SOS send failed");
+		return true;
+	}
+
+	/* GPS hardware is present but its coordinate is stale, absent, or GPS is
+	 * off. Announce the SOS immediately, then hold the detailed message for a
+	 * fresh fix or timeout. */
 	companion_sos.pending = true;
 	companion_sos.started_ms = k_uptime_get_32();
 	companion_sos.gps_started_by_sos = !gps_was_enabled;
 	companion_sos.saved_gps_duty_sec = gps_get_poll_interval_sec();
 	companion_sos_ui_waiting();
+	companion_send_sos_waiting_message();
+	companion_sos.next_waiting_message_ms = companion_sos.started_ms +
+		SOS_WAITING_REPEAT_MS;
 
-	/* SOS always starts a new, continuous acquisition. A cached coordinate
-	 * must not bypass the five-minute fresh-fix window. */
+	/* Hold GPS awake until a fresh fix or the SOS timeout. */
 	gps_set_poll_interval_sec(0);
-	if (!gps_was_enabled) {
-		gps_enable(true);
-	} else {
+	if (gps_was_enabled) {
 		gps_request_fresh_fix();
+	} else {
+		gps_enable(true);
 	}
 
 	strcpy(reply, "SOS: waiting for GPS fix (max 5 min)");
@@ -1028,12 +1103,20 @@ static void companion_sos_process(void)
 	}
 
 	struct gps_position pos = {};
-	bool fresh_fix = gps_get_last_known_position(&pos) &&
+	bool fresh_fix = companion_sos_has_fresh_fix() &&
+		gps_get_last_known_position(&pos) &&
 		pos.latitude_ndeg != 0 && pos.longitude_ndeg != 0 &&
 		pos.timestamp_ms > companion_sos.started_ms;
 	uint32_t elapsed_ms = k_uptime_get_32() - companion_sos.started_ms;
 	if (fresh_fix || elapsed_ms >= SOS_FIX_TIMEOUT_MS) {
 		companion_sos_finish(fresh_fix);
+		return;
+	}
+
+	uint32_t now_ms = k_uptime_get_32();
+	if ((int32_t)(now_ms - companion_sos.next_waiting_message_ms) >= 0) {
+		companion_send_sos_waiting_message();
+		companion_sos.next_waiting_message_ms = now_ms + SOS_WAITING_REPEAT_MS;
 	}
 }
 
@@ -1044,7 +1127,6 @@ static void companion_sos_tx_done(void)
 	    packets_sent >= companion_sos_tone.after_packets_sent) {
 		companion_sos_tone.pending = false;
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
-		/* buzzer_play(), unlike FindMe, obeys the user's buzz on/off setting. */
 		buzzer_play(MELODY_SOS);
 #endif
 	}

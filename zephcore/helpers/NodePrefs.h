@@ -154,6 +154,9 @@ static inline void initNodePrefs(NodePrefs* prefs) {
 	prefs->bw = 62.5f;                // LoRaConfig::BANDWIDTH
 	prefs->sf = 8;                    // LoRaConfig::SPREADING_FACTOR
 	prefs->cr = 8;                    // CR 4/8 (MeshCore uses 5-8 for CR 4/5 through 4/8)
+#ifdef CONFIG_ZEPHCORE_DEFAULT_LORA_433
+	prefs->freq = 434.030f;
+#endif
 #ifdef CONFIG_ZEPHCORE_DEFAULT_TX_POWER_DBM
 	prefs->tx_power_dbm = CONFIG_ZEPHCORE_DEFAULT_TX_POWER_DBM;
 #else
@@ -193,9 +196,20 @@ static inline void initNodePrefs(NodePrefs* prefs) {
 	prefs->tracking_interval_minutes = 10;
 	strcpy(prefs->tracking_group_name, "#tracks");
 
+#ifdef CONFIG_ZEPHCORE_DEFAULT_LORA_433
+	/* Factory defaults for the 433 MHz regional profile. */
+	prefs->airtime_factor = 1.0f;       /* 100 / (1 + 1) = 50% duty cycle */
+	prefs->advert_interval = 30;        /* stored in two-minute units = 60 min */
+	prefs->flood_advert_interval = 24;  /* hours */
+	prefs->flood_max = 32;
+	prefs->flood_max_unscoped = 32;
+	prefs->multi_acks = 1;
+#endif
+
 /* XIAO nRF52840 + Wio-SX1262 repeater profile. Applied only while creating
  * fresh repeater preferences; saved user settings always take precedence. */
-#if defined(CONFIG_BOARD_XIAO_NRF52840) && defined(CONFIG_ZEPHCORE_ROLE_REPEATER)
+#if defined(CONFIG_BOARD_XIAO_NRF52840) && defined(CONFIG_ZEPHCORE_ROLE_REPEATER_BASE) && \
+	!defined(CONFIG_ZEPHCORE_DEFAULT_LORA_433)
 	prefs->freq = 867.935f;
 	prefs->bw = 62.5f;
 	prefs->sf = 8;

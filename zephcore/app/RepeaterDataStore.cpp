@@ -385,6 +385,61 @@ bool RepeaterDataStore::savePrefs(const NodePrefs& prefs) {
     return true;
 }
 
+bool RepeaterDataStore::loadBridgePrefs(RepeaterBridgePrefs& prefs) {
+    char path[48];
+    snprintf(path, sizeof(path), "%s/espnow_bridge", BASE_PATH);
+
+    struct fs_file_t file;
+    fs_file_t_init(&file);
+    if (fs_open(&file, path, FS_O_READ) < 0) {
+        return false;
+    }
+
+    memset(&prefs, 0, sizeof(prefs));
+    ssize_t n = fs_read(&file, &prefs, sizeof(prefs));
+    fs_close(&file);
+    /* The bridge file is private to ZephCore.  Preserve all earlier settings
+     * and initialise fields appended by later bridge protocol revisions. */
+    constexpr size_t pre_address_type_size = offsetof(RepeaterBridgePrefs, peer_addr_type);
+    constexpr size_t pre_priority_size = offsetof(RepeaterBridgePrefs, forward_priority);
+    if (n == (ssize_t)pre_address_type_size || n == (ssize_t)pre_priority_size) {
+        prefs.forward_priority = 7;
+        LOG_INF("Migrated bridge prefs");
+        return true;
+    }
+    if (n != (ssize_t)sizeof(prefs)) {
+        LOG_WRN("Bridge prefs are corrupt");
+        return false;
+    }
+    return true;
+}
+
+bool RepeaterDataStore::saveBridgePrefs(const RepeaterBridgePrefs& prefs) {
+    if (!_initialized && !begin()) return false;
+
+    char path[48];
+    char tmp_path[56];
+    snprintf(path, sizeof(path), "%s/espnow_bridge", BASE_PATH);
+    if (snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path) >= (int)sizeof(tmp_path)) {
+        return false;
+    }
+    fs_unlink(tmp_path);
+
+    struct fs_file_t file;
+    fs_file_t_init(&file);
+    if (fs_open(&file, tmp_path, FS_O_CREATE | FS_O_WRITE) < 0) {
+        return false;
+    }
+    ssize_t n = fs_write(&file, &prefs, sizeof(prefs));
+    int ret = fs_sync(&file);
+    fs_close(&file);
+    if (n != (ssize_t)sizeof(prefs) || ret < 0 || fs_rename(tmp_path, path) < 0) {
+        fs_unlink(tmp_path);
+        return false;
+    }
+    return true;
+}
+
 bool RepeaterDataStore::formatFileSystem() {
     LOG_WRN("Factory reset: erasing repeater data at %s", BASE_PATH);
 

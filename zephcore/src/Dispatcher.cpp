@@ -259,6 +259,34 @@ bool Dispatcher::tryParsePacket(Packet *pkt, const uint8_t *raw, int len)
 	return true;
 }
 
+bool Dispatcher::injectRaw(const uint8_t *raw, int len)
+{
+	if (raw == nullptr || len < 2 || len > MAX_TRANS_UNIT) {
+		return false;
+	}
+
+	Packet *pkt = _mgr->allocNew();
+	if (pkt == nullptr) {
+		LOG_WRN("injectRaw: packet alloc failed");
+		return false;
+	}
+	if (!tryParsePacket(pkt, raw, len)) {
+		_mgr->free(pkt);
+		return false;
+	}
+
+	/* ESP-NOW has no LoRa SNR/RSSI equivalent. */
+	pkt->_snr = 0;
+	logRx(pkt, pkt->getRawLength(), 0.0f);
+	if (pkt->isRouteFlood()) {
+		n_recv_flood++;
+	} else {
+		n_recv_direct++;
+	}
+	processRecvPacket(pkt);
+	return true;
+}
+
 void Dispatcher::checkRecv()
 {
 	/* k_event is a bitfield — multiple ISR arrivals coalesce into one

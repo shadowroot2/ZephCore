@@ -13,7 +13,7 @@
  * - BME280 environment sensor on I2C0 @ 0x77 (alt address)
  * - Battery ADC on AIN2 (P0.04), 150K+150K voltage divider
  * - Single user button (P1.10, active-low, INPUT_PULLUP)
- * - 3-color LEDs active-low: RED=P0.13, BLUE=P0.14, GREEN=P0.15
+ * - 3-color RGB LED active-low: RED=P1.03, BLUE=P0.14, GREEN=P1.01
  *
  * Power rails (all must be HIGH for peripherals to function):
  * - Board power enable  P0.12  (main peripheral power)
@@ -24,8 +24,9 @@
  * - Capacitive touch pad (TTP223-style) that presents an active-low
  *   momentary output. Its only job is to wake the e-paper front-light:
  *   emits INPUT_KEY_BRIGHTNESSUP, which hits ui_task's default branch —
- *   no page action, but the display-on / auto-off-reset path still runs,
- *   so the backlight lights up for CONFIG_ZEPHCORE_UI_DISPLAY_AUTO_OFF_MS.
+ *   no page action. It is the only input that wakes the front-light for
+ *   CONFIG_ZEPHCORE_UI_DISPLAY_AUTO_OFF_MS; page buttons redraw e-paper
+ *   content without switching the front-light on.
  *
  * Note: Arduino ENV_INCLUDE_BME280 sits at 0x77; sensors-i2c.dtsi default
  * is 0x76 — we override below.
@@ -53,11 +54,11 @@
 
 	aliases {
 		lora0 = &lora;
-		/* LEDs: green blinks on LoRa TX (matches Arduino P_LORA_TX_LED=LED_GREEN),
-		 * blue acts as activity/heartbeat. Red stays available for errors. */
-		led0 = &led_blue;
+		/* Red is heartbeat; green replaces it for unread messages; blue is TX. */
+		led0 = &led_red;
 		led1 = &led_green;
-		lora-tx-led = &led_green;
+		lora-tx-led = &led_blue;
+		ble-status-led = &led_blue;
 		sw0 = &user_button;
 		watchdog0 = &wdt0;
 		gps-enable = &gps_enable_pin;
@@ -68,18 +69,18 @@
 		compatible = "gpio-leds";
 
 		led_red: led_0 {
-			gpios = <&gpio0 13 GPIO_ACTIVE_LOW>;
-			label = "Red LED";
+			gpios = <&gpio1 3 GPIO_ACTIVE_LOW>;
+			label = "Red LED (heartbeat)";
 		};
 
-		led_blue: led_1 {
+		led_green: led_1 {
+			gpios = <&gpio1 1 GPIO_ACTIVE_LOW>;
+			label = "Green LED";
+		};
+
+		led_blue: led_2 {
 			gpios = <&gpio0 14 GPIO_ACTIVE_LOW>;
-			label = "Blue LED";
-		};
-
-		led_green: led_2 {
-			gpios = <&gpio0 15 GPIO_ACTIVE_LOW>;
-			label = "Green LED (LoRa TX)";
+			label = "Blue LED (LoRa TX)";
 		};
 	};
 
@@ -121,10 +122,7 @@
 	 *
 	 * Separate gpio-keys node (not under `buttons`) so this event does
 	 * NOT feed the longpress/multitap filter chain above. Emits
-	 * INPUT_KEY_BRIGHTNESSUP — ui_task.c treats unknown codes as
-	 * display-wake only: a tap lights the front-light for
-	 * CONFIG_ZEPHCORE_UI_DISPLAY_AUTO_OFF_MS, just like any other
-	 * board's "tap to wake display". */
+	 * INPUT_KEY_BRIGHTNESSUP — the sole front-light wake control. */
 	backlight_btn: backlight-btn {
 		compatible = "gpio-keys";
 
@@ -186,11 +184,12 @@
 	};
 
 	/* ---- Battery ADC ----
-	 * 150K+150K voltage divider (2:1) on AIN2 (P0.04). Full-scale 7.2V
-	 * with ADC_REF_INTERNAL (0.6V) × gain 1/6 × divider 2.0. */
+	 * 150K+150K voltage divider (2:1) on AIN2 (P0.04).
+	 * Use the same 3.0 V ADC range as the T-Echo reference firmware:
+	 * ADC_REF_INTERNAL (0.6 V) × gain 1/5 × divider 2.0 = 6.0 V. */
 	zephyr,user {
 		io-channels = <&adc 2>;
-		vbat-mv-multiplier = <7236>;  /* 2:1 divider, 3.6V ref; +0.5% for nRF SAADC gain error */
+		vbat-mv-multiplier = <6000>;
 	};
 
 	/* ---- E-Paper display (MIPI DBI SPI) ----
@@ -245,7 +244,7 @@
 	/* Battery voltage on P0.04 (AIN2) */
 	channel@2 {
 		reg = <2>;
-		zephyr,gain = "ADC_GAIN_1_6";
+		zephyr,gain = "ADC_GAIN_1_5";
 		zephyr,reference = "ADC_REF_INTERNAL";
 		zephyr,acquisition-time = <ADC_ACQ_TIME(ADC_ACQ_TIME_MICROSECONDS, 10)>;
 		zephyr,input-positive = <NRF_SAADC_AIN2>;
@@ -263,6 +262,10 @@
 
 &gpio0 {
 	status = "okay";
+	/* P0.11 is the capacitive backlight pad. Use the shared GPIO SENSE
+	 * event rather than a scarce dedicated GPIOTE channel; LoRa DIO1 and the
+	 * e-paper controller use the same interrupt block. */
+	sense-edge-mask = <0x00000800>;
 };
 
 &gpio1 {

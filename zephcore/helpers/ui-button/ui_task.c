@@ -250,6 +250,7 @@ static void action_sos(void);
 static void action_gps_toggle(void);
 static void action_buzzer_toggle(void);
 static void action_leds_toggle(void);
+static void action_bridge_toggle(void);
 #ifdef CONFIG_ZEPHCORE_UI_DISPLAY
 static void action_ble_toggle(void);
 static void action_enter_dfu(void);
@@ -281,7 +282,9 @@ static void action_page_enter(void)
 		break;
 
 	case UI_PAGE_TRACKING:
+	#if !defined(ZEPHCORE_REPEATER)
 		mesh_tracking_toggle();
+	#endif
 		schedule_render();
 		break;
 
@@ -302,6 +305,10 @@ static void action_page_enter(void)
 	case UI_PAGE_LEDS:
 		/* Toggle LED on/off */
 		action_leds_toggle();
+		break;
+
+	case UI_PAGE_BRIDGE:
+		action_bridge_toggle();
 		break;
 
 	case UI_PAGE_OFFGRID: {
@@ -476,6 +483,11 @@ static void action_leds_toggle(void)
 	schedule_render();
 }
 
+static void action_bridge_toggle(void)
+{
+	mesh_set_bridge_enabled(!get_state()->bridge_enabled);
+}
+
 static void action_gps_toggle(void)
 {
 	if (!gps_is_available()) {
@@ -639,12 +651,27 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 		return;
 	}
 
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
+	/* T-ECHO's e-paper remains readable with its front-light off.  Its
+	 * dedicated capacitive pad is the sole control for that light.  Handle
+	 * both edges: some TTP223 modules only yield a usable release edge after
+	 * boot.  Page keys still never wake or extend the front-light. */
+#if defined(CONFIG_BOARD_LILYGO_TECHO)
+	if (evt->code == INPUT_KEY_BRIGHTNESSUP) {
+		mc_display_on();
+		schedule_render();
+		return;
+	}
+#endif
+#endif
+
 	/* Only handle key press events (value=1), not releases (value=0) */
 	if (!evt->value) {
 		return;
 	}
 
 #ifdef CONFIG_ZEPHCORE_UI_DISPLAY
+#if !defined(CONFIG_BOARD_LILYGO_TECHO)
 	/* If display is off, wake it and consume the event */
 	if (!mc_display_is_on()) {
 		mc_display_on();
@@ -656,6 +683,14 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 	 * auto-off. This is harmless when already on and fixes EPD frontlights
 	 * whose GPIO state can be off while the bistable content remains visible. */
 	mc_display_on();
+#else
+	/* On T-ECHO only the capacitive pad may turn the front-light on.  Menu
+	 * input made while it is already on keeps the existing 10-second window
+	 * alive without lighting it from the off state. */
+	if (mc_display_is_on()) {
+		mc_display_reset_auto_off();
+	}
+#endif
 #endif
 
 	/* Dismiss splash screen on any button press */
@@ -920,10 +955,14 @@ void ui_notify(enum ui_event event)
 	 * Message notifications use buzzer + LED flash instead of waking the display. */
 #ifdef CONFIG_ZEPHCORE_UI_DISPLAY
 #ifndef ZEPHCORE_REPEATER
+	/* On T-ECHO only the capacitive backlight button may turn on the
+	 * front-light; BLE state changes update the e-paper silently. */
+#if !defined(CONFIG_BOARD_LILYGO_TECHO)
 	if (!is_msg_event) {
 		mc_display_on();
 		schedule_render();
 	}
+#endif
 #endif
 #endif
 }
@@ -1186,6 +1225,63 @@ void ui_set_buzzer_quiet(bool quiet)
 	struct ui_state *s = get_state();
 
 	s->buzzer_quiet = quiet;
+}
+
+void ui_set_bridge_enabled(bool enabled)
+{
+	struct ui_state *s = get_state();
+
+	if (s->bridge_enabled == enabled) return;
+	s->bridge_enabled = enabled;
+	if (!enabled) s->bridge_connected = false;
+	schedule_render();
+}
+
+void ui_set_bridge_connected(bool connected)
+{
+	struct ui_state *s = get_state();
+
+	if (s->bridge_connected == connected) return;
+	s->bridge_connected = connected;
+	schedule_render();
+}
+
+void ui_set_bridge_status(const char *status)
+{
+	struct ui_state *s = get_state();
+	const char *next = status ? status : "off";
+
+	if (strcmp(s->bridge_status, next) == 0) return;
+	strncpy(s->bridge_status, next, sizeof(s->bridge_status) - 1);
+	s->bridge_status[sizeof(s->bridge_status) - 1] = '\0';
+	schedule_render();
+}
+
+void ui_set_bridge_addresses(const char *local, const char *peer)
+{
+	struct ui_state *s = get_state();
+	const char *next_local = local ? local : "unavailable";
+	const char *next_peer = peer ? peer : "not set";
+
+	if (strcmp(s->bridge_local_mac, next_local) == 0 &&
+	    strcmp(s->bridge_peer_mac, next_peer) == 0) return;
+	strncpy(s->bridge_local_mac, next_local, sizeof(s->bridge_local_mac) - 1);
+	s->bridge_local_mac[sizeof(s->bridge_local_mac) - 1] = '\0';
+	strncpy(s->bridge_peer_mac, next_peer, sizeof(s->bridge_peer_mac) - 1);
+	s->bridge_peer_mac[sizeof(s->bridge_peer_mac) - 1] = '\0';
+	schedule_render();
+}
+
+void ui_set_bridge_metrics(uint8_t priority, uint32_t forwarded, uint32_t skipped)
+{
+	struct ui_state *s = get_state();
+
+	if (s->bridge_priority == priority && s->bridge_forwarded == forwarded &&
+	    s->bridge_skipped == skipped) return;
+	s->bridge_priority = priority;
+	s->bridge_forwarded = forwarded;
+	s->bridge_skipped = skipped;
+	schedule_render();
 }
 
 void ui_set_offgrid_mode(bool enabled)

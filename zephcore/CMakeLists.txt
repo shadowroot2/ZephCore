@@ -331,7 +331,12 @@ endif()
 set(ZEPHCORE_CONF_FILES "")
 set(ZEPHCORE_BLE_CONF "${CMAKE_CURRENT_SOURCE_DIR}/boards/common/ble_common.conf")
 set(ZEPHCORE_BLE_DISABLED_BUILD FALSE)
+set(ZEPHCORE_REPEATER_BRIDGE_BUILD FALSE)
+if(EXTRA_CONF_FILE MATCHES "(^|[;/])([^;/]*)repeater_(espnow|ble)_bridge\\.conf($|[;/])")
+    set(ZEPHCORE_REPEATER_BRIDGE_BUILD TRUE)
+endif()
 if(EXTRA_CONF_FILE MATCHES "(^|[;/])([^;/]*)(repeater|room_server|observer)\\.conf($|[;/])"
+   OR ZEPHCORE_REPEATER_BRIDGE_BUILD
    OR ZEPHCORE_PLATFORM_CONF MATCHES "(linux_native|rp2040_common|stm32wl_common)")
     set(ZEPHCORE_BLE_DISABLED_BUILD TRUE)
 endif()
@@ -431,6 +436,7 @@ endif()
 # peripheral drops off the bus in light sleep and there is no USJ wake source
 # in the HAL (only UART0/1/2 and LP-UART).
 if(ZEPHCORE_PLATFORM_CONF MATCHES "esp32_common" AND EXTRA_CONF_FILE MATCHES "repeater"
+   AND NOT ZEPHCORE_REPEATER_BRIDGE_BUILD
    AND BOARD MATCHES "heltec_wifi_lora32_v3|heltec_wifi_lora32_v4|heltec_wireless_tracker")
     set(ZEPHCORE_PM_CONF "${CMAKE_CURRENT_SOURCE_DIR}/boards/common/pm_esp32.conf")
     if(EXISTS ${ZEPHCORE_PM_CONF})
@@ -441,6 +447,7 @@ if(ZEPHCORE_PLATFORM_CONF MATCHES "esp32_common" AND EXTRA_CONF_FILE MATCHES "re
 endif()
 
 if(ZEPHCORE_PLATFORM_CONF MATCHES "esp32_common" AND EXTRA_CONF_FILE MATCHES "repeater"
+   AND NOT ZEPHCORE_REPEATER_BRIDGE_BUILD
    AND NOT BOARD MATCHES "/esp32/")
     set(ZEPHCORE_WIFI_OTA_CONF "${CMAKE_CURRENT_SOURCE_DIR}/boards/common/wifi_ota.conf")
     if(EXISTS ${ZEPHCORE_WIFI_OTA_CONF})
@@ -766,7 +773,7 @@ else()
 endif()
 
 # ========== Role-Specific Sources ==========
-if(CONFIG_ZEPHCORE_ROLE_REPEATER)
+if(CONFIG_ZEPHCORE_ROLE_REPEATER_BASE)
   message(STATUS "ZephCore Role: REPEATER")
   target_sources(app PRIVATE
     src/main_repeater.cpp
@@ -812,6 +819,37 @@ if(CONFIG_ZEPHCORE_ROLE_REPEATER)
     )
   elseif(CONFIG_ZEPHCORE_REPEATER_UPLINK)
     message(WARNING "ZephCore repeater uplink requested, but MQTT is disabled in this configuration. Build will exclude uplink runtime.")
+  endif()
+  if(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+    target_sources(app PRIVATE app/RepeaterBridge.cpp app/BLERepeaterBridge.cpp)
+    if(CONFIG_SOC_FAMILY_ESPRESSIF_ESP32)
+      target_sources(app PRIVATE app/ESPNowBridge.cpp)
+      # The Zephyr Espressif HAL enables Wi-Fi's core/net80211/pp blobs, but
+      # deliberately leaves the optional ESP-NOW blob out of its common link
+      # set.  The bridge is the only ZephCore consumer.
+      if(CONFIG_ZEPHCORE_ESPNOW_BRIDGE AND NOT CONFIG_BUILD_ONLY_NO_BLOBS)
+        find_file(ZEPHCORE_ESPNOW_LIBRARY
+          NAMES libespnow.a
+          PATHS
+            ${ZEPHYR_HAL_ESPRESSIF_MODULE_DIR}/zephyr/blobs/lib/${CONFIG_SOC_SERIES}
+            $ENV{IDF_PATH}/components/esp_wifi/lib/${CONFIG_SOC_SERIES}
+          NO_DEFAULT_PATH
+        )
+        if(NOT ZEPHCORE_ESPNOW_LIBRARY)
+          file(GLOB ZEPHCORE_ESPNOW_IDF_LIBS
+            "$ENV{HOME}/.espressif/*/esp-idf/components/esp_wifi/lib/${CONFIG_SOC_SERIES}/libespnow.a")
+          list(SORT ZEPHCORE_ESPNOW_IDF_LIBS COMPARE NATURAL ORDER DESCENDING)
+          if(ZEPHCORE_ESPNOW_IDF_LIBS)
+            list(GET ZEPHCORE_ESPNOW_IDF_LIBS 0 ZEPHCORE_ESPNOW_LIBRARY)
+          endif()
+        endif()
+        if(NOT EXISTS "${ZEPHCORE_ESPNOW_LIBRARY}")
+          message(FATAL_ERROR "ESP-NOW bridge needs libespnow.a for ${CONFIG_SOC_SERIES}; install ESP-IDF or provide IDF_PATH")
+        endif()
+        zephyr_link_libraries(${ZEPHCORE_ESPNOW_LIBRARY})
+      endif()
+    endif()
+    target_include_directories(app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/app)
   endif()
   target_compile_definitions(app PRIVATE ZEPHCORE_REPEATER=1)
 elseif(CONFIG_ZEPHCORE_ROLE_ROOM_SERVER)
@@ -962,7 +1000,7 @@ if(CONFIG_ZEPHCORE_UI_BUTTONS OR CONFIG_ZEPHCORE_UI_BUZZER OR CONFIG_ZEPHCORE_UI
     ${CMAKE_CURRENT_SOURCE_DIR}/helpers/ui
   )
   # Repeater and Observer builds need weak stubs for companion-only UI mesh actions
-  if(CONFIG_ZEPHCORE_ROLE_REPEATER OR CONFIG_ZEPHCORE_ROLE_OBSERVER OR CONFIG_ZEPHCORE_ROLE_ROOM_SERVER)
+  if(CONFIG_ZEPHCORE_ROLE_REPEATER_BASE OR CONFIG_ZEPHCORE_ROLE_OBSERVER OR CONFIG_ZEPHCORE_ROLE_ROOM_SERVER)
     target_sources(app PRIVATE
       helpers/ui/ui_mesh_actions_stubs.c
     )

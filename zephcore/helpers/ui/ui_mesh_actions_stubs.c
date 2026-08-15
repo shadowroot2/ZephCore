@@ -21,6 +21,7 @@ __attribute__((weak)) void mesh_ble_set_enabled(bool enable) { ARG_UNUSED(enable
 __attribute__((weak)) void mesh_set_buzzer_quiet(bool quiet) { ARG_UNUSED(quiet); }
 __attribute__((weak)) void mesh_set_offgrid_mode(bool enable) { ARG_UNUSED(enable); }
 __attribute__((weak)) void mesh_set_leds_disabled(bool disabled) { ARG_UNUSED(disabled); }
+__attribute__((weak)) void mesh_set_bridge_enabled(bool enabled) { ARG_UNUSED(enabled); }
 __attribute__((weak)) void mesh_disable_power_regulators(void) {}
 __attribute__((weak)) void mesh_reboot_to_ota_dfu(void) {}
 __attribute__((weak)) void mesh_handle_ui_actions(void) {}

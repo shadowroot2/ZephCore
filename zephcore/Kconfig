@@ -84,6 +84,23 @@ config ZEPHCORE_ROLE_REPEATER
 	  No BLE stack. Has ACL authentication, region filtering,
 	  neighbor tracking, and full CLI command set.
 
+config ZEPHCORE_ROLE_REPEATER_BRIDGE
+	bool "Repeater Bridge (ESP-NOW / BLE)"
+	depends on SOC_FAMILY_ESPRESSIF_ESP32 || SOC_FAMILY_NORDIC_NRF
+	select NETWORKING if SOC_FAMILY_ESPRESSIF_ESP32
+	select WIFI if SOC_FAMILY_ESPRESSIF_ESP32
+	select WIFI_ESP32 if SOC_FAMILY_ESPRESSIF_ESP32
+	select BT
+	select BT_PERIPHERAL
+	select BT_CENTRAL
+	select BT_SMP
+	select BT_GATT_CLIENT
+	help
+	  Full repeater with an encrypted backhaul to one other bridge repeater:
+	  ESP-NOW on ESP32 and BLE GATT on Nordic nRF. It forwards only group/flood
+	  packets and adverts between the two LoRa networks. Direct, ACK and admin
+	  traffic is never bridged.
+
 config ZEPHCORE_ROLE_OBSERVER
 	bool "Observer (listen-only, WiFi+MQTT)"
 	help
@@ -104,6 +121,18 @@ config ZEPHCORE_ROLE_ROOM_SERVER
 	  Reuses the repeater's ACL, region filtering and CLI command set.
 
 endchoice
+
+config ZEPHCORE_ROLE_REPEATER_BASE
+	bool
+	default y if ZEPHCORE_ROLE_REPEATER || ZEPHCORE_ROLE_REPEATER_BRIDGE
+
+config ZEPHCORE_ESPNOW_BRIDGE
+	bool
+	default y if ZEPHCORE_ROLE_REPEATER_BRIDGE && SOC_FAMILY_ESPRESSIF_ESP32
+
+config ZEPHCORE_BLE_REPEATER_BRIDGE
+	bool
+	default y if ZEPHCORE_ROLE_REPEATER_BRIDGE
 
 config ZEPHCORE_COMPANION_USB
 	bool "Enable USB CDC companion transport"
@@ -155,11 +184,11 @@ config ZEPHCORE_COMPANION_SERIAL_POLLING
 	  whose USB-UART bridge does not deliver RX interrupts reliably. Native USB
 	  CDC transports are unaffected.
 
-if ZEPHCORE_ROLE_REPEATER || ZEPHCORE_ROLE_ROOM_SERVER
+if ZEPHCORE_ROLE_REPEATER_BASE || ZEPHCORE_ROLE_ROOM_SERVER
 
 config ZEPHCORE_REPEATER_UPLINK
 	bool "Enable repeater WiFi+MQTT uplink"
-	depends on ZEPHCORE_ROLE_REPEATER && SOC_FAMILY_ESPRESSIF_ESP32
+	depends on ZEPHCORE_ROLE_REPEATER_BASE && SOC_FAMILY_ESPRESSIF_ESP32
 	default n
 	help
 	  Adds observer-style WiFi station and MQTT packet publishing to
@@ -209,7 +238,7 @@ config ZEPHCORE_MAX_UNSYNCED_POSTS
 	  Size of the room server's circular post buffer.  When full, the
 	  oldest unsynced post is overwritten.  Matches upstream MeshCore (32).
 
-endif # ZEPHCORE_ROLE_REPEATER || ZEPHCORE_ROLE_ROOM_SERVER
+endif # ZEPHCORE_ROLE_REPEATER_BASE || ZEPHCORE_ROLE_ROOM_SERVER
 
 config ZEPHCORE_TIMESYNC_QUORUM
 	int "Mesh time sync: consensus quorum"
@@ -413,7 +442,7 @@ config ZEPHCORE_HOUSEKEEPING_INTERVAL_MS
 
 config ZEPHCORE_MAINTENANCE_BACKSTOP_MS
 	int "Repeater maintenance backstop (ms)"
-	depends on ZEPHCORE_ROLE_REPEATER
+	depends on ZEPHCORE_ROLE_REPEATER_BASE
 	default 60000
 	range 15000 600000
 	help
@@ -560,12 +589,23 @@ config ZEPHCORE_RADIO_SX127X
 
 endchoice
 
+config ZEPHCORE_DEFAULT_LORA_433
+	bool "Use the 433 MHz LoRa default profile"
+	default n
+	help
+	  Use 434.030 MHz, 62.5 kHz bandwidth, SF8 and coding rate 4/8 when
+	  creating fresh node preferences. This is intended for hardware with a
+	  433 MHz RF path and antenna. Existing saved radio preferences take
+	  precedence.
+
 config ZEPHCORE_DEFAULT_TX_POWER_DBM
 	int "Default TX power (dBm)"
+	default 17 if ZEPHCORE_DEFAULT_LORA_433
 	default 22
 	range -9 22
 	help
 	  Default SX1262 TX power in dBm for fresh devices (no saved prefs).
+	  The 433 MHz profile uses 17 dBm (50 mW); other boards use 22 dBm.
 	  Boards with external PA should set this lower to avoid overdriving.
 	  Example: Station G2 with 20dB PA gain uses 15 dBm (→ 35 dBm output).
 
@@ -809,7 +849,7 @@ config ZEPHCORE_GPS_NMEA_DUMP
 config ZEPHCORE_GPS_NAV_MODE
 	int "GNSS navigation dynamic model (CASIC $PCAS11)"
 	range -1 7
-	default 1 if ZEPHCORE_ROLE_REPEATER || ZEPHCORE_ROLE_ROOM_SERVER
+	default 1 if ZEPHCORE_ROLE_REPEATER_BASE || ZEPHCORE_ROLE_ROOM_SERVER
 	default 3
 	help
 	  Dynamic model sent to CASIC-family GNSS modules (Quectel L76K/L76KB,
@@ -835,7 +875,7 @@ config ZEPHCORE_GPS_SAT_DIAG
 	# this on for every GNSS-less repeater target.
 	depends on GNSS
 	select GNSS_SATELLITES
-	default y if ZEPHCORE_ROLE_REPEATER
+	default y if ZEPHCORE_ROLE_REPEATER_BASE
 	help
 	  Tally tracked satellites per constellation from GSV sentences and
 	  report them in "get gps" as sys=G<n>/R<n>/E<n>/B<n>/?<n>
@@ -862,7 +902,7 @@ menu "WiFi OTA Update"
 
 config ZEPHCORE_WIFI_OTA
 	bool "WiFi OTA firmware update"
-	depends on ZEPHCORE_ROLE_REPEATER
+	depends on ZEPHCORE_ROLE_REPEATER_BASE
 	help
 	  Enable WiFi AP + HTTP server for OTA firmware updates.
 	  Auto-enabled for ESP32 repeater builds via wifi_ota.conf.
@@ -966,6 +1006,7 @@ config ZEPHCORE_UI_TIMEZONE_OFFSET_MINUTES
 config ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS
 	int "Low-battery auto-shutdown threshold (mV, 0 = disabled)"
 	default 3250 if SOC_SERIES_NRF52
+	default 3300 if SOC_FAMILY_ESPRESSIF_ESP32 && ZEPHCORE_ROLE_COMPANION
 	default 0
 	help
 	  Companion only. When the battery falls below this voltage the device
@@ -975,19 +1016,17 @@ config ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS
 	  housekeeping tick (no extra polling) and is skipped while externally
 	  powered (USB/charger) via MainBoard::isExternalPowered().
 
-	  3250 mV is near the low end of the default LiPo curve (battery_curve.c) — a
-	  protective floor that still leaves headroom for the under-load voltage
-	  sag during a TX burst. Requires CONFIG_POWEROFF to actually power down.
+	  3250 mV (nRF52) and 3300 mV (ESP32 Companion) are protective floors that
+	  still leave headroom for the under-load voltage sag during a TX burst.
+	  Requires CONFIG_POWEROFF to actually power down.
 
 	  This is only the boot DEFAULT: the value is copied into prefs and is
 	  tunable at runtime over the USB CLI ("set autoshutdown <mv>" /
 	  "get autoshutdown", 0 = off or 1-5000 mV), persisted to flash.
 
-	  Defaults ON (3250) for nRF52 only: that is where isExternalPowered()
-	  reads VBUS, so the "plugged in" gate actually works. ESP32 / MG24 /
-	  nRF54L stay at 0 (off) — isExternalPowered() is a stub there, so a
-	  USB/mains-powered node could otherwise self-shutdown on a low ADC
-	  reading. Set explicitly per board to enable once VBUS detect exists.
+	  Defaults ON at 3250 mV for nRF52 and 3300 mV for ESP32 Companion.
+	  ESP32 currently has no portable VBUS detect, so its protection also runs
+	  while USB-powered. MG24 and nRF54L stay disabled by default.
 
 config ZEPHCORE_UI_CONFIRM_WINDOW_MS
 	int "Double-press confirmation window (ms)"

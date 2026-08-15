@@ -34,6 +34,8 @@ enum ui_page {
 	UI_PAGE_DFU,            /* BLE DFU bootloader entry */
 	UI_PAGE_TRACKING,       /* Periodic #tracks location reporting */
 	UI_PAGE_SOS,            /* Send SOS group message */
+	UI_PAGE_BRIDGE,         /* Repeater bridge backhaul toggle */
+	UI_PAGE_BRIDGE_INFO,    /* Repeater bridge priority and forwarding stats */
 	UI_PAGE_SHUTDOWN,       /* Hibernate / power off */
 	UI_PAGE_STATUS,         /* Repeater status (uptime, time, packets) */
 	UI_PAGE_COUNT
@@ -101,6 +103,14 @@ struct ui_state {
 
 	/* LEDs page */
 	bool     leds_disabled;    /* true = LEDs off */
+	bool     bridge_enabled;   /* true = repeater bridge backhaul active */
+	bool     bridge_connected; /* true = bridge transport link is ready */
+	char     bridge_local_mac[18];
+	char     bridge_peer_mac[18];
+	char     bridge_status[10];
+	uint8_t  bridge_priority;
+	uint32_t bridge_forwarded;
+	uint32_t bridge_skipped;
 
 	/* Sensors page */
 	int16_t  temperature_c10;  /* centi-degrees C */

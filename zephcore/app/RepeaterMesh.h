@@ -39,6 +39,8 @@
   #define FIRMWARE_BUILD_DATE   __DATE__
 #endif
 
+/* The mobile configurator accepts the upstream repeater role string only.
+ * Repeater-bridge is an implementation variant, not a protocol role. */
 #define FIRMWARE_ROLE "repeater"
 
 #ifndef MAX_NEIGHBOURS

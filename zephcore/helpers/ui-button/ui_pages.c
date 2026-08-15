@@ -167,6 +167,16 @@ static uint32_t activity_last_sample_ms;
 static const enum ui_page active_pages[] = {
 	UI_PAGE_STATUS,
 	UI_PAGE_RADIO,
+	#if defined(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+	UI_PAGE_BRIDGE,
+	UI_PAGE_BRIDGE_INFO,
+	#endif
+	#if defined(CONFIG_ZEPHCORE_UI_BUZZER)
+	UI_PAGE_BUZZER,
+	#endif
+	#if defined(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+	UI_PAGE_LEDS,
+	#endif
 	UI_PAGE_SHUTDOWN,
 };
 #else
@@ -573,6 +583,8 @@ static const char *tiny_page_title(enum ui_page p)
 	case UI_PAGE_DFU:       return "DFU";
 	case UI_PAGE_TRACKING:  return "TRACKING";
 	case UI_PAGE_SOS:       return "SOS";
+	case UI_PAGE_BRIDGE:    return "BRIDGE";
+	case UI_PAGE_BRIDGE_INFO:return "BRG INFO";
 	case UI_PAGE_SHUTDOWN:  return "SHUTDOWN";
 	case UI_PAGE_STATUS:    return "STATUS";
 	default:                return "";
@@ -1448,6 +1460,106 @@ static void render_leds(void)
 	render_leds_mono();
 }
 
+static const char *bridge_status_short(void)
+{
+	const char *status = state.bridge_status[0] ? state.bridge_status :
+		(state.bridge_connected ? "connected" : "waiting");
+
+	if (strcmp(status, "connected") == 0) return "conn";
+	if (strcmp(status, "waiting") == 0) return "wait";
+	if (strcmp(status, "no peer") == 0) return "nopr";
+	if (strcmp(status, "timeout") == 0) return "tout";
+	if (strcmp(status, "error") == 0) return "err";
+	if (strcmp(status, "off") == 0) return "off";
+	return "?";
+}
+
+static void render_bridge_mono(void)
+{
+	char buf[28];
+	int y = CONTENT_Y;
+
+	if (state.bridge_enabled) {
+		snprintf(buf, sizeof(buf), "Bridge: on (%s)", bridge_status_short());
+	} else {
+		snprintf(buf, sizeof(buf), "Bridge: off");
+	}
+	mc_display_text(0, y, buf, false);
+	y += LINE_H;
+	snprintf(buf, sizeof(buf), "MC: %s", state.bridge_local_mac[0] ?
+		 state.bridge_local_mac : "unavailable");
+	mc_display_text(0, y, buf, false);
+	y += LINE_H;
+	snprintf(buf, sizeof(buf), "PR: %s", state.bridge_peer_mac[0] ?
+		 state.bridge_peer_mac : "not set");
+	mc_display_text(0, y, buf, false);
+	y += LINE_H;
+	draw_centered(y + 2, state.bridge_enabled ? "Press to Disable" : "Press to Enable");
+}
+
+#if MC_DISPLAY_COLOR_PANEL
+static void render_bridge_color(void)
+{
+	char buf[28];
+	int y = CONTENT_Y;
+
+	draw_badge(0, y, "BRG", state.bridge_enabled ? UI_COLOR_OK : UI_COLOR_DISABLED);
+	if (state.bridge_enabled) {
+		snprintf(buf, sizeof(buf), "on (%s)", bridge_status_short());
+	} else {
+		snprintf(buf, sizeof(buf), "off");
+	}
+	mc_display_color_text(32, y, buf,
+			      state.bridge_enabled ? UI_COLOR_OK : UI_COLOR_DISABLED);
+	y += LINE_H;
+	snprintf(buf, sizeof(buf), "MC: %s", state.bridge_local_mac[0] ?
+		 state.bridge_local_mac : "unavailable");
+	mc_display_color_text(0, y, buf, UI_COLOR_VALUE);
+	y += LINE_H;
+	snprintf(buf, sizeof(buf), "PR: %s", state.bridge_peer_mac[0] ?
+		 state.bridge_peer_mac : "not set");
+	mc_display_color_text(0, y, buf, UI_COLOR_VALUE);
+	y += LINE_H + 2;
+	draw_centered_color(y, state.bridge_enabled ? "Press to disable" : "Press to enable",
+			    UI_COLOR_VALUE);
+}
+#endif /* MC_DISPLAY_COLOR_PANEL */
+
+static void render_bridge(void)
+{
+#if MC_DISPLAY_COLOR_PANEL
+	if (mc_display_has_color()) {
+		render_bridge_color();
+		return;
+	}
+#endif
+	render_bridge_mono();
+}
+
+static void render_bridge_info(void)
+{
+	char buf[28];
+	int y = CONTENT_Y;
+	const uint32_t min_delay_s = (uint32_t)state.bridge_priority * 5U;
+	const uint32_t max_delay_s = (uint32_t)state.bridge_priority * 30U;
+
+	snprintf(buf, sizeof(buf), "Priority: %u", state.bridge_priority);
+	mc_display_text(0, y, buf, false);
+	y += LINE_H;
+	if (state.bridge_priority == 0) {
+		mc_display_text(0, y, "Delay: immediate", false);
+	} else {
+		snprintf(buf, sizeof(buf), "Delay: %u-%us", min_delay_s, max_delay_s);
+		mc_display_text(0, y, buf, false);
+	}
+	y += LINE_H;
+	snprintf(buf, sizeof(buf), "Forwarded: %u", state.bridge_forwarded);
+	mc_display_text(0, y, buf, false);
+	y += LINE_H;
+	snprintf(buf, sizeof(buf), "Skipped: %u", state.bridge_skipped);
+	mc_display_text(0, y, buf, false);
+}
+
 static void render_sensors(void)
 {
 	char buf[24];
@@ -1702,11 +1814,33 @@ static void render_status(void)
 	/* Role label */
 	if (color) {
 		draw_badge(0, y, "MODE", UI_COLOR_ACTIVE);
+	#if defined(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+		mc_display_color_text(38, y, "repeater bridge", UI_COLOR_VALUE);
+	#else
 		mc_display_color_text(38, y, "repeater", UI_COLOR_VALUE);
+	#endif
 	} else {
+	#if defined(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+		draw_centered(y, "REPEATER BRIDGE");
+	#else
 		draw_centered(y, "REPEATER");
+	#endif
 	}
 	y += LINE_H;
+
+#if defined(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+	snprintf(buf, sizeof(buf), "Link: %s", state.bridge_status[0] ?
+		 state.bridge_status : (state.bridge_connected ? "connected" : "off"));
+	if (color) {
+		uint16_t status_color = state.bridge_connected ? UI_COLOR_OK :
+			(state.bridge_status[0] && strcmp(state.bridge_status, "off") != 0 &&
+			 strcmp(state.bridge_status, "no peer") != 0) ? UI_COLOR_WARN : UI_COLOR_DISABLED;
+		mc_display_color_text(0, y, buf, status_color);
+	} else {
+		mc_display_text(0, y, buf, false);
+	}
+	y += LINE_H;
+#endif
 
 	/* Uptime */
 	uint32_t up_s = (uint32_t)(k_uptime_get() / 1000);
@@ -1722,6 +1856,9 @@ static void render_status(void)
 	}
 	y += LINE_H;
 
+	/* Companion keeps the detailed clock here. Repeater-bridge shows it only
+	 * in the top bar, leaving the main page for link and radio state. */
+#if !defined(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
 	/* Clock — only if RTC has been synced (after Jan 1 2025) */
 	if (state.rtc_epoch > 1735689600) {
 		uint32_t day_sec = ui_local_day_seconds(state.rtc_epoch);
@@ -1745,6 +1882,7 @@ static void render_status(void)
 		}
 	}
 	y += LINE_H;
+#endif
 
 	/* Battery */
 	if (state.battery_mv > 0) {
@@ -1787,6 +1925,8 @@ static const page_render_fn renderers[] = {
 	[UI_PAGE_DFU]       = render_dfu,
 	[UI_PAGE_TRACKING]  = render_tracking,
 	[UI_PAGE_SOS]       = render_sos,
+	[UI_PAGE_BRIDGE]    = render_bridge,
+	[UI_PAGE_BRIDGE_INFO] = render_bridge_info,
 	[UI_PAGE_SHUTDOWN]  = render_shutdown,
 	[UI_PAGE_STATUS]    = render_status,
 };

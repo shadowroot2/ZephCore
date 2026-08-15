@@ -1,0 +1,6 @@
+board:
+  name: diy_esp32s3_n16r8_e22_back2back
+  full_name: DIY ESP32-S3 N16R8 + E22-400M30S Back2Back
+  vendor: diy
+  socs:
+    - name: esp32s3

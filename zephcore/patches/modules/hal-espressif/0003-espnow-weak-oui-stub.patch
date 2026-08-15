@@ -1,0 +1,13 @@
+diff --git a/zephyr/port/stubs/wifi_compat_stubs.c b/zephyr/port/stubs/wifi_compat_stubs.c
+index a371fdca19..53f2d3ff5c 100644
+--- a/zephyr/port/stubs/wifi_compat_stubs.c
++++ b/zephyr/port/stubs/wifi_compat_stubs.c
+@@ -11,7 +11,7 @@
+ #include "esp_event.h"
+ 
+ /* ESP-NOW OUI - required by blob */
+-const uint8_t g_espnow_user_oui[3] = {0x18, 0xFE, 0x34};
++const uint8_t g_espnow_user_oui[3] __attribute__((weak)) = {0x18, 0xFE, 0x34};
+ 
+ /* Regulatory domain data - required by blob */
+ const void *regdomain_table = NULL;

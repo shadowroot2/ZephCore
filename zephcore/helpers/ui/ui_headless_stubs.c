@@ -126,6 +126,11 @@ WEAK void ui_set_buzzer_quiet(bool quiet)
 	ARG_UNUSED(quiet);
 }
 
+WEAK void ui_set_bridge_metrics(uint8_t priority, uint32_t forwarded, uint32_t skipped)
+{
+	ARG_UNUSED(priority); ARG_UNUSED(forwarded); ARG_UNUSED(skipped);
+}
+
 /* Not a no-op: a headless build still has the LoRa TX LED, and the gate that
  * governs it lives outside the UI layer precisely so this case works. */
 WEAK void ui_set_leds_disabled(bool disabled)

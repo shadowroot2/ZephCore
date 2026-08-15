@@ -104,7 +104,11 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 #endif
 		"clkreboot\r\nerase\r\nhelp";
 	static const char repeater[] =
+	#if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+		"CLI repeater-bridge:\r\n"
+	#else
 		"CLI repeater:\r\n"
+	#endif
 		"ver\r\nboard\r\nadvert\r\nadvert.zerohop\r\n"
 		"clock [sync]\r\ntime <epoch>\r\ngps [on|off|setloc|advert]\r\n"
 #if DT_NODE_HAS_PROP(DT_ALIAS(led0), gpios) || DT_NODE_HAS_PROP(DT_ALIAS(led1), gpios)
@@ -134,6 +138,16 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"get/set allow.read.only\r\nget/set guest.password\r\n"
 		"get/set backoff.multiplier\r\nget/set loop.detect\r\n"
 		"get/set rxduty\r\n"
+	#if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+		"bridge [on|off|ping|keygen] (keygen: local)\r\nget/set bridge.type\r\n"
+		#if defined(CONFIG_SOC_FAMILY_ESPRESSIF_ESP32)
+			"set bridge.type ble|esp-now\r\n"
+		#else
+			"set bridge.type ble\r\n"
+		#endif
+		"get/set bridge.priority (0..7)\r\nget bridge.delay\r\n"
+		"get/set bridge.peer <MAC> [public|random]\r\nset bridge.key <32-hex>\r\n"
+	#endif
 		"neighbors\r\nneighbor.remove <pubkey>\r\n"
 		"discover.neighbors\r\n"
 		"region def|get|put|remove|list|load|save\r\n"

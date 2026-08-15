@@ -147,6 +147,9 @@ public:
 	uint32_t futureMillis(int millis_from_now) const;
 
 	bool tryParsePacket(Packet *pkt, const uint8_t *raw, int len);
+	/* Inject a complete packet received from a non-LoRa transport.  Intended
+	 * for the ESP-NOW bridge; callers must run it on the mesh main thread. */
+	bool injectRaw(const uint8_t *raw, int len);
 
 private:
 	void updateTxBudget();

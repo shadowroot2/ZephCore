@@ -56,6 +56,9 @@ extern "C" void bt_ctlr_assert_handle(char *file, uint32_t line)
 #include <ZephyrSensorManager.h>
 #include <helpers/LocalCLIHelp.h>
 #include <helpers/battery_curve.h>
+#if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+#include <app/RepeaterBridge.h>
+#endif
 
 /* UI subsystem (display, buttons, buzzer) */
 #include "ui_task.h"
@@ -153,11 +156,13 @@ static atomic_t pending_repeater_ui_actions = ATOMIC_INIT(0);
 static atomic_t pending_repeater_gps_enabled = ATOMIC_INIT(0);
 static atomic_t pending_repeater_buzzer_quiet = ATOMIC_INIT(0);
 static atomic_t pending_repeater_leds_disabled = ATOMIC_INIT(0);
+static atomic_t pending_repeater_bridge_enabled = ATOMIC_INIT(0);
 
 #define REPEATER_UI_ACTION_FLOOD_ADVERT BIT(0)
 #define REPEATER_UI_ACTION_GPS_TOGGLE   BIT(1)
 #define REPEATER_UI_ACTION_BUZZER       BIT(2)
 #define REPEATER_UI_ACTION_LEDS         BIT(3)
+#define REPEATER_UI_ACTION_BRIDGE       BIT(4)
 
 static void request_rtc_save(uint32_t epoch)
 {
@@ -541,6 +546,15 @@ extern "C" void mesh_set_leds_disabled(bool disabled)
 	k_event_post(&mesh_events, MESH_EVENT_UI_ACTION);
 }
 
+#if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+extern "C" void mesh_set_bridge_enabled(bool enabled)
+{
+	atomic_set(&pending_repeater_bridge_enabled, enabled ? 1 : 0);
+	atomic_or(&pending_repeater_ui_actions, REPEATER_UI_ACTION_BRIDGE);
+	k_event_post(&mesh_events, MESH_EVENT_UI_ACTION);
+}
+#endif
+
 static bool handle_repeater_ui_cli(const char *line, char *reply)
 {
 	if (strcmp(line, "shutdown") == 0) {
@@ -657,7 +671,7 @@ static void repeater_event_loop(void)
 {
 	LOG_INF("starting event-driven loop");
 
-	/* Print startup banner (no prompt - Arduino style) */
+	/* Keep the USB identification compatible with repeater-only tools. */
 	cli_print("\r\n=== ZephCore Repeater ===\r\n");
 
 	/* Arm the first maintenance wake; every pass below re-arms it. */
@@ -708,6 +722,27 @@ static void repeater_event_loop(void)
 					repeater_mesh_ptr->savePrefs();
 				}
 			}
+#if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+			if (actions & REPEATER_UI_ACTION_BRIDGE) {
+				const bool enabled = atomic_get(&pending_repeater_bridge_enabled) != 0;
+				char reply[64];
+
+				if (repeater_bridge_handle_command(enabled ? "bridge on" : "bridge off",
+							   reply, sizeof(reply)) && strncmp(reply, "OK:", 3) == 0) {
+					ui_set_bridge_enabled(enabled);
+					ui_set_bridge_connected(repeater_bridge_is_connected());
+					ui_set_bridge_status(repeater_bridge_status());
+					uint8_t priority;
+					uint32_t forwarded;
+					uint32_t skipped;
+					repeater_bridge_get_metrics(&priority, &forwarded, &skipped);
+					ui_set_bridge_metrics(priority, forwarded, skipped);
+					LOG_INF("Button: bridge %s", enabled ? "on" : "off");
+				} else {
+					LOG_WRN("Button: bridge %s failed: %s", enabled ? "on" : "off", reply);
+				}
+			}
+#endif
 		}
 
 		/* Run queued CLI commands here (main thread) BEFORE loop() drains
@@ -715,6 +750,22 @@ static void repeater_event_loop(void)
 		 * mutation on the main thread (see cli_cmd_queue). */
 		if (events & MESH_EVENT_CLI_RX) {
 			process_cli_commands();
+#if ZEPHCORE_HAS_UI && IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+			char bridge_local[18];
+			char bridge_peer[18];
+
+			ui_set_bridge_enabled(repeater_bridge_is_enabled());
+			ui_set_bridge_connected(repeater_bridge_is_connected());
+			ui_set_bridge_status(repeater_bridge_status());
+			uint8_t priority;
+			uint32_t forwarded;
+			uint32_t skipped;
+			repeater_bridge_get_metrics(&priority, &forwarded, &skipped);
+			ui_set_bridge_metrics(priority, forwarded, skipped);
+			repeater_bridge_get_addresses(bridge_local, sizeof(bridge_local), bridge_peer,
+					      sizeof(bridge_peer));
+			ui_set_bridge_addresses(bridge_local, bridge_peer);
+#endif
 		}
 
 		/* Deferred boot advert — sent on the main thread (see
@@ -771,6 +822,22 @@ static void repeater_event_loop(void)
 
 #if ZEPHCORE_HAS_UI
 			ui_set_clock(rtc_clock.getCurrentTime());
+#if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+			char bridge_local[18];
+			char bridge_peer[18];
+
+			ui_set_bridge_enabled(repeater_bridge_is_enabled());
+			ui_set_bridge_connected(repeater_bridge_is_connected());
+			ui_set_bridge_status(repeater_bridge_status());
+			uint8_t priority;
+			uint32_t forwarded;
+			uint32_t skipped;
+			repeater_bridge_get_metrics(&priority, &forwarded, &skipped);
+			ui_set_bridge_metrics(priority, forwarded, skipped);
+			repeater_bridge_get_addresses(bridge_local, sizeof(bridge_local), bridge_peer,
+					      sizeof(bridge_peer));
+			ui_set_bridge_addresses(bridge_local, bridge_peer);
+#endif
 
 #ifdef ZEPHCORE_LORA
 			/* Refresh live radio state (noise floor, TX power
@@ -942,6 +1009,24 @@ int main(void)
 	/* Start mesh with data store - loads ACL, regions */
 	repeater_mesh.begin(&data_store);
 	repeater_mesh.setLocalCommandHandler(handle_repeater_ui_cli);
+#if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+		if (!repeater_bridge_start(&data_store, &repeater_mesh)) {
+			LOG_ERR("Repeater bridge start failed");
+		}
+		ui_set_bridge_enabled(repeater_bridge_is_enabled());
+		ui_set_bridge_connected(repeater_bridge_is_connected());
+		ui_set_bridge_status(repeater_bridge_status());
+		uint8_t priority;
+		uint32_t forwarded;
+		uint32_t skipped;
+		repeater_bridge_get_metrics(&priority, &forwarded, &skipped);
+		ui_set_bridge_metrics(priority, forwarded, skipped);
+		char bridge_local[18];
+		char bridge_peer[18];
+		repeater_bridge_get_addresses(bridge_local, sizeof(bridge_local), bridge_peer,
+					      sizeof(bridge_peer));
+		ui_set_bridge_addresses(bridge_local, bridge_peer);
+#endif
 
 	/* Generate default node name from hardware device ID if not set */
 	NodePrefs* prefs = repeater_mesh.getNodePrefs();

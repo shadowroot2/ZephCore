@@ -177,6 +177,13 @@ void ui_set_buzzer_quiet(bool quiet);
  */
 void ui_set_leds_disabled(bool disabled);
 
+/** Update repeater-bridge backhaul state shown in the UI. */
+void ui_set_bridge_enabled(bool enabled);
+void ui_set_bridge_connected(bool connected);
+void ui_set_bridge_status(const char *status);
+void ui_set_bridge_addresses(const char *local, const char *peer);
+void ui_set_bridge_metrics(uint8_t priority, uint32_t forwarded, uint32_t skipped);
+
 /** Return the current LED heartbeat state. */
 bool ui_leds_disabled(void);
 

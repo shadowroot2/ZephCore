@@ -292,7 +292,7 @@ Flood-пакеты, созданные companion, используют мень�
 | `CONFIG_ZEPHCORE_GPS_FIRST_FIX_TIMEOUT_SEC` | 300 | Удлиненное cold-start окно для первого GPS fix |
 | `CONFIG_ZEPHCORE_REPEATER_GPS_INTERVAL_SEC` | 172800 | GPS duty interval repeater/room-server (48 ч), `0` — always-on |
 | `CONFIG_ZEPHCORE_UI_TIMEZONE_OFFSET_MINUTES` | 300 | Смещение локального времени UI в минутах; UTC timestamps не меняет |
-| `CONFIG_ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS` | 3250 на nRF52 | Порог low-battery shutdown для companion, `0` отключает |
+| `CONFIG_ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS` | 3250 на nRF52, 3300 на ESP32 Companion | Порог low-battery shutdown для companion, `0` отключает |
 | `CONFIG_ZEPHCORE_WIFI_OTA` | n | WiFi AP + HTTP OTA для ESP32 repeaters |
 | `CONFIG_ZEPHCORE_REPEATER_UPLINK` | n | WiFi+MQTT uplink для ESP32 repeater |
 | `CONFIG_ZEPHCORE_PACKET_LOGGING` | n | Arduino-compatible packet logging |

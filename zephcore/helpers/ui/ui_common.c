@@ -38,6 +38,7 @@
 LOG_MODULE_REGISTER(ui_led, CONFIG_ZEPHCORE_BOARD_LOG_LEVEL);
 
 static uint16_t (*s_batt_provider)(void);
+static bool (*s_power_source_provider)(void);
 
 /* Low-charge power-saving threshold shared by the buzzer and heartbeat. */
 #define BUZZER_LOW_BATT_THRESHOLD_PCT  25
@@ -259,19 +260,30 @@ static void led_on_work_handler(struct k_work *work)
 		#if HAS_BLE_STATUS_LED
 		bool ble_waiting = s_ble_enabled && !s_ble_connected;
 		#endif
-		#if !HEARTBEAT_IS_BLE_STATUS_LED
+		#if defined(CONFIG_BOARD_LILYGO_TECHO) && HAS_MSG_LED && HAS_BLE_STATUS_LED
+		/* T-ECHO: green means unread, blue means no BLE peer, red means
+		 * connected and no unread messages. The cadence is unchanged. */
+		if (mc > 0) {
+			gpio_pin_set_dt(&s_msg_led, 1);
+		} else if (!s_ble_connected) {
+			gpio_pin_set_dt(&s_ble_status_led, 1);
+		} else {
+			heartbeat_led_set(true);
+		}
+		#elif !HEARTBEAT_IS_BLE_STATUS_LED
 		heartbeat_led_set(true);
 		#else
 		if (ble_waiting) {
 			heartbeat_led_set(true);
 		}
 		#endif
-#if HAS_MSG_LED
+#if HAS_MSG_LED && !defined(CONFIG_BOARD_LILYGO_TECHO)
 		if (mc > 0) {
 			gpio_pin_set_dt(&s_msg_led, 1);
 		}
 #endif
-		#if HAS_BLE_STATUS_LED && !HEARTBEAT_IS_BLE_STATUS_LED
+		#if HAS_BLE_STATUS_LED && !HEARTBEAT_IS_BLE_STATUS_LED && \
+			!defined(CONFIG_BOARD_LILYGO_TECHO)
 		if (ble_waiting) {
 			gpio_pin_set_dt(&s_ble_status_led, 1);
 		}
@@ -392,6 +404,20 @@ void ui_led_set_ble_connected(bool connected)
 {
 #if HAS_BLE_STATUS_LED
 	s_ble_connected = connected;
+	#if defined(CONFIG_BOARD_LILYGO_TECHO) && HAS_MSG_LED
+	/* Apply the new colour immediately instead of waiting for the next
+	 * five-second heartbeat cycle. */
+	if (!zephcore_leds_disabled() && gpio_is_ready_dt(&s_heartbeat_led) &&
+	    gpio_is_ready_dt(&s_msg_led) && gpio_is_ready_dt(&s_ble_status_led)) {
+		k_work_cancel_delayable(&s_led_on_work);
+		k_work_cancel_delayable(&s_led_off_work);
+		heartbeat_sequence_reset();
+		heartbeat_led_set(false);
+		gpio_pin_set_dt(&s_msg_led, 0);
+		gpio_pin_set_dt(&s_ble_status_led, 0);
+		k_work_reschedule(&s_led_on_work, K_NO_WAIT);
+	}
+	#endif
 #else
 	ARG_UNUSED(connected);
 #endif
@@ -498,6 +524,8 @@ void ui_led_flash_msg(void)
 	#endif
 	#if defined(CONFIG_BOARD_T1000_E)
 	if (gpio_is_ready_dt(&s_heartbeat_led)) {
+	#elif defined(CONFIG_BOARD_LILYGO_TECHO) && HAS_MSG_LED
+	if (!zephcore_leds_disabled() && gpio_is_ready_dt(&s_msg_led)) {
 	#else
 	if (!zephcore_leds_disabled() && gpio_is_ready_dt(&s_heartbeat_led)) {
 	#endif
@@ -506,6 +534,9 @@ void ui_led_flash_msg(void)
 		heartbeat_sequence_reset();
 #if defined(CONFIG_BOARD_T1000_E)
 		t1000_led_flash_pattern(LED_MSG_BLINKS);
+	#elif defined(CONFIG_BOARD_LILYGO_TECHO) && HAS_MSG_LED
+		gpio_pin_set_dt(&s_msg_led, 1);
+		k_work_reschedule(&s_led_off_work, K_MSEC(LED_ON_MSG_MS));
 #else
 		heartbeat_led_set(true);
 		k_work_reschedule(&s_led_off_work, K_MSEC(LED_ON_MSG_MS));
@@ -571,7 +602,6 @@ void ui_led_flash_shutdown(void)
 
 static uint32_t s_batt_last_read_ms;
 static bool s_batt_ever_read;
-static bool (*s_power_source_provider)(void);
 
 void ui_set_battery_provider(uint16_t (*provider)(void))
 {

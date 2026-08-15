@@ -15,6 +15,16 @@
 #include <helpers/ClientACL.h>
 #include <helpers/RegionMap.h>
 
+struct RepeaterBridgePrefs {
+    uint8_t peer_mac[6];
+    uint8_t lmk[16];
+    uint8_t key_is_custom;
+    uint8_t transport;  /* 0 = BLE, 1 = ESP-NOW */
+    uint8_t enabled;
+    uint8_t peer_addr_type; /* BLE: 0 = public, 1 = random */
+    uint8_t forward_priority; /* 0 = primary, higher values wait longer */
+};
+
 class RepeaterDataStore {
 public:
     RepeaterDataStore();
@@ -29,6 +39,11 @@ public:
     /* Prefs management */
     bool loadPrefs(NodePrefs& prefs);
     bool savePrefs(const NodePrefs& prefs);
+
+    /* ESP-NOW bridge settings are deliberately separate from NodePrefs: the
+     * latter has an Arduino-compatible positional on-disk layout. */
+    bool loadBridgePrefs(RepeaterBridgePrefs& prefs);
+    bool saveBridgePrefs(const RepeaterBridgePrefs& prefs);
 
     /* ACL management - paths passed to ClientACL */
     const char* getAclPath() const;
