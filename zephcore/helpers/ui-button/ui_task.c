@@ -250,7 +250,9 @@ static void action_sos(void);
 static void action_gps_toggle(void);
 static void action_buzzer_toggle(void);
 static void action_leds_toggle(void);
+#if defined(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
 static void action_bridge_toggle(void);
+#endif
 #ifdef CONFIG_ZEPHCORE_UI_DISPLAY
 static void action_ble_toggle(void);
 static void action_enter_dfu(void);
@@ -307,9 +309,11 @@ static void action_page_enter(void)
 		action_leds_toggle();
 		break;
 
+#if defined(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
 	case UI_PAGE_BRIDGE:
 		action_bridge_toggle();
 		break;
+#endif
 
 	case UI_PAGE_OFFGRID: {
 		/* Double-press confirmation (CONFIRM_WINDOW_MS window) */
@@ -483,10 +487,12 @@ static void action_leds_toggle(void)
 	schedule_render();
 }
 
+#if defined(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
 static void action_bridge_toggle(void)
 {
 	mesh_set_bridge_enabled(!get_state()->bridge_enabled);
 }
+#endif
 
 static void action_gps_toggle(void)
 {
@@ -606,6 +612,14 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 	if (evt->type != INPUT_EV_KEY) {
 		return;
 	}
+
+#if defined(ZEPHCORE_COMPANION)
+	/* One physical press acknowledges an active fall alarm. The call is a
+	 * no-op unless the companion has such an alarm pending. */
+	if (evt->value) {
+		mesh_fall_alarm_acknowledge();
+	}
+#endif
 
 #ifdef CONFIG_ZEPHCORE_EASTER_EGG_DOOM
 	/* When Doom is running, intercept ALL input (presses AND releases) */

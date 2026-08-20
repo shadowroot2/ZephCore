@@ -1565,7 +1565,7 @@ static uint32_t gps_acquire_window_ms(void)
 static void gps_go_to_standby(void)
 {
 	/* Unified standby interval for both roles — set from prefs.gps_interval
-	 * at boot (companion default 300s, repeater default 48h). Always-on
+	 * at boot (companion default 300s, repeater default 12h). Always-on
 	 * (interval 0) never reaches here. */
 	uint64_t wake_interval = gps_wake_interval_ms;
 

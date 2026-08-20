@@ -562,12 +562,12 @@ int main(void)
 		}
 	}
 
-	/* Set GPS to repeater mode: power off now, wake every 48h for time sync only.
+	/* Set GPS to repeater mode: power off now, wake every 12h for time sync only.
 	 * This prevents GPS from draining power on boards that have it (e.g., Wio Tracker). */
 	if (gps_is_available()) {
 		gps_set_fix_callback(gps_fix_callback);
 		gps_set_event_callback(gps_event_callback);
-		/* Apply persisted GPS duty interval (repeater default 48h; 0 = always on) */
+		/* Apply persisted GPS duty interval (repeater default 12h; 0 = always on) */
 		gps_set_poll_interval_sec(room_mesh.getNodePrefs()->gps_interval);
 		gps_set_repeater_mode(true);
 	}

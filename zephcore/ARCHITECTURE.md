@@ -675,7 +675,7 @@ Two separate timeouts apply to acquisition:
 
 **Repeater mode**
 
-Repeaters and room servers default to `CONFIG_ZEPHCORE_REPEATER_GPS_INTERVAL_SEC` (48 h) for GPS duty — GPS wakes only for a periodic time-sync fix (5-minute acquire window). The interval is now unified with companion via `prefs.gps_interval` and is configurable at runtime via `set gps duty <sec>`; persists across reboots.
+Repeaters and room servers default to `CONFIG_ZEPHCORE_REPEATER_GPS_INTERVAL_SEC` (12 h) for GPS duty — GPS wakes only for a periodic time-sync fix (5-minute acquire window). The interval is now unified with companion via `prefs.gps_interval` and is configurable at runtime via `set gps duty <sec>`; persists across reboots.
 
 ### 7.4 USB (`adapters/usb/`)
 

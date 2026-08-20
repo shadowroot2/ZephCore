@@ -17,7 +17,7 @@
  *  Sensor      │ Address │ Compatible          │ Channels
  *  ────────────┼─────────┼─────────────────────┼────────────────────
  *  SHTC3       │ 0x70    │ sensirion,shtcx     │ temp + humidity
- *  AHT20       │ 0x38    │ aosong,aht20        │ temp + humidity
+ *  AHT10/AHT20 │ 0x38    │ aosong,aht20        │ temp + humidity
  *  DHT20       │ 0x38    │ aosong,dht20        │ temp + humidity
  *  AM2301B     │ 0x38    │ aosong,am2301b      │ temp + humidity
  *  SHT4x       │ 0x44    │ sensirion,sht4x     │ temp + humidity
@@ -28,8 +28,9 @@
  *  BMP388      │ 0x77    │ bosch,bmp388        │ temp + pressure
  *  LPS22HB     │ 0x5C    │ st,lps22hb-press    │ pressure + temp
  *
- *  Note: AHT20/DHT20/AM2301B share address 0x38 — only one can be
- *  defined.  We use AHT20 as the default (same driver handles all).
+ *  Note: AHT10/AHT20/DHT20/AM2301B share address 0x38 — only one can be
+ *  defined. The Zephyr binding is named AHT20; the command protocol is also
+ *  used by the M3's AHT10.
  *
  *  Note: SHT4x and SHT3xD share address 0x44 — only one can be
  *  defined.  We use SHT4x as the default (more common in new designs).

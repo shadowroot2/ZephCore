@@ -37,6 +37,12 @@ constexpr uint8_t CONTROL_OBSERVED = 3;
 constexpr size_t CONTROL_DATA_LEN = 8;
 constexpr size_t CONTROL_LEN = sizeof(CONTROL_MAGIC) + 1 + CONTROL_DATA_LEN;
 constexpr uint32_t PING_TIMEOUT_MS = 1500;
+constexpr uint32_t CONNECT_TIMEOUT_MS = 12000;
+constexpr uint32_t SETUP_TIMEOUT_MS = 15000;
+constexpr uint32_t RETRY_MS = 1500;
+constexpr uint32_t TRANSPORT_REFRESH_MS = 30000;
+constexpr uint32_t HEALTH_INTERVAL_MS = 30000;
+constexpr uint32_t HEALTH_TIMEOUT_MS = 6000;
 
 #define ZEPHCORE_BRIDGE_SERVICE_UUID \
 	BT_UUID_128_ENCODE(0x7c6462e1, 0x7a4f, 0x4765, 0x98cf, 0x2cd2f1a65001)
@@ -78,10 +84,17 @@ static uint16_t s_peer_value_handle;
 static SeenFrame s_seen[SEEN_SLOTS];
 static struct k_spinlock s_seen_lock;
 static struct k_spinlock s_prefs_lock;
+static struct k_spinlock s_state_lock;
 static bool s_started;
 static bool s_is_central;
 static bool s_adv_running;
 static bool s_link_ready;
+static int64_t s_connect_deadline_ms;
+static int64_t s_setup_deadline_ms;
+static int64_t s_retry_at_ms;
+static int64_t s_transport_refresh_ms;
+static int64_t s_health_due_ms;
+static int64_t s_health_deadline_ms;
 static atomic_t s_tx_count;
 static atomic_t s_rx_count;
 static atomic_t s_drop_count;
@@ -89,6 +102,8 @@ static atomic_t s_ping_sequence;
 static atomic_t s_ping_token;
 static atomic_t s_ping_sent_ms;
 static atomic_t s_ping_rtt_ms;
+static atomic_t s_health_sequence;
+static atomic_t s_health_token;
 K_SEM_DEFINE(ble_bridge_ping_sem, 0, 1);
 
 static const uint8_t s_default_lmk[16] = {
@@ -105,6 +120,66 @@ static bool mac_is_set(const uint8_t mac[6])
 		all_ff &= mac[i] == 0xFF;
 	}
 	return !all_zero && !all_ff;
+}
+
+static void schedule_retry(uint32_t delay_ms = RETRY_MS)
+{
+	k_spinlock_key_t key = k_spin_lock(&s_state_lock);
+	s_retry_at_ms = k_uptime_get() + delay_ms;
+	k_spin_unlock(&s_state_lock, key);
+}
+
+static struct bt_conn *link_conn_ref(bool require_ready, bool *is_central,
+		uint16_t *peer_value_handle)
+{
+	struct bt_conn *conn = nullptr;
+	k_spinlock_key_t key = k_spin_lock(&s_state_lock);
+	if (s_conn && (!require_ready || s_link_ready)) {
+		conn = bt_conn_ref(s_conn);
+		if (is_central) *is_central = s_is_central;
+		if (peer_value_handle) *peer_value_handle = s_peer_value_handle;
+	}
+	k_spin_unlock(&s_state_lock, key);
+	return conn;
+}
+
+static bool link_has_conn()
+{
+	k_spinlock_key_t key = k_spin_lock(&s_state_lock);
+	const bool present = s_conn != nullptr;
+	k_spin_unlock(&s_state_lock, key);
+	return present;
+}
+
+static struct bt_conn *detach_link(const struct bt_conn *expected = nullptr)
+{
+	k_spinlock_key_t key = k_spin_lock(&s_state_lock);
+	if (expected && s_conn && expected != s_conn) {
+		k_spin_unlock(&s_state_lock, key);
+		return nullptr;
+	}
+	struct bt_conn *conn = s_conn;
+	s_conn = nullptr;
+	s_link_ready = false;
+	s_peer_value_handle = 0;
+	s_connect_deadline_ms = 0;
+	s_setup_deadline_ms = 0;
+	s_health_due_ms = 0;
+	s_health_deadline_ms = 0;
+	atomic_set(&s_health_token, 0);
+	k_spin_unlock(&s_state_lock, key);
+	return conn;
+}
+
+static void reset_link(const struct bt_conn *expected = nullptr)
+{
+	struct bt_conn *conn = detach_link(expected);
+	if (conn) {
+		(void)bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+		bt_conn_unref(conn);
+	}
+	s_adv_running = false;
+	schedule_retry();
 }
 
 static void format_mac(char *out, size_t out_len, const uint8_t mac[6])
@@ -224,6 +299,13 @@ static bool handle_control(const BridgeFrame &frame)
 				      (uint32_t)atomic_get(&s_ping_sent_ms));
 		atomic_set(&s_ping_token, 0);
 		k_sem_give(&ble_bridge_ping_sem);
+	} else if (frame.raw[sizeof(CONTROL_MAGIC)] == CONTROL_PONG &&
+		   token == (uint32_t)atomic_get(&s_health_token)) {
+		atomic_set(&s_health_token, 0);
+		k_spinlock_key_t lock_key = k_spin_lock(&s_state_lock);
+		s_health_deadline_ms = 0;
+		s_health_due_ms = k_uptime_get() + HEALTH_INTERVAL_MS;
+		k_spin_unlock(&s_state_lock, lock_key);
 	} else if (frame.raw[sizeof(CONTROL_MAGIC)] == CONTROL_OBSERVED) {
 		repeater_bridge_peer_observed(data);
 	}
@@ -243,6 +325,9 @@ static bool accept_frame(struct bt_conn *conn, const void *data, uint16_t len)
 		return false;
 	}
 	if (handle_control(frame)) {
+		k_spinlock_key_t lock_key = k_spin_lock(&s_state_lock);
+		s_health_due_ms = k_uptime_get() + HEALTH_INTERVAL_MS;
+		k_spin_unlock(&s_state_lock, lock_key);
 		atomic_inc(&s_rx_count);
 		return true;
 	}
@@ -252,6 +337,9 @@ static bool accept_frame(struct bt_conn *conn, const void *data, uint16_t len)
 		return false;
 	}
 	atomic_inc(&s_rx_count);
+	k_spinlock_key_t lock_key = k_spin_lock(&s_state_lock);
+	s_health_due_ms = k_uptime_get() + HEALTH_INTERVAL_MS;
+	k_spin_unlock(&s_state_lock, lock_key);
 	if (s_dispatcher) s_dispatcher->notifyWake();
 	return true;
 }
@@ -270,7 +358,11 @@ static ssize_t bridge_write(struct bt_conn *conn, const struct bt_gatt_attr *att
 static void bridge_ccc_changed(const struct bt_gatt_attr *attr, uint16_t value)
 {
 	ARG_UNUSED(attr);
+	k_spinlock_key_t lock_key = k_spin_lock(&s_state_lock);
 	s_link_ready = value == BT_GATT_CCC_NOTIFY && s_conn != nullptr;
+	s_setup_deadline_ms = s_link_ready ? 0 : k_uptime_get() + SETUP_TIMEOUT_MS;
+	s_health_due_ms = s_link_ready ? k_uptime_get() + HEALTH_INTERVAL_MS : 0;
+	k_spin_unlock(&s_state_lock, lock_key);
 }
 
 BT_GATT_SERVICE_DEFINE(bridge_service,
@@ -282,7 +374,10 @@ BT_GATT_SERVICE_DEFINE(bridge_service,
 
 static bool send_control(uint8_t op, const uint8_t data[CONTROL_DATA_LEN])
 {
-	if (!s_link_ready || !s_conn) return false;
+	bool is_central;
+	uint16_t peer_value_handle;
+	struct bt_conn *conn = link_conn_ref(true, &is_central, &peer_value_handle);
+	if (!conn) return false;
 	BridgeFrame frame{};
 
 	frame.magic = BRIDGE_MAGIC;
@@ -292,11 +387,12 @@ static bool send_control(uint8_t op, const uint8_t data[CONTROL_DATA_LEN])
 	frame.raw[sizeof(CONTROL_MAGIC)] = op;
 	memcpy(&frame.raw[sizeof(CONTROL_MAGIC) + 1], data, CONTROL_DATA_LEN);
 	frame.hash = frame_hash(frame.raw, frame.raw_len);
-	int err = s_is_central ?
-		bt_gatt_write_without_response(s_conn, s_peer_value_handle, &frame,
+	int err = is_central ?
+		bt_gatt_write_without_response(conn, peer_value_handle, &frame,
 					       offsetof(BridgeFrame, raw) + frame.raw_len, false) :
-		bt_gatt_notify(s_conn, &bridge_service.attrs[2], &frame,
+		bt_gatt_notify(conn, &bridge_service.attrs[2], &frame,
 			       offsetof(BridgeFrame, raw) + frame.raw_len);
+	bt_conn_unref(conn);
 	if (err != 0) {
 		LOG_WRN("BLE bridge control send failed: %d", err);
 		return false;
@@ -310,7 +406,9 @@ static uint8_t notification_cb(struct bt_conn *conn, struct bt_gatt_subscribe_pa
 {
 	if (!data) {
 		params->value_handle = 0;
-		s_link_ready = false;
+		/* A subscription can disappear while the ACL link is still nominally
+		 * alive. Keeping s_conn in that state permanently blocks scan/advertise. */
+		reset_link(conn);
 		return BT_GATT_ITER_STOP;
 	}
 	accept_frame(conn, data, len);
@@ -322,7 +420,7 @@ static uint8_t discovery_cb(struct bt_conn *conn, const struct bt_gatt_attr *att
 {
 	if (!attr) {
 		memset(params, 0, sizeof(*params));
-		if (conn == s_conn) {
+		if (link_has_conn()) {
 			LOG_WRN("BLE bridge service discovery incomplete");
 			bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
 		}
@@ -342,7 +440,9 @@ static uint8_t discovery_cb(struct bt_conn *conn, const struct bt_gatt_attr *att
 		return BT_GATT_ITER_STOP;
 	}
 	if (!bt_uuid_cmp(params->uuid, &bridge_data_uuid.uuid)) {
-		s_peer_value_handle = bt_gatt_attr_value_handle(attr);
+	k_spinlock_key_t lock_key = k_spin_lock(&s_state_lock);
+	s_peer_value_handle = bt_gatt_attr_value_handle(attr);
+	k_spin_unlock(&s_state_lock, lock_key);
 		params->uuid = BT_UUID_GATT_CCC;
 		params->start_handle = attr->handle + 2;
 		params->end_handle = s_service_end_handle;
@@ -355,14 +455,18 @@ static uint8_t discovery_cb(struct bt_conn *conn, const struct bt_gatt_attr *att
 	}
 
 	memset(&s_subscribe, 0, sizeof(s_subscribe));
-	s_subscribe.value_handle = s_peer_value_handle;
+	s_subscribe.value_handle = bt_gatt_attr_value_handle(attr);
 	s_subscribe.ccc_handle = attr->handle;
 	s_subscribe.value = BT_GATT_CCC_NOTIFY;
 	s_subscribe.notify = notification_cb;
 	s_subscribe.min_security = BT_SECURITY_L2;
 	int err = bt_gatt_subscribe(conn, &s_subscribe);
 	if (err == 0 || err == -EALREADY) {
+		k_spinlock_key_t lock_key = k_spin_lock(&s_state_lock);
 		s_link_ready = true;
+		s_setup_deadline_ms = 0;
+		s_health_due_ms = k_uptime_get() + HEALTH_INTERVAL_MS;
+		k_spin_unlock(&s_state_lock, lock_key);
 	} else {
 		LOG_WRN("BLE bridge subscribe failed: %d", err);
 		bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
@@ -378,6 +482,7 @@ static void connected(struct bt_conn *conn, uint8_t err)
 	if (err) {
 		/* bt_conn_le_create() stops scanning.  A transient connection failure
 		 * must not leave the central permanently in "waiting". */
+		schedule_retry();
 		if (s_started && mac_is_set(s_prefs.peer_mac)) {
 			if (s_is_central) start_scan();
 			else {
@@ -394,10 +499,16 @@ static void connected(struct bt_conn *conn, uint8_t err)
 		bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
 		return;
 	}
+	k_spinlock_key_t lock_key = k_spin_lock(&s_state_lock);
 	s_conn = bt_conn_ref(conn);
 	s_adv_running = false;
 	s_link_ready = false;
 	s_peer_value_handle = 0;
+	s_connect_deadline_ms = 0;
+	s_setup_deadline_ms = k_uptime_get() + SETUP_TIMEOUT_MS;
+	s_health_due_ms = 0;
+	s_health_deadline_ms = 0;
+	k_spin_unlock(&s_state_lock, lock_key);
 	int sec_err = bt_conn_set_security(conn, BT_SECURITY_L2);
 	if (sec_err && sec_err != -EALREADY) {
 		LOG_WRN("BLE bridge security request failed: %d", sec_err);
@@ -408,16 +519,20 @@ static void connected(struct bt_conn *conn, uint8_t err)
 static void disconnected(struct bt_conn *conn, uint8_t reason)
 {
 	ARG_UNUSED(reason);
-	if (s_conn && conn != s_conn) return;
-	if (conn == s_conn) {
-		bt_conn_unref(s_conn);
-		s_conn = nullptr;
+	struct bt_conn *current = link_conn_ref(false, nullptr, nullptr);
+	if (current && conn != current) {
+		bt_conn_unref(current);
+		return;
 	}
+	if (current) bt_conn_unref(current);
+	struct bt_conn *owned = detach_link(conn);
+	if (owned) bt_conn_unref(owned);
 	/* A rejected foreign connection has no s_conn reference, but it still
 	 * stopped advertising.  Re-enter the selected role in both cases. */
 	s_adv_running = false;
 	s_link_ready = false;
 	s_peer_value_handle = 0;
+	schedule_retry();
 	if (s_started && mac_is_set(s_prefs.peer_mac)) {
 		if (s_is_central) start_scan();
 		else start_advertising();
@@ -426,7 +541,7 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 
 static void security_changed(struct bt_conn *conn, bt_security_t level, enum bt_security_err err)
 {
-	if (conn != s_conn) return;
+	if (!link_has_conn()) return;
 	if (err || level < BT_SECURITY_L2) {
 		LOG_WRN("BLE bridge security failed: %d", err);
 		bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
@@ -461,7 +576,7 @@ static void scan_found(const bt_addr_le_t *addr, int8_t rssi, uint8_t type, stru
 	memcpy(peer_mac, s_prefs.peer_mac, sizeof(peer_mac));
 	peer_addr_type = s_prefs.peer_addr_type;
 	k_spin_unlock(&s_prefs_lock, lock_key);
-	if (!s_is_central || s_conn ||
+	if (!s_is_central || link_has_conn() ||
 		(type != BT_GAP_ADV_TYPE_ADV_IND && type != BT_GAP_ADV_TYPE_ADV_DIRECT_IND) ||
 		addr->type != peer_addr_type ||
 		memcmp(addr->a.val, peer_mac, sizeof(peer_mac)) != 0) return;
@@ -472,31 +587,53 @@ static void scan_found(const bt_addr_le_t *addr, int8_t rssi, uint8_t type, stru
 	}
 	struct bt_conn *conn = nullptr;
 	int err = bt_conn_le_create(addr, BT_CONN_LE_CREATE_CONN, BT_LE_CONN_PARAM_DEFAULT, &conn);
-	if (err == 0 && conn) bt_conn_unref(conn);
-	else start_scan();
+	if (err == 0 && conn) {
+		k_spinlock_key_t state_key = k_spin_lock(&s_state_lock);
+		s_connect_deadline_ms = k_uptime_get() + CONNECT_TIMEOUT_MS;
+		k_spin_unlock(&s_state_lock, state_key);
+		bt_conn_unref(conn);
+	} else {
+		schedule_retry();
+		start_scan();
+	}
 }
 
 static void start_scan()
 {
-	if (!s_started || !s_is_central || s_conn || !mac_is_set(s_prefs.peer_mac)) return;
+	if (!s_started || !s_is_central || link_has_conn() || !mac_is_set(s_prefs.peer_mac)) return;
 	int err = bt_le_scan_start(BT_LE_SCAN_ACTIVE, scan_found);
-	if (err && err != -EALREADY) LOG_WRN("BLE bridge scan failed: %d", err);
+	if (err && err != -EALREADY) {
+		LOG_WRN("BLE bridge scan failed: %d", err);
+		schedule_retry();
+	} else {
+		k_spinlock_key_t lock_key = k_spin_lock(&s_state_lock);
+		s_retry_at_ms = 0;
+		s_transport_refresh_ms = k_uptime_get() + TRANSPORT_REFRESH_MS;
+		k_spin_unlock(&s_state_lock, lock_key);
+	}
 }
 
 static void start_advertising()
 {
-	if (!s_started || s_is_central || s_conn || !mac_is_set(s_prefs.peer_mac) || s_adv_running) return;
+	if (!s_started || s_is_central || link_has_conn() || !mac_is_set(s_prefs.peer_mac) || s_adv_running) return;
 	int err = bt_le_adv_start(BT_LE_ADV_CONN_FAST_1, bridge_ad, ARRAY_SIZE(bridge_ad), nullptr, 0);
-	if (err == 0 || err == -EALREADY) s_adv_running = true;
-	else LOG_WRN("BLE bridge advertising failed: %d", err);
+	if (err == 0 || err == -EALREADY) {
+		s_adv_running = true;
+		k_spinlock_key_t lock_key = k_spin_lock(&s_state_lock);
+		s_retry_at_ms = 0;
+		s_transport_refresh_ms = k_uptime_get() + TRANSPORT_REFRESH_MS;
+		k_spin_unlock(&s_state_lock, lock_key);
+	}
+	else {
+		LOG_WRN("BLE bridge advertising failed: %d", err);
+		schedule_retry();
+	}
 }
 
 static bool configure_peer()
 {
 	if (!s_started || !mac_is_set(s_prefs.peer_mac)) return false;
-	if (s_conn) {
-		bt_conn_disconnect(s_conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
-	}
+	reset_link();
 	bt_le_scan_stop();
 	if (s_adv_running) {
 		bt_le_adv_stop();
@@ -538,6 +675,16 @@ bool ble_bridge_start(RepeaterDataStore *store, mesh::Dispatcher *dispatcher)
 		return false;
 	}
 	s_started = true;
+	{
+		k_spinlock_key_t lock_key = k_spin_lock(&s_state_lock);
+		s_connect_deadline_ms = 0;
+		s_setup_deadline_ms = 0;
+		s_retry_at_ms = 0;
+		s_transport_refresh_ms = 0;
+		s_health_due_ms = 0;
+		s_health_deadline_ms = 0;
+		k_spin_unlock(&s_state_lock, lock_key);
+	}
 	if (mac_is_set(s_prefs.peer_mac)) configure_peer();
 	return true;
 }
@@ -565,7 +712,7 @@ bool ble_bridge_handle_command(const char *command, char *reply, size_t reply_le
 			snprintf(peer, sizeof(peer), "%s %s", mac, addr_type_name(s_prefs.peer_addr_type));
 		}
 		snprintf(reply, reply_len, "bridge: %s; transport=BLE; local=%s; peer=%s; encrypted; key=%s; tx=%u rx=%u drop=%u",
-			s_link_ready ? "ready" : (s_started ? "waiting" : "offline"), local, peer,
+			ble_bridge_is_connected() ? "ready" : (s_started ? "waiting" : "offline"), local, peer,
 			s_prefs.key_is_custom ? "custom" : "default", (unsigned int)atomic_get(&s_tx_count),
 			(unsigned int)atomic_get(&s_rx_count), (unsigned int)atomic_get(&s_drop_count));
 		return true;
@@ -606,7 +753,7 @@ bool ble_bridge_handle_command(const char *command, char *reply, size_t reply_le
 bool ble_bridge_ping(char *reply, size_t reply_len)
 {
 	if (!reply || reply_len == 0) return false;
-	if (!s_started || !s_link_ready || !s_conn) {
+	if (!s_started || !ble_bridge_is_connected()) {
 		snprintf(reply, reply_len, "ERR: bridge peer is not connected");
 		return true;
 	}
@@ -619,6 +766,7 @@ bool ble_bridge_ping(char *reply, size_t reply_len)
 	memcpy(ping_data, &token, sizeof(token));
 	if (!send_control(CONTROL_PING, ping_data)) {
 		atomic_set(&s_ping_token, 0);
+		reset_link();
 		snprintf(reply, reply_len, "ERR: bridge ping send failed");
 		return true;
 	}
@@ -627,6 +775,7 @@ bool ble_bridge_ping(char *reply, size_t reply_len)
 			 (unsigned int)atomic_get(&s_ping_rtt_ms));
 	} else {
 		atomic_set(&s_ping_token, 0);
+		reset_link();
 		snprintf(reply, reply_len, "ERR: bridge ping timeout");
 	}
 	return true;
@@ -634,13 +783,20 @@ bool ble_bridge_ping(char *reply, size_t reply_len)
 
 bool ble_bridge_forward_packet(const mesh::Packet *packet)
 {
-	if (!s_link_ready || !s_conn || !packet) return false;
+	bool is_central;
+	uint16_t peer_value_handle;
+	struct bt_conn *conn = link_conn_ref(true, &is_central, &peer_value_handle);
+	if (!conn || !packet) {
+		if (conn) bt_conn_unref(conn);
+		return false;
+	}
 	const int raw_len = packet->getRawLength();
 	if (raw_len < 2 || raw_len > (int)BRIDGE_RAW_MAX) {
 		if (raw_len > (int)BRIDGE_RAW_MAX) {
 			atomic_inc(&s_drop_count);
 			LOG_WRN("BLE bridge skips %d-byte packet", raw_len);
 		}
+		bt_conn_unref(conn);
 		return false;
 	}
 	BridgeFrame frame{};
@@ -649,16 +805,23 @@ bool ble_bridge_forward_packet(const mesh::Packet *packet)
 	frame.raw_len = raw_len;
 	packet->writeTo(frame.raw);
 	frame.hash = frame_hash(frame.raw, frame.raw_len);
-	if (seen_or_remember(frame.hash)) return false;
+	if (seen_or_remember(frame.hash)) {
+		bt_conn_unref(conn);
+		return false;
+	}
 	int err;
-	if (s_is_central) {
-		if (!s_peer_value_handle) return false;
-		err = bt_gatt_write_without_response(s_conn, s_peer_value_handle, &frame,
-						     offsetof(BridgeFrame, raw) + frame.raw_len, false);
+	if (is_central) {
+		if (!peer_value_handle) {
+			bt_conn_unref(conn);
+			return false;
+		}
+		err = bt_gatt_write_without_response(conn, peer_value_handle, &frame,
+					     offsetof(BridgeFrame, raw) + frame.raw_len, false);
 	} else {
-		err = bt_gatt_notify(s_conn, &bridge_service.attrs[2], &frame,
+		err = bt_gatt_notify(conn, &bridge_service.attrs[2], &frame,
 				     offsetof(BridgeFrame, raw) + frame.raw_len);
 	}
+	bt_conn_unref(conn);
 	if (err != 0) {
 		LOG_WRN("BLE bridge send failed: %d", err);
 		return false;
@@ -681,14 +844,94 @@ void ble_bridge_drain(mesh::Dispatcher *dispatcher)
 	}
 }
 
+void ble_bridge_maintain(void)
+{
+	if (!s_started || !mac_is_set(s_prefs.peer_mac)) return;
+	const int64_t now = k_uptime_get();
+	bool is_central;
+	bool link_ready;
+	bool has_conn;
+	bool start_health_ping = false;
+	bool reset = false;
+	bool refresh_transport = false;
+
+	k_spinlock_key_t lock_key = k_spin_lock(&s_state_lock);
+	is_central = s_is_central;
+	has_conn = s_conn != nullptr;
+	link_ready = s_link_ready;
+	if (!has_conn) {
+		if ((s_connect_deadline_ms && now >= s_connect_deadline_ms) ||
+		    (s_retry_at_ms && now >= s_retry_at_ms) ||
+		    (s_transport_refresh_ms && now >= s_transport_refresh_ms)) {
+			s_connect_deadline_ms = 0;
+			s_retry_at_ms = 0;
+			refresh_transport = true;
+		}
+	} else if (!link_ready && s_setup_deadline_ms && now >= s_setup_deadline_ms) {
+		reset = true;
+	} else if (link_ready && s_health_deadline_ms && now >= s_health_deadline_ms) {
+		reset = true;
+	} else if (link_ready && !atomic_get(&s_health_token) && s_health_due_ms && now >= s_health_due_ms) {
+		uint32_t token = (uint32_t)atomic_inc(&s_health_sequence) + 1;
+		if (token == 0) token = (uint32_t)atomic_inc(&s_health_sequence) + 1;
+		atomic_set(&s_health_token, token);
+		s_health_due_ms = 0;
+		s_health_deadline_ms = now + HEALTH_TIMEOUT_MS;
+		start_health_ping = true;
+	}
+	k_spin_unlock(&s_state_lock, lock_key);
+
+	if (reset) {
+		LOG_WRN("BLE bridge link watchdog reconnecting");
+		reset_link();
+		return;
+	}
+	if (refresh_transport) {
+		if (is_central) start_scan();
+		else {
+			if (s_adv_running) {
+				(void)bt_le_adv_stop();
+				s_adv_running = false;
+			}
+			start_advertising();
+		}
+		return;
+	}
+	if (start_health_ping) {
+		uint8_t data[CONTROL_DATA_LEN] = {};
+		const uint32_t token = (uint32_t)atomic_get(&s_health_token);
+		memcpy(data, &token, sizeof(token));
+		if (!send_control(CONTROL_PING, data)) {
+			LOG_WRN("BLE bridge health ping send failed");
+			reset_link();
+		}
+	}
+}
+
+uint32_t ble_bridge_ms_until_next(void)
+{
+	if (!s_started || !mac_is_set(s_prefs.peer_mac)) return UINT32_MAX;
+	const int64_t now = k_uptime_get();
+	int64_t deadline = 0;
+	k_spinlock_key_t lock_key = k_spin_lock(&s_state_lock);
+	const int64_t candidates[] = { s_connect_deadline_ms, s_setup_deadline_ms,
+		s_retry_at_ms, s_transport_refresh_ms, s_health_due_ms, s_health_deadline_ms };
+	for (const int64_t candidate : candidates) {
+		if (candidate && (!deadline || candidate < deadline)) deadline = candidate;
+	}
+	k_spin_unlock(&s_state_lock, lock_key);
+	if (!deadline || deadline <= now) return deadline ? 0 : UINT32_MAX;
+	const int64_t delta = deadline - now;
+	return delta > INT32_MAX ? UINT32_MAX : (uint32_t)delta;
+}
+
 void ble_bridge_stop()
 {
 	if (!s_started) return;
 	bt_le_scan_stop();
 	if (s_adv_running) bt_le_adv_stop();
-	if (s_conn) {
-		struct bt_conn *conn = s_conn;
-		s_conn = nullptr;
+	struct bt_conn *conn = detach_link();
+	if (conn) {
 		bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
 		bt_conn_unref(conn);
 	}
@@ -701,5 +944,8 @@ void ble_bridge_stop()
 
 bool ble_bridge_is_connected(void)
 {
-	return s_started && s_link_ready;
+	k_spinlock_key_t lock_key = k_spin_lock(&s_state_lock);
+	const bool connected = s_started && s_link_ready && s_conn != nullptr;
+	k_spin_unlock(&s_state_lock, lock_key);
+	return connected;
 }

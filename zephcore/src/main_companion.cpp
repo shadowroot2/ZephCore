@@ -30,6 +30,10 @@ LOG_MODULE_REGISTER(zephcore_main, CONFIG_ZEPHCORE_MAIN_LOG_LEVEL);
 #include <zephyr/sys/poweroff.h>
 #endif
 #include <ZephyrSensorManager.h>
+#if defined(CONFIG_BOARD_THINKNODE_M3) || defined(CONFIG_BOARD_T1000_E)
+#include <FallDetector.h>
+#define ZEPHCORE_FALL_DETECTOR 1
+#endif
 #include <helpers/time_sync.h>
 #include <helpers/LocalCLIHelp.h>
 #include "ui_task.h"
@@ -110,6 +114,7 @@ extern "C" void bt_ctlr_assert_handle(char *file, uint32_t line)
 #define MESH_EVENT_PREFS_DIRTY   BIT(8)  /* Prefs mutated off-main; main flushes to flash */
 #define MESH_EVENT_RTC_SAVE      BIT(9)  /* Hardware-RTC write requested off-main */
 #define MESH_EVENT_CONTACT_ITER  BIT(10) /* Continue contact-dump iteration on main thread */
+#define MESH_EVENT_FALL_DETECTED BIT(11) /* Accelerometer worker detected a fall */
 
 #ifdef ZEPHCORE_LORA
 /* Forward decls — data_store + companion_mesh_ptr statics are defined further
@@ -118,6 +123,7 @@ static void save_prefs_to_flash(void);
 static void vcontact_battery_alert_check(void);
 static void companion_sos_process(void);
 static void companion_sos_tx_done(void);
+static void companion_fall_detected(void);
 static void companion_tracking_process(void);
 #endif
 
@@ -132,7 +138,7 @@ static atomic_t pending_rtc_epoch = ATOMIC_INIT(0);
 #define MESH_EVENT_BASE          (MESH_EVENT_LORA_RX | MESH_EVENT_LORA_TX_DONE | \
 	MESH_EVENT_BLE_RX | MESH_EVENT_MAINTENANCE | MESH_EVENT_UI_ACTION |  \
 	MESH_EVENT_GPS_ACTION | MESH_EVENT_TX_DRAIN | MESH_EVENT_PREFS_DIRTY | \
-	MESH_EVENT_RTC_SAVE | MESH_EVENT_CONTACT_ITER)
+	MESH_EVENT_RTC_SAVE | MESH_EVENT_CONTACT_ITER | MESH_EVENT_FALL_DETECTED)
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_DESIGN_JOYSTICK)
 #define MESH_EVENT_JOYSTICK_LOOP BIT(7)  /* Joystick UI loop tick (50 ms) */
 #define MESH_EVENT_ALL           (MESH_EVENT_BASE | MESH_EVENT_JOYSTICK_LOOP)
@@ -510,6 +516,10 @@ static void mesh_event_loop(void)
 			gps_process_event();
 		}
 
+		if (events & MESH_EVENT_FALL_DETECTED) {
+			companion_fall_detected();
+		}
+
 		/* Parse inbound BLE/USB frames + USB text-CLI lines HERE (main
 		 * thread) before loop() drains any outbound they enqueued — keeps
 		 * all mesh-state mutation on one thread (see ble_on_rx_frame). */
@@ -854,10 +864,17 @@ static bool companion_send_auto_shutdown_emergency(uint16_t battery_mv,
 #define SOS_FIX_TIMEOUT_MS (5U * 60U * 1000U)
 #define SOS_FRESH_FIX_MAX_AGE_S 30U
 #define SOS_WAITING_REPEAT_MS 30000U
+#define FALL_ALARM_REPEAT_MS 30000U
+
+enum companion_emergency_type {
+	COMPANION_EMERGENCY_SOS,
+	COMPANION_EMERGENCY_FALL,
+};
 
 struct companion_sos_state {
 	bool pending;
 	bool gps_started_by_sos;
+	enum companion_emergency_type type;
 	uint32_t started_ms;
 	uint32_t next_waiting_message_ms;
 	uint32_t saved_gps_duty_sec;
@@ -866,13 +883,22 @@ struct companion_sos_state {
 static struct companion_sos_state companion_sos;
 static struct {
 	bool pending;
+	bool fall;
 	uint32_t after_packets_sent;
 } companion_sos_tone;
+static struct {
+	bool active;
+	uint32_t next_alarm_ms;
+} companion_fall_alarm_state;
 
 static void companion_sos_ui_waiting(void)
 {
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY) && IS_ENABLED(CONFIG_ZEPHCORE_UI_DESIGN_BUTTON)
-	ui_pages_sos_waiting();
+	if (companion_sos.type == COMPANION_EMERGENCY_SOS) {
+		ui_pages_sos_waiting();
+	} else {
+		ui_pages_sos_clear();
+	}
 #endif
 	ui_request_render();
 }
@@ -880,11 +906,92 @@ static void companion_sos_ui_waiting(void)
 static void companion_sos_ui_sent(bool success)
 {
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY) && IS_ENABLED(CONFIG_ZEPHCORE_UI_DESIGN_BUTTON)
-	ui_pages_sos_sent(success);
+	if (companion_sos.type == COMPANION_EMERGENCY_SOS) {
+		ui_pages_sos_sent(success);
+	} else {
+		ui_pages_sos_clear();
+	}
 #else
 	ARG_UNUSED(success);
 #endif
 	ui_request_render();
+}
+
+static void companion_sos_ui_clear(void)
+{
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY) && IS_ENABLED(CONFIG_ZEPHCORE_UI_DESIGN_BUTTON)
+	ui_pages_sos_clear();
+#endif
+	ui_request_render();
+}
+
+static void companion_fall_alarm_play(void)
+{
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
+	buzzer_play(MELODY_SOS);
+#endif
+}
+
+static void companion_fall_alarm_start(void)
+{
+	companion_fall_alarm_state.active = true;
+	companion_fall_alarm_play();
+	companion_fall_alarm_state.next_alarm_ms = k_uptime_get_32() +
+		FALL_ALARM_REPEAT_MS;
+}
+
+static void companion_fall_alarm_stop(void)
+{
+	companion_fall_alarm_state.active = false;
+	companion_sos_tone.pending = false;
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
+	buzzer_stop();
+#endif
+}
+
+static void companion_fall_cancel_pending(void)
+{
+	if (!companion_sos.pending ||
+	    companion_sos.type != COMPANION_EMERGENCY_FALL) {
+		return;
+	}
+
+	/* Return GPS exactly to its state before the fall event. */
+	gps_set_poll_interval_sec(companion_sos.saved_gps_duty_sec);
+	if (companion_sos.gps_started_by_sos) {
+		gps_enable(false);
+	}
+	memset(&companion_sos, 0, sizeof(companion_sos));
+	companion_sos_ui_clear();
+}
+
+static void companion_send_fall_canceled_message(void)
+{
+	ChannelDetails sos_channel;
+	static const char text[] = "Fall canceled...";
+
+	if (!companion_get_public_channel("#sos", sos_channel)) {
+		return;
+	}
+	if (!companion_mesh_ptr->sendGroupMessage(rtc_clock.getCurrentTimeUnique(),
+						  sos_channel.channel,
+						  companion_mesh_ptr->prefs.node_name,
+						  text, sizeof(text) - 1U)) {
+		LOG_WRN("fall: unable to queue cancel message");
+		return;
+	}
+	LOG_INF("fall: queued #sos cancel message");
+}
+
+extern "C" void companion_fall_alarm_acknowledge_from_ui(void)
+{
+	if (!companion_fall_alarm_state.active) {
+		return;
+	}
+	companion_fall_alarm_stop();
+	companion_fall_cancel_pending();
+	companion_send_fall_canceled_message();
+	LOG_INF("fall alarm acknowledged by button");
 }
 
 static bool companion_sos_has_fresh_fix(void)
@@ -904,7 +1011,8 @@ static bool companion_sos_has_fresh_fix(void)
 static bool companion_send_sos_waiting_message(void)
 {
 	ChannelDetails sos_channel;
-	static const char text[] = "SOS! Waiting GPS fix...";
+	const char *text = companion_sos.type == COMPANION_EMERGENCY_FALL ?
+		"Fall detected! Waiting GPS fix..." : "SOS! Waiting GPS fix...";
 
 	if (!companion_get_public_channel("#sos", sos_channel)) {
 		return false;
@@ -913,12 +1021,12 @@ static bool companion_send_sos_waiting_message(void)
 	if (!companion_mesh_ptr->sendGroupMessage(rtc_clock.getCurrentTimeUnique(),
 						  sos_channel.channel,
 						  companion_mesh_ptr->prefs.node_name,
-						  text, sizeof(text) - 1U)) {
-		LOG_WRN("SOS: unable to queue waiting message");
+						  text, (int)strlen(text))) {
+		LOG_WRN("emergency: unable to queue waiting message");
 		return false;
 	}
 
-	LOG_INF("SOS: queued #sos waiting message");
+	LOG_INF("emergency: queued #sos waiting message");
 	return true;
 }
 
@@ -931,9 +1039,11 @@ static bool companion_send_sos_message(bool allow_coordinates)
 
 	char temperature[16] = "n/a";
 	char gps[72];
-	char text[160];
+	char text[192];
 	struct env_data env;
 	bool has_gps = gps_is_available();
+	const char *prefix = companion_sos.type == COMPANION_EMERGENCY_FALL ?
+		"Fall detected! I may need help." : "SOS!";
 
 	if (env_sensors_read(&env) == 0) {
 		if (env.has_temperature) {
@@ -967,11 +1077,11 @@ static bool companion_send_sos_message(bool allow_coordinates)
 	uint16_t battery_mv = get_battery_mv();
 	if (has_gps) {
 		snprintf(text, sizeof(text),
-			 "SOS! batt %u.%02uV, temp %s; %s",
+			 "%s batt %u.%02uV, temp %s; %s", prefix,
 			 battery_mv / 1000U, (battery_mv % 1000U) / 10U,
 			 temperature, gps);
 	} else {
-		snprintf(text, sizeof(text), "SOS! batt %u.%02uV, temp %s",
+		snprintf(text, sizeof(text), "%s batt %u.%02uV, temp %s", prefix,
 			 battery_mv / 1000U, (battery_mv % 1000U) / 10U,
 			 temperature);
 	}
@@ -991,6 +1101,7 @@ static bool companion_send_sos_message(bool allow_coordinates)
 	 * so its alarm plays once after that packet has actually left the radio. */
 	companion_sos_tone.after_packets_sent = packets_before +
 		(tx_was_active ? 2U : 1U);
+	companion_sos_tone.fall = companion_sos.type == COMPANION_EMERGENCY_FALL;
 	companion_sos_tone.pending = true;
 	return true;
 }
@@ -1016,17 +1127,27 @@ static bool companion_sos_finish(bool fresh_fix)
 	return success;
 }
 
-static bool companion_sos_request(char *reply, bool play_confirm = true)
+static bool companion_emergency_request(enum companion_emergency_type type,
+						char *reply, bool play_confirm)
 {
+	/* A deliberate SOS takes over completely from a fall alarm without
+	 * emitting a cancel notice; it is a new emergency, not an acknowledgement. */
+	if (type == COMPANION_EMERGENCY_SOS && companion_fall_alarm_state.active) {
+		companion_fall_alarm_stop();
+	}
+
 	if (companion_sos.pending) {
-		/* A second SOS press is an explicit new request, not a no-op. Keep
-		 * the original GPS state saved by the first request, but restart the
-		 * five-minute window and announce the renewed search immediately. */
+		/* A new emergency replaces the active one while retaining the original
+		 * GPS state, so only an explicit Fall cancellation restores it. */
+		companion_sos.type = type;
 		companion_sos.started_ms = k_uptime_get_32();
 		companion_sos_ui_waiting();
 		companion_send_sos_waiting_message();
 		companion_sos.next_waiting_message_ms = companion_sos.started_ms +
 			SOS_WAITING_REPEAT_MS;
+		if (type == COMPANION_EMERGENCY_FALL) {
+			companion_fall_alarm_start();
+		}
 		gps_set_poll_interval_sec(0);
 		if (gps_is_enabled()) {
 			gps_request_fresh_fix();
@@ -1038,7 +1159,9 @@ static bool companion_sos_request(char *reply, bool play_confirm = true)
 			buzzer_play(MELODY_SOS_CONFIRM);
 		}
 #endif
-		strcpy(reply, "SOS: GPS search restarted (max 5 min)");
+		strcpy(reply, type == COMPANION_EMERGENCY_FALL ?
+			"Fall: GPS search restarted (max 5 min)" :
+			"SOS: GPS search restarted (max 5 min)");
 		return true;
 	}
 
@@ -1051,9 +1174,13 @@ static bool companion_sos_request(char *reply, bool play_confirm = true)
 	}
 
 	/* No GPS hardware: send the final message immediately. */
+	companion_sos.type = type;
+	if (type == COMPANION_EMERGENCY_FALL) {
+		companion_fall_alarm_start();
+	}
 	if (!gps_is_available()) {
 		strcpy(reply, companion_sos_send_now(false) ?
-		       "OK - SOS sent" : "ERROR: SOS send failed");
+		       "OK - emergency sent" : "ERROR: emergency send failed");
 		return true;
 	}
 
@@ -1061,7 +1188,7 @@ static bool companion_sos_request(char *reply, bool play_confirm = true)
 	bool gps_was_enabled = gps_is_enabled();
 	if (gps_was_enabled && companion_sos_has_fresh_fix()) {
 		strcpy(reply, companion_sos_send_now(true) ?
-		       "OK - SOS sent with GPS" : "ERROR: SOS send failed");
+		       "OK - emergency sent with GPS" : "ERROR: emergency send failed");
 		return true;
 	}
 
@@ -1069,6 +1196,7 @@ static bool companion_sos_request(char *reply, bool play_confirm = true)
 	 * off. Announce the SOS immediately, then hold the detailed message for a
 	 * fresh fix or timeout. */
 	companion_sos.pending = true;
+	companion_sos.type = type;
 	companion_sos.started_ms = k_uptime_get_32();
 	companion_sos.gps_started_by_sos = !gps_was_enabled;
 	companion_sos.saved_gps_duty_sec = gps_get_poll_interval_sec();
@@ -1076,7 +1204,6 @@ static bool companion_sos_request(char *reply, bool play_confirm = true)
 	companion_send_sos_waiting_message();
 	companion_sos.next_waiting_message_ms = companion_sos.started_ms +
 		SOS_WAITING_REPEAT_MS;
-
 	/* Hold GPS awake until a fresh fix or the SOS timeout. */
 	gps_set_poll_interval_sec(0);
 	if (gps_was_enabled) {
@@ -1085,8 +1212,23 @@ static bool companion_sos_request(char *reply, bool play_confirm = true)
 		gps_enable(true);
 	}
 
-	strcpy(reply, "SOS: waiting for GPS fix (max 5 min)");
+	strcpy(reply, type == COMPANION_EMERGENCY_FALL ?
+		"Fall: waiting for GPS fix (max 5 min)" :
+		"SOS: waiting for GPS fix (max 5 min)");
 	return true;
+}
+
+static bool companion_sos_request(char *reply, bool play_confirm = true)
+{
+	return companion_emergency_request(COMPANION_EMERGENCY_SOS, reply, play_confirm);
+}
+
+static void companion_fall_detected(void)
+{
+	char reply[CLI_REPLY_SIZE];
+	if (companion_emergency_request(COMPANION_EMERGENCY_FALL, reply, false)) {
+		LOG_WRN("%s", reply);
+	}
 }
 
 extern "C" void companion_sos_request_from_ui(void)
@@ -1098,6 +1240,13 @@ extern "C" void companion_sos_request_from_ui(void)
 
 static void companion_sos_process(void)
 {
+	uint32_t now_ms = k_uptime_get_32();
+	if (companion_fall_alarm_state.active &&
+	    (int32_t)(now_ms - companion_fall_alarm_state.next_alarm_ms) >= 0) {
+		companion_fall_alarm_play();
+		companion_fall_alarm_state.next_alarm_ms = now_ms + FALL_ALARM_REPEAT_MS;
+	}
+
 	if (!companion_sos.pending) {
 		return;
 	}
@@ -1113,7 +1262,6 @@ static void companion_sos_process(void)
 		return;
 	}
 
-	uint32_t now_ms = k_uptime_get_32();
 	if ((int32_t)(now_ms - companion_sos.next_waiting_message_ms) >= 0) {
 		companion_send_sos_waiting_message();
 		companion_sos.next_waiting_message_ms = now_ms + SOS_WAITING_REPEAT_MS;
@@ -1125,9 +1273,14 @@ static void companion_sos_tx_done(void)
 	uint32_t packets_sent = lora_radio.getPacketsSent();
 	if (companion_sos_tone.pending &&
 	    packets_sent >= companion_sos_tone.after_packets_sent) {
+		bool play = !companion_sos_tone.fall || companion_fall_alarm_state.active;
 		companion_sos_tone.pending = false;
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
-		buzzer_play(MELODY_SOS);
+		if (play) {
+			buzzer_play(MELODY_SOS);
+		}
+#else
+		ARG_UNUSED(play);
 #endif
 	}
 }
@@ -2488,6 +2641,12 @@ int main(void)
 
 	/* Initialize mesh event object */
 	k_event_init(&mesh_events);
+
+#if defined(ZEPHCORE_FALL_DETECTOR)
+	fall_detector_begin([]() {
+		k_event_post(&mesh_events, MESH_EVENT_FALL_DETECTED);
+	});
+#endif
 
 	/* Initialize UI mesh actions module (pass mesh objects for deferred actions) */
 	ui_mesh_actions_init(&mesh_events, MESH_EVENT_UI_ACTION,

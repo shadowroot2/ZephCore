@@ -30,3 +30,5 @@ bool ble_bridge_handle_command(const char *command, char *reply, size_t reply_le
 bool ble_bridge_forward_packet(const mesh::Packet *packet);
 bool ble_bridge_send_observed(const uint8_t fingerprint[8]);
 void ble_bridge_drain(mesh::Dispatcher *dispatcher);
+void ble_bridge_maintain(void);
+uint32_t ble_bridge_ms_until_next(void);

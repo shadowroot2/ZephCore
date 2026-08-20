@@ -46,8 +46,10 @@ LOG_MODULE_REGISTER(zephcore_ui_actions, CONFIG_ZEPHCORE_UI_ACTIONS_LOG_LEVEL);
 #define UI_ACTION_GPS_DUTY_SAVE     BIT(12)
 #define UI_ACTION_SOS               BIT(13)
 #define UI_ACTION_TRACKING_TOGGLE   BIT(14)
+#define UI_ACTION_FALL_ACK          BIT(15)
 
 extern "C" void companion_sos_request_from_ui(void);
+extern "C" void companion_fall_alarm_acknowledge_from_ui(void);
 extern "C" void companion_tracking_toggle_from_ui(void);
 extern "C" bool companion_tracking_gps_control_allowed(void);
 
@@ -109,6 +111,15 @@ extern "C" void mesh_send_zerohop_advert(void)
 extern "C" void mesh_send_sos(void)
 {
 	atomic_or(&pending_ui_actions, UI_ACTION_SOS);
+	k_event_post(s_mesh_events, s_mesh_event_ui_action);
+}
+
+extern "C" void mesh_fall_alarm_acknowledge(void)
+{
+	if (!s_mesh_events) {
+		return;
+	}
+	atomic_or(&pending_ui_actions, UI_ACTION_FALL_ACK);
 	k_event_post(s_mesh_events, s_mesh_event_ui_action);
 }
 
@@ -265,6 +276,9 @@ extern "C" void mesh_handle_ui_actions(void)
 
 	if (actions & UI_ACTION_SOS) {
 		companion_sos_request_from_ui();
+	}
+	if (actions & UI_ACTION_FALL_ACK) {
+		companion_fall_alarm_acknowledge_from_ui();
 	}
 	if (actions & UI_ACTION_TRACKING_TOGGLE) {
 		companion_tracking_toggle_from_ui();

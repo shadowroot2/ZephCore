@@ -2089,6 +2089,13 @@ void ui_pages_sos_sent(bool success)
 	state.sos_send_failed = !success;
 }
 
+void ui_pages_sos_clear(void)
+{
+	state.sos_waiting_fix = false;
+	state.sos_sent_time = 0;
+	state.sos_send_failed = false;
+}
+
 void ui_pages_set_tracking(bool enabled, uint16_t interval_minutes)
 {
 	state.tracking_enabled = enabled;

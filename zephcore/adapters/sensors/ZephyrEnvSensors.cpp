@@ -32,6 +32,7 @@ LOG_MODULE_REGISTER(zephcore_sensors, CONFIG_ZEPHCORE_SENSORS_LOG_LEVEL);
 #if IS_ENABLED(CONFIG_SENSOR)
 #define HAS_ENV_SENSORS 1
 #include <zephyr/drivers/sensor.h>
+#include <zephyr/drivers/i2c.h>
 #else
 #define HAS_ENV_SENSORS 0
 #endif
@@ -74,7 +75,111 @@ LOG_MODULE_REGISTER(zephcore_sensors, CONFIG_ZEPHCORE_SENSORS_LOG_LEVEL);
 static const struct device *temp_humidity_dev = NULL;
 static const struct device *pressure_dev = NULL;
 static bool temp_dev_has_pressure = false;  /* BME280/BME680 also have pressure */
+static bool temp_humidity_is_ahtx = false;
 static bool env_available = false;
+#endif
+
+/* ThinkNode M3 carries an AHT10, not an AHT20. They share address 0x38 and
+ * the measurement frame, but AHT10 needs the 0xE1 calibration command. */
+#if HAS_ENV_SENSORS && defined(CONFIG_BOARD_THINKNODE_M3) && DT_NODE_EXISTS(DT_NODELABEL(i2c0))
+#define HAS_THINKNODE_M3_AHT10 1
+static const struct i2c_dt_spec m3_aht10 = {
+	.bus = DEVICE_DT_GET(DT_NODELABEL(i2c0)),
+	.addr = 0x38,
+};
+static bool m3_aht10_available;
+static bool m3_aht10_power_settled;
+
+static int m3_aht10_init(void)
+{
+	uint8_t reset = 0xBA;
+	uint8_t init[] = { 0xE1, 0x08, 0x00 };
+	uint8_t status;
+
+	if (m3_aht10_available) {
+		return 0;
+	}
+	if (!i2c_is_ready_dt(&m3_aht10)) {
+		LOG_WRN("AHT10 I2C bus is not ready");
+		return -EIO;
+	}
+
+	/* Match Meshtastic's Adafruit_AHTX0 sequence: settle, soft-reset, wait for
+	 * idle, calibrate, then verify the calibrated bit. */
+	if (!m3_aht10_power_settled) {
+		k_msleep(20);
+		m3_aht10_power_settled = true;
+	}
+
+	for (int attempt = 0; attempt < 3; ++attempt) {
+		if (i2c_write_dt(&m3_aht10, &reset, sizeof(reset)) < 0) {
+			k_msleep(20);
+			continue;
+		}
+		k_msleep(20);
+		for (int busy_retry = 0; busy_retry < 10; ++busy_retry) {
+			if (i2c_read_dt(&m3_aht10, &status, sizeof(status)) == 0 &&
+			    !(status & BIT(7))) {
+				break;
+			}
+			k_msleep(10);
+		}
+		/* Adafruit permits a failed calibration write for newer AHT20s. */
+		i2c_write_dt(&m3_aht10, init, sizeof(init));
+		for (int busy_retry = 0; busy_retry < 10; ++busy_retry) {
+			if (i2c_read_dt(&m3_aht10, &status, sizeof(status)) == 0 &&
+			    !(status & BIT(7))) {
+				if (status & BIT(3)) {
+					m3_aht10_available = true;
+					LOG_INF("Found temp/humidity sensor: AHT10, offset=%d mC",
+						CONFIG_ZEPHCORE_AHT_TEMP_OFFSET_MILLIC);
+					return 0;
+				}
+				break;
+			}
+			k_msleep(10);
+		}
+		k_msleep(20);
+	}
+	LOG_WRN("AHT10 init failed");
+	return -EIO;
+}
+
+static int m3_aht10_read(struct env_data *data)
+{
+	uint8_t trigger[] = { 0xAC, 0x33, 0x00 };
+	uint8_t sample[6];
+
+	/* Retry initialization on a later telemetry request if boot-time sensor
+	 * power-up was slow. */
+	if ((!m3_aht10_available && m3_aht10_init() < 0) ||
+	    i2c_write_dt(&m3_aht10, trigger, sizeof(trigger)) < 0) {
+		return -EIO;
+	}
+	for (int attempt = 0; attempt < 10; ++attempt) {
+		uint8_t status;
+		k_msleep(10);
+		if (i2c_read_dt(&m3_aht10, &status, sizeof(status)) == 0 && !(status & BIT(7))) {
+			if (i2c_read_dt(&m3_aht10, sample, sizeof(sample)) < 0) {
+				return -EIO;
+			}
+			uint32_t humidity_raw = ((uint32_t)sample[1] << 12) |
+				((uint32_t)sample[2] << 4) | (sample[3] >> 4);
+			uint32_t temperature_raw = ((uint32_t)(sample[3] & 0x0F) << 16) |
+				((uint32_t)sample[4] << 8) | sample[5];
+
+			data->humidity_pct = (float)humidity_raw * 100.0f / 1048576.0f;
+			data->temperature_c = (float)temperature_raw * 200.0f / 1048576.0f - 50.0f +
+				(float)CONFIG_ZEPHCORE_AHT_TEMP_OFFSET_MILLIC / 1000.0f;
+			data->has_temperature = true;
+			data->has_humidity = true;
+			return 0;
+		}
+	}
+	return -EIO;
+}
+#else
+#define HAS_THINKNODE_M3_AHT10 0
 #endif
 
 #if HAS_T1000_ANALOG_LIGHT
@@ -238,6 +343,12 @@ int env_sensors_init(void)
 	 * Priority order: dedicated temp/humidity first, then combo sensors.
 	 * BME280/BME680 also provide pressure — tracked via temp_dev_has_pressure. */
 
+#if HAS_THINKNODE_M3_AHT10
+	if (m3_aht10_init() == 0) {
+		goto check_pressure;
+	}
+#endif
+
 	/* SHTC3 (e.g., RAK1901) */
 	dev = DEVICE_DT_GET_OR_NULL(DT_NODELABEL(shtc3));
 	if (dev && device_is_ready(dev)) {
@@ -246,7 +357,8 @@ int env_sensors_init(void)
 		goto check_pressure;
 	}
 
-	/* Aosong AHT20/DHT20/AM2301B — same chip family, three compatible strings */
+	/* AHT10/AHT20/DHT20/AM2301B — same measurement protocol at I2C 0x38.
+	 * Zephyr's compatible string is aosong,aht20. */
 	dev = DEVICE_DT_GET_OR_NULL(DT_NODELABEL(aht20));
 	if (!dev || !device_is_ready(dev)) {
 		dev = DEVICE_DT_GET_OR_NULL(DT_NODELABEL(dht20));
@@ -256,7 +368,9 @@ int env_sensors_init(void)
 	}
 	if (dev && device_is_ready(dev)) {
 		temp_humidity_dev = dev;
-		LOG_INF("Found temp/humidity sensor: %s (AHT20/DHT20)", dev->name);
+		temp_humidity_is_ahtx = true;
+		LOG_INF("Found temp/humidity sensor: %s (AHT10/AHT20), offset=%d mC",
+			dev->name, CONFIG_ZEPHCORE_AHT_TEMP_OFFSET_MILLIC);
 		goto check_pressure;
 	}
 
@@ -325,6 +439,9 @@ check_pressure:
 
 done:
 	env_available = (temp_humidity_dev != NULL) || (pressure_dev != NULL);
+#if HAS_THINKNODE_M3_AHT10
+	env_available = env_available || m3_aht10_available;
+#endif
 #if HAS_T1000_ANALOG_LIGHT
 	t1000_analog_light_init();
 	env_available = env_available || t1000_light_available;
@@ -355,11 +472,18 @@ int env_sensors_read(struct env_data *data)
 	int rc;
 
 	/* === Read temperature/humidity sensor === */
+#if HAS_THINKNODE_M3_AHT10
+	m3_aht10_read(data);
+#endif
 	if (temp_humidity_dev) {
 		rc = sensor_sample_fetch(temp_humidity_dev);
 		if (rc == 0) {
 			if (sensor_channel_get(temp_humidity_dev, SENSOR_CHAN_AMBIENT_TEMP, &val) == 0) {
 				data->temperature_c = sensor_value_to_float(&val);
+				if (temp_humidity_is_ahtx) {
+					data->temperature_c +=
+						(float)CONFIG_ZEPHCORE_AHT_TEMP_OFFSET_MILLIC / 1000.0f;
+				}
 				data->has_temperature = true;
 			}
 			if (sensor_channel_get(temp_humidity_dev, SENSOR_CHAN_HUMIDITY, &val) == 0) {
@@ -387,8 +511,9 @@ int env_sensors_read(struct env_data *data)
 		}
 	}
 
-	/* === MCU die temperature — fallback when no external temp sensor exists. */
-#ifdef MCU_TEMP_NODE
+	/* === MCU die temperature — fallback when no external temp sensor exists.
+	 * ThinkNode M3 has AHT10, so never expose the warmer nRF die value. */
+#if defined(MCU_TEMP_NODE) && !defined(CONFIG_BOARD_THINKNODE_M3)
 	const struct device *mcu_temp = DEVICE_DT_GET(MCU_TEMP_NODE);
 	if (mcu_temp && device_is_ready(mcu_temp)) {
 		if (sensor_sample_fetch(mcu_temp) == 0 &&

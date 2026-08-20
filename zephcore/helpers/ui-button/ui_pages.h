@@ -144,6 +144,7 @@ void ui_pages_advert_sent(bool flood);
 /** SOS status feedback for the SOS page. */
 void ui_pages_sos_waiting(void);
 void ui_pages_sos_sent(bool success);
+void ui_pages_sos_clear(void);
 void ui_pages_set_tracking(bool enabled, uint16_t interval_minutes);
 
 /**

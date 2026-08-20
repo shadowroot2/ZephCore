@@ -86,6 +86,30 @@ static const struct gpio_dt_spec s_heartbeat_led =
 #define HAS_HEARTBEAT_LED 0
 #endif
 
+/* Optional alternate heartbeat LED for the low-charge warning. */
+#if DT_NODE_HAS_PROP(DT_ALIAS(low_battery_led), gpios)
+static const struct gpio_dt_spec s_low_battery_led =
+	GPIO_DT_SPEC_GET(DT_ALIAS(low_battery_led), gpios);
+#define HAS_LOW_BATTERY_LED 1
+#else
+#define HAS_LOW_BATTERY_LED 0
+#endif
+
+/* ThinkNode M3: P0.31 is the board's documented EXT_PWR_DETECT. P1.0/CHRG
+ * remains asserted on some hardware revisions after the magnetic charger is
+ * removed, so it must not be used as an external-power indicator. */
+#if defined(CONFIG_BOARD_THINKNODE_M3) && \
+	DT_NODE_HAS_PROP(DT_ALIAS(charge_usb_detect), gpios) && \
+	DT_NODE_HAS_PROP(DT_ALIAS(charge_full), gpios)
+static const struct gpio_dt_spec s_charge_usb_detect =
+	GPIO_DT_SPEC_GET(DT_ALIAS(charge_usb_detect), gpios);
+static const struct gpio_dt_spec s_charge_full =
+	GPIO_DT_SPEC_GET(DT_ALIAS(charge_full), gpios);
+#define HAS_M3_CHARGE_STATUS 1
+#else
+#define HAS_M3_CHARGE_STATUS 0
+#endif
+
 /* Second LED for unread-message indication. Repeaters use led1 for LoRa TX
  * (via lora-tx-led alias) — no offline queue, so this is companion-only. */
 #if HAS_HEARTBEAT_LED && DT_NODE_HAS_PROP(DT_ALIAS(led0), gpios) && \
@@ -122,13 +146,23 @@ static const struct gpio_dt_spec s_led_enable =
 #define LED_CYCLE_MS                 5000  /* Heartbeat period */
 #define LED_ON_MS                      20  /* Normal pulse width */
 #define LED_ON_MSG_MS                 200  /* Pulse width when unread messages */
-#if defined(ZEPHCORE_REPEATER)
+#define LED_HEARTBEAT_BLINKS            1
+#if defined(CONFIG_BOARD_THINKNODE_M3)
+#define LED_UNREAD_BLINKS               2
+#else
+#define LED_UNREAD_BLINKS               1
+#endif
+#define LED_HEARTBEAT_BLINK_GAP_MS      80
+#if defined(CONFIG_BOARD_THINKNODE_M3)
+#define LED_LOW_BATT_THRESHOLD_PCT     20
+#elif defined(ZEPHCORE_REPEATER)
 #define LED_LOW_BATT_THRESHOLD_PCT     15
 #else
 #define LED_LOW_BATT_THRESHOLD_PCT     25
 #endif
 #define LED_LOW_BATT_BLINK_MS           80
 #define LED_LOW_BATT_BLINKS              3
+#define LED_CHARGING_BLINK_MS          1000
 #if defined(CONFIG_BOARD_T1000_E)
 #define LED_MSG_BLINK_MS   80  /* Fast incoming-message flash phase */
 #define LED_MSG_BLINKS      3  /* Number of flashes for one incoming message */
@@ -138,8 +172,10 @@ static const struct gpio_dt_spec s_led_enable =
 static struct k_work_delayable s_led_on_work;
 static struct k_work_delayable s_led_off_work;
 static uint8_t s_heartbeat_blinks_left;
+static uint8_t s_heartbeat_blinks_total;
 static uint16_t s_heartbeat_on_ms;
 static bool s_heartbeat_low_batt_cycle;
+static bool s_heartbeat_charging_cycle;
 #if defined(CONFIG_BOARD_T1000_E)
 static struct k_work_delayable s_msg_blink_work;
 static struct k_work_delayable s_tx_led_off_work;
@@ -188,21 +224,87 @@ static bool heartbeat_low_battery(void)
 	return low;
 }
 
+#if HAS_M3_CHARGE_STATUS
+enum m3_charge_state {
+	M3_CHARGE_NONE,
+	M3_CHARGE_ACTIVE,
+	M3_CHARGE_FULL,
+};
+
+static bool m3_gpio_is_active(const struct gpio_dt_spec *spec)
+{
+	int level = gpio_pin_get_dt(spec);
+
+	if (level < 0) {
+		return false;
+	}
+	return (spec->dt_flags & GPIO_ACTIVE_LOW) ? level == 0 : level != 0;
+}
+
+static enum m3_charge_state m3_charge_state_get(void)
+{
+	static uint32_t charge_done_since_ms;
+	static bool charge_done_seen;
+	bool usb_present_now = gpio_is_ready_dt(&s_charge_usb_detect) &&
+		m3_gpio_is_active(&s_charge_usb_detect);
+	bool charge_done = gpio_is_ready_dt(&s_charge_full) &&
+		m3_gpio_is_active(&s_charge_full);
+	uint32_t now = k_uptime_get_32();
+
+	if (!usb_present_now) {
+		charge_done_seen = false;
+		return M3_CHARGE_NONE;
+	}
+	/* Never use an ADC sample to decide that charging is complete: its voltage
+	 * rises under charge and can briefly look like 100%. DONE must be asserted,
+	 * and external power must remain physically present for 20 seconds before
+	 * solid green is allowed. */
+	if (charge_done) {
+		if (!charge_done_seen) {
+			charge_done_since_ms = now;
+			charge_done_seen = true;
+		} else if ((now - charge_done_since_ms) >= 20000U) {
+			return M3_CHARGE_FULL;
+		}
+	} else {
+		charge_done_seen = false;
+	}
+	return M3_CHARGE_ACTIVE;
+}
+#endif
+
+bool zephcore_led_status_priority_active(void)
+{
+#if HAS_M3_CHARGE_STATUS
+	return m3_charge_state_get() != M3_CHARGE_NONE;
+#else
+	return false;
+#endif
+}
+
 static void heartbeat_sequence_reset(void)
 {
 	s_heartbeat_blinks_left = 0;
+	s_heartbeat_blinks_total = 0;
 	s_heartbeat_on_ms = 0;
 	s_heartbeat_low_batt_cycle = false;
+	s_heartbeat_charging_cycle = false;
 }
 
 static void heartbeat_led_set(bool on)
 {
+	bool use_low_battery_led = on &&
+		(s_heartbeat_low_batt_cycle || s_heartbeat_charging_cycle) && HAS_LOW_BATTERY_LED;
+
 #if HAS_LED_ENABLE
 	if (on) {
 		gpio_pin_set_dt(&s_led_enable, 1);
 	}
 #endif
-	gpio_pin_set_dt(&s_heartbeat_led, on ? 1 : 0);
+	gpio_pin_set_dt(&s_heartbeat_led, use_low_battery_led ? 0 : (on ? 1 : 0));
+#if HAS_LOW_BATTERY_LED
+	gpio_pin_set_dt(&s_low_battery_led, use_low_battery_led ? 1 : 0);
+#endif
 #if HAS_LED_ENABLE
 	if (!on) {
 		gpio_pin_set_dt(&s_led_enable, 0);
@@ -225,20 +327,29 @@ static void led_off_work_handler(struct k_work *work)
 		s_heartbeat_blinks_left--;
 	}
 	if (s_heartbeat_blinks_left > 0) {
-		/* Continue the low-battery burst after a short dark gap. */
-		k_work_reschedule(&s_led_on_work, K_MSEC(LED_LOW_BATT_BLINK_MS));
+		/* Continue the current heartbeat burst after a short dark gap. */
+		k_work_reschedule(&s_led_on_work, K_MSEC(s_heartbeat_low_batt_cycle ?
+			LED_LOW_BATT_BLINK_MS : LED_HEARTBEAT_BLINK_GAP_MS));
 		return;
 	}
 
 	uint32_t delay_ms;
-	if (s_heartbeat_low_batt_cycle) {
+	if (s_heartbeat_charging_cycle) {
+		/* Red: one second on, one second off while charging. */
+		delay_ms = LED_CHARGING_BLINK_MS;
+	} else if (s_heartbeat_low_batt_cycle) {
 		/* Three 80 ms flashes, separated by two 80 ms gaps, start once
 		 * every five seconds. */
 		delay_ms = LED_CYCLE_MS -
 			(LED_LOW_BATT_BLINKS * LED_LOW_BATT_BLINK_MS +
 			 (LED_LOW_BATT_BLINKS - 1U) * LED_LOW_BATT_BLINK_MS);
+	} else if (s_heartbeat_blinks_total > 0) {
+		uint32_t burst_ms = s_heartbeat_blinks_total * s_heartbeat_on_ms +
+			(s_heartbeat_blinks_total - 1U) * LED_HEARTBEAT_BLINK_GAP_MS;
+		delay_ms = LED_CYCLE_MS - burst_ms;
 	} else {
-		delay_ms = LED_CYCLE_MS - s_heartbeat_on_ms;
+		/* A one-off incoming-message flash interrupted the heartbeat. */
+		delay_ms = LED_CYCLE_MS - LED_ON_MSG_MS;
 	}
 	heartbeat_sequence_reset();
 	k_work_reschedule(&s_led_on_work, K_MSEC(delay_ms));
@@ -248,12 +359,46 @@ static void led_on_work_handler(struct k_work *work)
 {
 	ARG_UNUSED(work);
 	uint16_t mc = ui_led_get_msg_count();
+	bool m3_charging = false;
+
+#if HAS_M3_CHARGE_STATUS
+	enum m3_charge_state m3_charge_state = m3_charge_state_get();
+	if (m3_charge_state == M3_CHARGE_FULL) {
+		heartbeat_sequence_reset();
+		if (!zephcore_leds_disabled()) {
+			/* USB attached and cell full: solid green. */
+			heartbeat_led_set(true);
+		}
+		k_work_reschedule(&s_led_on_work, K_SECONDS(1));
+		return;
+	}
+	m3_charging = m3_charge_state == M3_CHARGE_ACTIVE;
+	if (m3_charging) {
+		/* Do not finish a queued heartbeat/unread-message sequence in green.
+		 * Charging owns the RGB LED immediately and exclusively. */
+		heartbeat_sequence_reset();
+		s_heartbeat_charging_cycle = true;
+		s_heartbeat_blinks_total = 1;
+		s_heartbeat_blinks_left = 1;
+		s_heartbeat_on_ms = LED_CHARGING_BLINK_MS;
+		if (!zephcore_leds_disabled()) {
+			heartbeat_led_set(true);
+		}
+		k_work_reschedule(&s_led_off_work, K_MSEC(LED_CHARGING_BLINK_MS));
+		return;
+	}
+#endif
+
 	if (s_heartbeat_blinks_left == 0) {
-		s_heartbeat_low_batt_cycle = heartbeat_low_battery();
-		s_heartbeat_blinks_left = s_heartbeat_low_batt_cycle ?
-			LED_LOW_BATT_BLINKS : 1;
-		s_heartbeat_on_ms = s_heartbeat_low_batt_cycle ?
-			LED_LOW_BATT_BLINK_MS : (mc > 0 ? LED_ON_MSG_MS : LED_ON_MS);
+		s_heartbeat_charging_cycle = m3_charging;
+		s_heartbeat_low_batt_cycle = !m3_charging && heartbeat_low_battery();
+		s_heartbeat_blinks_total = s_heartbeat_charging_cycle ? 1 :
+			(s_heartbeat_low_batt_cycle ? LED_LOW_BATT_BLINKS :
+			 (mc > 0 ? LED_UNREAD_BLINKS : LED_HEARTBEAT_BLINKS));
+		s_heartbeat_blinks_left = s_heartbeat_blinks_total;
+		s_heartbeat_on_ms = s_heartbeat_charging_cycle ? LED_CHARGING_BLINK_MS :
+			(s_heartbeat_low_batt_cycle ? LED_LOW_BATT_BLINK_MS :
+			 (mc > 0 ? LED_ON_MSG_MS : LED_ON_MS));
 	}
 
 	if (!zephcore_leds_disabled()) {
@@ -278,7 +423,7 @@ static void led_on_work_handler(struct k_work *work)
 		}
 		#endif
 #if HAS_MSG_LED && !defined(CONFIG_BOARD_LILYGO_TECHO)
-		if (mc > 0) {
+		if (mc > 0 && !s_heartbeat_charging_cycle) {
 			gpio_pin_set_dt(&s_msg_led, 1);
 		}
 #endif
@@ -361,6 +506,20 @@ void ui_led_heartbeat_init(void)
 	if (gpio_is_ready_dt(&s_msg_led)) {
 		gpio_pin_configure_dt(&s_msg_led, GPIO_OUTPUT_INACTIVE);
 		LOG_INF("msg LED ready");
+	}
+#endif
+#if HAS_LOW_BATTERY_LED
+	if (gpio_is_ready_dt(&s_low_battery_led)) {
+		gpio_pin_configure_dt(&s_low_battery_led, GPIO_OUTPUT_INACTIVE);
+		LOG_INF("low-battery LED ready");
+	}
+#endif
+#if HAS_M3_CHARGE_STATUS
+	if (gpio_is_ready_dt(&s_charge_usb_detect)) {
+		gpio_pin_configure_dt(&s_charge_usb_detect, GPIO_INPUT);
+	}
+	if (gpio_is_ready_dt(&s_charge_full)) {
+		gpio_pin_configure_dt(&s_charge_full, GPIO_INPUT);
 	}
 #endif
 #if HAS_BLE_STATUS_LED && !HEARTBEAT_IS_BLE_STATUS_LED
@@ -517,6 +676,9 @@ static void t1000_led_flash_pattern(uint8_t count)
 void ui_led_flash_msg(void)
 {
 #if HAS_HEARTBEAT_LED
+	if (zephcore_led_status_priority_active()) {
+		return;
+	}
 	#if defined(CONFIG_BOARD_T1000_E)
 	if (s_tx_led_active) {
 		return;
@@ -580,7 +742,8 @@ void ui_led_force_tx(void)
 void ui_led_flash_shutdown(void)
 {
 #if HAS_HEARTBEAT_LED
-	if (!zephcore_leds_disabled() && gpio_is_ready_dt(&s_heartbeat_led)) {
+	if (!zephcore_leds_disabled() && !zephcore_led_status_priority_active() &&
+	    gpio_is_ready_dt(&s_heartbeat_led)) {
 		for (int i = 0; i < 3; i++) {
 			heartbeat_led_set(true);
 			k_sleep(K_MSEC(100));

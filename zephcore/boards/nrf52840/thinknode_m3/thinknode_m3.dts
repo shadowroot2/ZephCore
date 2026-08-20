@@ -9,8 +9,9 @@
  * - LR1110 LoRa radio on SPI1 (TCXO 3.3V, DIO5/DIO6 RF switch)
  * - GPS module on UART0 (9600 baud, generic NMEA)
  *   Control: GPS_POWER=P0.14 (always on), GPS_EN=P0.21 (standby); GPS_RESET=P0.25 unused/floating
- * - Battery ADC on AIN3 (P0.05), 2:1 voltage divider
- * - LEDs: GREEN=P1.03, RED=P1.01 (active-low), POWER=P0.29 (always on via overlay)
+ * - Battery ADC on AIN3 (P0.05), 1.75:1 voltage divider
+ * - RGB LED: GREEN=P1.03 (heartbeat/unread), RED=P1.01 (low battery), BLUE=P1.05 (LoRa TX),
+ *   active-low; POWER=P0.29 (always on via overlay)
  * - Button on P0.12 (active-low, pull-up), single button with multi-tap
  * - Buzzer PWM on P0.23 with enable on P1.04
  * - I2C on P0.26/P0.27 for on-board sensors
@@ -53,7 +54,13 @@
 
 		led_red: led_1 {
 			gpios = <&gpio1 1 GPIO_ACTIVE_LOW>;
-			label = "Red LED";
+			label = "Red LED (low battery)";
+		};
+
+		led_blue: led_2 {
+			/* LoRa transmit activity, matching Meshtastic LED_BLUE=37. */
+			gpios = <&gpio1 5 GPIO_ACTIVE_LOW>;
+			label = "Blue LED (LoRa TX)";
 		};
 	};
 
@@ -65,6 +72,31 @@
 			gpios = <&gpio0 12 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
 			zephyr,code = <INPUT_KEY_0>;
 			label = "User Button";
+		};
+	};
+
+	/* Charger status inputs. gpio-keys supplies the typed `gpios` property
+	 * required by GPIO_DT_SPEC_GET; no input action uses them. */
+	charger_status: charger-status {
+		compatible = "gpio-keys";
+
+		charge_detect: charging {
+			gpios = <&gpio1 0 GPIO_ACTIVE_LOW>;
+			zephyr,code = <INPUT_KEY_F23>;
+			label = "Charger charging";
+		};
+
+		charge_usb_detect: usb-present {
+			/* Magnetic charger present, as EXT_PWR_DETECT in Meshtastic. */
+			gpios = <&gpio0 31 GPIO_ACTIVE_HIGH>;
+			zephyr,code = <INPUT_KEY_F22>;
+			label = "Charger USB present";
+		};
+
+		charge_full: done {
+			gpios = <&gpio0 24 GPIO_ACTIVE_LOW>;
+			zephyr,code = <INPUT_KEY_F24>;
+			label = "Charger done";
 		};
 	};
 
@@ -91,12 +123,12 @@
 		tap-delay-ms = <500>;
 	};
 
-	/* Battery ADC channel reference for ZephyrBoard
-	 * 2:1 voltage divider on AIN3 (P0.05).
-	 * With GAIN_1_6 + internal ref (3600mV full scale) × 2 = 7200 multiplier. */
+	/* Battery ADC calibration for AIN3 (P0.05).
+	 * The nominal 1.75:1 divider (6300 mV FS) read 4.47 V at a
+	 * fully-charged M3 cell; 5920 corrects that reading to 4.20 V. */
 	zephyr,user {
 		io-channels = <&adc 3>;
-		vbat-mv-multiplier = <7236>;  /* 2:1 divider, 3.6V ref; +0.5% for nRF SAADC gain error */
+		vbat-mv-multiplier = <5920>;
 	};
 
 	/* Buzzer on PWM0 channel 0 (P0.23, PIN_BUZZER=23) */
@@ -114,13 +146,27 @@
 		enable-gpios = <&gpio1 4 GPIO_ACTIVE_HIGH>;
 	};
 
+	/* SC7A20H power switch. The reference firmware holds ACC_POWER (P0.02)
+	 * low while the accelerometer is used. */
+	accel_power: accel-power {
+		compatible = "regulator-fixed";
+		regulator-name = "accel-power";
+		enable-gpios = <&gpio0 2 GPIO_ACTIVE_LOW>;
+	};
+
 	aliases {
+		/* Green heartbeat; two pulses signal unread messages. Red replaces it below 20% battery. */
 		led0 = &led_green;
-		led1 = &led_red;
+		low-battery-led = &led_red;
+		lora-tx-led = &led_blue;
+		charge-detect = &charge_detect;
+		charge-usb-detect = &charge_usb_detect;
+		charge-full = &charge_full;
 		sw0 = &user_button;
 		watchdog0 = &wdt0;
 		buzzer = &buzzer;
 		buzzer-enable = &buzzer_enable;
+		accel-power = &accel_power;
 		lora0 = &lora;
 	};
 };
@@ -138,7 +184,7 @@
 	#address-cells = <1>;
 	#size-cells = <0>;
 
-	/* Battery voltage on P0.05 (AIN3) - 2:1 voltage divider */
+	/* Battery voltage on P0.05 (AIN3) - 1.75:1 voltage divider */
 	channel@3 {
 		reg = <3>;
 		zephyr,gain = "ADC_GAIN_1_6";
@@ -212,6 +258,13 @@
 	/* ThinkNode M3 has an onboard PCF8563 RTC — opt in to boot-time time
 	 * restore (auto-detected at runtime among the supported chips). */
 	#include "../../common/rtc-i2c.dtsi"
+};
+
+/* The M3 has AHT10. It requires calibration command 0xE1, unlike the
+ * AHT20/DHT20 node supplied by sensors-i2c.dtsi. ZephyrEnvSensors uses the
+ * correct AHT10 protocol directly. */
+&aht20 {
+	status = "disabled";
 };
 
 /* SPI1 for LR1110 */

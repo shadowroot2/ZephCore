@@ -54,6 +54,8 @@ void mesh_housekeeping_ui_refresh(void);
 void mesh_send_flood_advert(void);
 void mesh_send_zerohop_advert(void);
 void mesh_send_sos(void);
+/* A physical key press acknowledges a pending fall alarm. */
+void mesh_fall_alarm_acknowledge(void);
 void mesh_tracking_toggle(void);
 void mesh_gps_set_enabled(bool enable);
 void mesh_ble_set_enabled(bool enable);

@@ -33,6 +33,10 @@ bool zephcore_leds_disabled(void);
  * progress. Safe to call from any role, with or without a UI. */
 void zephcore_leds_set_disabled(bool disabled);
 
+/* True while a board-owned LED state (for example charger indication) must
+ * take precedence over heartbeat, message and radio activity LEDs. */
+bool zephcore_led_status_priority_active(void);
+
 /* Called by zephcore_leds_set_disabled() after the flag changes. Weak no-op in
  * led_gate.c; helpers/ui/ui_common.c overrides it to stop/restart the heartbeat
  * cycle and refresh the UI's LED page. Not meant to be called directly. */

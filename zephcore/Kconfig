@@ -671,6 +671,14 @@ config ZEPHCORE_VBAT_MV_MULTIPLIER
 
 	  Formula: mv = (raw * multiplier) / 4096
 
+config ZEPHCORE_AHT_TEMP_OFFSET_MILLIC
+	int "AHT10/AHT20 temperature offset in millicelsius"
+	default 0
+	help
+	  Board-specific correction applied only to an AHT10/AHT20 temperature
+	  reading. Use a negative value if the sensor reads high. The ThinkNode M3
+	  uses the Meshtastic calibration of -5000 (-5.0 C).
+
 endmenu
 
 menu "Debug & Logging"
@@ -823,11 +831,11 @@ config ZEPHCORE_GPS_FIRST_FIX_TIMEOUT_SEC
 
 config ZEPHCORE_REPEATER_GPS_INTERVAL_SEC
 	int "Repeater GPS duty interval in seconds (boot default)"
-	default 172800
+	default 43200
 	range 0 604800
 	help
 	  Default GPS standby interval for repeaters/room servers: how often
-	  the GPS wakes for a time-sync fix. Default 172800s (48 hours).
+	  the GPS wakes for a time-sync fix. Default 43200s (12 hours).
 	  0 = always-on (never sleeps). Applied at boot until the operator
 	  overrides it with "set gps duty <sec>" (persisted to flash).
 	  Companions default to ZEPHCORE_GPS_POLL_INTERVAL_SEC (300s) instead.

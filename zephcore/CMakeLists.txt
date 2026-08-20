@@ -916,6 +916,9 @@ else()
     # COMPANION_SERIAL (e.g. plain ESP32/S3 companions) failed to link otherwise.
     helpers/CommonCLI.cpp
   )
+  if(BOARD MATCHES "^(thinknode_m3|t1000_e)$")
+    target_sources(app PRIVATE adapters/sensors/FallDetector.cpp)
+  endif()
   # Companion transport: TCP socket on native Linux, serial (UART) on boards
   # with no Bluetooth controller (e.g. STM32WL), BLE NUS everywhere else.
   if(CONFIG_ZEPHCORE_TRANSPORT_TCP)

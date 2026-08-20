@@ -664,6 +664,7 @@ void repeater_bridge_drain(mesh::Dispatcher *dispatcher)
 {
 	if (!s_enabled) return;
 	if (s_transport == BRIDGE_BLE) {
+		ble_bridge_maintain();
 		ble_bridge_drain(dispatcher);
 	} else {
 #if defined(CONFIG_SOC_FAMILY_ESPRESSIF_ESP32)
@@ -701,7 +702,7 @@ uint32_t repeater_bridge_ms_until_next(void)
 {
 	if (!s_enabled) return UINT32_MAX;
 	const int64_t now = k_uptime_get();
-	uint32_t next = UINT32_MAX;
+	uint32_t next = s_transport == BRIDGE_BLE ? ble_bridge_ms_until_next() : UINT32_MAX;
 	k_spinlock_key_t key = k_spin_lock(&s_pending_lock);
 	for (const auto &pending : s_pending) {
 		if (!pending.used) continue;
