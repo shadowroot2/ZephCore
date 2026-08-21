@@ -115,6 +115,7 @@ extern "C" void bt_ctlr_assert_handle(char *file, uint32_t line)
 #define MESH_EVENT_RTC_SAVE      BIT(9)  /* Hardware-RTC write requested off-main */
 #define MESH_EVENT_CONTACT_ITER  BIT(10) /* Continue contact-dump iteration on main thread */
 #define MESH_EVENT_FALL_DETECTED BIT(11) /* Accelerometer worker detected a fall */
+#define MESH_EVENT_GPS_FIX       BIT(12) /* Valid GPS fix: finish pending SOS/Fall promptly */
 
 #ifdef ZEPHCORE_LORA
 /* Forward decls — data_store + companion_mesh_ptr statics are defined further
@@ -138,7 +139,8 @@ static atomic_t pending_rtc_epoch = ATOMIC_INIT(0);
 #define MESH_EVENT_BASE          (MESH_EVENT_LORA_RX | MESH_EVENT_LORA_TX_DONE | \
 	MESH_EVENT_BLE_RX | MESH_EVENT_MAINTENANCE | MESH_EVENT_UI_ACTION |  \
 	MESH_EVENT_GPS_ACTION | MESH_EVENT_TX_DRAIN | MESH_EVENT_PREFS_DIRTY | \
-	MESH_EVENT_RTC_SAVE | MESH_EVENT_CONTACT_ITER | MESH_EVENT_FALL_DETECTED)
+	MESH_EVENT_RTC_SAVE | MESH_EVENT_CONTACT_ITER | MESH_EVENT_FALL_DETECTED | \
+	MESH_EVENT_GPS_FIX)
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_DESIGN_JOYSTICK)
 #define MESH_EVENT_JOYSTICK_LOOP BIT(7)  /* Joystick UI loop tick (50 ms) */
 #define MESH_EVENT_ALL           (MESH_EVENT_BASE | MESH_EVENT_JOYSTICK_LOOP)
@@ -518,6 +520,11 @@ static void mesh_event_loop(void)
 
 		if (events & MESH_EVENT_FALL_DETECTED) {
 			companion_fall_detected();
+		}
+		/* gps_fix_callback has validated a fresh coordinate.  Do not wait for
+		 * the 30-second maintenance tick before sending the final SOS/Fall. */
+		if (events & MESH_EVENT_GPS_FIX) {
+			companion_sos_process();
 		}
 
 		/* Parse inbound BLE/USB frames + USB text-CLI lines HERE (main
@@ -928,7 +935,8 @@ static void companion_sos_ui_clear(void)
 static void companion_fall_alarm_play(void)
 {
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
-	buzzer_play(MELODY_SOS);
+	/* Fall is a safety alarm: user mute applies to UI sounds, not this alert. */
+	buzzer_play_force(MELODY_SOS);
 #endif
 }
 
@@ -990,6 +998,9 @@ extern "C" void companion_fall_alarm_acknowledge_from_ui(void)
 	}
 	companion_fall_alarm_stop();
 	companion_fall_cancel_pending();
+#if defined(ZEPHCORE_FALL_DETECTOR)
+	fall_detector_reset();
+#endif
 	companion_send_fall_canceled_message();
 	LOG_INF("fall alarm acknowledged by button");
 }
@@ -1277,6 +1288,8 @@ static void companion_sos_tx_done(void)
 		companion_sos_tone.pending = false;
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
 		if (play) {
+			/* Fall's repeating alarm is forced separately. The final transmission
+			 * respects the user's buzzer preference for both SOS and Fall. */
 			buzzer_play(MELODY_SOS);
 		}
 #else
@@ -1799,6 +1812,39 @@ static bool handle_sos_cli(const char *line, char *reply)
 	return companion_sos_request(reply);
 }
 
+#if defined(ZEPHCORE_FALL_DETECTOR)
+static bool handle_fall_cli(const char *line, char *reply)
+{
+	if (strcmp(line, "get fall.sens") == 0) {
+		snprintf(reply, CLI_REPLY_SIZE, "fall.sens: %u (1=strict, 3=normal, 5=max)",
+			 fall_detector_get_sensitivity());
+		return true;
+	}
+	if (strncmp(line, "set fall.sens ", 14) != 0) {
+		return false;
+	}
+	const char *arg = line + 14;
+	while (*arg == ' ' || *arg == '\t') {
+		arg++;
+	}
+	if (arg[0] < '1' || arg[0] > '5' ||
+	    (arg[1] != '\0' && arg[1] != '\r' && arg[1] != '\n' &&
+	     arg[1] != ' ' && arg[1] != '\t')) {
+		strcpy(reply, "ERROR: use a value from 1 to 5");
+		return true;
+	}
+	uint8_t value = (uint8_t)(arg[0] - '0');
+	if (!fall_detector_set_sensitivity(value)) {
+		strcpy(reply, "ERROR: fall detector unavailable");
+		return true;
+	}
+	companion_mesh.prefs.fall_sensitivity = value;
+	k_event_post(&mesh_events, MESH_EVENT_PREFS_DIRTY);
+	snprintf(reply, CLI_REPLY_SIZE, "OK - fall.sens %u", value);
+	return true;
+}
+#endif
+
 static bool handle_tracking_cli(const char *line, char *reply)
 {
 	if (companion_tracking.enabled &&
@@ -2075,6 +2121,11 @@ static void companion_cli_exec(const char *line, char *reply)
 	if (handle_sos_cli(line, reply)) {
 		return;
 	}
+#if defined(ZEPHCORE_FALL_DETECTOR)
+	if (handle_fall_cli(line, reply)) {
+		return;
+	}
+#endif
 	if (handle_offgrid_cli(line, reply)) {
 		return;
 	}
@@ -2228,6 +2279,12 @@ static void gps_event_callback(void)
  * Updates mesh node position and RTC. */
 static void gps_fix_callback(double lat, double lon, int64_t utc_time)
 {
+	/* The GNSS worker owns NMEA parsing; only wake the main mesh thread here.
+	 * It will send a pending emergency packet with this freshly validated fix. */
+#ifdef ZEPHCORE_LORA
+	k_event_post(&mesh_events, MESH_EVENT_GPS_FIX);
+#endif
+
 	/* Sync RTC from GPS time */
 	if (utc_time > 0) {
 		LOG_INF("GPS fix: RTC sync time=%lld", utc_time);
@@ -2643,6 +2700,7 @@ int main(void)
 	k_event_init(&mesh_events);
 
 #if defined(ZEPHCORE_FALL_DETECTOR)
+	fall_detector_set_sensitivity(companion_mesh.prefs.fall_sensitivity);
 	fall_detector_begin([]() {
 		k_event_post(&mesh_events, MESH_EVENT_FALL_DETECTED);
 	});

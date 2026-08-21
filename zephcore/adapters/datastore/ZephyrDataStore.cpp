@@ -860,9 +860,18 @@ void ZephyrDataStore::loadPrefs(NodePrefs &prefs)
 	if (off + sizeof(prefs.tracking_group_name) <= len) {
 		memcpy(prefs.tracking_group_name, &buf[off],
 		       sizeof(prefs.tracking_group_name));
+		off += sizeof(prefs.tracking_group_name);
 		prefs.tracking_group_name[sizeof(prefs.tracking_group_name) - 1] = '\0';
 		if (prefs.tracking_group_name[0] == '\0') {
 			strcpy(prefs.tracking_group_name, "#tracks");
+		}
+	}
+
+	/* Offset 200: fall sensitivity. Older files retain the level-3 default. */
+	if (off < len) {
+		prefs.fall_sensitivity = buf[off++];
+		if (prefs.fall_sensitivity < 1 || prefs.fall_sensitivity > 5) {
+			prefs.fall_sensitivity = 3;
 		}
 	}
 }
@@ -968,7 +977,9 @@ void ZephyrDataStore::savePrefs(const NodePrefs &prefs)
 	/* Offset 168: companion tracking destination group. */
 	memcpy(&buf[off], prefs.tracking_group_name, sizeof(prefs.tracking_group_name));
 	off += sizeof(prefs.tracking_group_name);
-	/* Total: 200 bytes. */
+	/* Offset 200: fall sensitivity. */
+	buf[off++] = prefs.fall_sensitivity;
+	/* Total: 201 bytes. */
 
 	bool ok = atomicReplaceFile(PREFS_FILE, buf, off);
 	LOG_DBG("savePrefs: wrote %s, ok=%d (%d bytes), name='%.16s'",

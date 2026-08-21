@@ -14,6 +14,8 @@
 
 #include "ZephyrEnvSensors.h"
 
+#include <math.h>
+
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
 #include <zephyr/logging/log.h>
@@ -38,10 +40,11 @@ LOG_MODULE_REGISTER(zephcore_sensors, CONFIG_ZEPHCORE_SENSORS_LOG_LEVEL);
 #endif
 
 #if HAS_ENV_SENSORS && IS_ENABLED(CONFIG_ADC) && IS_ENABLED(CONFIG_REGULATOR) && \
-	DT_NODE_EXISTS(DT_NODELABEL(t1000_light_adc))
-#define HAS_T1000_ANALOG_LIGHT 1
+	DT_NODE_EXISTS(DT_NODELABEL(t1000_light_adc)) && \
+	DT_NODE_EXISTS(DT_NODELABEL(t1000_ntc_adc))
+#define HAS_T1000_ANALOG_SENSORS 1
 #else
-#define HAS_T1000_ANALOG_LIGHT 0
+#define HAS_T1000_ANALOG_SENSORS 0
 #endif
 
 #if HAS_ENV_SENSORS && (IS_ENABLED(CONFIG_TEMP_NRF5) || IS_ENABLED(CONFIG_TEMP_NRFS)) && \
@@ -182,7 +185,7 @@ static int m3_aht10_read(struct env_data *data)
 #define HAS_THINKNODE_M3_AHT10 0
 #endif
 
-#if HAS_T1000_ANALOG_LIGHT
+#if HAS_T1000_ANALOG_SENSORS
 static const struct device *t1000_light_adc_dev =
 	DEVICE_DT_GET(DT_PARENT(DT_NODELABEL(t1000_light_adc)));
 static const struct adc_channel_cfg t1000_light_adc_cfg =
@@ -191,6 +194,12 @@ static const uint8_t t1000_light_adc_channel =
 	DT_REG_ADDR(DT_NODELABEL(t1000_light_adc));
 static const uint8_t t1000_light_adc_resolution =
 	DT_PROP(DT_NODELABEL(t1000_light_adc), zephyr_resolution);
+static const struct adc_channel_cfg t1000_ntc_adc_cfg =
+	ADC_CHANNEL_CFG_DT(DT_NODELABEL(t1000_ntc_adc));
+static const uint8_t t1000_ntc_adc_channel =
+	DT_REG_ADDR(DT_NODELABEL(t1000_ntc_adc));
+static const uint8_t t1000_ntc_adc_resolution =
+	DT_PROP(DT_NODELABEL(t1000_ntc_adc), zephyr_resolution);
 
 #if IS_ENABLED(CONFIG_REGULATOR) && DT_NODE_EXISTS(DT_NODELABEL(sensor_power))
 static const struct device *t1000_sensor_power =
@@ -206,7 +215,7 @@ static const struct device *t1000_sensor_enable =
 static const struct device *t1000_sensor_enable = NULL;
 #endif
 
-static bool t1000_light_available = false;
+static bool t1000_analog_sensors_available = false;
 
 static bool regulator_ready(const struct device *dev)
 {
@@ -238,7 +247,7 @@ static void t1000_disable_analog_power(void)
 	regulator_disable(t1000_sensor_power);
 }
 
-static int t1000_adc_read_average_raw(int32_t *raw_avg)
+static int t1000_adc_read_average_raw(uint8_t channel, uint8_t resolution, int32_t *raw_avg)
 {
 	const int samples = 15;
 	int32_t sum = 0;
@@ -249,10 +258,10 @@ static int t1000_adc_read_average_raw(int32_t *raw_avg)
 		int rc;
 
 		sequence = {};
-		sequence.channels = BIT(t1000_light_adc_channel);
+		sequence.channels = BIT(channel);
 		sequence.buffer = &sample;
 		sequence.buffer_size = sizeof(sample);
-		sequence.resolution = t1000_light_adc_resolution;
+		sequence.resolution = resolution;
 
 		rc = adc_read(t1000_light_adc_dev, &sequence);
 		if (rc < 0) {
@@ -272,7 +281,9 @@ static float t1000_light_level_from_raw(int32_t raw)
 		raw = 0;
 	}
 
-	uint32_t mv = ((uint32_t)raw * 3000U + 2048U) / 4096U;
+	/* nRF52840 SAADC: 0.6V internal reference with 1/6 gain = 3.6V full scale.
+	 * This is also Meshtastic's default AREF_VOLTAGE for Tracker T1000-E. */
+	uint32_t mv = ((uint32_t)raw * 3600U + 2048U) / 4096U;
 
 	if (mv <= 80U) {
 		return 0.0f;
@@ -284,10 +295,10 @@ static float t1000_light_level_from_raw(int32_t raw)
 	return (100.0f * (float)(mv - 80U)) / 2400.0f;
 }
 
-static void t1000_analog_light_init(void)
+static void t1000_analog_sensors_init(void)
 {
 	if (!device_is_ready(t1000_light_adc_dev)) {
-		LOG_WRN("T1000-E light ADC is not ready");
+		LOG_WRN("T1000-E ADC is not ready");
 		return;
 	}
 
@@ -301,9 +312,14 @@ static void t1000_analog_light_init(void)
 		LOG_WRN("T1000-E light ADC setup failed: %d", rc);
 		return;
 	}
+	rc = adc_channel_setup(t1000_light_adc_dev, &t1000_ntc_adc_cfg);
+	if (rc < 0) {
+		LOG_WRN("T1000-E NTC ADC setup failed: %d", rc);
+		return;
+	}
 
-	t1000_light_available = true;
-	LOG_INF("Found T1000-E analog light sensor");
+	t1000_analog_sensors_available = true;
+	LOG_INF("Found T1000-E analog light and NTC sensors");
 }
 
 static bool t1000_read_light(struct env_data *data)
@@ -311,7 +327,7 @@ static bool t1000_read_light(struct env_data *data)
 	int32_t raw = 0;
 	int rc;
 
-	if (!t1000_light_available) {
+	if (!t1000_analog_sensors_available) {
 		return false;
 	}
 
@@ -321,7 +337,8 @@ static bool t1000_read_light(struct env_data *data)
 		return false;
 	}
 
-	rc = t1000_adc_read_average_raw(&raw);
+	rc = t1000_adc_read_average_raw(t1000_light_adc_channel,
+						t1000_light_adc_resolution, &raw);
 	t1000_disable_analog_power();
 	if (rc < 0) {
 		LOG_WRN("T1000-E light ADC read failed: %d", rc);
@@ -330,6 +347,89 @@ static bool t1000_read_light(struct env_data *data)
 
 	data->light_lux = t1000_light_level_from_raw(raw);
 	data->has_light = true;
+	return true;
+}
+
+/* Values and divider topology match Meshtastic's T1000xSensor.  The 10k NTC
+ * is paired with an 8.25k series resistor and powered by the 3.0V sensor rail. */
+static const uint32_t t1000_ntc_resistance_ohms[] = {
+	113347, 107565, 102116, 96978, 92132, 87559, 83242, 79166, 75316, 71677,
+	68237, 64991, 61919, 59011, 56258, 53650, 51178, 48835, 46613, 44506,
+	42506, 40600, 38791, 37073, 35442, 33892, 32420, 31020, 29689, 28423,
+	27219, 26076, 24988, 23951, 22963, 22021, 21123, 20267, 19450, 18670,
+	17926, 17214, 16534, 15886, 15266, 14674, 14108, 13566, 13049, 12554,
+	12081, 11628, 11195, 10780, 10382, 10000, 9634, 9284, 8947, 8624,
+	8315, 8018, 7734, 7461, 7199, 6948, 6707, 6475, 6253, 6039,
+	5834, 5636, 5445, 5262, 5086, 4917, 4754, 4597, 4446, 4301,
+	4161, 4026, 3896, 3771, 3651, 3535, 3423, 3315, 3211, 3111,
+	3014, 2922, 2834, 2748, 2666, 2586, 2509, 2435, 2364, 2294,
+	2228, 2163, 2100, 2040, 1981, 1925, 1870, 1817, 1766, 1716,
+	1669, 1622, 1578, 1535, 1493, 1452, 1413, 1375, 1338, 1303,
+	1268, 1234, 1202, 1170, 1139, 1110, 1081, 1053, 1026, 999,
+	974, 949, 925, 902, 880, 858,
+};
+
+static float t1000_ntc_temp_from_raw(int32_t raw)
+{
+	constexpr uint32_t kAdcFullScaleMv = 3600;
+	constexpr uint32_t kSensorRailMv = 3000;
+	constexpr float kSeriesResistanceOhms = 8250.0f;
+	const size_t count = ARRAY_SIZE(t1000_ntc_resistance_ohms);
+	const float ntc_mv = (float)raw * (float)kAdcFullScaleMv / 4096.0f;
+
+	if (ntc_mv <= 0.0f || ntc_mv >= (float)kSensorRailMv) {
+		return NAN;
+	}
+
+	const float resistance = kSeriesResistanceOhms *
+		((float)kSensorRailMv / ntc_mv - 1.0f);
+	if (resistance >= t1000_ntc_resistance_ohms[0]) {
+		return -30.0f;
+	}
+	if (resistance <= t1000_ntc_resistance_ohms[count - 1]) {
+		return 105.0f;
+	}
+
+	for (size_t i = 1; i < count; ++i) {
+		if (resistance >= t1000_ntc_resistance_ohms[i]) {
+			const float above = (float)t1000_ntc_resistance_ohms[i - 1];
+			const float below = (float)t1000_ntc_resistance_ohms[i];
+			return -30.0f + (float)(i - 1) + (above - resistance) / (above - below);
+		}
+	}
+	return NAN;
+}
+
+static bool t1000_read_ntc_temperature(struct env_data *data)
+{
+	int32_t raw = 0;
+	int rc;
+
+	if (!t1000_analog_sensors_available) {
+		return false;
+	}
+
+	rc = t1000_enable_analog_power();
+	if (rc < 0) {
+		LOG_WRN("T1000-E NTC power enable failed: %d", rc);
+		return false;
+	}
+	rc = t1000_adc_read_average_raw(t1000_ntc_adc_channel,
+						t1000_ntc_adc_resolution, &raw);
+	t1000_disable_analog_power();
+	if (rc < 0) {
+		LOG_WRN("T1000-E NTC ADC read failed: %d", rc);
+		return false;
+	}
+
+	const float temperature_c = t1000_ntc_temp_from_raw(raw);
+	if (isnan(temperature_c)) {
+		LOG_WRN("T1000-E NTC sample out of range: %d", raw);
+		return false;
+	}
+
+	data->temperature_c = temperature_c;
+	data->has_temperature = true;
 	return true;
 }
 #endif
@@ -442,9 +542,9 @@ done:
 #if HAS_THINKNODE_M3_AHT10
 	env_available = env_available || m3_aht10_available;
 #endif
-#if HAS_T1000_ANALOG_LIGHT
-	t1000_analog_light_init();
-	env_available = env_available || t1000_light_available;
+#if HAS_T1000_ANALOG_SENSORS
+	t1000_analog_sensors_init();
+	env_available = env_available || t1000_analog_sensors_available;
 #endif
 	if (!env_available) {
 		LOG_INF("No environment sensors found");
@@ -513,7 +613,8 @@ int env_sensors_read(struct env_data *data)
 
 	/* === MCU die temperature — fallback when no external temp sensor exists.
 	 * ThinkNode M3 has AHT10, so never expose the warmer nRF die value. */
-#if defined(MCU_TEMP_NODE) && !defined(CONFIG_BOARD_THINKNODE_M3)
+#if defined(MCU_TEMP_NODE) && !defined(CONFIG_BOARD_THINKNODE_M3) && \
+	!defined(CONFIG_BOARD_T1000_E)
 	const struct device *mcu_temp = DEVICE_DT_GET(MCU_TEMP_NODE);
 	if (mcu_temp && device_is_ready(mcu_temp)) {
 		if (sensor_sample_fetch(mcu_temp) == 0 &&
@@ -524,7 +625,8 @@ int env_sensors_read(struct env_data *data)
 	}
 #endif
 
-#if HAS_T1000_ANALOG_LIGHT
+#if HAS_T1000_ANALOG_SENSORS
+	t1000_read_ntc_temperature(data);
 	t1000_read_light(data);
 #endif
 

@@ -97,7 +97,11 @@
 		compatible = "regulator-fixed";
 		regulator-name = "sensor-power";
 		enable-gpios = <&gpio1 6 GPIO_ACTIVE_HIGH>;
-		/* NOT regulator-boot-on - enabled on-demand in ZephyrBoard.cpp */
+		/* QMA6100P and its I2C pull-ups share this rail.  Keep it high as in
+		 * Seeed/Meshtastic reference firmware; the battery ADC may otherwise
+		 * turn the accelerometer off after it has been initialized. */
+		regulator-boot-on;
+		regulator-always-on;
 	};
 
 	/* Sensor analog front-end enable - P0.04 (SENSOR_EN in MeshCore/Meshtastic)
@@ -107,7 +111,17 @@
 		compatible = "regulator-fixed";
 		regulator-name = "t1000-sensor-enable";
 		enable-gpios = <&gpio0 4 GPIO_ACTIVE_HIGH>;
-		/* NOT regulator-boot-on - enabled only while sampling analog sensors */
+		regulator-boot-on;
+		regulator-always-on;
+	};
+
+	/* QMA6100P power gate. The accelerometer is off until P1.07 is high. */
+	accel_power: accel-power {
+		compatible = "regulator-fixed";
+		regulator-name = "accel-power";
+		enable-gpios = <&gpio1 7 GPIO_ACTIVE_HIGH>;
+		regulator-boot-on;
+		regulator-always-on;
 	};
 
 	/* Battery ADC channel reference for ZephyrBoard */
@@ -140,6 +154,7 @@
 		buzzer-enable = &buzzer_enable;
 		lora0 = &lora;
 		t1000-sensor-enable = &t1000_sensor_enable;
+		accel-power = &accel_power;
 	};
 };
 
@@ -243,7 +258,9 @@
 &i2c0 {
 	compatible = "nordic,nrf-twim";
 	status = "okay";
-	clock-frequency = <I2C_BITRATE_FAST>;
+	/* QMA6100P on this board is unreliable at 400 kHz; the vendor reference
+	 * firmware explicitly uses 100 kHz. */
+	clock-frequency = <I2C_BITRATE_STANDARD>;
 	pinctrl-0 = <&i2c0_default>;
 	pinctrl-1 = <&i2c0_sleep>;
 	pinctrl-names = "default", "sleep";

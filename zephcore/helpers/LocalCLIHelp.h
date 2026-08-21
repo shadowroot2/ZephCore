@@ -90,13 +90,17 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"get/set autoshutdown\r\nget/set autoshutdown.emergency\r\n"
 #endif
 		"get/set tracking.interval\r\nget/set tracking.group\r\n"
+#if defined(CONFIG_BOARD_THINKNODE_M3) || defined(CONFIG_BOARD_T1000_E)
+		"get/set fall.sens (1-5)\r\n"
+#endif
+		/* Emergency commands are grouped directly before DFU. */
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
+		"findme\r\n"
+#endif
+		"sos\r\n"
 		"start dfu\r\nstart ota\r\n"
 #if !defined(CONFIG_SOC_FAMILY_NORDIC_NRF)
 		"stop ota\r\n"
-#endif
-		"sos\r\n"
-#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
-		"findme\r\n"
 #endif
 		"reboot\r\n"
 #if IS_ENABLED(CONFIG_POWEROFF)

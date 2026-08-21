@@ -1503,9 +1503,23 @@ int CompanionMesh::appendSelfTelemetry(uint8_t *reply, uint8_t permissions)
 	bool env_ok = (env_sensors_read(&env) == 0);
 	bool temp_reported = false;
 
+	/* T1000-E's NTC replaces the nRF die sensor that was previously sent under
+	 * base telemetry permission. Keep that contract: otherwise the temperature
+	 * silently disappears for contacts without Environment permission. */
+#if defined(CONFIG_BOARD_T1000_E)
+	if (env_ok && env.has_temperature) {
+		temp_reported = true;
+		reply[i++] = CH_SELF;
+		reply[i++] = LPP_TEMPERATURE;
+		int16_t temp = (int16_t)(env.temperature_c * 10);
+		reply[i++] = (temp >> 8) & 0xFF;
+		reply[i++] = temp & 0xFF;
+	}
+#endif
+
 	if (permissions & TELEM_PERM_ENVIRONMENT) {
 		if (env_ok) {
-			if (env.has_temperature) {
+			if (env.has_temperature && !temp_reported) {
 				temp_reported = true;
 				reply[i++] = CH_SELF;
 				reply[i++] = LPP_TEMPERATURE;
