@@ -37,6 +37,8 @@ extern "C" {
 #define MELODY_LED_ON      "lon:d=16,o=7,b=200:c,p,c,p,8e"
 #define MELODY_LED_OFF     "lof:d=16,o=7,b=200:c,p,c,p,8g5"
 #define MELODY_SOS_CONFIRM "sok:d=16,o=7,b=200:c,p,e,p,g"
+/* Short falling acknowledgement after a Fall alarm is cancelled. */
+#define MELODY_FALL_CANCELED "fcan:d=16,o=7,b=220:g,e,c"
 /* Morse "ZEPHCORE" (unit = 62.5 ms, total = 5.06 s). */
 #define MELODY_FINDME      "FindMe:d=32,o=5,b=120:" \
                            "16c6.,p,16c6.,p,c6,p,c6,p,p,p," /* Z --.. */ \

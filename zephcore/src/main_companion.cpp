@@ -116,6 +116,7 @@ extern "C" void bt_ctlr_assert_handle(char *file, uint32_t line)
 #define MESH_EVENT_CONTACT_ITER  BIT(10) /* Continue contact-dump iteration on main thread */
 #define MESH_EVENT_FALL_DETECTED BIT(11) /* Accelerometer worker detected a fall */
 #define MESH_EVENT_GPS_FIX       BIT(12) /* Valid GPS fix: finish pending SOS/Fall promptly */
+#define MESH_EVENT_FALL_PREALERT  BIT(13) /* Fall confirmed; play forced acknowledgement */
 
 #ifdef ZEPHCORE_LORA
 /* Forward decls — data_store + companion_mesh_ptr statics are defined further
@@ -125,6 +126,7 @@ static void vcontact_battery_alert_check(void);
 static void companion_sos_process(void);
 static void companion_sos_tx_done(void);
 static void companion_fall_detected(void);
+static void companion_fall_prealert(void);
 static void companion_tracking_process(void);
 #endif
 
@@ -140,7 +142,7 @@ static atomic_t pending_rtc_epoch = ATOMIC_INIT(0);
 	MESH_EVENT_BLE_RX | MESH_EVENT_MAINTENANCE | MESH_EVENT_UI_ACTION |  \
 	MESH_EVENT_GPS_ACTION | MESH_EVENT_TX_DRAIN | MESH_EVENT_PREFS_DIRTY | \
 	MESH_EVENT_RTC_SAVE | MESH_EVENT_CONTACT_ITER | MESH_EVENT_FALL_DETECTED | \
-	MESH_EVENT_GPS_FIX)
+	MESH_EVENT_GPS_FIX | MESH_EVENT_FALL_PREALERT)
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_DESIGN_JOYSTICK)
 #define MESH_EVENT_JOYSTICK_LOOP BIT(7)  /* Joystick UI loop tick (50 ms) */
 #define MESH_EVENT_ALL           (MESH_EVENT_BASE | MESH_EVENT_JOYSTICK_LOOP)
@@ -519,7 +521,16 @@ static void mesh_event_loop(void)
 		}
 
 		if (events & MESH_EVENT_FALL_DETECTED) {
-			companion_fall_detected();
+#if defined(ZEPHCORE_FALL_DETECTOR)
+			if (fall_detector_is_enabled()) {
+				companion_fall_detected();
+			}
+#endif
+		}
+		if (events & MESH_EVENT_FALL_PREALERT) {
+#if defined(ZEPHCORE_FALL_DETECTOR)
+			companion_fall_prealert();
+#endif
 		}
 		/* gps_fix_callback has validated a fresh coordinate.  Do not wait for
 		 * the 30-second maintenance tick before sending the final SOS/Fall. */
@@ -1001,6 +1012,10 @@ extern "C" void companion_fall_alarm_acknowledge_from_ui(void)
 #if defined(ZEPHCORE_FALL_DETECTOR)
 	fall_detector_reset();
 #endif
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
+	/* Fall acknowledgement must be audible even when ordinary UI sounds mute. */
+	buzzer_play_force(MELODY_FALL_CANCELED);
+#endif
 	companion_send_fall_canceled_message();
 	LOG_INF("fall alarm acknowledged by button");
 }
@@ -1240,6 +1255,13 @@ static void companion_fall_detected(void)
 	if (companion_emergency_request(COMPANION_EMERGENCY_FALL, reply, false)) {
 		LOG_WRN("%s", reply);
 	}
+}
+
+static void companion_fall_prealert(void)
+{
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
+	buzzer_play_force(MELODY_FALL_CANCELED);
+#endif
 }
 
 extern "C" void companion_sos_request_from_ui(void)
@@ -1815,8 +1837,36 @@ static bool handle_sos_cli(const char *line, char *reply)
 #if defined(ZEPHCORE_FALL_DETECTOR)
 static bool handle_fall_cli(const char *line, char *reply)
 {
+	if (strcmp(line, "fall") == 0 || strcmp(line, "get fall") == 0) {
+		snprintf(reply, CLI_REPLY_SIZE, "fall: %s; sens=%u",
+			 fall_detector_is_enabled() ? "on" : "off",
+			 fall_detector_get_sensitivity());
+		return true;
+	}
+	if (strcmp(line, "fall on") == 0) {
+		if (!fall_detector_set_enabled(true)) {
+			strcpy(reply, "ERROR: fall detector unavailable");
+			return true;
+		}
+		companion_mesh.prefs.fall_enabled = 1;
+		k_event_post(&mesh_events, MESH_EVENT_PREFS_DIRTY);
+		snprintf(reply, CLI_REPLY_SIZE, "OK - fall on (sens %u)",
+			 fall_detector_get_sensitivity());
+		return true;
+	}
+	if (strcmp(line, "fall off") == 0) {
+		fall_detector_set_enabled(false);
+		companion_mesh.prefs.fall_enabled = 0;
+		k_event_post(&mesh_events, MESH_EVENT_PREFS_DIRTY);
+		if (companion_sos.type == COMPANION_EMERGENCY_FALL) {
+			companion_fall_alarm_stop();
+			companion_fall_cancel_pending();
+		}
+		strcpy(reply, "OK - fall off");
+		return true;
+	}
 	if (strcmp(line, "get fall.sens") == 0) {
-		snprintf(reply, CLI_REPLY_SIZE, "fall.sens: %u (1=strict, 3=normal, 5=max)",
+		snprintf(reply, CLI_REPLY_SIZE, "fall.sens: %u (1=max, 3=normal, 5=strict)",
 			 fall_detector_get_sensitivity());
 		return true;
 	}
@@ -2701,6 +2751,10 @@ int main(void)
 
 #if defined(ZEPHCORE_FALL_DETECTOR)
 	fall_detector_set_sensitivity(companion_mesh.prefs.fall_sensitivity);
+	fall_detector_set_enabled(companion_mesh.prefs.fall_enabled != 0);
+	fall_detector_set_prealert_callback([]() {
+		k_event_post(&mesh_events, MESH_EVENT_FALL_PREALERT);
+	});
 	fall_detector_begin([]() {
 		k_event_post(&mesh_events, MESH_EVENT_FALL_DETECTED);
 	});

@@ -19,26 +19,46 @@ constexpr uint8_t I2C_ADDR_QMA6100 = 0x12;
 struct fall_profile {
 	uint16_t free_fall_max_mg;
 	uint16_t impact_min_mg;
+	uint8_t free_fall_min_samples;
 	uint16_t free_fall_window_ms;
 	uint16_t settle_start_ms;
 	uint16_t settle_window_ms;
 	uint8_t settle_stable_min_percent;
+	uint16_t settle_vector_delta_mg;
+	uint16_t posture_change_min_mg;
 };
 
-/* Level 3 is the original, proven M3 profile. */
+/* Level 3 is the original, proven M3 profile.  The last two values are used
+ * only by QMA6100P, whose fixed board offset makes magnitude-only stillness
+ * too permissive. */
 constexpr fall_profile FALL_PROFILES[] = {
-	{ 450, 3800,  450, 1000, 8000, 90 }, /* 1: strict */
-	{ 550, 3300,  500, 1000, 8000, 88 }, /* 2 */
-	{ 650, 2800,  600, 1000, 8000, 85 }, /* 3: M3 default */
-	{ 750, 2300,  800,  800, 7000, 82 }, /* 4 */
-	{ 850, 1800, 1000,  600, 6000, 80 }, /* 5: most sensitive */
+	{ 850, 1800, 1, 1000,  600, 6000, 80, 0, 0 }, /* 1: most sensitive */
+	{ 750, 2300, 1,  800,  800, 7000, 82, 0, 0 }, /* 2 */
+	{ 650, 2800, 1,  600, 1000, 8000, 85, 0, 0 }, /* 3: M3 default */
+	{ 550, 3300, 1,  500, 1000, 8000, 88, 0, 0 }, /* 4 */
+	{ 450, 3800, 1,  450, 1000, 8000, 90, 0, 0 }, /* 5: strict */
 };
+#if defined(CONFIG_BOARD_T1000_E)
+/* A device carried in a backpack is routinely shaken and bumped.  A bump can
+ * make both a low-g sample and a peak, but it normally has no sustained change
+ * in resting orientation.  Keep the fall sequence short (low-g -> impact) and
+ * require its final resting vector to differ substantially from the vector
+ * before the event. */
+constexpr fall_profile T1000_FALL_PROFILES[] = {
+	/* QMA6100P samples from a real 1--1.5 m fall: low-g about 790 mg,
+	 * impact about 1.43--1.50 g, post-fall posture delta about 536 mg. */
+	{ 850, 1150, 1, 450,  700,  7000, 85, 800, 250 }, /* 1: most sensitive */
+	{ 825, 1200, 1, 400,  800,  7500, 86, 750, 350 }, /* 2 */
+	{ 800, 1250, 1, 350, 1000,  8000, 88, 650, 450 }, /* 3: default */
+	{ 700, 1550, 2, 300, 1200,  8500, 90, 450, 600 }, /* 4 */
+	{ 600, 1900, 3, 250, 1400, 10000, 92, 300, 800 }, /* 5: strict */
+};
+#endif
 constexpr uint32_t SAMPLE_PERIOD_MS = 20;
 /* Stillness is relative, not tied to an ideal 1 g magnitude: real QMA6100P
  * offsets vary by board and mounting orientation. */
 constexpr uint32_t SETTLE_REFERENCE_MIN_MG = 200;
 constexpr uint32_t SETTLE_REFERENCE_MAX_MG = 3000;
-constexpr uint32_t SETTLE_STABLE_DELTA_MG = 500;
 constexpr uint32_t FALL_COOLDOWN_MS = 60000;
 
 enum detector_state {
@@ -61,18 +81,37 @@ static const struct device *const t1000_sensor_enable =
 
 static struct k_work_delayable sample_work;
 static fall_detector_callback_t detected_callback;
+static fall_detector_callback_t prealert_callback;
 static enum detector_state state;
 static uint32_t state_started_ms;
 static uint32_t still_samples;
 static uint32_t settle_samples;
 static uint32_t settle_reference_mg;
+static uint8_t free_fall_samples;
+static int32_t idle_x;
+static int32_t idle_y;
+static int32_t idle_z;
+static uint8_t idle_samples;
+static int32_t pre_fall_x;
+static int32_t pre_fall_y;
+static int32_t pre_fall_z;
+static int32_t settle_x;
+static int32_t settle_y;
+static int32_t settle_z;
 static uint8_t consecutive_read_errors;
 static uint8_t sensitivity = 3;
 static bool available;
+static bool enabled = true;
+static bool sample_work_initialized;
+static bool accel_power_enabled;
 
 static const fall_profile &active_profile(void)
 {
+#if defined(CONFIG_BOARD_T1000_E)
+	return T1000_FALL_PROFILES[sensitivity - 1U];
+#else
 	return FALL_PROFILES[sensitivity - 1U];
+#endif
 }
 
 static uint32_t isqrt_u32(uint32_t value)
@@ -101,16 +140,71 @@ static uint32_t magnitude_mg(int32_t x, int32_t y, int32_t z)
 	return isqrt_u32(sum);
 }
 
+static uint32_t vector_delta_mg(int32_t ax, int32_t ay, int32_t az,
+				int32_t bx, int32_t by, int32_t bz)
+{
+	return magnitude_mg(ax - bx, ay - by, az - bz);
+}
+
+static void update_idle_reference(int32_t x, int32_t y, int32_t z, uint32_t magnitude)
+{
+#if defined(CONFIG_BOARD_T1000_E)
+	if (magnitude < SETTLE_REFERENCE_MIN_MG || magnitude > SETTLE_REFERENCE_MAX_MG) {
+		return;
+	}
+	if (idle_samples == 0) {
+		idle_x = x;
+		idle_y = y;
+		idle_z = z;
+	} else {
+		/* Slow EWMA: motion before the suspected fall cannot rewrite the
+		 * reference in one or two samples. */
+		idle_x += (x - idle_x) / 16;
+		idle_y += (y - idle_y) / 16;
+		idle_z += (z - idle_z) / 16;
+	}
+	if (idle_samples < UINT8_MAX) {
+		idle_samples++;
+	}
+#else
+	ARG_UNUSED(x);
+	ARG_UNUSED(y);
+	ARG_UNUSED(z);
+	ARG_UNUSED(magnitude);
+#endif
+}
+
+static int accel_power_on(void)
+{
+	if (accel_power_enabled) {
+		return 0;
+	}
+	if (!device_is_ready(accel_power)) {
+		return -ENODEV;
+	}
+	int rc = regulator_enable(accel_power);
+	if (rc == 0) {
+		accel_power_enabled = true;
+	}
+	return rc;
+}
+
+static void accel_power_off(void)
+{
+	if (!accel_power_enabled) {
+		return;
+	}
+	(void)regulator_disable(accel_power);
+	accel_power_enabled = false;
+}
+
 #if defined(CONFIG_BOARD_THINKNODE_M3)
 static int accel_init(void)
 {
 	uint8_t whoami = 0;
 	int rc;
 
-	if (!device_is_ready(accel_power)) {
-		return -ENODEV;
-	}
-	rc = regulator_enable(accel_power);
+	rc = accel_power_on();
 	if (rc != 0) {
 		return rc;
 	}
@@ -162,7 +256,7 @@ static int accel_init(void)
 	/* T1000-E powers its I2C rail from P1.6 and the QMA6100P itself from
 	 * P1.7.  This order and 20ms settling time match the board reference
 	 * firmware. P0.4 is kept high too: it is part of the shared sensor rail. */
-	if (!device_is_ready(t1000_sensor_power) || !device_is_ready(accel_power) ||
+	if (!device_is_ready(t1000_sensor_power) ||
 	    !device_is_ready(t1000_sensor_enable)) {
 		return -ENODEV;
 	}
@@ -170,7 +264,7 @@ static int accel_init(void)
 	if (rc != 0) {
 		return rc;
 	}
-	rc = regulator_enable(accel_power);
+	rc = accel_power_on();
 	if (rc != 0) {
 		return rc;
 	}
@@ -193,8 +287,8 @@ static int accel_init(void)
 		return -ENODEV;
 	}
 
-	/* QMA6100P reference sequence: reset, select +/-8g, then enter active
-	 * mode.  Do not overwrite the clock and filter bits left by the reset. */
+	/* Preserve the board's known-good clock and filter setup.  Explicitly
+	 * replacing PM/ODR changed the measured fall waveform on real hardware. */
 	rc = i2c_reg_write_byte(i2c, I2C_ADDR_QMA6100, 0x36, 0xB6);
 	if (rc == 0) {
 		k_sleep(K_MSEC(5));
@@ -235,9 +329,13 @@ static int accel_read_mg(int32_t *x, int32_t *y, int32_t *z)
 static void detector_reset(void)
 {
 	state = DETECTOR_IDLE;
+	free_fall_samples = 0;
 	still_samples = 0;
 	settle_samples = 0;
 	settle_reference_mg = 0;
+	settle_x = 0;
+	settle_y = 0;
+	settle_z = 0;
 }
 
 static void detector_sample(struct k_work *work)
@@ -246,17 +344,46 @@ static void detector_sample(struct k_work *work)
 	int32_t x, y, z;
 	uint32_t now = k_uptime_get_32();
 	const fall_profile &profile = active_profile();
+	if (!enabled) {
+		return;
+	}
 
 	if (accel_read_mg(&x, &y, &z) == 0) {
 		consecutive_read_errors = 0;
 		uint32_t magnitude = magnitude_mg(x, y, z);
 		switch (state) {
-		case DETECTOR_IDLE:
-			if (magnitude <= profile.free_fall_max_mg) {
-				state = DETECTOR_FREE_FALL;
-				state_started_ms = now;
+		case DETECTOR_IDLE: {
+#if defined(CONFIG_BOARD_T1000_E)
+			bool low_g = magnitude <= profile.free_fall_max_mg;
+			if (!low_g) {
+				update_idle_reference(x, y, z, magnitude);
+			}
+#else
+			bool low_g = magnitude <= profile.free_fall_max_mg;
+#endif
+			if (low_g) {
+				if (free_fall_samples == 0) {
+					state_started_ms = now;
+				}
+				if (free_fall_samples < UINT8_MAX) {
+					free_fall_samples++;
+				}
+				if (free_fall_samples >= profile.free_fall_min_samples) {
+#if defined(CONFIG_BOARD_T1000_E)
+					pre_fall_x = idle_x;
+					pre_fall_y = idle_y;
+					pre_fall_z = idle_z;
+#endif
+					state = DETECTOR_FREE_FALL;
+				}
+			} else {
+				free_fall_samples = 0;
+#if !defined(CONFIG_BOARD_T1000_E)
+				update_idle_reference(x, y, z, magnitude);
+#endif
 			}
 			break;
+		}
 		case DETECTOR_FREE_FALL:
 			if (magnitude >= profile.impact_min_mg) {
 				state = DETECTOR_SETTLING;
@@ -264,6 +391,9 @@ static void detector_sample(struct k_work *work)
 				still_samples = 0;
 				settle_samples = 0;
 				settle_reference_mg = 0;
+				settle_x = 0;
+				settle_y = 0;
+				settle_z = 0;
 			} else if (now - state_started_ms > profile.free_fall_window_ms) {
 				detector_reset();
 			}
@@ -279,13 +409,15 @@ static void detector_sample(struct k_work *work)
 					if (magnitude >= SETTLE_REFERENCE_MIN_MG &&
 					    magnitude <= SETTLE_REFERENCE_MAX_MG) {
 						settle_reference_mg = magnitude;
+						settle_x = x;
+						settle_y = y;
+						settle_z = z;
 						still_samples++;
 					}
 				} else {
-					uint32_t delta = magnitude > settle_reference_mg ?
-						magnitude - settle_reference_mg :
-						settle_reference_mg - magnitude;
-					if (delta <= SETTLE_STABLE_DELTA_MG) {
+					uint32_t delta = vector_delta_mg(x, y, z,
+						settle_x, settle_y, settle_z);
+					if (delta <= profile.settle_vector_delta_mg) {
 						still_samples++;
 					}
 				}
@@ -303,7 +435,10 @@ static void detector_sample(struct k_work *work)
 #if defined(CONFIG_BOARD_T1000_E)
 				uint32_t still_pct = settle_samples != 0 ?
 					(still_samples * 100U) / settle_samples : 0U;
+				uint32_t posture_delta = vector_delta_mg(settle_x, settle_y, settle_z,
+					pre_fall_x, pre_fall_y, pre_fall_z);
 				if (settle_reference_mg != 0 &&
+					posture_delta >= profile.posture_change_min_mg &&
 					still_pct >= profile.settle_stable_min_percent) {
 #else
 				uint32_t still_pct = settle_samples != 0 ?
@@ -314,6 +449,9 @@ static void detector_sample(struct k_work *work)
 					LOG_WRN("fall detected");
 					state = DETECTOR_COOLDOWN;
 					state_started_ms = now;
+					if (prealert_callback) {
+						prealert_callback();
+					}
 					if (detected_callback) {
 						detected_callback();
 					}
@@ -350,24 +488,65 @@ extern "C" void fall_detector_begin(fall_detector_callback_t callback)
 {
 	detected_callback = callback;
 	consecutive_read_errors = 0;
+	k_work_init_delayable(&sample_work, detector_sample);
+	sample_work_initialized = true;
+	if (!enabled) {
+		available = false;
+		LOG_INF("fall detector disabled");
+		return;
+	}
 	if (!device_is_ready(i2c)) {
 		LOG_WRN("fall detector disabled: I2C unavailable");
 		return;
 	}
 	if (accel_init() != 0) {
 		LOG_WRN("fall detector disabled: accelerometer unavailable");
+		accel_power_off();
 		return;
 	}
 	available = true;
 	detector_reset();
-	k_work_init_delayable(&sample_work, detector_sample);
 	k_work_schedule(&sample_work, K_MSEC(SAMPLE_PERIOD_MS));
 	LOG_INF("fall detector enabled");
+}
+
+extern "C" void fall_detector_set_prealert_callback(fall_detector_callback_t callback)
+{
+	prealert_callback = callback;
 }
 
 extern "C" bool fall_detector_is_available(void)
 {
 	return available;
+}
+
+extern "C" bool fall_detector_set_enabled(bool value)
+{
+	enabled = value;
+	detector_reset();
+	consecutive_read_errors = 0;
+	if (!sample_work_initialized) {
+		return true;
+	}
+	if (!value) {
+		(void)k_work_cancel_delayable(&sample_work);
+		accel_power_off();
+		available = false;
+		return true;
+	}
+	if (accel_init() != 0) {
+		available = false;
+		accel_power_off();
+		return false;
+	}
+	available = true;
+	k_work_schedule(&sample_work, K_MSEC(SAMPLE_PERIOD_MS));
+	return true;
+}
+
+extern "C" bool fall_detector_is_enabled(void)
+{
+	return enabled;
 }
 
 extern "C" bool fall_detector_set_sensitivity(uint8_t value)

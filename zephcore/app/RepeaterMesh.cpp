@@ -1335,7 +1335,7 @@ static const char *repeater_remote_help(const char *command)
 		". help 2";
 #if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
 	static const char page2[] =
-		"Help 2/12: bridge [on|off|ping]; get/set bridge.type; get/set bridge.priority (0..7); "
+		"Help 2/12: bridge [on|off|ping|keygen|unpair]; get/set bridge.type; get/set bridge.priority; "
 		"get bridge.delay; get/set bridge.peer; set bridge.key. help 3";
 #else
 	static const char page2[] =

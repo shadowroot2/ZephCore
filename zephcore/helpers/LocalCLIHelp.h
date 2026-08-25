@@ -91,7 +91,7 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 #endif
 		"get/set tracking.interval\r\nget/set tracking.group\r\n"
 #if defined(CONFIG_BOARD_THINKNODE_M3) || defined(CONFIG_BOARD_T1000_E)
-		"get/set fall.sens (1-5)\r\n"
+		"fall [on|off]\r\nget/set fall.sens (1-5)\r\n"
 #endif
 		/* Emergency commands are grouped directly before DFU. */
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
@@ -143,14 +143,14 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"get/set backoff.multiplier\r\nget/set loop.detect\r\n"
 		"get/set rxduty\r\n"
 	#if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
-		"bridge [on|off|ping|keygen] (keygen: local)\r\nget/set bridge.type\r\n"
+		"bridge [on|off|ping|keygen|unpair] (keygen: local)\r\nget/set bridge.type\r\n"
 		#if defined(CONFIG_SOC_FAMILY_ESPRESSIF_ESP32)
 			"set bridge.type ble|esp-now\r\n"
 		#else
 			"set bridge.type ble\r\n"
 		#endif
 		"get/set bridge.priority (0..7)\r\nget bridge.delay\r\n"
-		"get/set bridge.peer <MAC> [public|random]\r\nset bridge.key <32-hex>\r\n"
+		"get/set bridge.peer <MAC> public|random\r\nset bridge.key <32-hex>\r\n"
 	#endif
 		"neighbors\r\nneighbor.remove <pubkey>\r\n"
 		"discover.neighbors\r\n"

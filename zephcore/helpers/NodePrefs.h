@@ -133,7 +133,8 @@ struct NodePrefs {
 	uint8_t auto_shutdown_emergency; // 1 = send #zephcore emergency notice before automatic low-battery shutdown
 	uint16_t tracking_interval_minutes; // Companion: periodic tracking position report interval (minimum 5)
 	char tracking_group_name[32];       // Companion: destination group, default #tracks
-	uint8_t fall_sensitivity;           // 1 = strict, 3 = default, 5 = most sensitive
+	uint8_t fall_sensitivity;           // 1 = most sensitive, 3 = default, 5 = strict
+	uint8_t fall_enabled;               // 1 = detection enabled (default), 0 = disabled
 };
 
 /* Default prefs -- must match LoRaConfig.h defaults for radio interop. */
@@ -197,6 +198,7 @@ static inline void initNodePrefs(NodePrefs* prefs) {
 	prefs->tracking_interval_minutes = 10;
 	strcpy(prefs->tracking_group_name, "#tracks");
 	prefs->fall_sensitivity = 3;
+	prefs->fall_enabled = 1;
 
 #ifdef CONFIG_ZEPHCORE_DEFAULT_LORA_433
 	/* Factory defaults for the 433 MHz regional profile. */

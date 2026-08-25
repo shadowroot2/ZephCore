@@ -60,6 +60,17 @@
 		};
 	};
 
+	charger_status: charger-status {
+		compatible = "gpio-keys";
+
+		charge_usb_detect: external-power {
+			/* EXT_PWR_DETECT: high while USB-C power is present. */
+			gpios = <&gpio0 5 GPIO_ACTIVE_HIGH>;
+			zephyr,code = <INPUT_KEY_F23>;
+			label = "External Power";
+		};
+	};
+
 	/* Input filter: user button long-press detection (1000ms)
 	 * T1000-E has only one button - long-press = enter/execute
 	 * Short-press → KEY_A, Long-press → KEY_F (safe, no system side-effects) */
@@ -120,8 +131,6 @@
 		compatible = "regulator-fixed";
 		regulator-name = "accel-power";
 		enable-gpios = <&gpio1 7 GPIO_ACTIVE_HIGH>;
-		regulator-boot-on;
-		regulator-always-on;
 	};
 
 	/* Battery ADC channel reference for ZephyrBoard */
@@ -155,6 +164,7 @@
 		lora0 = &lora;
 		t1000-sensor-enable = &t1000_sensor_enable;
 		accel-power = &accel_power;
+		charge-usb-detect = &charge_usb_detect;
 	};
 };
 

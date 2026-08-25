@@ -110,6 +110,17 @@ static const struct gpio_dt_spec s_charge_full =
 #define HAS_M3_CHARGE_STATUS 0
 #endif
 
+/* T1000-E: P0.05 says USB-C power is physically present. P1.03/CHRG is not
+ * reliable enough on this board to decide that the battery is full. */
+#if defined(CONFIG_BOARD_T1000_E) && \
+	DT_NODE_HAS_PROP(DT_ALIAS(charge_usb_detect), gpios)
+static const struct gpio_dt_spec s_charge_usb_detect =
+	GPIO_DT_SPEC_GET(DT_ALIAS(charge_usb_detect), gpios);
+#define HAS_T1000_CHARGE_STATUS 1
+#else
+#define HAS_T1000_CHARGE_STATUS 0
+#endif
+
 /* Second LED for unread-message indication. Repeaters use led1 for LoRa TX
  * (via lora-tx-led alias) — no offline queue, so this is companion-only. */
 #if HAS_HEARTBEAT_LED && DT_NODE_HAS_PROP(DT_ALIAS(led0), gpios) && \
@@ -163,6 +174,11 @@ static const struct gpio_dt_spec s_led_enable =
 #define LED_LOW_BATT_BLINK_MS           80
 #define LED_LOW_BATT_BLINKS              3
 #define LED_CHARGING_BLINK_MS          1000
+#define T1000_CHARGE_FULL_MV           4190
+#define CHARGE_PERCENT_SAMPLE_MS       30000U
+#define CHARGE_PERCENT_BLINK_MS          150
+#define CHARGE_PERCENT_BLINK_GAP_MS      200
+#define CHARGE_PERCENT_SERIES_PAUSE_MS  1500
 #if defined(CONFIG_BOARD_T1000_E)
 #define LED_MSG_BLINK_MS   80  /* Fast incoming-message flash phase */
 #define LED_MSG_BLINKS      3  /* Number of flashes for one incoming message */
@@ -176,6 +192,9 @@ static uint8_t s_heartbeat_blinks_total;
 static uint16_t s_heartbeat_on_ms;
 static bool s_heartbeat_low_batt_cycle;
 static bool s_heartbeat_charging_cycle;
+#if HAS_M3_CHARGE_STATUS || HAS_T1000_CHARGE_STATUS
+static bool s_heartbeat_charge_percent_cycle;
+#endif
 #if defined(CONFIG_BOARD_T1000_E)
 static struct k_work_delayable s_msg_blink_work;
 static struct k_work_delayable s_tx_led_off_work;
@@ -224,12 +243,26 @@ static bool heartbeat_low_battery(void)
 	return low;
 }
 
+#if HAS_T1000_CHARGE_STATUS
+static bool charge_gpio_is_active(const struct gpio_dt_spec *spec)
+{
+	int level = gpio_pin_get_dt(spec);
+
+	if (level < 0) {
+		return false;
+	}
+	return (spec->dt_flags & GPIO_ACTIVE_LOW) ? level == 0 : level != 0;
+}
+#endif
+
 #if HAS_M3_CHARGE_STATUS
 enum m3_charge_state {
 	M3_CHARGE_NONE,
 	M3_CHARGE_ACTIVE,
 	M3_CHARGE_FULL,
 };
+
+static uint8_t s_m3_charge_pct;
 
 static bool m3_gpio_is_active(const struct gpio_dt_spec *spec)
 {
@@ -244,7 +277,9 @@ static bool m3_gpio_is_active(const struct gpio_dt_spec *spec)
 static enum m3_charge_state m3_charge_state_get(void)
 {
 	static uint32_t charge_done_since_ms;
+	static uint32_t last_voltage_sample_ms;
 	static bool charge_done_seen;
+	static bool voltage_sampled;
 	bool usb_present_now = gpio_is_ready_dt(&s_charge_usb_detect) &&
 		m3_gpio_is_active(&s_charge_usb_detect);
 	bool charge_done = gpio_is_ready_dt(&s_charge_full) &&
@@ -253,12 +288,10 @@ static enum m3_charge_state m3_charge_state_get(void)
 
 	if (!usb_present_now) {
 		charge_done_seen = false;
+		voltage_sampled = false;
+		s_m3_charge_pct = 0;
 		return M3_CHARGE_NONE;
 	}
-	/* Never use an ADC sample to decide that charging is complete: its voltage
-	 * rises under charge and can briefly look like 100%. DONE must be asserted,
-	 * and external power must remain physically present for 20 seconds before
-	 * solid green is allowed. */
 	if (charge_done) {
 		if (!charge_done_seen) {
 			charge_done_since_ms = now;
@@ -269,7 +302,63 @@ static enum m3_charge_state m3_charge_state_get(void)
 	} else {
 		charge_done_seen = false;
 	}
+	if (s_batt_provider &&
+	    (!voltage_sampled || (now - last_voltage_sample_ms) >= CHARGE_PERCENT_SAMPLE_MS)) {
+		uint16_t mv = s_batt_provider();
+
+		last_voltage_sample_ms = now;
+		voltage_sampled = true;
+		s_m3_charge_pct = mv ? battery_curve_lookup(&battery_curve_default, mv) : 0;
+	}
 	return M3_CHARGE_ACTIVE;
+}
+
+static uint8_t m3_charge_blink_count(void)
+{
+	return s_m3_charge_pct < 50 ? 1 : (s_m3_charge_pct < 75 ? 2 : 3);
+}
+#endif
+
+#if HAS_T1000_CHARGE_STATUS
+enum t1000_charge_state {
+	T1000_CHARGE_NONE,
+	T1000_CHARGE_ACTIVE,
+	T1000_CHARGE_FULL,
+};
+
+static uint8_t s_t1000_charge_pct;
+
+static enum t1000_charge_state t1000_charge_state_get(void)
+{
+	static uint32_t last_voltage_sample_ms;
+	static bool full_voltage;
+	static bool voltage_sampled;
+	bool usb_present_now = gpio_is_ready_dt(&s_charge_usb_detect) &&
+		charge_gpio_is_active(&s_charge_usb_detect);
+	uint32_t now = k_uptime_get_32();
+
+	if (!usb_present_now) {
+		full_voltage = false;
+		voltage_sampled = false;
+		s_t1000_charge_pct = 0;
+		return T1000_CHARGE_NONE;
+	}
+
+	if (s_batt_provider &&
+	    (!voltage_sampled || (now - last_voltage_sample_ms) >= CHARGE_PERCENT_SAMPLE_MS)) {
+		uint16_t mv = s_batt_provider();
+
+		last_voltage_sample_ms = now;
+		voltage_sampled = true;
+		full_voltage = mv >= T1000_CHARGE_FULL_MV;
+		s_t1000_charge_pct = mv ? battery_curve_lookup(&battery_curve_default, mv) : 0;
+	}
+	return full_voltage ? T1000_CHARGE_FULL : T1000_CHARGE_ACTIVE;
+}
+
+static uint8_t t1000_charge_blink_count(void)
+{
+	return s_t1000_charge_pct < 50 ? 1 : (s_t1000_charge_pct < 75 ? 2 : 3);
 }
 #endif
 
@@ -277,6 +366,8 @@ bool zephcore_led_status_priority_active(void)
 {
 #if HAS_M3_CHARGE_STATUS
 	return m3_charge_state_get() != M3_CHARGE_NONE;
+#elif HAS_T1000_CHARGE_STATUS
+	return t1000_charge_state_get() != T1000_CHARGE_NONE;
 #else
 	return false;
 #endif
@@ -289,6 +380,9 @@ static void heartbeat_sequence_reset(void)
 	s_heartbeat_on_ms = 0;
 	s_heartbeat_low_batt_cycle = false;
 	s_heartbeat_charging_cycle = false;
+#if HAS_M3_CHARGE_STATUS || HAS_T1000_CHARGE_STATUS
+	s_heartbeat_charge_percent_cycle = false;
+#endif
 }
 
 static void heartbeat_led_set(bool on)
@@ -328,12 +422,23 @@ static void led_off_work_handler(struct k_work *work)
 	}
 	if (s_heartbeat_blinks_left > 0) {
 		/* Continue the current heartbeat burst after a short dark gap. */
-		k_work_reschedule(&s_led_on_work, K_MSEC(s_heartbeat_low_batt_cycle ?
-			LED_LOW_BATT_BLINK_MS : LED_HEARTBEAT_BLINK_GAP_MS));
+		uint32_t gap_ms = s_heartbeat_low_batt_cycle ? LED_LOW_BATT_BLINK_MS :
+			LED_HEARTBEAT_BLINK_GAP_MS;
+#if HAS_M3_CHARGE_STATUS || HAS_T1000_CHARGE_STATUS
+		if (s_heartbeat_charge_percent_cycle) {
+			gap_ms = CHARGE_PERCENT_BLINK_GAP_MS;
+		}
+#endif
+		k_work_reschedule(&s_led_on_work, K_MSEC(gap_ms));
 		return;
 	}
 
 	uint32_t delay_ms;
+	#if HAS_M3_CHARGE_STATUS || HAS_T1000_CHARGE_STATUS
+	if (s_heartbeat_charge_percent_cycle) {
+		delay_ms = CHARGE_PERCENT_SERIES_PAUSE_MS;
+	} else
+	#endif
 	if (s_heartbeat_charging_cycle) {
 		/* Red: one second on, one second off while charging. */
 		delay_ms = LED_CHARGING_BLINK_MS;
@@ -373,18 +478,44 @@ static void led_on_work_handler(struct k_work *work)
 		return;
 	}
 	m3_charging = m3_charge_state == M3_CHARGE_ACTIVE;
-	if (m3_charging) {
+	if (m3_charging && s_heartbeat_blinks_left == 0) {
 		/* Do not finish a queued heartbeat/unread-message sequence in green.
 		 * Charging owns the RGB LED immediately and exclusively. */
 		heartbeat_sequence_reset();
 		s_heartbeat_charging_cycle = true;
-		s_heartbeat_blinks_total = 1;
-		s_heartbeat_blinks_left = 1;
-		s_heartbeat_on_ms = LED_CHARGING_BLINK_MS;
+		s_heartbeat_charge_percent_cycle = true;
+		s_heartbeat_blinks_total = m3_charge_blink_count();
+		s_heartbeat_blinks_left = s_heartbeat_blinks_total;
+		s_heartbeat_on_ms = CHARGE_PERCENT_BLINK_MS;
 		if (!zephcore_leds_disabled()) {
 			heartbeat_led_set(true);
 		}
-		k_work_reschedule(&s_led_off_work, K_MSEC(LED_CHARGING_BLINK_MS));
+		k_work_reschedule(&s_led_off_work, K_MSEC(CHARGE_PERCENT_BLINK_MS));
+		return;
+	}
+#endif
+
+#if HAS_T1000_CHARGE_STATUS
+	enum t1000_charge_state t1000_charge_state = t1000_charge_state_get();
+	if (t1000_charge_state == T1000_CHARGE_FULL) {
+		heartbeat_sequence_reset();
+		if (!zephcore_leds_disabled()) {
+			heartbeat_led_set(true);
+		}
+		k_work_reschedule(&s_led_on_work, K_SECONDS(1));
+		return;
+	}
+	if (t1000_charge_state == T1000_CHARGE_ACTIVE && s_heartbeat_blinks_left == 0) {
+		heartbeat_sequence_reset();
+		s_heartbeat_charging_cycle = true;
+		s_heartbeat_charge_percent_cycle = true;
+		s_heartbeat_blinks_total = t1000_charge_blink_count();
+		s_heartbeat_blinks_left = s_heartbeat_blinks_total;
+		s_heartbeat_on_ms = CHARGE_PERCENT_BLINK_MS;
+		if (!zephcore_leds_disabled()) {
+			heartbeat_led_set(true);
+		}
+		k_work_reschedule(&s_led_off_work, K_MSEC(CHARGE_PERCENT_BLINK_MS));
 		return;
 	}
 #endif
@@ -520,6 +651,11 @@ void ui_led_heartbeat_init(void)
 	}
 	if (gpio_is_ready_dt(&s_charge_full)) {
 		gpio_pin_configure_dt(&s_charge_full, GPIO_INPUT);
+	}
+#endif
+#if HAS_T1000_CHARGE_STATUS
+	if (gpio_is_ready_dt(&s_charge_usb_detect)) {
+		gpio_pin_configure_dt(&s_charge_usb_detect, GPIO_INPUT);
 	}
 #endif
 #if HAS_BLE_STATUS_LED && !HEARTBEAT_IS_BLE_STATUS_LED

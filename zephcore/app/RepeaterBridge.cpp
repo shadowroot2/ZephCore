@@ -175,7 +175,7 @@ static bool parse_peer(const char *text, uint8_t mac[6], uint8_t *addr_type)
 	char type[8] = {};
 	if (sscanf(text, "%02x:%02x:%02x:%02x:%02x:%02x %7s", &bytes[0], &bytes[1], &bytes[2],
 		   &bytes[3], &bytes[4], &bytes[5], type) < 6) return false;
-	if (type[0] == '\0' || strcmp(type, "public") == 0) {
+	if (strcmp(type, "public") == 0) {
 		*addr_type = 0;
 	} else if (strcmp(type, "random") == 0) {
 		*addr_type = 1;
@@ -406,13 +406,18 @@ bool repeater_bridge_handle_command(const char *command, char *reply, size_t rep
 	if (strcmp(command, "bridge") == 0) {
 		char local[18];
 		char peer[18];
+		/* This reply also travels through LoRa, whose CLI payload cap is 161
+		 * bytes. Keep the full bridge diagnosis compact enough for that path. */
+		char diagnostics[96] = {};
 
 		repeater_bridge_get_addresses(local, sizeof(local), peer, sizeof(peer));
 		RepeaterBridgePrefs prefs{};
 		const unsigned int priority = s_store && s_store->loadBridgePrefs(prefs) ?
 			prefs.forward_priority : FORWARD_PRIORITY_MAX;
-		snprintf(reply, reply_len, "bridge: %s; type=%s; priority=%u; local=%s; peer=%s",
-			 repeater_bridge_status(), transport_name(s_transport), priority, local, peer);
+		if (s_transport == BRIDGE_BLE) ble_bridge_get_diagnostics(diagnostics, sizeof(diagnostics));
+		snprintf(reply, reply_len, "bridge=%s;type=%s;pri=%u;mc=%s;pr=%s%s%s",
+			 repeater_bridge_status(), transport_name(s_transport), priority, local, peer,
+			 diagnostics[0] ? ";" : "", diagnostics);
 		return true;
 	}
 	if (strcmp(command, "bridge on") == 0 || strcmp(command, "bridge off") == 0) {
@@ -473,6 +478,10 @@ bool repeater_bridge_handle_command(const char *command, char *reply, size_t rep
 			return true;
 		}
 		if (s_enabled) {
+			/* bridge.key changes the frame authenticator.  The persistent SMP
+			 * bond belongs to the previous pairing context, so clear only this
+			 * peer before the new transport starts. */
+			if (s_transport == BRIDGE_BLE) (void)ble_bridge_unpair();
 			stop_active();
 			if (!start_active()) {
 				s_enabled = false;
@@ -543,7 +552,7 @@ bool repeater_bridge_handle_command(const char *command, char *reply, size_t rep
 		uint8_t peer[6];
 		uint8_t peer_addr_type;
 		if (!parse_peer(command + 16, peer, &peer_addr_type)) {
-			snprintf(reply, reply_len, "ERR: use set bridge.peer MAC [public|random]");
+			snprintf(reply, reply_len, "ERR: use set bridge.peer MAC public|random");
 			return true;
 		}
 		if (!s_store || !s_store->loadBridgePrefs(prefs)) {

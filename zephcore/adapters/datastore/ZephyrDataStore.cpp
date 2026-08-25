@@ -874,6 +874,10 @@ void ZephyrDataStore::loadPrefs(NodePrefs &prefs)
 			prefs.fall_sensitivity = 3;
 		}
 	}
+	/* Offset 201: fall detector enabled. Older files retain the default ON. */
+	if (off < len) {
+		prefs.fall_enabled = buf[off++] ? 1 : 0;
+	}
 }
 
 void ZephyrDataStore::savePrefs(const NodePrefs &prefs)
@@ -979,7 +983,9 @@ void ZephyrDataStore::savePrefs(const NodePrefs &prefs)
 	off += sizeof(prefs.tracking_group_name);
 	/* Offset 200: fall sensitivity. */
 	buf[off++] = prefs.fall_sensitivity;
-	/* Total: 201 bytes. */
+	/* Offset 201: fall detector enabled. */
+	buf[off++] = prefs.fall_enabled ? 1 : 0;
+	/* Total: 202 bytes. */
 
 	bool ok = atomicReplaceFile(PREFS_FILE, buf, off);
 	LOG_DBG("savePrefs: wrote %s, ok=%d (%d bytes), name='%.16s'",

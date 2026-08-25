@@ -124,11 +124,11 @@
 	};
 
 	/* Battery ADC calibration for AIN3 (P0.05).
-	 * The nominal 1.75:1 divider (6300 mV FS) read 4.47 V at a
-	 * fully-charged M3 cell; 5920 corrects that reading to 4.20 V. */
+	 * Match Meshtastic exactly: AR_INTERNAL_2_4 (SAADC gain 1/4),
+	 * 12-bit conversion and the 1.75:1 divider = 4200 mV scale. */
 	zephyr,user {
 		io-channels = <&adc 3>;
-		vbat-mv-multiplier = <5920>;
+		vbat-mv-multiplier = <4200>;
 	};
 
 	/* Buzzer on PWM0 channel 0 (P0.23, PIN_BUZZER=23) */
@@ -184,10 +184,10 @@
 	#address-cells = <1>;
 	#size-cells = <0>;
 
-	/* Battery voltage on P0.05 (AIN3) - 1.75:1 voltage divider */
+	/* Battery voltage on P0.05 (AIN3) — Meshtastic AR_INTERNAL_2_4. */
 	channel@3 {
 		reg = <3>;
-		zephyr,gain = "ADC_GAIN_1_6";
+		zephyr,gain = "ADC_GAIN_1_4";
 		zephyr,reference = "ADC_REF_INTERNAL";
 		zephyr,acquisition-time = <ADC_ACQ_TIME(ADC_ACQ_TIME_MICROSECONDS, 10)>;
 		zephyr,input-positive = <NRF_SAADC_AIN3>;
