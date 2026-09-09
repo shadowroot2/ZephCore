@@ -90,6 +90,11 @@ class RepeaterMesh : public mesh::Mesh, public CommonCLICallbacks {
     RepeaterDataStore* _store;
     uint32_t last_millis;
     uint64_t uptime_millis;
+    uint64_t battery_check_at = 0;
+    int64_t battery_last_alert_at = 0;
+    bool battery_alert_sent = false;
+    RepeaterBatteryPrefs battery_prefs;
+    uint8_t battery_low_samples = 0;
     unsigned long next_local_advert, next_flood_advert;
     bool _logging;
     NodePrefs _prefs;
@@ -139,6 +144,8 @@ class RepeaterMesh : public mesh::Mesh, public CommonCLICallbacks {
 
     void putNeighbour(const mesh::Identity& id, uint32_t timestamp, float snr);
     void timeSyncTick();
+    void batteryAlertTick();
+    bool handleBatteryCommand(const char* command, char* reply);
     uint8_t handleLoginReq(const mesh::Identity& sender, const uint8_t* secret, uint32_t sender_timestamp, const uint8_t* data, bool is_flood);
     uint8_t handleAnonRegionsReq(const mesh::Identity& sender, uint32_t sender_timestamp, const uint8_t* data, size_t data_len);
     uint8_t handleAnonOwnerReq(const mesh::Identity& sender, uint32_t sender_timestamp, const uint8_t* data, size_t data_len);

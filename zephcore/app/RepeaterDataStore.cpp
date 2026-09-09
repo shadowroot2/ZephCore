@@ -122,6 +122,86 @@ bool RepeaterDataStore::saveIdentity(const mesh::LocalIdentity& id) {
     return true;
 }
 
+bool RepeaterDataStore::loadBatteryPrefs(RepeaterBatteryPrefs& prefs) {
+    prefs = RepeaterBatteryPrefs{};
+    struct fs_file_t file;
+    fs_file_t_init(&file);
+    if (fs_open(&file, "/lfs/repeater/battery_prefs", FS_O_READ) < 0) return false;
+    struct {
+        uint32_t magic, enabled, hours;
+        char group[32];
+        uint32_t threshold_mv;
+    } record = {};
+    ssize_t n = fs_read(&file, &record, sizeof(record));
+    fs_close(&file);
+    const bool legacy = n == 12 && record.magic == 0x42504631;
+    const bool version2 = n == 44 && record.magic == 0x42504632;
+    if (!legacy && !version2 && (n != sizeof(record) || record.magic != 0x42504633)) return false;
+    if (record.enabled > 1 || record.hours < 1 || record.hours > 168) return false;
+    if (record.threshold_mv > 5000) return false;
+    if (!legacy) {
+        if (!memchr(record.group, 0, sizeof(record.group)) || record.group[0] != '#' ||
+            strchr(record.group, '\r') || strchr(record.group, '\n')) return false;
+        memcpy(prefs.group_name, record.group, sizeof(prefs.group_name));
+    }
+    prefs.enabled = record.enabled != 0;
+    prefs.interval_hours = record.hours;
+    /* v1/v2 had no voltage setting. Preserve an explicitly stored v3 zero. */
+    if (!legacy && !version2) prefs.threshold_mv = record.threshold_mv;
+    return true;
+}
+
+bool RepeaterDataStore::saveBatteryPrefs(const RepeaterBatteryPrefs& prefs) {
+    if (prefs.interval_hours < 1 || prefs.interval_hours > 168) return false;
+    if (prefs.threshold_mv > 5000) return false;
+    if (!memchr(prefs.group_name, 0, sizeof(prefs.group_name)) || prefs.group_name[0] != '#' ||
+        strchr(prefs.group_name, '\r') || strchr(prefs.group_name, '\n')) return false;
+    if (!_initialized && !begin()) return false;
+    static const char path[] = "/lfs/repeater/battery_prefs";
+    static const char tmp[] = "/lfs/repeater/battery_prefs.tmp";
+    struct fs_file_t file;
+    fs_file_t_init(&file);
+    if (fs_open(&file, tmp, FS_O_CREATE | FS_O_WRITE | FS_O_TRUNC) < 0) return false;
+    struct {
+        uint32_t magic, enabled, hours;
+        char group[32];
+        uint32_t threshold_mv;
+    } record = {0x42504633, prefs.enabled ? 1U : 0U, prefs.interval_hours, {}, prefs.threshold_mv};
+    memcpy(record.group, prefs.group_name, sizeof(record.group));
+    ssize_t n = fs_write(&file, &record, sizeof(record));
+    int synced = fs_sync(&file);
+    int closed = fs_close(&file);
+    if (n != sizeof(record) || synced < 0 || closed < 0) return false;
+    return fs_rename(tmp, path) == 0;
+}
+
+bool RepeaterDataStore::loadBatteryAlertTime(uint32_t& epoch) {
+    struct fs_file_t file;
+    fs_file_t_init(&file);
+    if (fs_open(&file, "/lfs/repeater/battery_alert", FS_O_READ) < 0) return false;
+    uint32_t record[2] = {};
+    ssize_t n = fs_read(&file, record, sizeof(record));
+    fs_close(&file);
+    if (n != sizeof(record) || record[0] != 0x42415431) return false;
+    epoch = record[1];
+    return true;
+}
+
+bool RepeaterDataStore::saveBatteryAlertTime(uint32_t epoch) {
+    if (!_initialized && !begin()) return false;
+    static const char path[] = "/lfs/repeater/battery_alert";
+    static const char tmp[] = "/lfs/repeater/battery_alert.tmp";
+    struct fs_file_t file;
+    fs_file_t_init(&file);
+    if (fs_open(&file, tmp, FS_O_CREATE | FS_O_WRITE | FS_O_TRUNC) < 0) return false;
+    const uint32_t record[] = {0x42415431, epoch};
+    ssize_t n = fs_write(&file, record, sizeof(record));
+    int synced = fs_sync(&file);
+    int closed = fs_close(&file);
+    if (n != sizeof(record) || synced < 0 || closed < 0) return false;
+    return fs_rename(tmp, path) == 0;
+}
+
 bool RepeaterDataStore::loadPrefs(NodePrefs& prefs) {
     char path[48];
     snprintf(path, sizeof(path), "%s/prefs", BASE_PATH);

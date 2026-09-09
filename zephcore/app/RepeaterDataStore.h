@@ -12,8 +12,16 @@
 #include <stddef.h>
 #include <mesh/Identity.h>
 #include <helpers/NodePrefs.h>
+#include <helpers/BatteryAlertDefaults.h>
 #include <helpers/ClientACL.h>
 #include <helpers/RegionMap.h>
+
+struct RepeaterBatteryPrefs {
+    bool enabled = true;
+    uint16_t interval_hours = 12;
+    char group_name[32] = "#zephcore";
+    uint16_t threshold_mv = ZEPHCORE_BATTERY_ALERT_DEFAULT_MV;  /* Literal mV; 0 disables alerts */
+};
 
 struct RepeaterBridgePrefs {
     uint8_t peer_mac[6];
@@ -39,6 +47,11 @@ public:
     /* Prefs management */
     bool loadPrefs(NodePrefs& prefs);
     bool savePrefs(const NodePrefs& prefs);
+
+    bool loadBatteryAlertTime(uint32_t& epoch);
+    bool saveBatteryAlertTime(uint32_t epoch);
+    bool loadBatteryPrefs(RepeaterBatteryPrefs& prefs);
+    bool saveBatteryPrefs(const RepeaterBatteryPrefs& prefs);
 
     /* ESP-NOW bridge settings are deliberately separate from NodePrefs: the
      * latter has an Arduino-compatible positional on-disk layout. */

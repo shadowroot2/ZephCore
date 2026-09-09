@@ -1053,7 +1053,7 @@ void ui_prepare_for_system_off(void)
  * so there is no dedicated poll. Disabled entirely (compiled out) unless a
  * board sets CONFIG_ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS > 0. */
 #if defined(CONFIG_ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS) && \
-	CONFIG_ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS > 0
+	CONFIG_ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS > 0 && !defined(ZEPHCORE_REPEATER)
 
 /* How often we actually sample the ADC for the shutdown check. The caller
  * fires every housekeeping tick (~5 s); this gate keeps the divider from

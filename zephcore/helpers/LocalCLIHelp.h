@@ -9,6 +9,8 @@
 
 #include <string.h>
 #include <zephyr/devicetree.h>
+#include <zephyr/sys/util.h>
+#include <helpers/BatteryAlertDefaults.h>
 
 enum class LocalCLIHelpRole {
 	Companion,
@@ -113,7 +115,7 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 	#else
 		"CLI repeater:\r\n"
 	#endif
-		"ver\r\nboard\r\nadvert\r\nadvert.zerohop\r\n"
+		"ver\r\nboard\r\nuptime\r\nadvert\r\nadvert.zerohop\r\n"
 		"clock [sync]\r\ntime <epoch>\r\ngps [on|off|setloc|advert]\r\n"
 #if DT_NODE_HAS_PROP(DT_ALIAS(led0), gpios) || DT_NODE_HAS_PROP(DT_ALIAS(led1), gpios)
 		"leds [on|off]\r\n"
@@ -139,6 +141,12 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"get dc.restarts\r\nget tx apc\r\nget cad\r\n"
 		"set cad.auto\r\nset cad.offset\r\nset probe.interval\r\n"
 		"set cad.busycap\r\nset cad.reset\r\n"
+		"battery (mV, %, uptime, alert settings)\r\n"
+		"get/set battery.alert on|off (default on)\r\n"
+		"get/set battery.threshold <mV> (0..5000, default "
+		STRINGIFY(ZEPHCORE_BATTERY_ALERT_DEFAULT_MV) "; 0=no alerts)\r\n"
+		"get/set battery.interval <hours> (1..168, default 12)\r\n"
+		"get/set battery.group <name> (default #zephcore)\r\n"
 		"get/set allow.read.only\r\nget/set guest.password\r\n"
 		"get/set backoff.multiplier\r\nget/set loop.detect\r\n"
 		"get/set rxduty\r\n"

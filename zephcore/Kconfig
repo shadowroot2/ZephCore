@@ -1013,6 +1013,7 @@ config ZEPHCORE_UI_TIMEZONE_OFFSET_MINUTES
 
 config ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS
 	int "Low-battery auto-shutdown threshold (mV, 0 = disabled)"
+	default 0 if ZEPHCORE_ROLE_REPEATER_BASE
 	default 3250 if SOC_SERIES_NRF52
 	default 3300 if SOC_FAMILY_ESPRESSIF_ESP32 && ZEPHCORE_ROLE_COMPANION
 	default 0
