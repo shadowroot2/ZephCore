@@ -46,11 +46,17 @@ constexpr uint32_t RETRY_MS = 1500;
 constexpr uint32_t TRANSPORT_REFRESH_MS = 30000;
 constexpr uint32_t HEALTH_INTERVAL_MS = 30000;
 constexpr uint32_t HEALTH_TIMEOUT_MS = 6000;
-constexpr size_t TX_QUEUE_SLOTS = 4;
+/* One full bridge frame is 244 bytes.  Keep the transport deliberately
+ * serialized, but retain a little burst room for LoRa RX.  Two slots are
+ * reserved for HELLO/PING/PONG so a data burst cannot starve recovery. */
+constexpr size_t TX_QUEUE_SLOTS = 8;
+constexpr size_t TX_CONTROL_RESERVE = 2;
+constexpr size_t TX_CALLBACK_SLOTS = 4;
 constexpr uint32_t TX_RETRY_MS = 100;
 constexpr uint32_t TX_DISCONNECTED_RETRY_MS = 500;
 constexpr uint32_t TX_LIFETIME_MS = 30000;
 constexpr uint8_t TX_MAX_ATTEMPTS = 4;
+constexpr uint32_t TX_IN_FLIGHT_TIMEOUT_MS = 8000;
 
 #define ZEPHCORE_BRIDGE_SERVICE_UUID \
 	BT_UUID_128_ENCODE(0x7c6462e1, 0x7a4f, 0x4765, 0x98cf, 0x2cd2f1a65001)
@@ -85,6 +91,16 @@ struct PendingTx {
 	int64_t retry_at_ms;
 	int64_t expires_at_ms;
 	uint8_t attempts;
+	uint32_t generation;
+	bool require_established;
+	bool control;
+	bool in_flight;
+	bool used;
+};
+
+struct TxCompletion {
+	PendingTx *slot;
+	uint32_t generation;
 	bool used;
 };
 
@@ -120,6 +136,7 @@ static uint16_t s_service_end_handle;
 static uint16_t s_peer_value_handle;
 static SeenFrame s_seen[SEEN_SLOTS];
 static PendingTx s_tx_queue[TX_QUEUE_SLOTS];
+static TxCompletion s_tx_completions[TX_CALLBACK_SLOTS];
 static struct k_spinlock s_seen_lock;
 static struct k_spinlock s_prefs_lock;
 static struct k_spinlock s_state_lock;
@@ -143,7 +160,9 @@ static int64_t s_retry_at_ms;
 static int64_t s_transport_refresh_ms;
 static int64_t s_health_due_ms;
 static int64_t s_health_deadline_ms;
+static int64_t s_tx_in_flight_deadline_ms;
 static uint32_t s_handshake_token;
+static uint32_t s_tx_generation;
 static atomic_t s_tx_count;
 static atomic_t s_rx_count;
 static atomic_t s_drop_count;
@@ -160,6 +179,7 @@ static atomic_t s_last_security_error;
 static atomic_t s_last_fault;
 static atomic_t s_reconnect_count;
 static uint8_t s_health_send_failures;
+static bool s_tx_in_flight;
 K_SEM_DEFINE(ble_bridge_ping_sem, 0, 1);
 
 static const uint8_t s_default_lmk[16] = {
@@ -253,6 +273,22 @@ static void purge_tx_queue()
 {
 	k_spinlock_key_t key = k_spin_lock(&s_tx_lock);
 	memset(s_tx_queue, 0, sizeof(s_tx_queue));
+	s_tx_in_flight = false;
+	s_tx_in_flight_deadline_ms = 0;
+	k_spin_unlock(&s_tx_lock, key);
+}
+
+static void retry_in_flight_tx()
+{
+	const int64_t retry_at = k_uptime_get() + TX_DISCONNECTED_RETRY_MS;
+	k_spinlock_key_t key = k_spin_lock(&s_tx_lock);
+	for (auto &pending : s_tx_queue) {
+		if (!pending.used || !pending.in_flight) continue;
+		pending.in_flight = false;
+		pending.retry_at_ms = retry_at;
+	}
+	s_tx_in_flight = false;
+	s_tx_in_flight_deadline_ms = 0;
 	k_spin_unlock(&s_tx_lock, key);
 }
 
@@ -411,7 +447,7 @@ static bool connection_is_peer(const struct bt_conn *conn)
 }
 
 static bool send_control(uint8_t op, const uint8_t data[CONTROL_DATA_LEN]);
-static int send_frame(const BridgeFrame &frame, bool require_established);
+static int send_frame(const BridgeFrame &frame, bool require_established, bool control);
 
 static void link_established()
 {
@@ -589,24 +625,58 @@ BT_GATT_SERVICE_DEFINE(bridge_service,
 		BT_GATT_PERM_WRITE_ENCRYPT, NULL, bridge_write, NULL),
 	BT_GATT_CCC(bridge_ccc_changed, BT_GATT_PERM_READ_ENCRYPT | BT_GATT_PERM_WRITE_ENCRYPT));
 
-static int send_frame(const BridgeFrame &frame, bool require_established)
+static void tx_complete(struct bt_conn *conn, void *user_data)
 {
-	bool is_central;
-	uint16_t peer_value_handle;
-	struct bt_conn *conn = link_conn_ref(true, require_established, &is_central, &peer_value_handle);
-	if (!conn) return -ENOTCONN;
-	if (is_central && peer_value_handle == 0) {
-		bt_conn_unref(conn);
-		return -ENOTCONN;
+	ARG_UNUSED(conn);
+	auto *completion = static_cast<TxCompletion *>(user_data);
+	if (!completion) return;
+	bool wake = false;
+	k_spinlock_key_t key = k_spin_lock(&s_tx_lock);
+	if (completion->used) {
+		PendingTx *slot = completion->slot;
+		/* A late completion from the ACL link before reconnect must not consume
+		 * a frame already re-submitted on the new link. */
+		if (slot && slot->used && slot->in_flight &&
+		    slot->generation == completion->generation) {
+			slot->used = false;
+			slot->in_flight = false;
+			s_tx_in_flight = false;
+			s_tx_in_flight_deadline_ms = 0;
+			wake = true;
+		}
+		completion->slot = nullptr;
+		completion->used = false;
 	}
-	int err = is_central ?
-		bt_gatt_write_without_response(conn, peer_value_handle, &frame,
-					       offsetof(BridgeFrame, raw) + frame.raw_len, false) :
-		bt_gatt_notify(conn, &bridge_service.attrs[2], &frame,
-			       offsetof(BridgeFrame, raw) + frame.raw_len);
-	bt_conn_unref(conn);
-	if (err == 0) atomic_inc(&s_tx_count);
-	return err;
+	k_spin_unlock(&s_tx_lock, key);
+	if (wake && s_dispatcher) s_dispatcher->notifyWake();
+}
+
+static int send_frame(const BridgeFrame &frame, bool require_established, bool control)
+{
+	const int64_t now = k_uptime_get();
+	k_spinlock_key_t key = k_spin_lock(&s_tx_lock);
+	size_t data_slots = 0;
+	PendingTx *slot = nullptr;
+	for (auto &pending : s_tx_queue) {
+		if (pending.used && !pending.control) ++data_slots;
+		if (!pending.used && !slot) slot = &pending;
+	}
+	if (!slot || (!control && data_slots >= TX_QUEUE_SLOTS - TX_CONTROL_RESERVE)) {
+		k_spin_unlock(&s_tx_lock, key);
+		return -ENOMEM;
+	}
+	slot->frame = frame;
+	slot->retry_at_ms = now;
+	slot->expires_at_ms = now + TX_LIFETIME_MS;
+	slot->attempts = 0;
+	slot->generation = 0;
+	slot->require_established = require_established;
+	slot->control = control;
+	slot->in_flight = false;
+	slot->used = true;
+	k_spin_unlock(&s_tx_lock, key);
+	if (s_dispatcher) s_dispatcher->notifyWake();
+	return 0;
 }
 
 static bool send_control(uint8_t op, const uint8_t data[CONTROL_DATA_LEN])
@@ -619,7 +689,10 @@ static bool send_control(uint8_t op, const uint8_t data[CONTROL_DATA_LEN])
 	frame.raw[sizeof(CONTROL_MAGIC)] = op;
 	memcpy(&frame.raw[sizeof(CONTROL_MAGIC) + 1], data, CONTROL_DATA_LEN);
 	frame.hash = frame_hash(frame.raw, frame.raw_len);
-	const int err = send_frame(frame, false);
+	/* OBSERVED is advisory loop suppression traffic.  It must not occupy the
+	 * two recovery slots reserved for HELLO/READY/ACK and health PING/PONG. */
+	const bool observed = op == CONTROL_OBSERVED;
+	const int err = send_frame(frame, observed, !observed);
 	if (err != 0) LOG_WRN("BLE bridge control send failed: %d", err);
 	return err == 0;
 }
@@ -821,6 +894,9 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 	atomic_inc(&s_reconnect_count);
 	struct bt_conn *owned = detach_link(conn);
 	if (owned) bt_conn_unref(owned);
+	/* Completion callbacks can arrive after the ACL disconnect callback.  Keep
+	 * their frames, but make them eligible for the next encrypted link. */
+	retry_in_flight_tx();
 	/* Keep a valid bond across an RF/LL link loss.  ESP32 may report 0x22,
 	 * 0x3e or 0x08 while the LTK itself is valid; deleting it here races NVS
 	 * persistence and makes the peer attempt encryption with a different key.
@@ -1003,11 +1079,14 @@ static bool save_and_configure()
 
 } // namespace
 
+static void maintain_tx_queue(int64_t now);
+
 bool ble_bridge_start(RepeaterDataStore *store, mesh::Dispatcher *dispatcher)
 {
 	s_store = store;
 	s_dispatcher = dispatcher;
 	memset(&s_prefs, 0, sizeof(s_prefs));
+	purge_tx_queue();
 	if (!s_store->loadBridgePrefs(s_prefs)) {
 		memcpy(s_prefs.lmk, s_default_lmk, sizeof(s_prefs.lmk));
 		s_store->saveBridgePrefs(s_prefs);
@@ -1069,20 +1148,30 @@ void ble_bridge_get_diagnostics(char *out, size_t out_len)
 	const int connect = atomic_get(&s_last_connect_error);
 	const int security = atomic_get(&s_last_security_error);
 	const int fault = atomic_get(&s_last_fault);
+	uint8_t queued = 0;
+	bool tx_busy;
+	lock_key = k_spin_lock(&s_tx_lock);
+	for (const auto &pending : s_tx_queue) {
+		if (pending.used) ++queued;
+	}
+	tx_busy = s_tx_in_flight;
+	k_spin_unlock(&s_tx_lock, lock_key);
 	uint8_t peer_type;
 	lock_key = k_spin_lock(&s_prefs_lock);
 	peer_type = s_prefs.peer_addr_type;
 	k_spin_unlock(&s_prefs_lock, lock_key);
 	if (disc >= 0) {
 		snprintf(out, out_len,
-			 "p=%s,r=%c,t=%c,f=%s,s=%d,d=%02X,c=%02X,n=%u",
+			 "p=%s,r=%c,t=%c,f=%s,s=%d,d=%02X,c=%02X,n=%u,q=%u/%u",
 			 phase, central ? 'C' : 'P', peer_type == BT_ADDR_LE_RANDOM ? 'R' : 'P', fault_name(fault),
-			 security, disc, connect, (unsigned int)atomic_get(&s_reconnect_count));
+			 security, disc, connect, (unsigned int)atomic_get(&s_reconnect_count),
+			 (unsigned int)queued, tx_busy ? 1U : 0U);
 	} else {
 		snprintf(out, out_len,
-			 "p=%s,r=%c,t=%c,f=%s,s=%d,c=%02X,n=%u",
+			 "p=%s,r=%c,t=%c,f=%s,s=%d,c=%02X,n=%u,q=%u/%u",
 			 phase, central ? 'C' : 'P', peer_type == BT_ADDR_LE_RANDOM ? 'R' : 'P', fault_name(fault),
-			 security, connect, (unsigned int)atomic_get(&s_reconnect_count));
+			 security, connect, (unsigned int)atomic_get(&s_reconnect_count),
+			 (unsigned int)queued, tx_busy ? 1U : 0U);
 	}
 }
 
@@ -1187,7 +1276,21 @@ bool ble_bridge_ping(char *reply, size_t reply_len)
 		snprintf(reply, reply_len, "ERR: bridge ping send failed");
 		return true;
 	}
-	if (k_sem_take(&ble_bridge_ping_sem, K_MSEC(PING_TIMEOUT_MS)) == 0) {
+	/* CLI waits synchronously for the PONG.  A relayed packet may already be
+	 * in flight, so keep draining the serialized queue while we wait instead of
+	 * declaring a false timeout behind it. */
+	const int64_t deadline = k_uptime_get() + PING_TIMEOUT_MS;
+	bool pong = false;
+	while (k_uptime_get() < deadline) {
+		maintain_tx_queue(k_uptime_get());
+		const int64_t remaining = deadline - k_uptime_get();
+		if (k_sem_take(&ble_bridge_ping_sem,
+			K_MSEC(remaining > 25 ? 25 : (remaining > 0 ? remaining : 0))) == 0) {
+			pong = true;
+			break;
+		}
+	}
+	if (pong) {
 		snprintf(reply, reply_len, "OK: bridge pong %ums",
 			 (unsigned int)atomic_get(&s_ping_rtt_ms));
 	} else {
@@ -1216,68 +1319,105 @@ bool ble_bridge_forward_packet(const mesh::Packet *packet)
 	packet->writeTo(frame.raw);
 	frame.hash = frame_hash(frame.raw, frame.raw_len);
 	if (seen_or_remember(frame.hash)) return false;
-	const int err = send_frame(frame, true);
+	const int err = send_frame(frame, true, false);
 	if (err == 0) return true;
-
-	const int64_t now = k_uptime_get();
-	k_spinlock_key_t key = k_spin_lock(&s_tx_lock);
-	PendingTx *slot = nullptr;
-	for (auto &pending : s_tx_queue) {
-		if (!pending.used) {
-			slot = &pending;
-			break;
-		}
-	}
-	if (slot) {
-		slot->frame = frame;
-		slot->retry_at_ms = now + (err == -ENOTCONN ? TX_DISCONNECTED_RETRY_MS : TX_RETRY_MS);
-		slot->expires_at_ms = now + TX_LIFETIME_MS;
-		slot->attempts = 1;
-		slot->used = true;
-	}
-	k_spin_unlock(&s_tx_lock, key);
-	if (!slot) {
+	if (err == -ENOMEM) {
 		atomic_inc(&s_drop_count);
 		LOG_WRN("BLE bridge TX queue full; packet dropped");
-		return false;
 	}
-	LOG_WRN("BLE bridge send deferred: %d", err);
-	if (s_dispatcher) s_dispatcher->notifyWake();
-	return true;
+	return false;
 }
 
 static void maintain_tx_queue(int64_t now)
 {
-	for (size_t i = 0; i < TX_QUEUE_SLOTS; ++i) {
-		PendingTx pending{};
-		k_spinlock_key_t key = k_spin_lock(&s_tx_lock);
-		if (!s_tx_queue[i].used || s_tx_queue[i].retry_at_ms > now) {
-			k_spin_unlock(&s_tx_lock, key);
-			continue;
-		}
-		pending = s_tx_queue[i];
+	PendingTx *slot = nullptr;
+	TxCompletion *completion = nullptr;
+	k_spinlock_key_t key = k_spin_lock(&s_tx_lock);
+	if (s_tx_in_flight) {
 		k_spin_unlock(&s_tx_lock, key);
-
-		const int err = send_frame(pending.frame, true);
-		key = k_spin_lock(&s_tx_lock);
-		if (!s_tx_queue[i].used || s_tx_queue[i].frame.hash != pending.frame.hash) {
-			k_spin_unlock(&s_tx_lock, key);
-			continue;
+		return;
+	}
+	/* Control packets establish and monitor the transport, so service them
+	 * before relayed LoRa frames. */
+	for (int pass = 0; pass < 2 && !slot; ++pass) {
+		const bool control = pass == 0;
+		for (auto &pending : s_tx_queue) {
+			if (pending.used && !pending.in_flight && pending.control == control &&
+			    pending.retry_at_ms <= now) {
+				slot = &pending;
+				break;
+			}
 		}
-		if (err == 0) {
-			s_tx_queue[i].used = false;
-		} else if (now >= pending.expires_at_ms ||
-			   (err != -ENOTCONN && pending.attempts >= TX_MAX_ATTEMPTS)) {
-			s_tx_queue[i].used = false;
+	}
+	if (slot) {
+		for (auto &candidate : s_tx_completions) {
+			if (!candidate.used) {
+				completion = &candidate;
+				break;
+			}
+		}
+	}
+	if (!slot || !completion) {
+		k_spin_unlock(&s_tx_lock, key);
+		return;
+	}
+	uint32_t generation = ++s_tx_generation;
+	if (generation == 0) generation = ++s_tx_generation;
+	slot->generation = generation;
+	slot->in_flight = true;
+	s_tx_in_flight = true;
+	s_tx_in_flight_deadline_ms = now + TX_IN_FLIGHT_TIMEOUT_MS;
+	completion->slot = slot;
+	completion->generation = generation;
+	completion->used = true;
+	const bool require_established = slot->require_established;
+	k_spin_unlock(&s_tx_lock, key);
+
+	bool is_central;
+	uint16_t peer_value_handle;
+	struct bt_conn *conn = link_conn_ref(true, require_established, &is_central, &peer_value_handle);
+	int err = 0;
+	if (!conn || (is_central && peer_value_handle == 0)) {
+		err = -ENOTCONN;
+	} else if (is_central) {
+		err = bt_gatt_write_without_response_cb(conn, peer_value_handle, &slot->frame,
+			offsetof(BridgeFrame, raw) + slot->frame.raw_len, false, tx_complete, completion);
+	} else {
+		struct bt_gatt_notify_params params = {
+			.attr = &bridge_service.attrs[2],
+			.data = &slot->frame,
+			.len = (uint16_t)(offsetof(BridgeFrame, raw) + slot->frame.raw_len),
+			.func = tx_complete,
+			.user_data = completion,
+		};
+		err = bt_gatt_notify_cb(conn, &params);
+	}
+	if (conn) bt_conn_unref(conn);
+	if (err == 0) {
+		atomic_inc(&s_tx_count);
+		return;
+	}
+
+	key = k_spin_lock(&s_tx_lock);
+	if (completion->used && completion->slot == slot && completion->generation == generation) {
+		completion->slot = nullptr;
+		completion->used = false;
+	}
+	if (slot->used && slot->in_flight && slot->generation == generation) {
+		slot->in_flight = false;
+		s_tx_in_flight = false;
+		s_tx_in_flight_deadline_ms = 0;
+		if (now >= slot->expires_at_ms ||
+		    (err != -ENOTCONN && ++slot->attempts >= TX_MAX_ATTEMPTS)) {
+			slot->used = false;
 			atomic_inc(&s_drop_count);
 			LOG_WRN("BLE bridge TX retries exhausted: %d", err);
 		} else {
-			if (err != -ENOTCONN) s_tx_queue[i].attempts++;
-			s_tx_queue[i].retry_at_ms = now +
+			slot->retry_at_ms = now +
 				(err == -ENOTCONN ? TX_DISCONNECTED_RETRY_MS : TX_RETRY_MS);
 		}
-		k_spin_unlock(&s_tx_lock, key);
 	}
+	k_spin_unlock(&s_tx_lock, key);
 }
 
 bool ble_bridge_send_observed(const uint8_t fingerprint[8])
@@ -1298,6 +1438,19 @@ void ble_bridge_maintain(void)
 {
 	if (!s_started || !mac_is_set(s_prefs.peer_mac)) return;
 	const int64_t now = k_uptime_get();
+	bool tx_timeout = false;
+	k_spinlock_key_t tx_key = k_spin_lock(&s_tx_lock);
+	if (s_tx_in_flight && s_tx_in_flight_deadline_ms && now >= s_tx_in_flight_deadline_ms) {
+		tx_timeout = true;
+	}
+	k_spin_unlock(&s_tx_lock, tx_key);
+	if (tx_timeout) {
+		LOG_WRN("BLE bridge TX completion timed out; reconnecting");
+		atomic_set(&s_last_fault, BRIDGE_FAULT_HEALTH);
+		retry_in_flight_tx();
+		reset_link();
+		return;
+	}
 	bool is_central;
 	bool link_ready;
 	bool has_conn;
@@ -1401,8 +1554,13 @@ uint32_t ble_bridge_ms_until_next(void)
 	}
 	k_spin_unlock(&s_state_lock, lock_key);
 	lock_key = k_spin_lock(&s_tx_lock);
+	if (s_tx_in_flight_deadline_ms &&
+	    (!deadline || s_tx_in_flight_deadline_ms < deadline)) {
+		deadline = s_tx_in_flight_deadline_ms;
+	}
 	for (const auto &pending : s_tx_queue) {
-		if (pending.used && (!deadline || pending.retry_at_ms < deadline)) {
+		if (pending.used && !pending.in_flight &&
+		    (!deadline || pending.retry_at_ms < deadline)) {
 			deadline = pending.retry_at_ms;
 		}
 	}

@@ -754,14 +754,17 @@ static void save_prefs_to_flash(void)
 	data_store.savePrefs(companion_mesh_ptr->prefs);
 }
 
-static void format_uptime(uint32_t uptime_ms, char *out, size_t out_len)
+static void format_uptime(uint64_t uptime_ms, char *out, size_t out_len)
 {
-	uint32_t mins = uptime_ms / 60000U;
-	uint32_t days = mins / (24U * 60U);
-	uint32_t hours = (mins / 60U) % 24U;
-	uint32_t rem_mins = mins % 60U;
+	uint64_t seconds = uptime_ms / 1000U;
+	uint64_t days = seconds / (24U * 60U * 60U);
+	uint64_t hours = (seconds / (60U * 60U)) % 24U;
+	uint64_t mins = (seconds / 60U) % 60U;
+	uint64_t rem_seconds = seconds % 60U;
 
-	snprintf(out, out_len, "%ud %uh %um", days, hours, rem_mins);
+	snprintf(out, out_len, "%llud %02lluh %02llum %02llus",
+		 (unsigned long long)days, (unsigned long long)hours,
+		 (unsigned long long)mins, (unsigned long long)rem_seconds);
 }
 
 /* Find a public group, creating its normal public-channel key when absent. */
@@ -1748,6 +1751,17 @@ static const char *companion_cli_help(const char *line)
 	return local_cli_help(LocalCLIHelpRole::Companion, line);
 }
 
+static bool handle_uptime_cli(const char *line, char *reply)
+{
+	if (strcmp(line, "uptime") != 0 && strcmp(line, "get uptime") != 0) {
+		return false;
+	}
+	char formatted[32];
+	format_uptime((uint64_t)k_uptime_get(), formatted, sizeof(formatted));
+	snprintf(reply, CLI_REPLY_SIZE, "uptime: %s", formatted);
+	return true;
+}
+
 static bool handle_vcontact_cli(const char *line, char *reply)
 {
 	if (strcmp(line, "get v.contact") == 0) {
@@ -2165,6 +2179,9 @@ static_assert(VCONTACT_CLI_REPLY_SIZE == CLI_REPLY_SIZE,
 static void companion_cli_exec(const char *line, char *reply)
 {
 	reply[0] = '\0';
+	if (handle_uptime_cli(line, reply)) {
+		return;
+	}
 	if (handle_local_ui_cli(line, reply)) {
 		return;
 	}

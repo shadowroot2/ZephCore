@@ -57,7 +57,7 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"reboot\r\nclkreboot\r\nerase\r\nhelp";
 	static const char companion[] =
 		"CLI companion:\r\n"
-		"ver\r\nboard\r\nadvert\r\nadvert.zerohop\r\n"
+		"ver\r\nboard\r\nuptime\r\nadvert\r\nadvert.zerohop\r\n"
 		"clock [sync]\r\ntime <epoch>\r\ngps [on|off|setloc|advert]\r\n"
 		"offgrid [on|off]\r\n"
 		"tracking [on|off]\r\n"
