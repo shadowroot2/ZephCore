@@ -455,7 +455,7 @@ static uint16_t get_battery_mv(void)
 	return zephyr_board.getBattMilliVolts();
 }
 
-#if defined(CONFIG_BOARD_XIAO_NRF52840)
+#if defined(CONFIG_BOARD_XIAO_NRF52840) || defined(CONFIG_BOARD_LILYGO_TECHO)
 static bool get_external_power(void)
 {
 	return zephyr_board.isExternalPowered();
@@ -1016,7 +1016,7 @@ int main(void)
 	ui_set_node_name(prefs->node_name);
 	refresh_repeater_ui_radio_state();
 	ui_set_battery_provider(get_battery_mv);
-#if defined(CONFIG_BOARD_XIAO_NRF52840)
+#if defined(CONFIG_BOARD_XIAO_NRF52840) || defined(CONFIG_BOARD_LILYGO_TECHO)
 	ui_set_power_source_provider(get_external_power);
 #endif
 	ui_set_battery(zephyr_board.getBattMilliVolts(), 0);

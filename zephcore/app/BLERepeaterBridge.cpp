@@ -1079,7 +1079,16 @@ static bool save_and_configure()
 
 } // namespace
 
-static void maintain_tx_queue(int64_t now);
+static void tx_work_handler(struct k_work *work);
+K_WORK_DEFINE(s_bridge_tx_work, tx_work_handler);
+
+static void maintain_tx_queue(int64_t now)
+{
+	ARG_UNUSED(now);
+	/* Zephyr ATT uses K_NO_WAIT on the system workqueue, but K_FOREVER
+	 * on an application thread. Never allocate GATT TX buffers in main. */
+	k_work_submit(&s_bridge_tx_work);
+}
 
 bool ble_bridge_start(RepeaterDataStore *store, mesh::Dispatcher *dispatcher)
 {
@@ -1328,8 +1337,11 @@ bool ble_bridge_forward_packet(const mesh::Packet *packet)
 	return false;
 }
 
-static void maintain_tx_queue(int64_t now)
+static void tx_work_handler(struct k_work *work)
 {
+	ARG_UNUSED(work);
+	const int64_t now = k_uptime_get();
+	BridgeFrame frame;
 	PendingTx *slot = nullptr;
 	TxCompletion *completion = nullptr;
 	k_spinlock_key_t key = k_spin_lock(&s_tx_lock);
@@ -1371,22 +1383,27 @@ static void maintain_tx_queue(int64_t now)
 	completion->generation = generation;
 	completion->used = true;
 	const bool require_established = slot->require_established;
+	/* stop/reconfigure can purge and reuse this slot while GATT runs. */
+	frame = slot->frame;
 	k_spin_unlock(&s_tx_lock, key);
 
 	bool is_central;
 	uint16_t peer_value_handle;
 	struct bt_conn *conn = link_conn_ref(true, require_established, &is_central, &peer_value_handle);
+	key = k_spin_lock(&s_tx_lock);
+	const bool current = slot->used && slot->in_flight && slot->generation == generation;
+	k_spin_unlock(&s_tx_lock, key);
 	int err = 0;
-	if (!conn || (is_central && peer_value_handle == 0)) {
+	if (!current || !conn || (is_central && peer_value_handle == 0)) {
 		err = -ENOTCONN;
 	} else if (is_central) {
-		err = bt_gatt_write_without_response_cb(conn, peer_value_handle, &slot->frame,
-			offsetof(BridgeFrame, raw) + slot->frame.raw_len, false, tx_complete, completion);
+		err = bt_gatt_write_without_response_cb(conn, peer_value_handle, &frame,
+			offsetof(BridgeFrame, raw) + frame.raw_len, false, tx_complete, completion);
 	} else {
 		struct bt_gatt_notify_params params = {
 			.attr = &bridge_service.attrs[2],
-			.data = &slot->frame,
-			.len = (uint16_t)(offsetof(BridgeFrame, raw) + slot->frame.raw_len),
+			.data = &frame,
+			.len = (uint16_t)(offsetof(BridgeFrame, raw) + frame.raw_len),
 			.func = tx_complete,
 			.user_data = completion,
 		};
@@ -1411,13 +1428,13 @@ static void maintain_tx_queue(int64_t now)
 		    (err != -ENOTCONN && ++slot->attempts >= TX_MAX_ATTEMPTS)) {
 			slot->used = false;
 			atomic_inc(&s_drop_count);
-			LOG_WRN("BLE bridge TX retries exhausted: %d", err);
 		} else {
 			slot->retry_at_ms = now +
 				(err == -ENOTCONN ? TX_DISCONNECTED_RETRY_MS : TX_RETRY_MS);
 		}
 	}
 	k_spin_unlock(&s_tx_lock, key);
+	if (s_dispatcher) s_dispatcher->notifyWake();
 }
 
 bool ble_bridge_send_observed(const uint8_t fingerprint[8])
@@ -1559,9 +1576,11 @@ uint32_t ble_bridge_ms_until_next(void)
 		deadline = s_tx_in_flight_deadline_ms;
 	}
 	for (const auto &pending : s_tx_queue) {
-		if (pending.used && !pending.in_flight &&
-		    (!deadline || pending.retry_at_ms < deadline)) {
-			deadline = pending.retry_at_ms;
+		if (pending.used && !pending.in_flight) {
+			/* A queued worker or exhausted callback pool must not cause a
+			 * zero-delay main-loop spin while waiting for asynchronous TX. */
+			const int64_t retry = MAX(pending.retry_at_ms, now + TX_RETRY_MS);
+			if (!deadline || retry < deadline) deadline = retry;
 		}
 	}
 	k_spin_unlock(&s_tx_lock, lock_key);

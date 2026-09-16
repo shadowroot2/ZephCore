@@ -115,7 +115,13 @@ static const struct gpio_dt_spec s_charge_full_led =
 #else
 #define HAS_XIAO_CHARGE_STATUS 0
 #endif
-#define HAS_RGB_CHARGE_STATUS (HAS_M3_CHARGE_STATUS || HAS_XIAO_CHARGE_STATUS)
+#if defined(CONFIG_BOARD_LILYGO_TECHO)
+#define HAS_TECHO_CHARGE_STATUS 1
+#else
+#define HAS_TECHO_CHARGE_STATUS 0
+#endif
+#define HAS_M3_STYLE_CHARGE_STATUS (HAS_M3_CHARGE_STATUS || HAS_TECHO_CHARGE_STATUS)
+#define HAS_RGB_CHARGE_STATUS (HAS_M3_STYLE_CHARGE_STATUS || HAS_XIAO_CHARGE_STATUS)
 
 /* T1000-E: P0.05 says USB-C power is physically present. P1.03/CHRG is not
  * reliable enough on this board to decide that the battery is full. */
@@ -165,13 +171,13 @@ static const struct gpio_dt_spec s_led_enable =
 #define LED_ON_MS                      20  /* Normal pulse width */
 #define LED_ON_MSG_MS                 200  /* Pulse width when unread messages */
 #define LED_HEARTBEAT_BLINKS            1
-#if defined(CONFIG_BOARD_THINKNODE_M3)
+#if defined(CONFIG_BOARD_THINKNODE_M3) || defined(CONFIG_BOARD_LILYGO_TECHO)
 #define LED_UNREAD_BLINKS               2
 #else
 #define LED_UNREAD_BLINKS               1
 #endif
 #define LED_HEARTBEAT_BLINK_GAP_MS      80
-#if defined(CONFIG_BOARD_THINKNODE_M3)
+#if defined(CONFIG_BOARD_THINKNODE_M3) || defined(CONFIG_BOARD_LILYGO_TECHO)
 #define LED_LOW_BATT_THRESHOLD_PCT     20
 #elif defined(ZEPHCORE_REPEATER)
 #define LED_LOW_BATT_THRESHOLD_PCT     15
@@ -288,7 +294,7 @@ static enum m3_charge_state m3_charge_state_get(void)
 	static uint32_t last_voltage_sample_ms;
 	static bool full_voltage;
 	static bool voltage_sampled;
-#if HAS_XIAO_CHARGE_STATUS
+#if HAS_XIAO_CHARGE_STATUS || HAS_TECHO_CHARGE_STATUS
 	bool usb_present_now = s_power_source_provider && s_power_source_provider();
 #else
 	bool usb_present_now = gpio_is_ready_dt(&s_charge_usb_detect) &&
@@ -308,8 +314,13 @@ static enum m3_charge_state m3_charge_state_get(void)
 
 		last_voltage_sample_ms = now;
 		voltage_sampled = true;
-		full_voltage = mv >= CHARGE_FULL_MV;
 		s_m3_charge_pct = mv ? battery_curve_lookup(&battery_curve_default, mv) : 0;
+#if HAS_TECHO_CHARGE_STATUS
+		/* T-ECHO's existing curve reaches 100% at 4100 mV. */
+		full_voltage = mv != 0 && s_m3_charge_pct == 100;
+#else
+		full_voltage = mv >= CHARGE_FULL_MV;
+#endif
 	}
 	return full_voltage ? M3_CHARGE_FULL : M3_CHARGE_ACTIVE;
 }
@@ -410,7 +421,7 @@ static uint8_t t1000_charge_blink_count(void)
 
 bool zephcore_led_status_priority_active(void)
 {
-#if HAS_M3_CHARGE_STATUS
+#if HAS_M3_STYLE_CHARGE_STATUS
 	return m3_charge_state_get() != M3_CHARGE_NONE;
 #elif HAS_T1000_CHARGE_STATUS
 	return t1000_charge_state_get() != T1000_CHARGE_NONE;
@@ -512,7 +523,7 @@ static void led_on_work_handler(struct k_work *work)
 	uint16_t mc = ui_led_get_msg_count();
 	bool m3_charging = false;
 
-#if HAS_M3_CHARGE_STATUS
+#if HAS_M3_STYLE_CHARGE_STATUS
 	enum m3_charge_state m3_charge_state = m3_charge_state_get();
 	if (m3_charge_state == M3_CHARGE_FULL) {
 		heartbeat_sequence_reset();

@@ -54,11 +54,10 @@
 
 	aliases {
 		lora0 = &lora;
-		/* Red is heartbeat; green replaces it for unread messages; blue is TX. */
-		led0 = &led_red;
-		led1 = &led_green;
+		/* M3-style: green heartbeat/unread, red low battery/charging, blue TX. */
+		led0 = &led_green;
+		low-battery-led = &led_red;
 		lora-tx-led = &led_blue;
-		ble-status-led = &led_blue;
 		sw0 = &user_button;
 		watchdog0 = &wdt0;
 		gps-enable = &gps_enable_pin;
@@ -70,7 +69,7 @@
 
 		led_red: led_0 {
 			gpios = <&gpio1 3 GPIO_ACTIVE_LOW>;
-			label = "Red LED (heartbeat)";
+			label = "Red LED (low battery/charging)";
 		};
 
 		led_green: led_1 {
