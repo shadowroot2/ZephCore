@@ -24,6 +24,9 @@ static atomic_t s_leds_disabled;
  */
 __weak void zephcore_leds_ui_sync(bool disabled) { ARG_UNUSED(disabled); }
 
+/* UI-capable boards with a hardware status indicator override this. */
+__weak bool zephcore_led_status_priority_active(void) { return false; }
+
 bool zephcore_leds_disabled(void)
 {
 	return atomic_get(&s_leds_disabled) != 0;

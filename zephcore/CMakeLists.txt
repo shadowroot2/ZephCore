@@ -321,26 +321,39 @@ set(ZEPHCORE_COMMON_CONF "${CMAKE_CURRENT_SOURCE_DIR}/boards/common/zephcore_com
 # string and the BOARD_QUALIFIERS which contains just the qualifier (e.g., "nrf52840")
 if(BOARD MATCHES ".*nrf52.*" OR BOARD MATCHES "rak4631" OR BOARD MATCHES "rak_wismesh_tag" OR BOARD MATCHES "rak3401_1watt" OR BOARD MATCHES "wio_tracker" OR BOARD MATCHES "ikoka_nano" OR BOARD MATCHES "t1000_e" OR BOARD MATCHES "meshtracker_x1" OR BOARD MATCHES "thinknode_m1" OR BOARD MATCHES "thinknode_m3" OR BOARD MATCHES "thinknode_m6" OR BOARD MATCHES "promicro_lr2021" OR BOARD MATCHES "promicro_sx1262" OR BOARD MATCHES "sensecap_solar" OR BOARD MATCHES "xiao_nrf52840" OR BOARD MATCHES "lilygo_techo" OR BOARD MATCHES "lilygo_timpulse_plus" OR BOARD MATCHES "heltec_t114" OR BOARD MATCHES "heltec_t096" OR BOARD MATCHES "gat562" OR BOARD MATCHES "muziworks_r1neo")
     set(ZEPHCORE_PLATFORM_CONF "${CMAKE_CURRENT_SOURCE_DIR}/boards/common/nrf52_common.conf")
+    set(ZEPHCORE_PLATFORM_BLE_CONF "${CMAKE_CURRENT_SOURCE_DIR}/boards/common/nrf52_ble_common.conf")
 elseif(DEFINED BOARD_QUALIFIERS AND BOARD_QUALIFIERS MATCHES ".*nrf52.*")
     set(ZEPHCORE_PLATFORM_CONF "${CMAKE_CURRENT_SOURCE_DIR}/boards/common/nrf52_common.conf")
 elseif(BOARD MATCHES ".*esp32.*" OR BOARD MATCHES "station_g2" OR BOARD MATCHES "thinknode_m9" OR BOARD MATCHES "lilygo_tlora_c6" OR BOARD MATCHES "heltec_wifi_lora32_v3" OR BOARD MATCHES "heltec_wifi_lora32_v4" OR BOARD MATCHES "meshnology_w12")
     set(ZEPHCORE_PLATFORM_CONF "${CMAKE_CURRENT_SOURCE_DIR}/boards/common/esp32_common.conf")
+    set(ZEPHCORE_PLATFORM_BLE_CONF "${CMAKE_CURRENT_SOURCE_DIR}/boards/common/esp32_ble_common.conf")
 elseif(DEFINED BOARD_QUALIFIERS AND BOARD_QUALIFIERS MATCHES ".*esp32.*")
     set(ZEPHCORE_PLATFORM_CONF "${CMAKE_CURRENT_SOURCE_DIR}/boards/common/esp32_common.conf")
+    set(ZEPHCORE_PLATFORM_BLE_CONF "${CMAKE_CURRENT_SOURCE_DIR}/boards/common/esp32_ble_common.conf")
 elseif(BOARD MATCHES ".*nrf54l.*" OR BOARD MATCHES "me25ls02")
     set(ZEPHCORE_PLATFORM_CONF "${CMAKE_CURRENT_SOURCE_DIR}/boards/common/nrf54l_common.conf")
+    set(ZEPHCORE_PLATFORM_BLE_CONF "${CMAKE_CURRENT_SOURCE_DIR}/boards/common/nrf54l_ble_common.conf")
 elseif(DEFINED BOARD_QUALIFIERS AND BOARD_QUALIFIERS MATCHES ".*nrf54l.*")
     set(ZEPHCORE_PLATFORM_CONF "${CMAKE_CURRENT_SOURCE_DIR}/boards/common/nrf54l_common.conf")
+    set(ZEPHCORE_PLATFORM_BLE_CONF "${CMAKE_CURRENT_SOURCE_DIR}/boards/common/nrf54l_ble_common.conf")
 elseif(BOARD MATCHES ".*mg24.*" OR BOARD MATCHES ".*efr32.*")
     set(ZEPHCORE_PLATFORM_CONF "${CMAKE_CURRENT_SOURCE_DIR}/boards/common/mg24_common.conf")
+    set(ZEPHCORE_PLATFORM_BLE_CONF "${CMAKE_CURRENT_SOURCE_DIR}/boards/common/mg24_ble_common.conf")
 elseif(DEFINED BOARD_QUALIFIERS AND BOARD_QUALIFIERS MATCHES ".*mg24.*")
     set(ZEPHCORE_PLATFORM_CONF "${CMAKE_CURRENT_SOURCE_DIR}/boards/common/mg24_common.conf")
+    set(ZEPHCORE_PLATFORM_BLE_CONF "${CMAKE_CURRENT_SOURCE_DIR}/boards/common/mg24_ble_common.conf")
+elseif(BOARD MATCHES "rpi_pico" OR BOARD MATCHES ".*rp2040.*")
+    set(ZEPHCORE_PLATFORM_CONF "${CMAKE_CURRENT_SOURCE_DIR}/boards/common/rp2040_common.conf")
+    set(ZEPHCORE_PLATFORM_BLE_CONF "")
 elseif(BOARD MATCHES "lora_e5" OR BOARD MATCHES ".*stm32wl.*")
     set(ZEPHCORE_PLATFORM_CONF "${CMAKE_CURRENT_SOURCE_DIR}/boards/common/stm32wl_common.conf")
+    set(ZEPHCORE_PLATFORM_BLE_CONF "")
 elseif(BOARD MATCHES "native_sim" OR BOARD MATCHES "native_posix")
     set(ZEPHCORE_PLATFORM_CONF "${CMAKE_CURRENT_SOURCE_DIR}/boards/linux_native/linux_common.conf")
+    set(ZEPHCORE_PLATFORM_BLE_CONF "")
 else()
     set(ZEPHCORE_PLATFORM_CONF "")
+    set(ZEPHCORE_PLATFORM_BLE_CONF "")
 endif()
 
 # Check for board-specific config in new folder structure
@@ -409,16 +422,45 @@ endif()
 # Build the EXTRA_CONF_FILE list (append to any user-provided extras)
 # Auto-pair each .conf with a same-named .overlay if it exists.
 set(ZEPHCORE_CONF_FILES "")
+set(ZEPHCORE_BLE_CONF "${CMAKE_CURRENT_SOURCE_DIR}/boards/common/ble_common.conf")
+set(ZEPHCORE_BLE_DISABLED_BUILD FALSE)
+set(ZEPHCORE_REPEATER_BRIDGE_BUILD FALSE)
+if(EXTRA_CONF_FILE MATCHES "(^|[;/])([^;/]*)repeater_(espnow|ble)_bridge\\.conf($|[;/])")
+    set(ZEPHCORE_REPEATER_BRIDGE_BUILD TRUE)
+endif()
+if(EXTRA_CONF_FILE MATCHES "(^|[;/])([^;/]*)(repeater|room_server|observer)\\.conf($|[;/])"
+   OR ZEPHCORE_REPEATER_BRIDGE_BUILD
+   OR ZEPHCORE_PLATFORM_CONF MATCHES "(linux_native|rp2040_common|stm32wl_common)")
+    set(ZEPHCORE_BLE_DISABLED_BUILD TRUE)
+endif()
 if(EXISTS ${ZEPHCORE_COMMON_CONF})
     list(APPEND ZEPHCORE_CONF_FILES ${ZEPHCORE_COMMON_CONF})
     zephcore_auto_pair_overlay("${ZEPHCORE_COMMON_CONF}")
+endif()
+if(NOT ZEPHCORE_BLE_DISABLED_BUILD AND EXISTS ${ZEPHCORE_BLE_CONF})
+    list(APPEND ZEPHCORE_CONF_FILES ${ZEPHCORE_BLE_CONF})
+    zephcore_auto_pair_overlay("${ZEPHCORE_BLE_CONF}")
 endif()
 if(ZEPHCORE_PLATFORM_CONF AND EXISTS ${ZEPHCORE_PLATFORM_CONF})
     list(APPEND ZEPHCORE_CONF_FILES ${ZEPHCORE_PLATFORM_CONF})
     zephcore_auto_pair_overlay("${ZEPHCORE_PLATFORM_CONF}")
 endif()
-if(ZEPHCORE_BOARD_CONF AND EXISTS ${ZEPHCORE_BOARD_CONF})
-    list(APPEND ZEPHCORE_CONF_FILES ${ZEPHCORE_BOARD_CONF})
+if(NOT ZEPHCORE_BLE_DISABLED_BUILD AND ZEPHCORE_PLATFORM_BLE_CONF AND EXISTS ${ZEPHCORE_PLATFORM_BLE_CONF})
+    list(APPEND ZEPHCORE_CONF_FILES ${ZEPHCORE_PLATFORM_BLE_CONF})
+    zephcore_auto_pair_overlay("${ZEPHCORE_PLATFORM_BLE_CONF}")
+endif()
+
+# Role and platform builds without BLE must not inherit board-level BT flags.
+set(ZEPHCORE_BOARD_CONF_EFFECTIVE "${ZEPHCORE_BOARD_CONF}")
+if(ZEPHCORE_BLE_DISABLED_BUILD AND ZEPHCORE_BOARD_CONF AND EXISTS ${ZEPHCORE_BOARD_CONF})
+    file(READ "${ZEPHCORE_BOARD_CONF}" _zephcore_board_conf_text)
+    string(REGEX REPLACE "(^|\\n)[ \\t]*CONFIG_BT[^\\n]*" "\\1" _zephcore_board_conf_text "${_zephcore_board_conf_text}")
+    string(REGEX REPLACE "(^|\\n)[ \\t]*CONFIG_ESP32_BT[^\\n]*" "\\1" _zephcore_board_conf_text "${_zephcore_board_conf_text}")
+    set(ZEPHCORE_BOARD_CONF_EFFECTIVE "${CMAKE_BINARY_DIR}/zephcore_board_no_ble.conf")
+    file(WRITE "${ZEPHCORE_BOARD_CONF_EFFECTIVE}" "${_zephcore_board_conf_text}")
+endif()
+if(ZEPHCORE_BOARD_CONF_EFFECTIVE AND EXISTS ${ZEPHCORE_BOARD_CONF_EFFECTIVE})
+    list(APPEND ZEPHCORE_CONF_FILES ${ZEPHCORE_BOARD_CONF_EFFECTIVE})
     zephcore_auto_pair_overlay("${ZEPHCORE_BOARD_CONF}")
 endif()
 
@@ -505,6 +547,7 @@ endif()
 # matches it (CMake MATCHES is unanchored), which made V4.3's inclusion look
 # accidental; spelling it out makes the intent reviewable.
 if(ZEPHCORE_PLATFORM_CONF MATCHES "esp32_common" AND EXTRA_CONF_FILE MATCHES "repeater"
+   AND NOT ZEPHCORE_REPEATER_BRIDGE_BUILD
    AND BOARD MATCHES "heltec_wifi_lora32_v3|heltec_wifi_lora32_v4|heltec_wifi_lora32_v43|heltec_wireless_tracker")
     set(ZEPHCORE_PM_CONF "${CMAKE_CURRENT_SOURCE_DIR}/boards/common/pm_esp32.conf")
     if(EXISTS ${ZEPHCORE_PM_CONF})
@@ -515,6 +558,7 @@ if(ZEPHCORE_PLATFORM_CONF MATCHES "esp32_common" AND EXTRA_CONF_FILE MATCHES "re
 endif()
 
 if(ZEPHCORE_PLATFORM_CONF MATCHES "esp32_common" AND EXTRA_CONF_FILE MATCHES "repeater"
+   AND NOT ZEPHCORE_REPEATER_BRIDGE_BUILD
    AND NOT BOARD MATCHES "/esp32/")
     set(ZEPHCORE_WIFI_OTA_CONF "${CMAKE_CURRENT_SOURCE_DIR}/boards/common/wifi_ota.conf")
     if(EXISTS ${ZEPHCORE_WIFI_OTA_CONF})
@@ -641,15 +685,33 @@ set(TF_PSA_CRYPTO_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(zephcore)
 
-# Dynamic build date - always current, even without --pristine
-string(TIMESTAMP ZEPHCORE_BUILD_DATE "%Y %b %d" UTC)
-add_definitions(-DFIRMWARE_BUILD_DATE="${ZEPHCORE_BUILD_DATE}")
-
-# Build-time UNIX epoch: mesh time sync's "provably dead clock" floor (a local
-# time below this is impossible for a running build). string(TIMESTAMP) honors
-# SOURCE_DATE_EPOCH for reproducible builds.
+# Keep the mesh time-sync floor from the configure step. The build stamp below
+# takes care of the visible firmware date on every Ninja invocation.
 string(TIMESTAMP ZEPHCORE_BUILD_EPOCH "%s" UTC)
 add_definitions(-DFIRMWARE_BUILD_EPOCH=${ZEPHCORE_BUILD_EPOCH}u)
+
+# Build stamp is generated before every build. It only changes when the local
+# calendar day changes, then its forced include recompiles the application with
+# the matching firmware date.
+set(ZEPHCORE_BUILD_STAMP_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+set(ZEPHCORE_BUILD_STAMP "${ZEPHCORE_BUILD_STAMP_DIR}/zephcore_build_stamp.h")
+set(ZEPHCORE_BUILD_STAMP_TRIGGER "${ZEPHCORE_BUILD_STAMP_DIR}/zephcore_build_stamp.trigger")
+file(MAKE_DIRECTORY "${ZEPHCORE_BUILD_STAMP_DIR}")
+
+add_custom_target(zephcore_build_stamp_tick ALL
+	BYPRODUCTS "${ZEPHCORE_BUILD_STAMP_TRIGGER}"
+	COMMAND "${CMAKE_COMMAND}" -E touch "${ZEPHCORE_BUILD_STAMP_TRIGGER}"
+	VERBATIM)
+add_custom_command(
+	OUTPUT "${ZEPHCORE_BUILD_STAMP}"
+	COMMAND "${CMAKE_COMMAND}"
+		-DZEPHCORE_BUILD_STAMP=${ZEPHCORE_BUILD_STAMP}
+		-P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/UpdateBuildStamp.cmake"
+	DEPENDS "${ZEPHCORE_BUILD_STAMP_TRIGGER}"
+		"${CMAKE_CURRENT_SOURCE_DIR}/cmake/UpdateBuildStamp.cmake"
+	VERBATIM)
+add_custom_target(zephcore_build_stamp DEPENDS "${ZEPHCORE_BUILD_STAMP}")
+add_dependencies(zephcore_build_stamp zephcore_build_stamp_tick)
 
 # Single source of truth for the firmware version string (vMAJOR.MINOR.PATCH-zephyr).
 # Injected globally like FIRMWARE_BUILD_DATE above, so every app TU sees the same
@@ -662,10 +724,15 @@ add_definitions(-DFIRMWARE_BUILD_EPOCH=${ZEPHCORE_BUILD_EPOCH}u)
 # key — so the configurator can match a running device against the catalog. Keep
 # all four identical; the release workflow reads this value directly.
 set(ZEPHCORE_FIRMWARE_VERSION "1.17.4-zephcore")
+string(REGEX REPLACE "-.*$" "" ZEPHCORE_DISPLAY_VERSION "${ZEPHCORE_FIRMWARE_VERSION}")
 add_definitions(-DFIRMWARE_VERSION="${ZEPHCORE_FIRMWARE_VERSION}")
+add_definitions(-DFIRMWARE_DISPLAY_VERSION="${ZEPHCORE_DISPLAY_VERSION}")
 
 add_subdirectory(lib/monocypher)
 target_link_libraries(app PRIVATE monocypher)
+add_dependencies(app zephcore_build_stamp)
+target_sources(app PRIVATE "${ZEPHCORE_BUILD_STAMP}")
+target_compile_options(app PRIVATE "-include${ZEPHCORE_BUILD_STAMP}")
 
 target_include_directories(app PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -702,6 +769,7 @@ target_sources(app PRIVATE
   adapters/sensors/ZephyrEnvSensors.cpp
   helpers/AdvertDataHelpers.cpp
   helpers/MeshTimeSync.cpp
+  helpers/ui/ui_timezone.c
   helpers/oled_power.c
   helpers/fatal_reboot.c
   # LED master gate ("set leds on|off"). Always compiled: helpers/ui/ui_common.c
@@ -858,7 +926,7 @@ else()
 endif()
 
 # ========== Role-Specific Sources ==========
-if(CONFIG_ZEPHCORE_ROLE_REPEATER)
+if(CONFIG_ZEPHCORE_ROLE_REPEATER_BASE)
   message(STATUS "ZephCore Role: REPEATER")
   target_sources(app PRIVATE
     src/main_repeater.cpp
@@ -904,6 +972,37 @@ if(CONFIG_ZEPHCORE_ROLE_REPEATER)
     )
   elseif(CONFIG_ZEPHCORE_REPEATER_UPLINK)
     message(WARNING "ZephCore repeater uplink requested, but MQTT is disabled in this configuration. Build will exclude uplink runtime.")
+  endif()
+  if(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+    target_sources(app PRIVATE app/RepeaterBridge.cpp app/BLERepeaterBridge.cpp)
+    if(CONFIG_SOC_FAMILY_ESPRESSIF_ESP32)
+      target_sources(app PRIVATE app/ESPNowBridge.cpp)
+      # The Zephyr Espressif HAL enables Wi-Fi's core/net80211/pp blobs, but
+      # deliberately leaves the optional ESP-NOW blob out of its common link
+      # set.  The bridge is the only ZephCore consumer.
+      if(CONFIG_ZEPHCORE_ESPNOW_BRIDGE AND NOT CONFIG_BUILD_ONLY_NO_BLOBS)
+        find_file(ZEPHCORE_ESPNOW_LIBRARY
+          NAMES libespnow.a
+          PATHS
+            ${ZEPHYR_HAL_ESPRESSIF_MODULE_DIR}/zephyr/blobs/lib/${CONFIG_SOC_SERIES}
+            $ENV{IDF_PATH}/components/esp_wifi/lib/${CONFIG_SOC_SERIES}
+          NO_DEFAULT_PATH
+        )
+        if(NOT ZEPHCORE_ESPNOW_LIBRARY)
+          file(GLOB ZEPHCORE_ESPNOW_IDF_LIBS
+            "$ENV{HOME}/.espressif/*/esp-idf/components/esp_wifi/lib/${CONFIG_SOC_SERIES}/libespnow.a")
+          list(SORT ZEPHCORE_ESPNOW_IDF_LIBS COMPARE NATURAL ORDER DESCENDING)
+          if(ZEPHCORE_ESPNOW_IDF_LIBS)
+            list(GET ZEPHCORE_ESPNOW_IDF_LIBS 0 ZEPHCORE_ESPNOW_LIBRARY)
+          endif()
+        endif()
+        if(NOT EXISTS "${ZEPHCORE_ESPNOW_LIBRARY}")
+          message(FATAL_ERROR "ESP-NOW bridge needs libespnow.a for ${CONFIG_SOC_SERIES}; install ESP-IDF or provide IDF_PATH")
+        endif()
+        zephyr_link_libraries(${ZEPHCORE_ESPNOW_LIBRARY})
+      endif()
+    endif()
+    target_include_directories(app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/app)
   endif()
   target_compile_definitions(app PRIVATE ZEPHCORE_REPEATER=1)
 elseif(CONFIG_ZEPHCORE_ROLE_ROOM_SERVER)
@@ -970,6 +1069,9 @@ else()
     # COMPANION_SERIAL (e.g. plain ESP32/S3 companions) failed to link otherwise.
     helpers/CommonCLI.cpp
   )
+  if(BOARD MATCHES "^(thinknode_m3|t1000_e)$")
+    target_sources(app PRIVATE adapters/sensors/FallDetector.cpp)
+  endif()
   # Companion transport: TCP socket on native Linux, serial (UART) on boards
   # with no Bluetooth controller (e.g. STM32WL), BLE NUS everywhere else.
   if(CONFIG_ZEPHCORE_TRANSPORT_TCP)
@@ -1006,6 +1108,7 @@ else()
   if(CONFIG_LOG OR CONFIG_ZEPHCORE_COMPANION_USB OR CONFIG_ZEPHCORE_COMPANION_SERIAL)
     target_sources(app PRIVATE
       adapters/usb/ZephyrCompanionUSB.cpp
+      helpers/CommonCLI.cpp
     )
     if(NOT CONFIG_CDC_ACM_SERIAL_INITIALIZE_AT_BOOT AND (CONFIG_USB_CDC_ACM OR CONFIG_USBD_CDC_ACM_CLASS))
       target_sources(app PRIVATE
@@ -1054,7 +1157,7 @@ if(CONFIG_ZEPHCORE_UI_BUTTONS OR CONFIG_ZEPHCORE_UI_BUZZER OR CONFIG_ZEPHCORE_UI
     ${CMAKE_CURRENT_SOURCE_DIR}/helpers/ui
   )
   # Repeater and Observer builds need weak stubs for companion-only UI mesh actions
-  if(CONFIG_ZEPHCORE_ROLE_REPEATER OR CONFIG_ZEPHCORE_ROLE_OBSERVER OR CONFIG_ZEPHCORE_ROLE_ROOM_SERVER)
+  if(CONFIG_ZEPHCORE_ROLE_REPEATER_BASE OR CONFIG_ZEPHCORE_ROLE_OBSERVER OR CONFIG_ZEPHCORE_ROLE_ROOM_SERVER)
     target_sources(app PRIVATE
       helpers/ui/ui_mesh_actions_stubs.c
     )

@@ -27,6 +27,9 @@ public:
 	void clearBootloaderMagic();      /* Clear stale GPREGRET values at startup */
 	uint8_t getStartupReason() const override;
 	bool isExternalPowered() override;  /* nRF52: VBUS present (USB/charger); else false */
+	bool isBatteryCharging() override;  /* Board-specific charge-status GPIO when available */
+	float getChargePowerWatts() override;  /* Optional board-specific charge source rating */
+	float getChargeCurrentAmps() override; /* Optional board-specific nominal charge current */
 
 private:
 	/* Runtime override for vbat-mv-multiplier. Units match DT `vbat-mv-multiplier`

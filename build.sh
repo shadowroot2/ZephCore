@@ -71,6 +71,7 @@ ESP32_boards=(
     heltec_wireless_tracker/esp32s3/procpu
     heltec_wireless_tracker_v2/esp32s3/procpu
     meshnology_w12/esp32s3/procpu
+    thinknode_m5/esp32s3/procpu
     ttgo_tbeam/esp32/procpu
 )
 
@@ -243,6 +244,12 @@ if [[ $1 == "esp32" ]]; then
             exit 1;
         fi
 
+        FLASH_MODE="dio"
+        FLASH_FREQ="40m"
+        if [[ $board == "thinknode_m5/esp32s3/procpu" ]]; then
+            FLASH_FREQ="80m"
+        fi
+
         # Classic ESP32 (e.g. T-Beam, PICO-D4) uses Zephyr's simple-boot path for
         # both roles: a self-contained zephyr.bin flashed at the 0x1000 ROM
         # bootloader offset. The companion keeps BLE (whose controller reserves
@@ -316,20 +323,28 @@ size = parse_cell(m.group(1))
 print(str(size // 1048576) + "MB")
                 ' "${ZEPHYR_DTS:-build/zephcore/zephyr/zephyr.dts}"
             )
+            # ThinkNode M5 reserves 0x10000..0x1ffff as its sys partition;
+            # its MCUboot slot0 starts at 0x20000. Other ESP32 sysbuild boards
+            # use the upstream slot0 offset at 0x10000.
+            APP_OFFSET=0x10000
+            if [[ $board == "thinknode_m5/esp32s3/procpu" ]]; then
+                APP_OFFSET=0x20000
+            fi
             # MCUboot/sysbuild boards: only the merged (MCUboot + signed app)
             # image is bootable on a bare/existing chip at 0x0. The signed app
-            # alone requires MCUboot already present and must land at 0x10000 —
+            # alone requires MCUboot already present and must land at the board's
+            # slot0 offset (0x10000 on upstream ESP32 boards, 0x20000 on M5) —
             # never publish it as a bootable "plain .bin" (bricks boards when
             # flashed like classic-ESP32's self-contained zephyr.bin, see GH #42).
             python -m esptool --chip "$chip" merge-bin \
             --output firmware/"$board_clean_for_path"-companion-"$COMMIT_HASH"-merged.bin \
-            --flash-mode dio --flash-freq 40m --flash-size "$FLASH_SIZE" \
+            --flash-mode "$FLASH_MODE" --flash-freq "$FLASH_FREQ" --flash-size "$FLASH_SIZE" \
             0x00000 build/mcuboot/zephyr/zephyr.bin \
-            0x10000 build/zephcore/zephyr/zephyr.signed.bin
+            "$APP_OFFSET" build/zephcore/zephyr/zephyr.signed.bin
 
-            # Signed app image (slot0 @ 0x10000). App-only update payload: used by
+            # Signed app image (slot0). App-only update payload: used by
             # the Mesh America configurator's "flash-update" (esptool writes it at
-            # 0x10000 over an existing MCUboot) and as a WiFi-OTA payload. NOT
+            # the board's slot0 offset over an existing MCUboot) and as a WiFi-OTA payload. NOT
             # bootable standalone — never flash at 0x0 (see GH #42).
             cp build/zephcore/zephyr/zephyr.signed.bin \
                 firmware/"$board_clean_for_path"-companion-"$COMMIT_HASH"-update.bin
@@ -374,7 +389,7 @@ print(str(size // 1048576) + "MB")
             # standalone, so only publish the merged image for these boards.
             python -m esptool --chip "$chip" merge-bin \
             --output firmware/"$board_clean_for_path"-repeater-"$COMMIT_HASH"-merged.bin \
-            --flash-mode dio --flash-freq 40m --flash-size "$FLASH_SIZE" \
+            --flash-mode "$FLASH_MODE" --flash-freq "$FLASH_FREQ" --flash-size "$FLASH_SIZE" \
             0x00000 build/mcuboot/zephyr/zephyr.bin \
             0x10000 build/zephcore/zephyr/zephyr.signed.bin
 

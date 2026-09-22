@@ -33,6 +33,7 @@
 #define LPP_TEMPERATURE_MULT         10
 #define LPP_HUMIDITY_MULT            2
 #define LPP_PRESSURE_MULT            10
+#define LPP_LUMINOSITY_MULT          1
 #define LPP_VOLTAGE_MULT             100
 #define LPP_CURRENT_MULT             1000
 #define LPP_DISTANCE_MULT            1000
@@ -108,7 +109,7 @@ public:
      * @return Number of bytes written, or 0 on overflow
      */
     uint8_t addLuminosity(uint8_t channel, float value) {
-        if (value < 0.0f) value = 0.0f;
+        if (isnan(value) || value < 0.0f) value = 0.0f;
         if (value > 65535.0f) value = 65535.0f;
         return addField2Unsigned(channel, LPP_LUMINOSITY, (uint16_t)value);
     }

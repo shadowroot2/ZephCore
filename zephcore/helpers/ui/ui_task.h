@@ -63,6 +63,9 @@ void ui_led_heartbeat_init(void);
  */
 void ui_notify(enum ui_event event);
 
+/** Request a redraw of the current UI state. Safe from the mesh thread. */
+void ui_request_render(void);
+
 /**
  * Update the message count shown on the messages page.
  *
@@ -161,10 +164,12 @@ void ui_set_gps_enabled(bool enabled);
 /**
  * Update GPS state machine info for display.
  * @param state        0=OFF, 1=STANDBY (sleeping), 2=ACQUIRING (searching)
+ * @param satellites   Last GNSS satellite count
  * @param last_fix_age_s  Seconds since last fix (UINT32_MAX = never)
  * @param next_search_s   Seconds until next search (0 = now or off)
  */
-void ui_set_gps_state(uint8_t state, uint32_t last_fix_age_s, uint32_t next_search_s);
+void ui_set_gps_state(uint8_t state, uint16_t satellites,
+		      uint32_t last_fix_age_s, uint32_t next_search_s);
 
 /**
  * Set BLE enabled state (for display page).
@@ -181,22 +186,54 @@ void ui_set_buzzer_mode(uint8_t mode);
  */
 void ui_set_leds_disabled(bool disabled);
 
+/** Update repeater-bridge backhaul state shown in the UI. */
+void ui_set_bridge_enabled(bool enabled);
+void ui_set_bridge_connected(bool connected);
+void ui_set_bridge_status(const char *status);
+void ui_set_bridge_addresses(const char *local, const char *peer);
+void ui_set_bridge_metrics(uint8_t priority, uint32_t forwarded, uint32_t skipped);
+
+/** Return the current LED heartbeat state. */
+bool ui_leds_disabled(void);
+
 /**
  * Enable or disable the heartbeat LED.
  */
 void ui_set_heartbeat_led(bool enabled);
 
 /**
- * Flash the heartbeat LED immediately on message receipt.
- * Cancels the current cycle, pulses, then resumes normal heartbeat.
+ * Update LED-only BLE state. Boards that opt in with the ble-status-led alias
+ * can mirror the heartbeat while BLE is enabled but not connected.
+ */
+void ui_led_set_ble_connected(bool connected);
+void ui_led_set_ble_enabled(bool enabled);
+
+/**
+ * Flash the heartbeat LED on message receipt.
+ * Cancels the current cycle, then resumes normal heartbeat.
  */
 void ui_led_flash_msg(void);
+
+/**
+ * Force the T-1000E LED on briefly after a user-originated message or advert.
+ * Other boards implement this as a no-op.
+ */
+void ui_led_force_tx(void);
+
+/**
+ * Confirm a local on/off setting change: one flash for on, two for off.
+ * T-1000E implements this even when heartbeat LEDs are disabled.
+ */
+void ui_led_confirm_state(bool enabled);
 
 /**
  * Flash the heartbeat LED 3 times as a visual shutdown indicator.
  * Used when the buzzer is muted — gives visual feedback on power-off.
  */
 void ui_led_flash_shutdown(void);
+
+/** Execute the same user-initiated shutdown path as a long button press. */
+void ui_shutdown(void);
 
 /**
  * Set offgrid mode (client repeat) state for display page.
@@ -238,42 +275,45 @@ void ui_set_power_source_provider(bool (*provider)(void));
  * Set the runtime low-battery auto-shutdown threshold in millivolts.
  * 0 disables the check. Seeded at boot from prefs (which default to
  * CONFIG_ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS) and updated live by the CLI.
- * No-op on builds where the feature is compiled out (non-nRF52).
  */
 void ui_set_auto_shutdown_mv(uint16_t mv);
 
 /* Reason codes passed to the shutdown hook. */
 #define UI_SHUTDOWN_LOW_BATTERY  1
 
-/* Grace period (ms) the poweroff is deferred by when the hook asks for it
- * (an app is connected and a live notice was queued), so the notify→fetch→
- * send round-trip can complete before power is cut. */
-#define UI_SHUTDOWN_GRACE_MS     1000
+/* Grace period (ms) the poweroff is deferred by when the hook asks for it.
+ * This leaves enough time for a queued LoRa Public-channel shutdown message
+ * to be transmitted before power is cut. */
+#define UI_SHUTDOWN_GRACE_MS     8000
 
 /**
  * Register a pre-shutdown hook, called from ui_auto_shutdown_check() just
- * before power-off. The companion uses it to report the shutdown to the
- * connected app (v-contact). Return value:
- *   true  = an app is connected and a live notice was queued — defer the
- *           poweroff by UI_SHUTDOWN_GRACE_MS so the app can fetch it.
- *   false = nothing to deliver live (persist to flash instead) — power off
- *           immediately.
+ * before power-off. The companion uses it to report the shutdown. battery_mv
+ * and uptime_ms are the measurement that confirmed the automatic shutdown.
+ * Return value:
+ *   true  = a live notice was queued — defer poweroff by
+ *           UI_SHUTDOWN_GRACE_MS so its delivery can finish.
+ *   false = nothing was queued — power off immediately.
  * The hook runs on the main thread and must not block.
  */
-typedef bool (*ui_shutdown_fn)(int reason);
+typedef bool (*ui_shutdown_fn)(int reason, uint16_t battery_mv, uint32_t uptime_ms);
 void ui_set_shutdown_hook(ui_shutdown_fn fn);
 
 /**
  * Low-battery auto-shutdown check (companion only).
  *
  * Call from the periodic housekeeping tick — it self-throttles its own ADC
- * sampling, so calling it every tick is cheap (no extra polling). When
- * CONFIG_ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS is 0 this is a no-op. Otherwise,
- * if the battery is below the threshold AND not externally powered, it shows
- * a brief warning (3 s on OLED, instant-persist on e-paper) and powers off
- * via ui_prepare_for_system_off() + sys_poweroff().
+ * sampling, so calling it every tick is cheap (no extra polling). When the
+ * runtime threshold is 0 this is a no-op. Otherwise, if the battery is below
+ * the threshold AND not externally powered, it shows a brief warning (3 s on
+ * OLED, instant-persist on e-paper) and powers off via
+ * ui_prepare_for_system_off() + sys_poweroff().
  */
 void ui_auto_shutdown_check(void);
+
+/** True after auto-shutdown has committed; UI renderers must not overwrite
+ * the terminal low-battery screen while a queued emergency message drains. */
+bool ui_shutdown_in_progress(void);
 
 /**
  * Drop the battery-refresh freshness timestamp. The next

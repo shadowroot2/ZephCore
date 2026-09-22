@@ -7,6 +7,7 @@
 #include "../joystick_screens.h"
 #include "../joystick_ui_task.h"
 #include "screen_helpers.h"
+#include <helpers/battery_curve.h>
 #include <zephyr/kernel.h>
 #include <stdio.h>
 #include <ZephyrSensorManager.h>
@@ -44,9 +45,7 @@ int HomeScreen::render(JoystickDisplay &display)
 	if (_task->getBatteryDisplayMode() == 1) {
 		snprintf(batt, sizeof(batt), "%.1fV", (double)batt_mv / 1000.0);
 	} else {
-		int pct = ((int)batt_mv - kBattMinMv) * 100 / (kBattMaxMv - kBattMinMv);
-		if (pct < 0) pct = 0;
-		if (pct > 100) pct = 100;
+		int pct = battery_curve_lookup(&battery_curve_default, batt_mv);
 		snprintf(batt, sizeof(batt), "%d%%", pct);
 	}
 
@@ -209,6 +208,10 @@ bool HomeScreen::handleInput(char c)
 #define FIRMWARE_VERSION "ZephCore"
 #endif
 
+#ifndef FIRMWARE_DISPLAY_VERSION
+#define FIRMWARE_DISPLAY_VERSION FIRMWARE_VERSION
+#endif
+
 #ifndef FIRMWARE_BUILD_DATE
 #define FIRMWARE_BUILD_DATE ""
 #endif
@@ -245,7 +248,7 @@ int SplashScreen::render(JoystickDisplay &display)
 	}
 
 	/* Match the button-UI splash: ZephCore wordmark bitmap centered at top,
-	 * "MeshCore on Zephyr" beneath it, build date at the bottom. Logo and
+	 * "MeshCore on Zephyr" beneath it, firmware version, build date and a signature. Logo and
 	 * its dimensions live in helpers/ui/ui_common.c — declared in display.h. */
 	int w = display.width();
 	int fh = display.fontH();
@@ -258,8 +261,14 @@ int SplashScreen::render(JoystickDisplay &display)
 	int cx = w / 2;
 	display.setColor(JoystickDisplay::GREEN);
 	display.drawTextCentered(cx, y + fh / 2, "MeshCore on Zephyr");
-	y += line_h * 2;
+	/* Keep the firmware version and build date below the product name. */
+	y += line_h;
 	display.setColor(JoystickDisplay::LIGHT);
+	display.drawTextCentered(cx, y + fh / 2, FIRMWARE_DISPLAY_VERSION);
+	y += line_h;
 	display.drawTextCentered(cx, y + fh / 2, FIRMWARE_BUILD_DATE);
+	int signature_y = display.height() - fh - 2;
+	display.drawTextCentered(cx, signature_y < 0 ? fh / 2 : signature_y + fh / 2,
+					 "Tuned by ShadoW");
 	return 250;
 }

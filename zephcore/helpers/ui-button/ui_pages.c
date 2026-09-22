@@ -18,6 +18,9 @@
 #include "ui_task.h"
 #include "display.h"
 #include <helpers/buzzer_gate.h>
+#include <helpers/ui/ui_timezone.h>
+#include <helpers/battery_curve.h>
+
 
 #include <time_sync.h>
 #include <ZephyrSensorManager.h>
@@ -166,6 +169,16 @@ static uint32_t activity_last_sample_ms;
 static const enum ui_page active_pages[] = {
 	UI_PAGE_STATUS,
 	UI_PAGE_RADIO,
+	#if defined(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+	UI_PAGE_BRIDGE,
+	UI_PAGE_BRIDGE_INFO,
+	#endif
+	#if defined(CONFIG_ZEPHCORE_UI_BUZZER)
+	UI_PAGE_BUZZER,
+	#endif
+	#if defined(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+	UI_PAGE_LEDS,
+	#endif
 	UI_PAGE_SHUTDOWN,
 };
 #else
@@ -177,6 +190,8 @@ static const enum ui_page active_pages[] = {
 	UI_PAGE_BLUETOOTH,
 	UI_PAGE_ADVERT,
 	UI_PAGE_GPS,
+	UI_PAGE_TRACKING,
+	UI_PAGE_SOS,
 #ifdef CONFIG_ZEPHCORE_UI_BUZZER
 	UI_PAGE_BUZZER,
 #endif
@@ -197,13 +212,10 @@ static int current_page_idx;
 
 static uint8_t calc_battery_pct(uint16_t mv)
 {
-	if (mv >= 4200) {
-		return 100;
-	}
-	if (mv <= 3000) {
-		return 0;
-	}
-	return (uint8_t)((mv - 3000) * 100 / 1200);
+	/* Voltage is not a linear state-of-charge indicator for a LiPo. Use the
+	 * selected board curve instead: M5's 3368 mV is ~15%, not the misleading
+	 * 30% produced by the former 3.0–4.2 V linear scale. */
+	return battery_curve_lookup(&battery_curve_default, mv);
 }
 
 /* ========== Helper: local wall clock ==========
@@ -213,11 +225,6 @@ static uint8_t calc_battery_pct(uint16_t mv)
  * backward jump to every timestamp consumer on the node (advert timestamps,
  * the repeater ACL's monotonic gate, MeshTimeSync), and a backward clock is a
  * silent mesh-wide mute.  Never write these values back into state. */
-static uint32_t local_epoch(void)
-{
-	return state.rtc_epoch + (int32_t)state.tz_offset * 3600;
-}
-
 /* The zone the displayed digits are actually in: "UTC", "UTC+2", "UTC-11".
  * Static buffer -- every caller is on the UI thread inside ui_pages_render(). */
 static const char *tz_label(void)
@@ -264,7 +271,8 @@ static void render_top_bar(void)
 	 * Before sync, getCurrentTime() returns bare uptime (~seconds),
 	 * so check for a sane epoch (after Jan 1 2025 = 1735689600). */
 	if (state.rtc_epoch > 1735689600) {
-		uint32_t day_sec = local_epoch() % 86400;
+		uint32_t day_sec = ui_local_day_seconds(state.rtc_epoch);
+
 		uint8_t hh = day_sec / 3600;
 		uint8_t mm = (day_sec % 3600) / 60;
 
@@ -596,6 +604,10 @@ static const char *tiny_page_title(enum ui_page p)
 	case UI_PAGE_SENSORS:   return "SENSORS";
 	case UI_PAGE_OFFGRID:   return "OFFGRID";
 	case UI_PAGE_DFU:       return "DFU";
+	case UI_PAGE_TRACKING:  return "TRACKING";
+	case UI_PAGE_SOS:       return "SOS";
+	case UI_PAGE_BRIDGE:    return "BRIDGE";
+	case UI_PAGE_BRIDGE_INFO:return "BRG INFO";
 	case UI_PAGE_SHUTDOWN:  return "SHUTDOWN";
 	case UI_PAGE_STATUS:    return "STATUS";
 	default:                return "";
@@ -1138,6 +1150,115 @@ static void render_advert(void)
 	render_advert_mono();
 }
 
+static void render_sos_mono(void)
+{
+	uint32_t now = k_uptime_get_32();
+	bool recent = state.sos_sent_time > 0 &&
+		(now - state.sos_sent_time) < 2000;
+
+	draw_centered(centered_row(0, 2), "Send SOS");
+	if (state.sos_waiting_fix) {
+		draw_centered(centered_row(1, 2), "Waiting fix (5m max)");
+	} else if (recent) {
+		draw_centered(centered_row(1, 2),
+			      state.sos_send_failed ? "SOS failed" : ">>> SOS Sent! <<<");
+	} else {
+		draw_centered(centered_row(1, 2), "Press to Send");
+	}
+}
+
+#if MC_DISPLAY_COLOR_PANEL
+static void render_sos_color(void)
+{
+	uint32_t now = k_uptime_get_32();
+	bool recent = state.sos_sent_time > 0 &&
+		(now - state.sos_sent_time) < 2000;
+	int y = CONTENT_Y;
+
+	draw_badge(0, y, "SOS", state.sos_waiting_fix ? UI_COLOR_WARN : UI_COLOR_ERROR);
+	mc_display_color_text(32, y, "Emergency message", UI_COLOR_VALUE);
+	y += LINE_H + 2;
+	if (state.sos_waiting_fix) {
+		draw_centered_color(y, "Waiting fix (5m max)", UI_COLOR_WARN);
+	} else if (recent) {
+		draw_centered_color(y, state.sos_send_failed ? "SOS failed" : "SOS sent",
+				    state.sos_send_failed ? UI_COLOR_ERROR : UI_COLOR_OK);
+	} else {
+		draw_centered_color(y, "Press to send", UI_COLOR_VALUE);
+	}
+}
+#endif /* MC_DISPLAY_COLOR_PANEL */
+
+static void render_sos(void)
+{
+#if MC_DISPLAY_COLOR_PANEL
+	if (mc_display_has_color()) {
+		render_sos_color();
+		return;
+	}
+#endif
+	render_sos_mono();
+}
+
+static void render_tracking_mono(void)
+{
+	char buf[32];
+	int y = CONTENT_Y;
+
+	if (!state.gps_available) {
+		draw_centered(centered_row(0, 2), "Tracking unavailable");
+		draw_centered(centered_row(1, 2), "No GPS");
+		return;
+	}
+
+	snprintf(buf, sizeof(buf), "Tracking: %s",
+		 state.tracking_enabled ? "on" : "off");
+	mc_display_text(0, y, buf, false);
+	y += LINE_H;
+	snprintf(buf, sizeof(buf), "Interval: %um",
+		 state.tracking_interval_minutes);
+	mc_display_text(0, y, buf, false);
+	y += LINE_H;
+	draw_centered(y + 8, state.tracking_enabled ?
+		      "Press to Disable" : "Press to Enable");
+}
+
+#if MC_DISPLAY_COLOR_PANEL
+static void render_tracking_color(void)
+{
+	char buf[32];
+	int y = CONTENT_Y;
+
+	if (!state.gps_available) {
+		draw_centered_color(y, "No GPS", UI_COLOR_WARN);
+		return;
+	}
+	snprintf(buf, sizeof(buf), "Tracking: %s",
+		 state.tracking_enabled ? "on" : "off");
+	mc_display_color_text(0, y, buf,
+		state.tracking_enabled ? UI_COLOR_OK : UI_COLOR_LABEL);
+	y += LINE_H;
+	snprintf(buf, sizeof(buf), "Interval: %um",
+		 state.tracking_interval_minutes);
+	mc_display_color_text(0, y, buf, UI_COLOR_LABEL);
+	y += LINE_H;
+	draw_centered_color(y + 8,
+			    state.tracking_enabled ? "Press to Disable" : "Press to Enable",
+			    UI_COLOR_VALUE);
+}
+#endif /* MC_DISPLAY_COLOR_PANEL */
+
+static void render_tracking(void)
+{
+#if MC_DISPLAY_COLOR_PANEL
+	if (mc_display_has_color()) {
+		render_tracking_color();
+		return;
+	}
+#endif
+	render_tracking_mono();
+}
+
 /* Format seconds into compact time string: "3m20s", "1h05m", "12s" */
 static void fmt_duration(char *buf, size_t len, uint32_t secs)
 {
@@ -1217,8 +1338,16 @@ static void render_gps(void)
 	/* State-dependent display */
 	if (state.gps_state == 2) {
 		/* ACQUIRING — actively searching for satellites */
-		snprintf(buf, sizeof(buf), "Searching... sat:%u",
-			 state.gps_satellites);
+		strcpy(buf, "Searching...");
+		if (color) {
+			mc_display_color_text(0, y, buf, UI_COLOR_WARN);
+		} else {
+			mc_display_text(0, y, buf, false);
+		}
+		y += LINE_H;
+
+		/* Keep the satellite count on its own line before Last fix. */
+		snprintf(buf, sizeof(buf), "Sats in view: %u", state.gps_satellites);
 		if (color) {
 			draw_color_segments(y, "SAT ", buf, UI_COLOR_WARN);
 		} else {
@@ -1246,6 +1375,14 @@ static void render_gps(void)
 		}
 	} else if (state.gps_state == 1) {
 		/* STANDBY — sleeping between fix cycles */
+		snprintf(buf, sizeof(buf), "Sats in view: %u", state.gps_satellites);
+		if (color) {
+			draw_color_segments(y, "SAT ", buf, UI_COLOR_LABEL);
+		} else {
+			mc_display_text(0, y, buf, false);
+		}
+		y += LINE_H;
+
 		if (state.gps_last_fix_age_s != UINT32_MAX) {
 			char tbuf[12];
 
@@ -1278,11 +1415,12 @@ static void render_gps(void)
 			}
 		}
 	} else {
-		/* OFF — shouldn't reach here if gps_enabled is true */
+		/* gps_enabled is set synchronously, while the UI state update can
+		 * arrive one render later. Never contradict the enabled status. */
 		if (color) {
-			mc_display_color_text(0, y, "GPS off", UI_COLOR_DISABLED);
+			mc_display_color_text(0, y, "Starting GPS...", UI_COLOR_WARN);
 		} else {
-			mc_display_text(0, y, "GPS off", false);
+			mc_display_text(0, y, "Starting GPS...", false);
 		}
 	}
 }
@@ -1345,6 +1483,106 @@ static void render_leds(void)
 	}
 #endif
 	render_leds_mono();
+}
+
+static const char *bridge_status_short(void)
+{
+	const char *status = state.bridge_status[0] ? state.bridge_status :
+		(state.bridge_connected ? "connected" : "waiting");
+
+	if (strcmp(status, "connected") == 0) return "conn";
+	if (strcmp(status, "waiting") == 0) return "wait";
+	if (strcmp(status, "no peer") == 0) return "nopr";
+	if (strcmp(status, "timeout") == 0) return "tout";
+	if (strcmp(status, "error") == 0) return "err";
+	if (strcmp(status, "off") == 0) return "off";
+	return "?";
+}
+
+static void render_bridge_mono(void)
+{
+	char buf[28];
+	int y = CONTENT_Y;
+
+	if (state.bridge_enabled) {
+		snprintf(buf, sizeof(buf), "Bridge: on (%s)", bridge_status_short());
+	} else {
+		snprintf(buf, sizeof(buf), "Bridge: off");
+	}
+	mc_display_text(0, y, buf, false);
+	y += LINE_H;
+	snprintf(buf, sizeof(buf), "MC: %s", state.bridge_local_mac[0] ?
+		 state.bridge_local_mac : "unavailable");
+	mc_display_text(0, y, buf, false);
+	y += LINE_H;
+	snprintf(buf, sizeof(buf), "PR: %s", state.bridge_peer_mac[0] ?
+		 state.bridge_peer_mac : "not set");
+	mc_display_text(0, y, buf, false);
+	y += LINE_H;
+	draw_centered(y + 2, state.bridge_enabled ? "Press to Disable" : "Press to Enable");
+}
+
+#if MC_DISPLAY_COLOR_PANEL
+static void render_bridge_color(void)
+{
+	char buf[28];
+	int y = CONTENT_Y;
+
+	draw_badge(0, y, "BRG", state.bridge_enabled ? UI_COLOR_OK : UI_COLOR_DISABLED);
+	if (state.bridge_enabled) {
+		snprintf(buf, sizeof(buf), "on (%s)", bridge_status_short());
+	} else {
+		snprintf(buf, sizeof(buf), "off");
+	}
+	mc_display_color_text(32, y, buf,
+			      state.bridge_enabled ? UI_COLOR_OK : UI_COLOR_DISABLED);
+	y += LINE_H;
+	snprintf(buf, sizeof(buf), "MC: %s", state.bridge_local_mac[0] ?
+		 state.bridge_local_mac : "unavailable");
+	mc_display_color_text(0, y, buf, UI_COLOR_VALUE);
+	y += LINE_H;
+	snprintf(buf, sizeof(buf), "PR: %s", state.bridge_peer_mac[0] ?
+		 state.bridge_peer_mac : "not set");
+	mc_display_color_text(0, y, buf, UI_COLOR_VALUE);
+	y += LINE_H + 2;
+	draw_centered_color(y, state.bridge_enabled ? "Press to disable" : "Press to enable",
+			    UI_COLOR_VALUE);
+}
+#endif /* MC_DISPLAY_COLOR_PANEL */
+
+static void render_bridge(void)
+{
+#if MC_DISPLAY_COLOR_PANEL
+	if (mc_display_has_color()) {
+		render_bridge_color();
+		return;
+	}
+#endif
+	render_bridge_mono();
+}
+
+static void render_bridge_info(void)
+{
+	char buf[28];
+	int y = CONTENT_Y;
+	const uint32_t min_delay_s = (uint32_t)state.bridge_priority * 5U;
+	const uint32_t max_delay_s = (uint32_t)state.bridge_priority * 30U;
+
+	snprintf(buf, sizeof(buf), "Priority: %u", state.bridge_priority);
+	mc_display_text(0, y, buf, false);
+	y += LINE_H;
+	if (state.bridge_priority == 0) {
+		mc_display_text(0, y, "Delay: immediate", false);
+	} else {
+		snprintf(buf, sizeof(buf), "Delay: %u-%us", min_delay_s, max_delay_s);
+		mc_display_text(0, y, buf, false);
+	}
+	y += LINE_H;
+	snprintf(buf, sizeof(buf), "Forwarded: %u", state.bridge_forwarded);
+	mc_display_text(0, y, buf, false);
+	y += LINE_H;
+	snprintf(buf, sizeof(buf), "Skipped: %u", state.bridge_skipped);
+	mc_display_text(0, y, buf, false);
 }
 
 static void render_sensors(void)
@@ -1579,7 +1817,8 @@ static void render_status(void)
 		draw_centered(centered_row(0, 3), buf);
 
 		if (state.rtc_epoch > 1735689600) {
-			uint32_t ds = local_epoch() % 86400;
+			uint32_t ds = ui_local_day_seconds(state.rtc_epoch);
+
 
 			snprintf(buf, sizeof(buf), "%02u:%02u %s",
 				 (unsigned)(ds / 3600), (unsigned)((ds % 3600) / 60),
@@ -1602,11 +1841,33 @@ static void render_status(void)
 	/* Role label */
 	if (color) {
 		draw_badge(0, y, "MODE", UI_COLOR_ACTIVE);
+	#if defined(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+		mc_display_color_text(38, y, "repeater bridge", UI_COLOR_VALUE);
+	#else
 		mc_display_color_text(38, y, "repeater", UI_COLOR_VALUE);
+	#endif
 	} else {
+	#if defined(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+		draw_centered(y, "REPEATER BRIDGE");
+	#else
 		draw_centered(y, "REPEATER");
+	#endif
 	}
 	y += LINE_H;
+
+#if defined(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+	snprintf(buf, sizeof(buf), "Link: %s", state.bridge_status[0] ?
+		 state.bridge_status : (state.bridge_connected ? "connected" : "off"));
+	if (color) {
+		uint16_t status_color = state.bridge_connected ? UI_COLOR_OK :
+			(state.bridge_status[0] && strcmp(state.bridge_status, "off") != 0 &&
+			 strcmp(state.bridge_status, "no peer") != 0) ? UI_COLOR_WARN : UI_COLOR_DISABLED;
+		mc_display_color_text(0, y, buf, status_color);
+	} else {
+		mc_display_text(0, y, buf, false);
+	}
+	y += LINE_H;
+#endif
 
 	/* Uptime */
 	uint32_t up_s = (uint32_t)(k_uptime_get() / 1000);
@@ -1622,18 +1883,21 @@ static void render_status(void)
 	}
 	y += LINE_H;
 
+	/* Companion keeps the detailed clock here. Repeater-bridge shows it only
+	 * in the top bar, leaving the main page for link and radio state. */
+#if !defined(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
 	/* Clock — only if RTC has been synced (after Jan 1 2025) */
 	if (state.rtc_epoch > 1735689600) {
-		uint32_t day_sec = local_epoch() % 86400;
+		uint32_t day_sec = ui_local_day_seconds(state.rtc_epoch);
+
 		uint8_t hh = day_sec / 3600;
 		uint8_t mm = (day_sec % 3600) / 60;
 		uint8_t ss = day_sec % 60;
+		char tz[10];
 
-		/* "T:" rather than "Time:" so a two-digit zone still fits the
-		 * 20-column budget of the 200x200 e-paper boards, which pair
-		 * CONFIG_ZEPHCORE_DISPLAY_LARGE_FONT (10x16) with this page. */
-		snprintf(buf, sizeof(buf), "T: %02u:%02u:%02u %s", hh, mm, ss,
-			 tz_label());
+		ui_timezone_format_label(tz, sizeof(tz));
+		snprintf(buf, sizeof(buf), "T: %02u:%02u:%02u %s", hh, mm, ss, tz);
+
 		if (color) {
 			draw_color_segments(y, "CLK ", buf, UI_COLOR_OK);
 		} else {
@@ -1647,6 +1911,7 @@ static void render_status(void)
 		}
 	}
 	y += LINE_H;
+#endif
 
 	/* Battery */
 	if (state.battery_mv > 0) {
@@ -1687,6 +1952,10 @@ static const page_render_fn renderers[] = {
 	[UI_PAGE_SENSORS]   = render_sensors,
 	[UI_PAGE_OFFGRID]   = render_offgrid,
 	[UI_PAGE_DFU]       = render_dfu,
+	[UI_PAGE_TRACKING]  = render_tracking,
+	[UI_PAGE_SOS]       = render_sos,
+	[UI_PAGE_BRIDGE]    = render_bridge,
+	[UI_PAGE_BRIDGE_INFO] = render_bridge_info,
 	[UI_PAGE_SHUTDOWN]  = render_shutdown,
 	[UI_PAGE_STATUS]    = render_status,
 };
@@ -1757,12 +2026,23 @@ void ui_pages_render_splash(void)
 
 	/* "MeshCore on Zephyr" centered below logo */
 	draw_centered(y, "MeshCore on Zephyr");
-	y += LINE_H * 2;
+	/* Keep the firmware version and build date below the product name. */
+	y += LINE_H;
+
+#ifdef FIRMWARE_DISPLAY_VERSION
+	draw_centered(y, FIRMWARE_DISPLAY_VERSION);
+	y += LINE_H;
+#endif
 
 	/* Build date centered below (format: "2026 Feb 15") */
 #ifdef FIRMWARE_BUILD_DATE
 	draw_centered(y, FIRMWARE_BUILD_DATE);
 #endif
+
+	/* Custom build signature: keep it anchored to the physical bottom rather
+	 * than the content below the logo, so it remains centered on every panel. */
+	int signature_y = (int)DISP_H - FONT_H - 2;
+	draw_centered(signature_y < 0 ? 0 : signature_y, "Tuned by ShadoW");
 
 	mc_display_finalize();
 }
@@ -1822,4 +2102,31 @@ void ui_pages_advert_sent(bool flood)
 {
 	state.advert_sent_time = k_uptime_get_32();
 	state.advert_was_flood = flood;
+}
+
+void ui_pages_sos_waiting(void)
+{
+	state.sos_waiting_fix = true;
+	state.sos_sent_time = 0;
+	state.sos_send_failed = false;
+}
+
+void ui_pages_sos_sent(bool success)
+{
+	state.sos_waiting_fix = false;
+	state.sos_sent_time = k_uptime_get_32();
+	state.sos_send_failed = !success;
+}
+
+void ui_pages_sos_clear(void)
+{
+	state.sos_waiting_fix = false;
+	state.sos_sent_time = 0;
+	state.sos_send_failed = false;
+}
+
+void ui_pages_set_tracking(bool enabled, uint16_t interval_minutes)
+{
+	state.tracking_enabled = enabled;
+	state.tracking_interval_minutes = interval_minutes;
 }

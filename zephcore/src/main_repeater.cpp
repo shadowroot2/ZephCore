@@ -55,12 +55,22 @@ extern "C" void bt_ctlr_assert_handle(char *file, uint32_t line)
 #include <adapters/clock/ZephyrRTCClock.h>
 #include <adapters/clock/ZephyrRTCDiscover.h>
 #include <ZephyrSensorManager.h>
+#include <helpers/LocalCLIHelp.h>
+#include <helpers/buzzer_gate.h>
+#include <helpers/battery_curve.h>
+#if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+#include <app/RepeaterBridge.h>
+#endif
 
 /* UI subsystem (display, buttons, buzzer) */
 #include "ui_task.h"
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
 #include "display.h"
 #endif
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
+#include "buzzer.h"
+#endif
+#include <helpers/ui/ui_timezone.h>
 
 /* Headless repeaters link the weak no-op ui_* stubs (ui_headless_stubs.c), so
  * the periodic UI refresh in the maintenance pass is pure work for nothing on
@@ -109,7 +119,8 @@ static const struct gpio_dt_spec led1 = GPIO_DT_SPEC_GET(LED1_NODE, gpios);
 #define MESH_EVENT_RTC_SAVE      BIT(6)  /* Hardware-RTC write requested off-main */
 #define MESH_EVENT_INIT_ADVERT   BIT(7)  /* Deferred boot advert — send on main thread */
 #define MESH_EVENT_WAKE          BIT(8)  /* Off-main state set; run loop() promptly */
-#define MESH_EVENT_ALL           (MESH_EVENT_LORA_RX | MESH_EVENT_LORA_TX_DONE | MESH_EVENT_CLI_RX | MESH_EVENT_MAINTENANCE | MESH_EVENT_GPS_ACTION | MESH_EVENT_TX_DRAIN | MESH_EVENT_RTC_SAVE | MESH_EVENT_INIT_ADVERT | MESH_EVENT_WAKE)
+#define MESH_EVENT_UI_ACTION     BIT(9)  /* Button action requested off-main */
+#define MESH_EVENT_ALL           (MESH_EVENT_LORA_RX | MESH_EVENT_LORA_TX_DONE | MESH_EVENT_CLI_RX | MESH_EVENT_MAINTENANCE | MESH_EVENT_GPS_ACTION | MESH_EVENT_TX_DRAIN | MESH_EVENT_RTC_SAVE | MESH_EVENT_INIT_ADVERT | MESH_EVENT_WAKE | MESH_EVENT_UI_ACTION)
 
 /* Maintenance is deadline-driven, not periodic: after every pass the loop asks
  * the mesh when its soonest pending deadline is (msUntilNextMaintenance) and
@@ -133,6 +144,17 @@ static struct k_event mesh_events;
  * would stall NMEA ingest. Stash the latest epoch and let the main thread
  * perform the write; concurrent posts coalesce into one save. */
 static atomic_t pending_rtc_epoch = ATOMIC_INIT(0);
+static atomic_t pending_repeater_ui_actions = ATOMIC_INIT(0);
+static atomic_t pending_repeater_gps_enabled = ATOMIC_INIT(0);
+static atomic_t pending_repeater_buzzer_quiet = ATOMIC_INIT(0);
+static atomic_t pending_repeater_leds_disabled = ATOMIC_INIT(0);
+static atomic_t pending_repeater_bridge_enabled = ATOMIC_INIT(0);
+
+#define REPEATER_UI_ACTION_FLOOD_ADVERT BIT(0)
+#define REPEATER_UI_ACTION_GPS_TOGGLE   BIT(1)
+#define REPEATER_UI_ACTION_BUZZER       BIT(2)
+#define REPEATER_UI_ACTION_LEDS         BIT(3)
+#define REPEATER_UI_ACTION_BRIDGE       BIT(4)
 
 static void request_rtc_save(uint32_t epoch)
 {
@@ -279,12 +301,18 @@ static void process_cli_commands(void)
 {
 	struct cli_cmd_line c;
 	while (repeater_mesh_ptr && k_msgq_get(&cli_cmd_queue, &c, K_NO_WAIT) == 0) {
-		cli_reply_buf[0] = '\0';
-		repeater_mesh_ptr->handleCommand(0, c.buf, cli_reply_buf);
-		refresh_repeater_ui_radio_state();
-		if (cli_reply_buf[0] != '\0') {
+		const char *help = local_cli_help(LocalCLIHelpRole::Repeater, c.buf);
+		if (help != nullptr) {
 			cli_print("\r\n  -> ");
-			cli_print(cli_reply_buf);
+			cli_print(help);
+		} else {
+			cli_reply_buf[0] = '\0';
+			repeater_mesh_ptr->handleCommand(0, c.buf, cli_reply_buf);
+			refresh_repeater_ui_radio_state();
+			if (cli_reply_buf[0] != '\0') {
+				cli_print("\r\n  -> ");
+				cli_print(cli_reply_buf);
+			}
 		}
 		cli_print("\r\n");
 	}
@@ -435,6 +463,13 @@ static uint16_t get_battery_mv(void)
 	return zephyr_board.getBattMilliVolts();
 }
 
+#if defined(CONFIG_BOARD_XIAO_NRF52840) || defined(CONFIG_BOARD_LILYGO_TECHO)
+static bool get_external_power(void)
+{
+	return zephyr_board.isExternalPowered();
+}
+#endif
+
 /* Radio is constructed with no prefs pointer; main() binds it to
  * repeater_mesh._prefs via setPrefs() before repeater_mesh.begin(). */
 
@@ -463,15 +498,122 @@ static mesh::SimpleMeshTables mesh_tables;
 /* RepeaterMesh requires: board, radio, ms_clock, rng, rtc, tables */
 static RepeaterMesh repeater_mesh(zephyr_board, lora_radio, ms_clock, zephyr_rng, rtc_clock, mesh_tables);
 
-/* Strong override of the weak stub in ui_mesh_actions_stubs.c: keep the prefs
- * copy in step when the LEDs page toggles, so "get leds" reports what the node
- * is actually doing. RAM only — a repeater has no deferred-save path off the UI
- * thread, so a UI toggle lasts until reboot; "set leds" is what persists. */
+extern "C" void mesh_send_flood_advert(void)
+{
+	atomic_or(&pending_repeater_ui_actions, REPEATER_UI_ACTION_FLOOD_ADVERT);
+	k_event_post(&mesh_events, MESH_EVENT_UI_ACTION);
+}
+
+extern "C" void mesh_gps_set_enabled(bool enabled)
+{
+	atomic_set(&pending_repeater_gps_enabled, enabled ? 1 : 0);
+	atomic_or(&pending_repeater_ui_actions, REPEATER_UI_ACTION_GPS_TOGGLE);
+	k_event_post(&mesh_events, MESH_EVENT_UI_ACTION);
+}
+
+extern "C" void mesh_set_buzzer_mode(uint8_t mode)
+{
+	atomic_set(&pending_repeater_buzzer_quiet, mode);
+	atomic_or(&pending_repeater_ui_actions, REPEATER_UI_ACTION_BUZZER);
+	k_event_post(&mesh_events, MESH_EVENT_UI_ACTION);
+}
+
 extern "C" void mesh_set_leds_disabled(bool disabled)
 {
-	if (repeater_mesh_ptr) {
-		repeater_mesh_ptr->getNodePrefs()->leds_disabled = disabled ? 1 : 0;
+	atomic_set(&pending_repeater_leds_disabled, disabled ? 1 : 0);
+	atomic_or(&pending_repeater_ui_actions, REPEATER_UI_ACTION_LEDS);
+	k_event_post(&mesh_events, MESH_EVENT_UI_ACTION);
+}
+
+#if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+extern "C" void mesh_set_bridge_enabled(bool enabled)
+{
+	atomic_set(&pending_repeater_bridge_enabled, enabled ? 1 : 0);
+	atomic_or(&pending_repeater_ui_actions, REPEATER_UI_ACTION_BRIDGE);
+	k_event_post(&mesh_events, MESH_EVENT_UI_ACTION);
+}
+#endif
+
+static bool handle_repeater_ui_cli(const char *line, char *reply)
+{
+	if (strcmp(line, "shutdown") == 0) {
+		strcpy(reply, "To confirm use with y");
+		return true;
 	}
+
+	if (strcmp(line, "shutdown y") == 0) {
+#ifdef CONFIG_POWEROFF
+		strcpy(reply, "Shutting down");
+		ui_shutdown();
+#else
+		strcpy(reply, "ERROR: system power-off not supported");
+#endif
+		return true;
+	}
+
+	if (strcmp(line, "leds") == 0) {
+#if DT_NODE_HAS_PROP(DT_ALIAS(led0), gpios) || DT_NODE_HAS_PROP(DT_ALIAS(led1), gpios)
+		snprintf(reply, CLI_REPLY_SIZE, "LEDs %s",
+			 ui_leds_disabled() ? "off" : "on");
+#else
+		strcpy(reply, "ERROR: no controllable LEDs on this board");
+#endif
+		return true;
+	}
+
+	bool leds_on = strcmp(line, "leds on") == 0;
+	bool leds_off = strcmp(line, "leds off") == 0;
+	if (leds_on || leds_off) {
+#if DT_NODE_HAS_PROP(DT_ALIAS(led0), gpios) || DT_NODE_HAS_PROP(DT_ALIAS(led1), gpios)
+		bool disabled = !leds_on;
+		ui_set_leds_disabled(disabled);
+		repeater_mesh.getNodePrefs()->leds_disabled = disabled ? 1 : 0;
+		repeater_mesh.savePrefs();
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
+		buzzer_play(leds_on ? MELODY_LED_ON : MELODY_LED_OFF);
+#endif
+		snprintf(reply, CLI_REPLY_SIZE, "OK - LEDs %s", leds_on ? "on" : "off");
+#else
+		strcpy(reply, "ERROR: no controllable LEDs on this board");
+#endif
+		return true;
+	}
+
+	if (strcmp(line, "buzz") == 0) {
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
+		snprintf(reply, CLI_REPLY_SIZE, "Buzzer %s",
+			 buzzer_is_quiet() ? "off" : "on");
+#else
+		strcpy(reply, "ERROR: no buzzer on this board");
+#endif
+		return true;
+	}
+
+	bool buzz_on;
+	if (strcmp(line, "buzz on") == 0) {
+		buzz_on = true;
+	} else if (strcmp(line, "buzz off") == 0) {
+		buzz_on = false;
+	} else {
+		return false;
+	}
+
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
+	if (buzz_on) {
+		zephcore_buzzer_set_mode(ZEPHCORE_BUZZER_ON, false);
+		buzzer_play(MELODY_BUZZER_ON);
+	} else {
+		buzzer_play(MELODY_BUZZER_OFF);
+		zephcore_buzzer_set_mode(ZEPHCORE_BUZZER_OFF, true);
+	}
+	repeater_mesh.getNodePrefs()->buzzer_quiet = buzz_on ? 0 : 1;
+	repeater_mesh.savePrefs();
+	ui_set_buzzer_mode(buzz_on ? ZEPHCORE_BUZZER_ON : ZEPHCORE_BUZZER_OFF);
+	snprintf(reply, CLI_REPLY_SIZE, "OK - buzzer %s", buzz_on ? "on" : "off");
+#else
+	strcpy(reply, "ERROR: no buzzer on this board");
+#endif
+	return true;
 }
 
 static void refresh_repeater_ui_radio_state(void)
@@ -508,7 +650,7 @@ static void repeater_event_loop(void)
 {
 	LOG_INF("starting event-driven loop");
 
-	/* Print startup banner (no prompt - Arduino style) */
+	/* Keep the USB identification compatible with repeater-only tools. */
 	cli_print("\r\n=== ZephCore Repeater ===\r\n");
 
 	/* Arm the first maintenance wake; every pass below re-arms it. */
@@ -526,11 +668,83 @@ static void repeater_event_loop(void)
 		}
 
 #ifdef ZEPHCORE_LORA
+		if (events & MESH_EVENT_UI_ACTION) {
+			atomic_val_t actions = atomic_set(&pending_repeater_ui_actions, 0);
+
+			if ((actions & REPEATER_UI_ACTION_FLOOD_ADVERT) && repeater_mesh_ptr) {
+				LOG_INF("Button: flood advert requested");
+				repeater_mesh_ptr->sendSelfAdvertisement(1500, true);
+			}
+			if (actions & REPEATER_UI_ACTION_GPS_TOGGLE) {
+				bool enabled = atomic_get(&pending_repeater_gps_enabled) != 0;
+				if (repeater_mesh_ptr && repeater_mesh_ptr->setGpsEnabled(enabled)) {
+					repeater_mesh_ptr->getNodePrefs()->gps_enabled = enabled ? 1 : 0;
+					repeater_mesh_ptr->savePrefs();
+					ui_set_gps_enabled(enabled);
+					LOG_INF("Button: GPS %s", enabled ? "on" : "off");
+				} else {
+					LOG_WRN("Button: GPS unavailable");
+				}
+			}
+			if (actions & REPEATER_UI_ACTION_BUZZER) {
+				uint8_t mode = (uint8_t)atomic_get(&pending_repeater_buzzer_quiet);
+				if (repeater_mesh_ptr) {
+					repeater_mesh_ptr->getNodePrefs()->buzzer_quiet = zephcore_buzzer_prefs_from_mode(mode);
+					repeater_mesh_ptr->savePrefs();
+					ui_set_buzzer_mode(mode);
+				}
+			}
+			if (actions & REPEATER_UI_ACTION_LEDS) {
+				bool disabled = atomic_get(&pending_repeater_leds_disabled) != 0;
+				if (repeater_mesh_ptr) {
+					repeater_mesh_ptr->getNodePrefs()->leds_disabled = disabled ? 1 : 0;
+					repeater_mesh_ptr->savePrefs();
+				}
+			}
+#if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+			if (actions & REPEATER_UI_ACTION_BRIDGE) {
+				const bool enabled = atomic_get(&pending_repeater_bridge_enabled) != 0;
+				char reply[64];
+
+				if (repeater_bridge_handle_command(enabled ? "bridge on" : "bridge off",
+							   reply, sizeof(reply)) && strncmp(reply, "OK:", 3) == 0) {
+					ui_set_bridge_enabled(enabled);
+					ui_set_bridge_connected(repeater_bridge_is_connected());
+					ui_set_bridge_status(repeater_bridge_status());
+					uint8_t priority;
+					uint32_t forwarded;
+					uint32_t skipped;
+					repeater_bridge_get_metrics(&priority, &forwarded, &skipped);
+					ui_set_bridge_metrics(priority, forwarded, skipped);
+					LOG_INF("Button: bridge %s", enabled ? "on" : "off");
+				} else {
+					LOG_WRN("Button: bridge %s failed: %s", enabled ? "on" : "off", reply);
+				}
+			}
+#endif
+		}
+
 		/* Run queued CLI commands here (main thread) BEFORE loop() drains
 		 * any outbound packets they enqueued — keeps all mesh-state
 		 * mutation on the main thread (see cli_cmd_queue). */
 		if (events & MESH_EVENT_CLI_RX) {
 			process_cli_commands();
+#if ZEPHCORE_HAS_UI && IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+			char bridge_local[18];
+			char bridge_peer[18];
+
+			ui_set_bridge_enabled(repeater_bridge_is_enabled());
+			ui_set_bridge_connected(repeater_bridge_is_connected());
+			ui_set_bridge_status(repeater_bridge_status());
+			uint8_t priority;
+			uint32_t forwarded;
+			uint32_t skipped;
+			repeater_bridge_get_metrics(&priority, &forwarded, &skipped);
+			ui_set_bridge_metrics(priority, forwarded, skipped);
+			repeater_bridge_get_addresses(bridge_local, sizeof(bridge_local), bridge_peer,
+					      sizeof(bridge_peer));
+			ui_set_bridge_addresses(bridge_local, bridge_peer);
+#endif
 		}
 
 		/* Deferred boot advert — sent on the main thread (see
@@ -544,7 +758,7 @@ static void repeater_event_loop(void)
 		if (repeater_mesh_ptr &&
 		    (events & (MESH_EVENT_LORA_RX | MESH_EVENT_LORA_TX_DONE |
 			       MESH_EVENT_CLI_RX | MESH_EVENT_TX_DRAIN |
-			       MESH_EVENT_WAKE))) {
+		       MESH_EVENT_WAKE | MESH_EVENT_UI_ACTION))) {
 			repeater_mesh_ptr->loop();
 		}
 #endif
@@ -587,6 +801,22 @@ static void repeater_event_loop(void)
 
 #if ZEPHCORE_HAS_UI
 			ui_set_clock(rtc_clock.getCurrentTime());
+#if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+			char bridge_local[18];
+			char bridge_peer[18];
+
+			ui_set_bridge_enabled(repeater_bridge_is_enabled());
+			ui_set_bridge_connected(repeater_bridge_is_connected());
+			ui_set_bridge_status(repeater_bridge_status());
+			uint8_t priority;
+			uint32_t forwarded;
+			uint32_t skipped;
+			repeater_bridge_get_metrics(&priority, &forwarded, &skipped);
+			ui_set_bridge_metrics(priority, forwarded, skipped);
+			repeater_bridge_get_addresses(bridge_local, sizeof(bridge_local), bridge_peer,
+					      sizeof(bridge_peer));
+			ui_set_bridge_addresses(bridge_local, bridge_peer);
+#endif
 
 #ifdef ZEPHCORE_LORA
 			/* Refresh live radio state (noise floor, TX power
@@ -695,12 +925,12 @@ int main(void)
 		}
 	}
 
-	/* Set GPS to repeater mode: power off now, wake every 48h for time sync only.
+	/* Set GPS to repeater mode: power off now, wake every 12h for time sync only.
 	 * This prevents GPS from draining power on boards that have it (e.g., Wio Tracker). */
 	if (gps_is_available()) {
 		gps_set_fix_callback(gps_fix_callback);
 		gps_set_event_callback(gps_event_callback);
-		/* Apply persisted GPS duty interval (repeater default 48h; 0 = always on) */
+		/* Apply persisted GPS duty interval (repeater default 12h; 0 = always on) */
 		gps_set_poll_interval_sec(repeater_mesh.getNodePrefs()->gps_interval);
 		gps_set_repeater_mode(true);
 	}
@@ -752,10 +982,17 @@ int main(void)
 	/* Load persisted prefs and bind the radio to _prefs BEFORE begin() — the
 	 * radio reads freq/bw/sf/cr through this pointer during Mesh::begin() →
 	 * Dispatcher::begin() → Radio::begin().  Without this, the radio would
-	 * configure on NodePrefs defaults (869.618 MHz) regardless of saved
+	 * configure on NodePrefs defaults (867.935 MHz) regardless of saved
 	 * settings: CLI readback looked correct but the hardware stayed on EU.
 	 * Mirrors the temp_prefs pattern in main_companion.cpp. */
 	data_store.loadPrefs(*repeater_mesh.getNodePrefs());
+	ui_set_timezone_offset_minutes(repeater_mesh.getNodePrefs()->ui_timezone_offset_minutes);
+	ui_set_leds_disabled(repeater_mesh.getNodePrefs()->leds_disabled != 0);
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
+	uint8_t bmode = zephcore_buzzer_mode_from_prefs(repeater_mesh.getNodePrefs()->buzzer_quiet);
+	zephcore_buzzer_set_mode(bmode, false);
+	ui_set_buzzer_mode(bmode);
+#endif
 	lora_radio.setPrefs(repeater_mesh.getNodePrefs());
 
 	/* Apply the persisted LED master switch ("set leds on|off").  MUST come
@@ -780,6 +1017,25 @@ int main(void)
 
 	/* Start mesh with data store - loads ACL, regions */
 	repeater_mesh.begin(&data_store);
+	repeater_mesh.setLocalCommandHandler(handle_repeater_ui_cli);
+#if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+		if (!repeater_bridge_start(&data_store, &repeater_mesh)) {
+			LOG_ERR("Repeater bridge start failed");
+		}
+		ui_set_bridge_enabled(repeater_bridge_is_enabled());
+		ui_set_bridge_connected(repeater_bridge_is_connected());
+		ui_set_bridge_status(repeater_bridge_status());
+		uint8_t priority;
+		uint32_t forwarded;
+		uint32_t skipped;
+		repeater_bridge_get_metrics(&priority, &forwarded, &skipped);
+		ui_set_bridge_metrics(priority, forwarded, skipped);
+		char bridge_local[18];
+		char bridge_peer[18];
+		repeater_bridge_get_addresses(bridge_local, sizeof(bridge_local), bridge_peer,
+					      sizeof(bridge_peer));
+		ui_set_bridge_addresses(bridge_local, bridge_peer);
+#endif
 
 	/* Generate default node name from hardware device ID if not set */
 	NodePrefs* prefs = repeater_mesh.getNodePrefs();
@@ -838,6 +1094,9 @@ int main(void)
 	ui_set_node_name(prefs->node_name);
 	refresh_repeater_ui_radio_state();
 	ui_set_battery_provider(get_battery_mv);
+#if defined(CONFIG_BOARD_XIAO_NRF52840) || defined(CONFIG_BOARD_LILYGO_TECHO)
+	ui_set_power_source_provider(get_external_power);
+#endif
 	ui_set_battery(zephyr_board.getBattMilliVolts(), 0);
 	ui_set_gps_available(gps_is_available());
 

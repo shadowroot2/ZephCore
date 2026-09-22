@@ -213,6 +213,8 @@ CompanionMesh::CompanionMesh(mesh::Radio &radio, mesh::MillisecondClock &ms, mes
 	memset(_send_scope.key, 0, sizeof(_send_scope.key));
 	_send_scope_force_unscoped = false;
 	_cli_exec_cb = nullptr;
+	_vcontact_help_cb = nullptr;
+
 	memset(_vcontact_pubkey, 0, sizeof(_vcontact_pubkey));
 	_vcontact_lastmod = 0;
 	memset(_vcontact_recent_ts, 0, sizeof(_vcontact_recent_ts));
@@ -1245,15 +1247,24 @@ bool CompanionMesh::vcontactHandleFrame(const uint8_t *data, size_t len)
 				}
 
 				LOG_INF("vcontact CLI: '%s'", line);
-				char reply[COMPANION_CLI_REPLY_SIZE];
-				reply[0] = '\0';
-				if (_cli_exec_cb) {
-					_cli_exec_cb(line, reply);
+				const char *help = _vcontact_help_cb ? _vcontact_help_cb(line) : nullptr;
+				if (help != nullptr) {
+					/* Help is intentionally handled outside the fixed reply buffer;
+					 * vcontactQueueText() splits the full local-only catalogue into
+					 * transport-safe chat messages. */
+					vcontactQueueText(help);
+
 				} else {
-					strcpy(reply, "CLI not available");
-				}
-				if (reply[0] != '\0') {
-					vcontactQueueText(reply);
+					char reply[COMPANION_CLI_REPLY_SIZE];
+					reply[0] = '\0';
+					if (_cli_exec_cb) {
+						_cli_exec_cb(line, reply);
+					} else {
+						strcpy(reply, "CLI not available");
+					}
+					if (reply[0] != '\0') {
+						vcontactQueueText(reply);
+					}
 				}
 			} else {
 				LOG_DBG("vcontact CLI: dup ts=%u, re-ack only", msg_timestamp);
@@ -1676,9 +1687,23 @@ int CompanionMesh::appendSelfTelemetry(uint8_t *reply, uint8_t permissions)
 	bool env_ok = (env_sensors_read(&env) == 0);
 	bool temp_reported = false;
 
+	/* T1000-E's NTC replaces the nRF die sensor that was previously sent under
+	 * base telemetry permission. Keep that contract: otherwise the temperature
+	 * silently disappears for contacts without Environment permission. */
+#if defined(CONFIG_BOARD_T1000_E)
+	if (env_ok && env.has_temperature) {
+		temp_reported = true;
+		reply[i++] = CH_SELF;
+		reply[i++] = LPP_TEMPERATURE;
+		int16_t temp = (int16_t)(env.temperature_c * 10);
+		reply[i++] = (temp >> 8) & 0xFF;
+		reply[i++] = temp & 0xFF;
+	}
+#endif
+
 	if (permissions & TELEM_PERM_ENVIRONMENT) {
 		if (env_ok) {
-			if (env.has_temperature) {
+			if (env.has_temperature && !temp_reported) {
 				temp_reported = true;
 				reply[i++] = CH_SELF;
 				reply[i++] = LPP_TEMPERATURE;
@@ -1698,7 +1723,11 @@ int CompanionMesh::appendSelfTelemetry(uint8_t *reply, uint8_t permissions)
 				reply[i++] = (press >> 8) & 0xFF;
 				reply[i++] = press & 0xFF;
 			}
+#if defined(CONFIG_BOARD_T1000_E)
 			if (env.has_luminosity) {
+#else
+			if (env.has_luminosity && !gps_is_available()) {
+#endif
 				reply[i++] = CH_SELF;
 				reply[i++] = LPP_LUMINOSITY;
 				float lum = env.luminosity;
@@ -1708,6 +1737,7 @@ int CompanionMesh::appendSelfTelemetry(uint8_t *reply, uint8_t permissions)
 				reply[i++] = (lux >> 8) & 0xFF;
 				reply[i++] = lux & 0xFF;
 			}
+
 		}
 
 		// Power monitor telemetry (INA219/INA3221/ina2xx)
@@ -1744,6 +1774,22 @@ int CompanionMesh::appendSelfTelemetry(uint8_t *reply, uint8_t permissions)
 		}
 	}
 
+/* Cayenne LPP has no satellite-count type.  Reuse the luminosity field
+ * on the self channel so existing client UIs show the value rather than
+ * an anonymous secondary Analog Input channel.  T1000-E is excluded: its
+ * physical light sensor keeps reporting real lux. */
+#if !defined(CONFIG_BOARD_T1000_E)
+	if ((permissions & TELEM_PERM_LOCATION) && gps_is_available()) {
+		struct gps_state_info gsi;
+		gps_get_state_info(&gsi);
+		uint16_t sats_in_view = gsi.visible_satellites ?
+			gsi.visible_satellites : gsi.satellites;
+		reply[i++] = CH_SELF;
+		reply[i++] = LPP_LUMINOSITY;
+		reply[i++] = (sats_in_view >> 8) & 0xFF;
+		reply[i++] = sats_in_view & 0xFF;
+	}
+#endif
 	/* MCU die temperature — reported under base permission, but only when no
 	 * external sensor already supplied a CH_SELF temperature (never emit two). */
 	if (!temp_reported && env_ok && env.has_mcu_temperature) {
@@ -1813,9 +1859,21 @@ uint8_t CompanionMesh::onContactRequest(const ContactInfo &contact, uint32_t sen
 	return 0;  // Unknown request or denied
 }
 
-void CompanionMesh::logTx(mesh::Packet *, int)
+void CompanionMesh::logTx(mesh::Packet *pkt, int)
 {
 #if ZEPHCORE_HAS_UI_TASK
+	/* Dispatcher invokes logTx only after radio->onSendFinished(), so the
+	 * T-1000E TX LED begins after the packet has physically left the radio.
+	 * Exclude ACKs, telemetry, and forwarding housekeeping. */
+#if defined(CONFIG_BOARD_T1000_E)
+	if (pkt != nullptr) {
+		uint8_t type = pkt->getPayloadType();
+		if (type == PAYLOAD_TYPE_TXT_MSG || type == PAYLOAD_TYPE_GRP_TXT ||
+		    type == PAYLOAD_TYPE_ADVERT) {
+			ui_led_force_tx();
+		}
+	}
+#endif
 	ui_notify_packet_sent();
 #endif
 }

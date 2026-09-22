@@ -16,6 +16,7 @@
 #include <adapters/clock/ZephyrRTCDiscover.h>
 #include <helpers/TxtDataHelpers.h>
 #include <helpers/AdvertDataHelpers.h>
+#include <helpers/ui/ui_timezone.h>
 #include <adapters/board/ZephyrBoard.h>
 #include <adapters/gps/ZephyrGPSManager.h>
 #include <zephyr/logging/log.h>
@@ -586,7 +587,12 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
 #endif
         } else if (memcmp(config, "input.rotate", 12) == 0) {
             snprintf(reply, CLI_REPLY_SIZE, "> %d", zephcore_input_is_flipped() ? 1 : 0);
-        } else if (memcmp(config, "tz.offset", 9) == 0) {
+        } else if (strcmp(config, "tz") == 0) {
+            char tz[12];
+            ui_timezone_format_label(tz, sizeof(tz));
+            snprintf(reply, CLI_REPLY_SIZE, "> %s (%d min)", tz,
+                     (int)_prefs->ui_timezone_offset_minutes);
+        } else if (strcmp(config, "tz.offset") == 0) {
             snprintf(reply, CLI_REPLY_SIZE, "> %d", (int)_prefs->tz_offset);
         } else if (memcmp(config, "gps diag", 8) == 0) {
             // What the last module-configuration attempt actually did.
@@ -1314,6 +1320,18 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
             } else {
                 strcpy(reply, "Error: must be 0, 1, on, or off");
             }
+        } else if (memcmp(config, "tz ", 3) == 0) {
+            long minutes;
+            if (!cliNum(&config[3], cliDefaults()->ui_timezone_offset_minutes, &minutes) ||
+                minutes < -1439 || minutes > 1439) {
+                strcpy(reply, "usage: set tz <-1439..1439|default> (minutes)");
+                return;
+            }
+            _prefs->ui_timezone_offset_minutes = (int16_t)minutes;
+            _prefs->tz_offset = (int8_t)(minutes / 60);
+            ui_set_timezone_offset_minutes((int16_t)minutes);
+            savePrefs();
+            snprintf(reply, CLI_REPLY_SIZE, "OK - tz=%ld min", minutes);
         } else if (memcmp(config, "tz.offset ", 10) == 0) {
             // Whole-hour offset from UTC for the ON-DEVICE CLOCK DISPLAY only.
             // The RTC, `clock` and `time <epoch>` all stay UTC: they round-trip
@@ -1333,6 +1351,8 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
                          TZ_OFFSET_MIN, TZ_OFFSET_MAX);
             } else {
                 _prefs->tz_offset = (int8_t)val;
+                _prefs->ui_timezone_offset_minutes = (int16_t)(val * 60);
+                ui_set_timezone_offset_minutes(_prefs->ui_timezone_offset_minutes);
                 savePrefs();
                 snprintf(reply, CLI_REPLY_SIZE, "OK - tz.offset=%d", (int)val);
             }

@@ -55,9 +55,11 @@ extern "C" void bt_ctlr_assert_handle(char *file, uint32_t line)
 #include <adapters/clock/ZephyrRTCClock.h>
 #include <adapters/clock/ZephyrRTCDiscover.h>
 #include <ZephyrSensorManager.h>
+#include <helpers/LocalCLIHelp.h>
 
 /* UI subsystem (display, buttons, buzzer) */
 #include "ui_task.h"
+#include <helpers/ui/ui_timezone.h>
 
 /* Radio + mesh includes (shared header selects LR1110 or SX126x) */
 #include <mesh/RadioIncludes.h>
@@ -87,16 +89,16 @@ static const struct gpio_dt_spec led1 = GPIO_DT_SPEC_GET(LED1_NODE, gpios);
 #define MESH_EVENT_LORA_RX       BIT(0)  /* LoRa packet received */
 #define MESH_EVENT_LORA_TX_DONE  BIT(1)  /* LoRa TX complete */
 #define MESH_EVENT_CLI_RX        BIT(2)  /* CLI command received */
-#define MESH_EVENT_HOUSEKEEPING  BIT(3)  /* Periodic housekeeping (noise floor, etc.) */
+#define MESH_EVENT_MAINTENANCE   BIT(3)  /* A maintenance deadline came due */
 #define MESH_EVENT_GPS_ACTION    BIT(4)  /* GPS state change (must run on main thread!) */
 #define MESH_EVENT_TX_DRAIN      BIT(5)  /* Outbound packet delay expired, run checkSend */
 #define MESH_EVENT_PUSH_TICK     BIT(6)  /* Room server: drive the post-sync push engine */
 #define MESH_EVENT_RTC_SAVE      BIT(7)  /* Hardware-RTC write requested off-main */
 #define MESH_EVENT_INIT_ADVERT   BIT(8)  /* Deferred boot advert — send on main thread */
-#define MESH_EVENT_ALL           (MESH_EVENT_LORA_RX | MESH_EVENT_LORA_TX_DONE | MESH_EVENT_CLI_RX | MESH_EVENT_HOUSEKEEPING | MESH_EVENT_GPS_ACTION | MESH_EVENT_TX_DRAIN | MESH_EVENT_PUSH_TICK | MESH_EVENT_RTC_SAVE | MESH_EVENT_INIT_ADVERT)
+#define MESH_EVENT_ALL           (MESH_EVENT_LORA_RX | MESH_EVENT_LORA_TX_DONE | MESH_EVENT_CLI_RX | MESH_EVENT_MAINTENANCE | MESH_EVENT_GPS_ACTION | MESH_EVENT_TX_DRAIN | MESH_EVENT_PUSH_TICK | MESH_EVENT_RTC_SAVE | MESH_EVENT_INIT_ADVERT)
 
-/* Housekeeping interval - infrequent to preserve power savings */
-#define HOUSEKEEPING_INTERVAL_MS CONFIG_ZEPHCORE_HOUSEKEEPING_INTERVAL_MS
+#define MAINTENANCE_BACKSTOP_MS 30000
+#define MAINTENANCE_MIN_MS      50
 
 /* Event object for mesh loop */
 static struct k_event mesh_events;
@@ -135,15 +137,14 @@ K_MSGQ_DEFINE(cli_cmd_queue, sizeof(struct cli_cmd_line), 4, 4);
 
 /* Work items for event-driven processing */
 static void cli_rx_work_fn(struct k_work *work);
-static void housekeeping_timer_fn(struct k_timer *timer);
+static void maintenance_timer_fn(struct k_timer *timer);
 static void tx_drain_work_fn(struct k_work *work);
 static void initial_advert_work_fn(struct k_work *work);
 K_WORK_DEFINE(cli_rx_work, cli_rx_work_fn);
 K_WORK_DELAYABLE_DEFINE(tx_drain_work, tx_drain_work_fn);
 K_WORK_DELAYABLE_DEFINE(initial_advert_work, initial_advert_work_fn);
 
-/* Housekeeping timer for periodic tasks (noise floor calibration, etc.) */
-K_TIMER_DEFINE(housekeeping_timer, housekeeping_timer_fn, NULL);
+K_TIMER_DEFINE(maintenance_timer, maintenance_timer_fn, NULL);
 
 /* Room server push timer — wakes loop() at PUSH_TICK_INTERVAL_MS so the
  * post-sync push engine advances at its intended ~1.2 s cadence instead of
@@ -161,6 +162,19 @@ K_TIMER_DEFINE(push_timer, push_timer_fn, NULL);
 #ifdef ZEPHCORE_LORA
 static RoomServerMesh *room_mesh_ptr;
 #endif
+
+static void arm_maintenance_wake(void)
+{
+	uint32_t delay = MAINTENANCE_BACKSTOP_MS;
+#ifdef ZEPHCORE_LORA
+	if (room_mesh_ptr) {
+		uint32_t next = room_mesh_ptr->msUntilNextMaintenance();
+		if (next < delay) delay = next;
+	}
+#endif
+	if (delay < MAINTENANCE_MIN_MS) delay = MAINTENANCE_MIN_MS;
+	k_timer_start(&maintenance_timer, K_MSEC(delay), K_NO_WAIT);
+}
 
 /* Print string to USB serial */
 static void cli_print(const char *str)
@@ -262,11 +276,17 @@ static void process_cli_commands(void)
 {
 	struct cli_cmd_line c;
 	while (room_mesh_ptr && k_msgq_get(&cli_cmd_queue, &c, K_NO_WAIT) == 0) {
-		cli_reply_buf[0] = '\0';
-		room_mesh_ptr->handleCommand(0, c.buf, cli_reply_buf);
-		if (cli_reply_buf[0] != '\0') {
+		const char *help = local_cli_help(LocalCLIHelpRole::RoomServer, c.buf);
+		if (help != nullptr) {
 			cli_print("\r\n  -> ");
-			cli_print(cli_reply_buf);
+			cli_print(help);
+		} else {
+			cli_reply_buf[0] = '\0';
+			room_mesh_ptr->handleCommand(0, c.buf, cli_reply_buf);
+			if (cli_reply_buf[0] != '\0') {
+				cli_print("\r\n  -> ");
+				cli_print(cli_reply_buf);
+			}
 		}
 		cli_print("\r\n");
 	}
@@ -274,10 +294,10 @@ static void process_cli_commands(void)
 #endif
 
 /* Housekeeping timer callback - signals event to wake mesh loop periodically */
-static void housekeeping_timer_fn(struct k_timer *timer)
+static void maintenance_timer_fn(struct k_timer *timer)
 {
 	ARG_UNUSED(timer);
-	k_event_post(&mesh_events, MESH_EVENT_HOUSEKEEPING);
+	k_event_post(&mesh_events, MESH_EVENT_MAINTENANCE);
 }
 
 #ifdef ZEPHCORE_LORA
@@ -414,9 +434,7 @@ static void room_event_loop(void)
 	/* Print startup banner (no prompt - Arduino style) */
 	cli_print("\r\n=== ZephCore Room Server ===\r\n");
 
-	/* Start housekeeping timer for periodic maintenance tasks */
-	k_timer_start(&housekeeping_timer, K_MSEC(HOUSEKEEPING_INTERVAL_MS),
-		      K_MSEC(HOUSEKEEPING_INTERVAL_MS));
+	arm_maintenance_wake();
 
 	/* Start the room-server push timer (drives post sync between clients). */
 	k_timer_start(&push_timer, K_MSEC(PUSH_TICK_INTERVAL_MS),
@@ -457,8 +475,8 @@ static void room_event_loop(void)
 		}
 #endif
 
-		/* Periodic housekeeping — maintenance + display refresh */
-		if (events & MESH_EVENT_HOUSEKEEPING) {
+		/* Deadline-driven maintenance plus a 30-second UI refresh backstop. */
+		if (events & MESH_EVENT_MAINTENANCE) {
 #ifdef ZEPHCORE_LORA
 			/* Radio maintenance: noise floor calibration, adaptive-CAD
 			 * probe, RX watchdog.  Separated from loop() so these
@@ -505,6 +523,8 @@ static void room_event_loop(void)
 			}
 #endif
 		}
+
+		arm_maintenance_wake();
 	}
 }
 
@@ -581,12 +601,12 @@ int main(void)
 		}
 	}
 
-	/* Set GPS to repeater mode: power off now, wake every 48h for time sync only.
+	/* Set GPS to repeater mode: power off now, wake every 12h for time sync only.
 	 * This prevents GPS from draining power on boards that have it (e.g., Wio Tracker). */
 	if (gps_is_available()) {
 		gps_set_fix_callback(gps_fix_callback);
 		gps_set_event_callback(gps_event_callback);
-		/* Apply persisted GPS duty interval (repeater default 48h; 0 = always on) */
+		/* Apply persisted GPS duty interval (repeater default 12h; 0 = always on) */
 		gps_set_poll_interval_sec(room_mesh.getNodePrefs()->gps_interval);
 		gps_set_repeater_mode(true);
 	}
@@ -637,10 +657,11 @@ int main(void)
 	/* Load persisted prefs and bind the radio to _prefs BEFORE begin() — the
 	 * radio reads freq/bw/sf/cr through this pointer during Mesh::begin() →
 	 * Dispatcher::begin() → Radio::begin().  Without this, the radio would
-	 * configure on NodePrefs defaults (869.618 MHz) regardless of saved
+	 * configure on NodePrefs defaults (867.935 MHz) regardless of saved
 	 * settings: CLI readback looked correct but the hardware stayed on EU.
 	 * Mirrors the temp_prefs pattern in main_companion.cpp. */
 	data_store.loadPrefs(*room_mesh.getNodePrefs());
+	ui_set_timezone_offset_minutes(room_mesh.getNodePrefs()->ui_timezone_offset_minutes);
 	lora_radio.setPrefs(room_mesh.getNodePrefs());
 
 	/* Apply the persisted LED master switch ("set leds on|off").  MUST come

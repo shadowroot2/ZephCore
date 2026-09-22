@@ -15,6 +15,7 @@
 #include <helpers/ui/ui_mesh_actions.h>
 #include <helpers/ui/ui_task.h>
 #include <helpers/AdvertDataHelpers.h>
+#include <helpers/battery_curve.h>
 #include <CompanionMesh.h>
 #include <mesh/Utils.h>
 
@@ -772,9 +773,7 @@ void JoystickUITask::renderLockOverlay()
 	 * doesn't burn power). */
 	char batt_buf[16];
 	if (_cached_batt_mv > 0) {
-		int pct = ((int)_cached_batt_mv - kBattMinMv) * 100 / (kBattMaxMv - kBattMinMv);
-		if (pct < 0) pct = 0;
-		if (pct > 100) pct = 100;
+		int pct = battery_curve_lookup(&battery_curve_default, _cached_batt_mv);
 		snprintf(batt_buf, sizeof(batt_buf), "Batt: %d%%", pct);
 	} else {
 		snprintf(batt_buf, sizeof(batt_buf), "Batt: --");
@@ -814,7 +813,7 @@ void JoystickUITask::renderLockOverlay()
 /* ===== loop() ===== */
 void JoystickUITask::loop()
 {
-	if (!_initialized) return;
+	if (!_initialized || ui_shutdown_in_progress()) return;
 
 	uint32_t now = k_uptime_get_32();
 
@@ -1559,6 +1558,18 @@ void JoystickUITask::shutdown(bool restart)
 		sys_reboot(SYS_REBOOT_COLD);
 	} else {
 #ifdef CONFIG_POWEROFF
+		/* Manual menu shutdown: replace the current screen with a final state.
+		 * E-paper retains this frame after power-off; OLED needs a short dwell
+		 * before ui_prepare_for_system_off() turns it off. */
+		_display.turnOn();
+		_display.startFrame();
+		_display.drawTextCentered(_display.width() / 2, _display.height() / 2,
+						  "Power OFF");
+		_display.endFrame();
+		if (!mc_display_is_epd()) {
+			k_sleep(K_MSEC(1000));
+		}
+
 		/* Full peripheral teardown + SENSE config for sw0 wake.  Shared
 		 * helper turns off display, GPS, regulators, holds LoRa in reset
 		 * and arms the button SENSE so the user can actually wake the

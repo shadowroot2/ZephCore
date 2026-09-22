@@ -53,11 +53,16 @@ void mesh_housekeeping_ui_refresh(void);
  */
 void mesh_send_flood_advert(void);
 void mesh_send_zerohop_advert(void);
+void mesh_send_sos(void);
+/* A physical key press acknowledges a pending fall alarm. */
+void mesh_fall_alarm_acknowledge(void);
+void mesh_tracking_toggle(void);
 void mesh_gps_set_enabled(bool enable);
 void mesh_ble_set_enabled(bool enable);
 void mesh_set_buzzer_mode(uint8_t mode);
 void mesh_set_offgrid_mode(bool enable);
 void mesh_set_leds_disabled(bool disabled);
+void mesh_set_bridge_enabled(bool enabled);
 void mesh_disable_power_regulators(void);
 void mesh_reboot_to_ota_dfu(void);
 void mesh_save_brightness(uint8_t brightness);

@@ -1,5 +1,10 @@
 # ZephCore Architecture Guide
 
+ShadoW overlay: [custom features and settings migration](SHADOW_FEATURES.md).
+Our repeater GPS default is 12 hours; board-specific SOS/Fall, charge indication
+and repeater-bridge additions are described there. The radio/SDK architecture
+below follows the author release.
+
 > Comprehensive developer reference for the ZephCore codebase — a Zephyr RTOS port of the Arduino MeshCore LoRa mesh networking firmware.
 
 ---

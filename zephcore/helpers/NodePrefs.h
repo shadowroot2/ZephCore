@@ -207,6 +207,12 @@ struct NodePrefs {
 	 * upper bits are telemetry permissions.  Kept here so a toggle survives
 	 * reconnects and reboots instead of being echoed back as 0. */
 	uint8_t v_contact_flags;
+	int16_t ui_timezone_offset_minutes; // UI-only timezone offset; RTC/protocol stay UTC
+	uint8_t auto_shutdown_emergency; // 1 = send #zephcore emergency notice before automatic low-battery shutdown
+	uint16_t tracking_interval_minutes; // Companion: periodic tracking position report interval (minimum 5)
+	char tracking_group_name[32];       // Companion: destination group, default #tracks
+	uint8_t fall_sensitivity;           // 1 = most sensitive, 3 = default, 5 = strict
+	uint8_t fall_enabled;               // 1 = detection enabled (default), 0 = disabled
 };
 
 /* Default prefs -- must match LoRaConfig.h defaults for radio interop. */
@@ -245,6 +251,8 @@ static inline T saneBool(T v, T fallback) { return (v == 0 || v == 1) ? v : fall
 static inline uint8_t saneEnum(uint8_t v, uint8_t max) { return (v <= max) ? v : 0; }
 
 static inline void sanitizeNodePrefs(NodePrefs* p) {
+	if (p->ui_timezone_offset_minutes < -1439 || p->ui_timezone_offset_minutes > 1439)
+		p->ui_timezone_offset_minutes = CONFIG_ZEPHCORE_UI_TIMEZONE_OFFSET_MINUTES;
 	p->node_name[sizeof(p->node_name) - 1] = '\0';
 	p->password[sizeof(p->password) - 1] = '\0';
 	p->guest_password[sizeof(p->guest_password) - 1] = '\0';
@@ -278,7 +286,15 @@ static inline void sanitizeNodePrefs(NodePrefs* p) {
 	p->client_repeat       = saneBool<uint8_t>(p->client_repeat, 0);
 	p->manual_add_contacts = saneBool<uint8_t>(p->manual_add_contacts, 0);
 	p->multi_acks          = saneBool<uint8_t>(p->multi_acks, 0);
-	p->buzzer_quiet        = saneBool<uint8_t>(p->buzzer_quiet, 0);
+	p->buzzer_quiet        = saneEnum(p->buzzer_quiet, 3);
+	p->auto_shutdown_emergency = saneBool<uint8_t>(p->auto_shutdown_emergency, 1);
+	p->fall_enabled = saneBool<uint8_t>(p->fall_enabled, 1);
+	if (p->fall_sensitivity < 1 || p->fall_sensitivity > 5) p->fall_sensitivity = 3;
+	if (p->tracking_interval_minutes < 5) p->tracking_interval_minutes = 10;
+	p->tracking_group_name[sizeof(p->tracking_group_name) - 1] = 0;
+	if (p->tracking_group_name[0] != '#' ||
+	    strchr(p->tracking_group_name, '\r') || strchr(p->tracking_group_name, '\n'))
+		strcpy(p->tracking_group_name, "#tracks");
 	p->gps_enabled         = saneBool<uint8_t>(p->gps_enabled, 0);
 	p->rx_duty_cycle       = saneBool<uint8_t>(p->rx_duty_cycle, 0);
 	p->leds_disabled       = saneBool<uint8_t>(p->leds_disabled, 0);
@@ -356,10 +372,13 @@ static inline void initNodePrefs(NodePrefs* prefs) {
 	strncpy(prefs->guest_password, CONFIG_ZEPHCORE_GUEST_PASSWORD, sizeof(prefs->guest_password) - 1);
 #endif
 	/* Radio params - MUST match LoRaConfig.h for interop with companion nodes */
-	prefs->freq = 869.618f;           // LoRaConfig::FREQ_HZ / 1000000.0
+	prefs->freq = 867.935f;           // LoRaConfig::FREQ_HZ / 1000000.0
 	prefs->bw = 62.5f;                // LoRaConfig::BANDWIDTH
-	prefs->sf = 7;                    // LoRaConfig::SPREADING_FACTOR
-	prefs->cr = 5;                    // CR 4/5 (MeshCore uses 5-8 for CR 4/5 through 4/8)
+	prefs->sf = 8;                    // LoRaConfig::SPREADING_FACTOR
+	prefs->cr = 8;                    // CR 4/8 (MeshCore uses 5-8 for CR 4/5 through 4/8)
+#ifdef CONFIG_ZEPHCORE_DEFAULT_LORA_433
+	prefs->freq = 434.030f;
+#endif
 #ifdef CONFIG_ZEPHCORE_DEFAULT_TX_POWER_DBM
 	prefs->tx_power_dbm = CONFIG_ZEPHCORE_DEFAULT_TX_POWER_DBM;
 #else
@@ -420,5 +439,39 @@ static inline void initNodePrefs(NodePrefs* prefs) {
 	prefs->auto_shutdown_mv = CONFIG_ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS;
 #else
 	prefs->auto_shutdown_mv = 0;
+#endif
+	prefs->ui_timezone_offset_minutes = CONFIG_ZEPHCORE_UI_TIMEZONE_OFFSET_MINUTES;
+	prefs->auto_shutdown_emergency = 1; // Default ON — send the low-battery emergency notice
+	prefs->tracking_interval_minutes = 10;
+	strcpy(prefs->tracking_group_name, "#tracks");
+	prefs->fall_sensitivity = 3;
+	prefs->fall_enabled = 1;
+
+#ifdef CONFIG_ZEPHCORE_DEFAULT_LORA_433
+	/* Factory defaults for the 433 MHz regional profile. */
+	prefs->airtime_factor = 1.0f;       /* 100 / (1 + 1) = 50% duty cycle */
+	prefs->advert_interval = 30;        /* stored in two-minute units = 60 min */
+	prefs->flood_advert_interval = 24;  /* hours */
+	prefs->flood_max = 32;
+	prefs->flood_max_unscoped = 32;
+	prefs->multi_acks = 1;
+#endif
+
+/* XIAO nRF52840 + Wio-SX1262 repeater profile. Applied only while creating
+ * fresh repeater preferences; saved user settings always take precedence. */
+#if defined(CONFIG_BOARD_XIAO_NRF52840) && defined(CONFIG_ZEPHCORE_ROLE_REPEATER_BASE) && \
+	!defined(CONFIG_ZEPHCORE_DEFAULT_LORA_433)
+	prefs->freq = 867.935f;
+	prefs->bw = 62.5f;
+	prefs->sf = 8;
+	prefs->cr = 8;
+	prefs->airtime_factor = 1.0f;       /* 100 / (1 + 1) = 50% duty cycle */
+	prefs->advert_interval = 90;        /* stored in two-minute units = 180 min */
+	prefs->flood_advert_interval = 24;  /* hours */
+	prefs->flood_max = 32;
+	prefs->flood_max_unscoped = 32;
+	prefs->flood_max_advert = 32;
+	prefs->path_hash_mode = 1;
+	prefs->multi_acks = 1;
 #endif
 }

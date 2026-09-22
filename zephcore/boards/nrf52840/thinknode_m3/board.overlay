@@ -11,6 +11,7 @@
  * - PIN_PWR_EN   (P0.16) - Main power domain
  * - BAT_POWER    (P0.17) - Battery power rail
  * - EEPROM_POWER (P0.07) - EEPROM power
+ * - DHT_POWER (P0.03) - AHT10 temperature/humidity sensor power
  * - LED_POWER    (P0.29) - Power LED (always on)
  */
 
@@ -40,6 +41,14 @@
 };
 
 &gpio0 {
+	/* DHT_POWER (P0.03) powers the on-board AHT10 at I2C 0x38. */
+	dht-power-hog {
+		gpio-hog;
+		gpios = <3 GPIO_ACTIVE_HIGH>;
+		output-high;
+		line-name = "AHT10 Power";
+	};
+
 	/* GPS_POWER (P0.14) - always HIGH, main GPS power supply */
 	gps-power-hog {
 		gpio-hog;

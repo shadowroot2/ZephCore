@@ -6,6 +6,7 @@ build-*/
 **/build-*/
 **/build_*/
 /twister-out*/
+/.ccache/
 
 # West workspace (recreated by west init/update)
 /.west/
@@ -15,6 +16,7 @@ build-*/
 /modules/
 /tools/
 /zephyr/
+/zephyr-sdk-*/
 
 # Python
 .venv/
@@ -140,6 +142,7 @@ HANDOVER_crypto_hw_accel.md
 PATH_HASH_AUDIT_INDEX.md
 MESHTIMESYNC_PLAN.md
 /meshtimesync-sim/
+releasenotes/RELEASE_NOTES_v1.16.4.md
 
 # Older release notes kept local-only. Renamed 2026-07-16 to the
 # RELEASE_NOTES_<version>-zephcore.md convention; these rules follow the rename.

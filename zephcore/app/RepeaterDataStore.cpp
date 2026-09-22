@@ -4,6 +4,7 @@
  */
 
 #include "RepeaterDataStore.h"
+#include <helpers/ShadowPrefs.h>
 #include "../adapters/datastore/ZephyrFsFormat.h"
 #include <zephyr/fs/fs.h>
 #include <zephyr/sys/util.h>
@@ -20,7 +21,7 @@ bool RepeaterDataStore::begin() {
     if (_initialized) return true;
 
     /* Create repeater directory if it doesn't exist */
-    struct fs_dirent entry;
+    struct fs_dirent entry = {};
     int ret = fs_stat(BASE_PATH, &entry);
     if (ret < 0) {
         ret = fs_mkdir(BASE_PATH);
@@ -179,6 +180,86 @@ bool RepeaterDataStore::saveIdentity(const mesh::LocalIdentity& id) {
     return true;
 }
 
+bool RepeaterDataStore::loadBatteryPrefs(RepeaterBatteryPrefs& prefs) {
+    prefs = RepeaterBatteryPrefs{};
+    struct fs_file_t file;
+    fs_file_t_init(&file);
+    if (fs_open(&file, "/lfs/repeater/battery_prefs", FS_O_READ) < 0) return false;
+    struct {
+        uint32_t magic, enabled, hours;
+        char group[32];
+        uint32_t threshold_mv;
+    } record = {};
+    ssize_t n = fs_read(&file, &record, sizeof(record));
+    fs_close(&file);
+    const bool legacy = n == 12 && record.magic == 0x42504631;
+    const bool version2 = n == 44 && record.magic == 0x42504632;
+    if (!legacy && !version2 && (n != sizeof(record) || record.magic != 0x42504633)) return false;
+    if (record.enabled > 1 || record.hours < 1 || record.hours > 168) return false;
+    if (record.threshold_mv > 5000) return false;
+    if (!legacy) {
+        if (!memchr(record.group, 0, sizeof(record.group)) || record.group[0] != '#' ||
+            strchr(record.group, '\r') || strchr(record.group, '\n')) return false;
+        memcpy(prefs.group_name, record.group, sizeof(prefs.group_name));
+    }
+    prefs.enabled = record.enabled != 0;
+    prefs.interval_hours = record.hours;
+    /* v1/v2 had no voltage setting. Preserve an explicitly stored v3 zero. */
+    if (!legacy && !version2) prefs.threshold_mv = record.threshold_mv;
+    return true;
+}
+
+bool RepeaterDataStore::saveBatteryPrefs(const RepeaterBatteryPrefs& prefs) {
+    if (prefs.interval_hours < 1 || prefs.interval_hours > 168) return false;
+    if (prefs.threshold_mv > 5000) return false;
+    if (!memchr(prefs.group_name, 0, sizeof(prefs.group_name)) || prefs.group_name[0] != '#' ||
+        strchr(prefs.group_name, '\r') || strchr(prefs.group_name, '\n')) return false;
+    if (!_initialized && !begin()) return false;
+    static const char path[] = "/lfs/repeater/battery_prefs";
+    static const char tmp[] = "/lfs/repeater/battery_prefs.tmp";
+    struct fs_file_t file;
+    fs_file_t_init(&file);
+    if (fs_open(&file, tmp, FS_O_CREATE | FS_O_WRITE | FS_O_TRUNC) < 0) return false;
+    struct {
+        uint32_t magic, enabled, hours;
+        char group[32];
+        uint32_t threshold_mv;
+    } record = {0x42504633, prefs.enabled ? 1U : 0U, prefs.interval_hours, {}, prefs.threshold_mv};
+    memcpy(record.group, prefs.group_name, sizeof(record.group));
+    ssize_t n = fs_write(&file, &record, sizeof(record));
+    int synced = fs_sync(&file);
+    int closed = fs_close(&file);
+    if (n != sizeof(record) || synced < 0 || closed < 0) return false;
+    return fs_rename(tmp, path) == 0;
+}
+
+bool RepeaterDataStore::loadBatteryAlertTime(uint32_t& epoch) {
+    struct fs_file_t file;
+    fs_file_t_init(&file);
+    if (fs_open(&file, "/lfs/repeater/battery_alert", FS_O_READ) < 0) return false;
+    uint32_t record[2] = {};
+    ssize_t n = fs_read(&file, record, sizeof(record));
+    fs_close(&file);
+    if (n != sizeof(record) || record[0] != 0x42415431) return false;
+    epoch = record[1];
+    return true;
+}
+
+bool RepeaterDataStore::saveBatteryAlertTime(uint32_t epoch) {
+    if (!_initialized && !begin()) return false;
+    static const char path[] = "/lfs/repeater/battery_alert";
+    static const char tmp[] = "/lfs/repeater/battery_alert.tmp";
+    struct fs_file_t file;
+    fs_file_t_init(&file);
+    if (fs_open(&file, tmp, FS_O_CREATE | FS_O_WRITE | FS_O_TRUNC) < 0) return false;
+    const uint32_t record[] = {0x42415431, epoch};
+    ssize_t n = fs_write(&file, record, sizeof(record));
+    int synced = fs_sync(&file);
+    int closed = fs_close(&file);
+    if (n != sizeof(record) || synced < 0 || closed < 0) return false;
+    return fs_rename(tmp, path) == 0;
+}
+
 bool RepeaterDataStore::loadPrefs(NodePrefs& prefs) {
     char path[48];
     snprintf(path, sizeof(path), "%s/prefs", BASE_PATH);
@@ -194,7 +275,7 @@ bool RepeaterDataStore::loadPrefs(NodePrefs& prefs) {
         prefs.advert_loc_policy = ADVERT_LOC_PREFS;
         prefs.loop_detect = LOOP_DETECT_MODERATE;
         prefs.path_hash_mode = 1;
-        prefs.gps_interval = CONFIG_ZEPHCORE_REPEATER_GPS_INTERVAL_SEC;  // repeater default (48h)
+        prefs.gps_interval = CONFIG_ZEPHCORE_REPEATER_GPS_INTERVAL_SEC;  // repeater default (12h)
         /* Persist defaults so flash always has a prefs file from boot 1.
          * Lets later code (e.g. tempradio revert) trust that flash is
          * authoritative without a "first run" special case. */
@@ -273,6 +354,12 @@ bool RepeaterDataStore::loadPrefs(NodePrefs& prefs) {
     fs_read(&file, &prefs.probe_interval, sizeof(prefs.probe_interval));
     /* cad_busycap absent in <301-byte files; EOF read keeps default 25 */
     fs_read(&file, &prefs.cad_busycap, sizeof(prefs.cad_busycap));
+    const bool legacy_shadow = ret == 0 && entry.size == 303;
+    if (legacy_shadow) {
+        uint8_t tz[2] = {};
+        if (fs_read(&file, tz, sizeof(tz)) == sizeof(tz))
+            prefs.ui_timezone_offset_minutes = (int16_t)((uint16_t)tz[0] | ((uint16_t)tz[1] << 8));
+    } else {
     /* LR2021 side-detector SFs, offsets 301-303.  Absent in <304-byte files;
      * the no-op EOF read leaves the zeroed default = feature off. */
     fs_read(&file, prefs.extra_sf, sizeof(prefs.extra_sf));
@@ -301,6 +388,12 @@ bool RepeaterDataStore::loadPrefs(NodePrefs& prefs) {
      * (activity LED on transmit, heartbeat with unread indication). */
     fs_read(&file, &prefs.leds_radio_mode, sizeof(prefs.leds_radio_mode));
     fs_read(&file, &prefs.leds_hb_mode, sizeof(prefs.leds_hb_mode));
+
+    uint8_t extension[ShadowPrefs::record_size] = {};
+    ssize_t ext_len = fs_read(&file, extension, sizeof(extension));
+    if (ext_len < 0 || !ShadowPrefs::decode(prefs, extension, (size_t)ext_len))
+        prefs.ui_timezone_offset_minutes = (int16_t)prefs.tz_offset * 60;
+    }
 
     fs_close(&file);
 
@@ -334,6 +427,8 @@ bool RepeaterDataStore::loadPrefs(NodePrefs& prefs) {
     /* Everything else that came off flash — bounds, NaNs, and the char fields,
      * which the file format stores without terminators. */
     sanitizeNodePrefs(&prefs);
+    prefs.tz_offset = (int8_t)(prefs.ui_timezone_offset_minutes / 60);
+
 
     /* One-time format upgrade: old files (< 294 bytes) never saved the ZephCore
      * extension fields, and stored path_hash_mode/loop_detect as zero padding.
@@ -467,7 +562,12 @@ bool RepeaterDataStore::savePrefs(const NodePrefs& prefs) {
     /* LED activity/heartbeat modes (offsets 309-310) */
     fs_write(&file, &prefs.leds_radio_mode, sizeof(prefs.leds_radio_mode));
     fs_write(&file, &prefs.leds_hb_mode, sizeof(prefs.leds_hb_mode));
-
+    uint8_t extension[ShadowPrefs::record_size];
+    ShadowPrefs::encode(prefs, extension);
+    if (fs_write(&file, extension, sizeof(extension)) != sizeof(extension)) {
+        fs_close(&file);
+        return false;
+    }
     ret = fs_sync(&file);
     fs_close(&file);
     if (ret < 0) {
@@ -482,6 +582,61 @@ bool RepeaterDataStore::savePrefs(const NodePrefs& prefs) {
         return false;
     }
     LOG_INF("Saved prefs to %s", path);
+    return true;
+}
+
+bool RepeaterDataStore::loadBridgePrefs(RepeaterBridgePrefs& prefs) {
+    char path[48];
+    snprintf(path, sizeof(path), "%s/espnow_bridge", BASE_PATH);
+
+    struct fs_file_t file;
+    fs_file_t_init(&file);
+    if (fs_open(&file, path, FS_O_READ) < 0) {
+        return false;
+    }
+
+    memset(&prefs, 0, sizeof(prefs));
+    ssize_t n = fs_read(&file, &prefs, sizeof(prefs));
+    fs_close(&file);
+    /* The bridge file is private to ZephCore.  Preserve all earlier settings
+     * and initialise fields appended by later bridge protocol revisions. */
+    constexpr size_t pre_address_type_size = offsetof(RepeaterBridgePrefs, peer_addr_type);
+    constexpr size_t pre_priority_size = offsetof(RepeaterBridgePrefs, forward_priority);
+    if (n == (ssize_t)pre_address_type_size || n == (ssize_t)pre_priority_size) {
+        prefs.forward_priority = 7;
+        LOG_INF("Migrated bridge prefs");
+        return true;
+    }
+    if (n != (ssize_t)sizeof(prefs)) {
+        LOG_WRN("Bridge prefs are corrupt");
+        return false;
+    }
+    return true;
+}
+
+bool RepeaterDataStore::saveBridgePrefs(const RepeaterBridgePrefs& prefs) {
+    if (!_initialized && !begin()) return false;
+
+    char path[48];
+    char tmp_path[56];
+    snprintf(path, sizeof(path), "%s/espnow_bridge", BASE_PATH);
+    if (snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path) >= (int)sizeof(tmp_path)) {
+        return false;
+    }
+    fs_unlink(tmp_path);
+
+    struct fs_file_t file;
+    fs_file_t_init(&file);
+    if (fs_open(&file, tmp_path, FS_O_CREATE | FS_O_WRITE) < 0) {
+        return false;
+    }
+    ssize_t n = fs_write(&file, &prefs, sizeof(prefs));
+    int ret = fs_sync(&file);
+    fs_close(&file);
+    if (n != (ssize_t)sizeof(prefs) || ret < 0 || fs_rename(tmp_path, path) < 0) {
+        fs_unlink(tmp_path);
+        return false;
+    }
     return true;
 }
 

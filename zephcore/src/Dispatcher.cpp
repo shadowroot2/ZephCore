@@ -66,7 +66,7 @@ void Dispatcher::begin()
 
 uint8_t Dispatcher::getDutyCyclePercent() const
 {
-	return 10; /* EU 868 default: 10% duty cycle */
+	return 50; /* Custom base preset: 50% duty cycle */
 }
 
 uint32_t Dispatcher::getMaxTxBudgetMs() const
@@ -297,6 +297,34 @@ bool Dispatcher::tryParsePacket(Packet *pkt, const uint8_t *raw, int len)
 	}
 
 	memcpy(pkt->payload, &raw[i], pkt->payload_len);
+	return true;
+}
+
+bool Dispatcher::injectRaw(const uint8_t *raw, int len)
+{
+	if (raw == nullptr || len < 2 || len > MAX_TRANS_UNIT) {
+		return false;
+	}
+
+	Packet *pkt = _mgr->allocNew();
+	if (pkt == nullptr) {
+		LOG_WRN("injectRaw: packet alloc failed");
+		return false;
+	}
+	if (!tryParsePacket(pkt, raw, len)) {
+		_mgr->free(pkt);
+		return false;
+	}
+
+	/* ESP-NOW has no LoRa SNR/RSSI equivalent. */
+	pkt->_snr = 0;
+	logRx(pkt, pkt->getRawLength(), 0.0f);
+	if (pkt->isRouteFlood()) {
+		n_recv_flood++;
+	} else {
+		n_recv_direct++;
+	}
+	processRecvPacket(pkt);
 	return true;
 }
 

@@ -10,10 +10,10 @@
 namespace mesh {
 
 struct LoRaConfig {
-	static constexpr uint32_t FREQ_HZ = 869618000;   /* MeshCore default channel (EU 869 MHz ISM) */
+	static constexpr uint32_t FREQ_HZ = 867935000;   /* Custom base preset */
 	static constexpr uint16_t BANDWIDTH = 62;         /* BW_62_KHZ — MeshCore default */
-	static constexpr uint8_t SPREADING_FACTOR = 7;    /* SF7: HU regional default since 2026-08 */
-	static constexpr uint8_t CODING_RATE = 5;         /* CR_4_5: lowest overhead */
+	static constexpr uint8_t SPREADING_FACTOR = 8;
+	static constexpr uint8_t CODING_RATE = 8;
 	static constexpr uint16_t PREAMBLE_LEN = 16;      /* MeshCore default; longer aids RX sync */
 	static constexpr int8_t TX_POWER_DBM = 22;        /* SX1262 max */
 };

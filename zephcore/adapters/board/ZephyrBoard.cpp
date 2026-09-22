@@ -13,6 +13,11 @@
 #include <stdio.h>
 #include <string.h>
 
+#if defined(CONFIG_SOC_RP2040) && \
+	defined(CONFIG_RETENTION_BOOT_MODE)
+#include <zephyr/retention/bootmode.h>
+#endif
+
 #if defined(CONFIG_SOC_SERIES_NRF52)
 #include <hal/nrf_power.h>
 /* Adafruit bootloader GPREGRET magic values */
@@ -124,8 +129,42 @@ static const struct gpio_dt_spec tx_led =
 #define ZEPHCORE_LED_PIN_SHARED 0
 #endif
 
+/* Optional active-state battery charge-status GPIO. */
+#if DT_NODE_EXISTS(DT_ALIAS(charge_detect))
+static const struct gpio_dt_spec charge_detect =
+	GPIO_DT_SPEC_GET(DT_ALIAS(charge_detect), gpios);
+#define HAS_CHARGE_DETECT 1
+#else
+#define HAS_CHARGE_DETECT 0
+#endif
+
+/* Optional charger current-select GPIO. Active selects the board's 100 mA mode. */
+#if DT_NODE_EXISTS(DT_ALIAS(charge_current_100ma))
+static const struct gpio_dt_spec charge_current_100ma =
+	GPIO_DT_SPEC_GET(DT_ALIAS(charge_current_100ma), gpios);
+#define HAS_CHARGE_CURRENT_100MA 1
+#else
+#define HAS_CHARGE_CURRENT_100MA 0
+#endif
+
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(zephcore_board, CONFIG_ZEPHCORE_BOARD_LOG_LEVEL);
+
+#define ZEPHYR_USER_NODE DT_PATH(zephyr_user)
+
+#if DT_NODE_EXISTS(ZEPHYR_USER_NODE) && \
+    DT_NODE_HAS_PROP(ZEPHYR_USER_NODE, charge_power_mw)
+#define CHARGE_POWER_MW DT_PROP(ZEPHYR_USER_NODE, charge_power_mw)
+#else
+#define CHARGE_POWER_MW 0
+#endif
+
+#if DT_NODE_EXISTS(ZEPHYR_USER_NODE) && \
+    DT_NODE_HAS_PROP(ZEPHYR_USER_NODE, charge_current_ma)
+#define CHARGE_CURRENT_MA DT_PROP(ZEPHYR_USER_NODE, charge_current_ma)
+#else
+#define CHARGE_CURRENT_MA 0
+#endif
 
 #if DT_NODE_EXISTS(DT_PATH(zephyr_user)) && \
     DT_NODE_HAS_PROP(DT_PATH(zephyr_user), io_channels)
@@ -152,13 +191,18 @@ static const struct device *vbat_enable_dev = NULL;
  *       vbat-mv-multiplier = <7200>;
  *   };
  */
-#define ZEPHYR_USER_NODE DT_PATH(zephyr_user)
 #if DT_NODE_HAS_PROP(ZEPHYR_USER_NODE, vbat_mv_multiplier)
 #define VBAT_MV_MULTIPLIER DT_PROP(ZEPHYR_USER_NODE, vbat_mv_multiplier)
 #else
 #define VBAT_MV_MULTIPLIER CONFIG_ZEPHCORE_VBAT_MV_MULTIPLIER
 #endif
 #define VBAT_ADC_SAMPLES   8
+#endif
+
+#if DT_NODE_HAS_STATUS_OKAY(DT_NODELABEL(temp))
+#define MCU_TEMP_NODE DT_NODELABEL(temp)
+#elif DT_NODE_HAS_STATUS_OKAY(DT_NODELABEL(die_temp))
+#define MCU_TEMP_NODE DT_NODELABEL(die_temp)
 #endif
 
 /* Battery fuel gauge (AXP2101 PMU etc.) — preferred over the ADC divider when
@@ -199,7 +243,9 @@ static void rx_pulse_off_handler(struct k_work *work)
 	if (atomic_get(&s_tx_lit)) {
 		return;
 	}
-	gpio_pin_set_dt(&tx_led, 0);
+	if (!zephcore_led_status_priority_active()) {
+		gpio_pin_set_dt(&tx_led, 0);
+	}
 #if ZEPHCORE_LED_PIN_SHARED
 	zephcore_led_radio_hold_pin(false);
 #endif
@@ -214,6 +260,28 @@ static int tx_led_init(void)
 	return 0;
 }
 SYS_INIT(tx_led_init, APPLICATION, 90);
+#endif
+
+#if HAS_CHARGE_DETECT
+static int charge_detect_gpio_init(void)
+{
+	if (gpio_is_ready_dt(&charge_detect)) {
+		gpio_pin_configure_dt(&charge_detect, GPIO_INPUT);
+	}
+	return 0;
+}
+SYS_INIT(charge_detect_gpio_init, APPLICATION, 91);
+#endif
+
+#if HAS_CHARGE_CURRENT_100MA
+static int charge_current_gpio_init(void)
+{
+	if (gpio_is_ready_dt(&charge_current_100ma)) {
+		gpio_pin_configure_dt(&charge_current_100ma, GPIO_OUTPUT_ACTIVE);
+	}
+	return 0;
+}
+SYS_INIT(charge_current_gpio_init, APPLICATION, 92);
 #endif
 
 namespace mesh {
@@ -338,9 +406,9 @@ float ZephyrBoard::getAdcMultiplier() const
 
 float ZephyrBoard::getMCUTemperature()
 {
-	/* nRF52840 die temperature sensor - "nordic,nrf-temp" at 0x4000c000
-	 * Nodelabel "temp" is defined in nrf52840.dtsi, status="okay" by default */
-	const struct device *dev = DEVICE_DT_GET_OR_NULL(DT_NODELABEL(temp));
+	/* nRF uses `temp`; RP2040 exposes the ADC-backed sensor as `die_temp`. */
+#ifdef MCU_TEMP_NODE
+	const struct device *dev = DEVICE_DT_GET_OR_NULL(MCU_TEMP_NODE);
 	if (!dev || !device_is_ready(dev)) {
 		return NAN;
 	}
@@ -349,6 +417,7 @@ float ZephyrBoard::getMCUTemperature()
 	    sensor_channel_get(dev, SENSOR_CHAN_DIE_TEMP, &val) == 0) {
 		return sensor_value_to_float(&val);
 	}
+	#endif
 	return NAN;
 }
 
@@ -366,7 +435,7 @@ void ZephyrBoard::onBeforeTransmit()
 	 * onAfterTransmit() still clears the pin unconditionally, so a gate or mode
 	 * flipped mid-transmit can't strand it lit. */
 	uint8_t mode = zephcore_leds_radio_mode();
-	if (!zephcore_leds_disabled() &&
+	if (!zephcore_leds_disabled() && !zephcore_led_status_priority_active() &&
 	    (mode == LEDS_RADIO_TX || mode == LEDS_RADIO_ALL)) {
 		/* A receive blink may still be in flight; take the pin from it so its
 		 * handler doesn't clear the LED partway through this transmit. */
@@ -384,7 +453,9 @@ void ZephyrBoard::onAfterTransmit()
 {
 #if HAS_TX_LED
 	atomic_set(&s_tx_lit, 0);
-	gpio_pin_set_dt(&tx_led, 0);
+	if (!zephcore_led_status_priority_active()) {
+		gpio_pin_set_dt(&tx_led, 0);
+	}
 #if ZEPHCORE_LED_PIN_SHARED
 	zephcore_led_radio_hold_pin(false);
 #endif
@@ -395,7 +466,7 @@ void ZephyrBoard::onPacketReceived()
 {
 #if HAS_TX_LED
 	uint8_t mode = zephcore_leds_radio_mode();
-	if (zephcore_leds_disabled() ||
+	if (zephcore_leds_disabled() || zephcore_led_status_priority_active() ||
 	    (mode != LEDS_RADIO_RX && mode != LEDS_RADIO_ALL)) {
 		return;
 	}
@@ -445,6 +516,14 @@ void ZephyrBoard::rebootToBootloader()
 	 * controller it lands on is settled by the PHY mux below, after the
 	 * detach. */
 	REG_SET_BIT(RTC_CNTL_OPTION1_REG, RTC_CNTL_FORCE_DOWNLOAD_BOOT);
+#endif
+#if defined(CONFIG_RPI_PICO_ROM_BOOTLOADER) && \
+	defined(CONFIG_RETENTION_BOOT_MODE)
+	/* The RP2040 ROM checks this retained byte early after reset and enters
+	 * its USB mass-storage bootloader. */
+	if (bootmode_set(BOOT_MODE_TYPE_BOOTLOADER) != 0) {
+		LOG_ERR("Cannot request RP2040 ROM bootloader");
+	}
 #endif
 	k_msleep(50);  /* Let UART/USB flush */
 #ifdef ZEPHCORE_USBD_DETACH
@@ -549,6 +628,31 @@ bool ZephyrBoard::isExternalPowered()
 	 * so low-battery auto-shutdown is never inhibited. */
 	return false;
 #endif
+}
+
+bool ZephyrBoard::isBatteryCharging()
+{
+#if HAS_CHARGE_DETECT
+	if (gpio_is_ready_dt(&charge_detect)) {
+		int level = gpio_pin_get_dt(&charge_detect);
+		if (level >= 0) {
+			/* gpio_pin_get_dt() returns the physical level; unlike set_dt(),
+			 * it does not apply GPIO_ACTIVE_LOW. */
+			return (charge_detect.dt_flags & GPIO_ACTIVE_LOW) ? level == 0 : level != 0;
+		}
+	}
+#endif
+	return false;
+}
+
+float ZephyrBoard::getChargePowerWatts()
+{
+	return (float)CHARGE_POWER_MW / 1000.0f;
+}
+
+float ZephyrBoard::getChargeCurrentAmps()
+{
+	return (float)CHARGE_CURRENT_MA / 1000.0f;
 }
 
 } /* namespace mesh */

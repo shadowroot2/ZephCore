@@ -17,6 +17,9 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <zephyr/kernel.h>
+#ifdef CONFIG_POWEROFF
+#include <zephyr/sys/poweroff.h>
+#endif
 
 #include "ui_task.h"
 #include "led_gate.h"
@@ -31,6 +34,8 @@ WEAK void ui_notify(enum ui_event event)
 {
 	ARG_UNUSED(event);
 }
+
+WEAK void ui_request_render(void) { }
 
 WEAK void ui_set_msg_count(uint16_t count)
 {
@@ -109,10 +114,11 @@ WEAK void ui_set_gps_enabled(bool enabled)
 	ARG_UNUSED(enabled);
 }
 
-WEAK void ui_set_gps_state(uint8_t state, uint32_t last_fix_age_s,
-			    uint32_t next_search_s)
+WEAK void ui_set_gps_state(uint8_t state, uint16_t satellites,
+			    uint32_t last_fix_age_s, uint32_t next_search_s)
 {
-	ARG_UNUSED(state); ARG_UNUSED(last_fix_age_s); ARG_UNUSED(next_search_s);
+	ARG_UNUSED(state); ARG_UNUSED(satellites);
+	ARG_UNUSED(last_fix_age_s); ARG_UNUSED(next_search_s);
 }
 
 WEAK void ui_set_ble_enabled(bool enabled)
@@ -125,6 +131,11 @@ WEAK void ui_set_buzzer_mode(uint8_t mode)
 	ARG_UNUSED(mode);
 }
 
+WEAK void ui_set_bridge_metrics(uint8_t priority, uint32_t forwarded, uint32_t skipped)
+{
+	ARG_UNUSED(priority); ARG_UNUSED(forwarded); ARG_UNUSED(skipped);
+}
+
 /* Not a no-op: a headless build still has the LoRa TX LED, and the gate that
  * governs it lives outside the UI layer precisely so this case works. */
 WEAK void ui_set_leds_disabled(bool disabled)
@@ -132,9 +143,25 @@ WEAK void ui_set_leds_disabled(bool disabled)
 	zephcore_leds_set_disabled(disabled);
 }
 
+WEAK bool ui_leds_disabled(void)
+{
+	return true;
+}
+
 WEAK void ui_set_heartbeat_led(bool enabled)
 {
 	ARG_UNUSED(enabled);
+}
+
+WEAK void ui_led_force_tx(void) { }
+WEAK void ui_led_confirm_state(bool enabled) { ARG_UNUSED(enabled); }
+
+WEAK void ui_shutdown(void)
+{
+#ifdef CONFIG_POWEROFF
+	ui_prepare_for_system_off();
+	sys_poweroff();
+#endif
 }
 
 WEAK void ui_set_offgrid_mode(bool enabled)

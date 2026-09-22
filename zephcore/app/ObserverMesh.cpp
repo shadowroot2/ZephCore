@@ -54,9 +54,9 @@ void ObserverMesh::begin(RepeaterDataStore *store, struct ObserverCreds *creds)
 
 	/* Initialize prefs with observer-specific defaults */
 	initNodePrefs(&_prefs);
-	_prefs.cr           = 5;   /* CR 4/5 (same as initNodePrefs; kept explicit) */
+	_prefs.cr           = 5;   /* Observer-specific CR 4/5 */
 	_prefs.tx_power_dbm = 0;   /* observer never TXes anyway */
-	/* freq=869.618, bw=62.5, sf=7 already set by initNodePrefs */
+	/* Board-specific frequency and SF are set by initNodePrefs. */
 
 	/* First boot has to be detected BEFORE loadPrefs(): the store is shared
 	 * with the repeater and its no-file branch re-runs initNodePrefs(), applies

@@ -39,6 +39,9 @@ public:
 	virtual bool startOTAUpdate(const char *id, char reply[]) { (void)id; (void)reply; return false; }
 
 	virtual bool isExternalPowered() { return false; }
+	virtual bool isBatteryCharging() { return false; }
+	virtual float getChargePowerWatts() { return 0.0f; }
+	virtual float getChargeCurrentAmps() { return 0.0f; }
 	virtual uint16_t getBootVoltage() { return 0; }
 	virtual uint32_t getResetReason() const { return 0; }
 	virtual const char *getResetReasonString(uint32_t reason) { (void)reason; return "Not available"; }

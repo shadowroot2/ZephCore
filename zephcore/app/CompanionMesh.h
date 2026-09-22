@@ -98,6 +98,10 @@ typedef void (*PinChangeCallback)(uint32_t new_pin);
 #define COMPANION_CLI_REPLY_SIZE 256
 typedef void (*CompanionCLICallback)(const char *line, char *reply);
 
+/* Full local help is larger than the normal CLI reply buffer. Keep it as a
+ * static string and let vcontactQueueText() split it into chat messages. */
+typedef const char *(*VContactCLIHelpCallback)(const char *line);
+
 /**
  * CompanionMesh: Application layer for ZephCore Companion device
  *
@@ -172,6 +176,7 @@ public:
 	 * registered in the RF RX matching path, so over-the-air traffic addressed
 	 * to it is inert. */
 	void setCLICallback(CompanionCLICallback cb) { _cli_exec_cb = cb; }
+	void setVContactCLIHelpCallback(VContactCLIHelpCallback cb) { _vcontact_help_cb = cb; }
 	bool isVContactEnabled() const { return prefs.v_contact_enabled != 0; }
 	/** Queue an unsolicited v-contact message (battery alert, restart reason).
 	 *  Goes through the offline queue — delivered on next app connect/sync. */
@@ -512,6 +517,7 @@ private:
 	 * so the contact is withheld from sync/adverts until a time source
 	 * arrives — otherwise the app shows a 1970 last-heard timestamp. */
 	CompanionCLICallback _cli_exec_cb;
+	VContactCLIHelpCallback _vcontact_help_cb;
 	uint8_t _vcontact_pubkey[PUB_KEY_SIZE];
 	uint32_t _vcontact_lastmod;
 	/* Dedupe app resends: a retry reuses the message timestamp (only the

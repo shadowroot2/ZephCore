@@ -32,6 +32,10 @@ enum ui_page {
 	UI_PAGE_SENSORS,        /* Environment sensor data */
 	UI_PAGE_OFFGRID,        /* Offgrid mode (client repeat) toggle */
 	UI_PAGE_DFU,            /* BLE DFU bootloader entry */
+	UI_PAGE_TRACKING,       /* Periodic #tracks location reporting */
+	UI_PAGE_SOS,            /* Send SOS group message */
+	UI_PAGE_BRIDGE,         /* Repeater bridge backhaul toggle */
+	UI_PAGE_BRIDGE_INFO,    /* Repeater bridge priority and forwarding stats */
 	UI_PAGE_SHUTDOWN,       /* Hibernate / power off */
 	UI_PAGE_STATUS,         /* Repeater status (uptime, time, packets) */
 	UI_PAGE_COUNT
@@ -92,11 +96,23 @@ struct ui_state {
 	uint32_t gps_last_fix_age_s;  /* seconds since last fix (UINT32_MAX=never) */
 	uint32_t gps_next_search_s;   /* seconds until next search (0=now/off) */
 
+	/* Tracking page */
+	bool     tracking_enabled;
+	uint16_t tracking_interval_minutes;
+
 	/* Buzzer page */
 	uint8_t  buzzer_mode;      /* ZEPHCORE_BUZZER_{OFF,ON,VIBRATE} */
 
 	/* LEDs page */
 	bool     leds_disabled;    /* true = LEDs off */
+	bool     bridge_enabled;   /* true = repeater bridge backhaul active */
+	bool     bridge_connected; /* true = bridge transport link is ready */
+	char     bridge_local_mac[18];
+	char     bridge_peer_mac[18];
+	char     bridge_status[10];
+	uint8_t  bridge_priority;
+	uint32_t bridge_forwarded;
+	uint32_t bridge_skipped;
 
 	/* Sensors page */
 	int16_t  temperature_c10;  /* centi-degrees C */
@@ -113,6 +129,9 @@ struct ui_state {
 	/* Transient feedback (shown briefly after action) */
 	uint32_t advert_sent_time;   /* uptime ms when advert was sent (0=idle) */
 	bool     advert_was_flood;   /* true if last advert was flood */
+	uint32_t sos_sent_time;      /* uptime ms when SOS was queued (0=idle) */
+	bool     sos_waiting_fix;    /* SOS is waiting for a GPS fix */
+	bool     sos_send_failed;    /* last SOS queue attempt failed */
 	uint32_t offgrid_confirm_time; /* uptime ms when offgrid toggle confirm started (0=idle) */
 	uint32_t dfu_confirm_time;   /* uptime ms when DFU confirm started (0=idle) */
 	uint32_t shutdown_confirm_time; /* uptime ms when shutdown confirm started (0=idle) */
@@ -123,6 +142,12 @@ struct ui_state {
  * @param flood true if flood advert, false if zero-hop
  */
 void ui_pages_advert_sent(bool flood);
+
+/** SOS status feedback for the SOS page. */
+void ui_pages_sos_waiting(void);
+void ui_pages_sos_sent(bool success);
+void ui_pages_sos_clear(void);
+void ui_pages_set_tracking(bool enabled, uint16_t interval_minutes);
 
 /**
  * Get the global UI state for updating from main app.

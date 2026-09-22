@@ -135,8 +135,12 @@ int RoomServerMesh::handleRequest(ClientInfo* sender, uint32_t sender_timestamp,
         const uint8_t CH_SELF = 1;
         uint16_t batt_mv = _board.getBattMilliVolts();
         lpp.addVoltage(CH_SELF, batt_mv / 1000.0f);
+        float charge_power_w = _board.getChargePowerWatts();
+        if (_board.isBatteryCharging() && charge_power_w > 0.0f) {
+            lpp.addPower(CH_SELF, charge_power_w);
+        }
 
-        /* Environment sensors — prefer external, fallback to MCU die temp */
+        /* Environment sensors — prefer external, fallback to MCU die temp. */
         struct env_data env;
         if (env_sensors_read(&env) == 0) {
             if (env.has_temperature) {
@@ -144,7 +148,6 @@ int RoomServerMesh::handleRequest(ClientInfo* sender, uint32_t sender_timestamp,
             } else if (env.has_mcu_temperature) {
                 lpp.addTemperature(CH_SELF, env.mcu_temperature_c);
             } else {
-                /* Last resort: MCU temp from board API */
                 float mcu_temp = _board.getMCUTemperature();
                 if (!isnan(mcu_temp)) {
                     lpp.addTemperature(CH_SELF, mcu_temp);
@@ -156,11 +159,15 @@ int RoomServerMesh::handleRequest(ClientInfo* sender, uint32_t sender_timestamp,
             if (env.has_pressure) {
                 lpp.addBarometricPressure(CH_SELF, env.pressure_hpa);
             }
+#if defined(CONFIG_BOARD_T1000_E)
             if (env.has_luminosity) {
+#else
+            if (env.has_luminosity && !gps_is_available()) {
+#endif
                 lpp.addLuminosity(CH_SELF, env.luminosity);
             }
+
         } else {
-            /* No env sensors at all — try MCU temp directly */
             float mcu_temp = _board.getMCUTemperature();
             if (!isnan(mcu_temp)) {
                 lpp.addTemperature(CH_SELF, mcu_temp);
@@ -183,6 +190,17 @@ int RoomServerMesh::handleRequest(ClientInfo* sender, uint32_t sender_timestamp,
             }
         }
 
+        /* Cayenne LPP has no satellite-count type.  Reuse the luminosity
+         * field on the self channel so existing client UIs show a value.
+         * T1000-E is excluded: its physical light sensor reports real lux. */
+#if !defined(CONFIG_BOARD_T1000_E)
+        if (sender->isAdmin() && gps_is_available()) {
+            struct gps_state_info gsi;
+            gps_get_state_info(&gsi);
+            lpp.addLuminosity(CH_SELF, gsi.satellites);
+        }
+#endif
+
         /* GPS precise position — admin-only, and only via telemetry, never
          * adverts. Guests get the rest of the LPP payload but no position:
          * adverts already publish the operator-set prefs coordinates, so
@@ -195,7 +213,6 @@ int RoomServerMesh::handleRequest(ClientInfo* sender, uint32_t sender_timestamp,
                     (float)(gpos.longitude_ndeg / 1e9),
                     gpos.altitude_mm / 1000.0f);
             }
-
             /* Wake GPS / extend acquire window so the next telemetry poll has
              * a fresher fix. In repeater mode GPS is normally off between the
              * 48h time-sync cycles — this opportunistically rearms acquire

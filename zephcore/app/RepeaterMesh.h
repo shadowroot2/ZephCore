@@ -40,6 +40,8 @@
   #define FIRMWARE_BUILD_DATE   __DATE__
 #endif
 
+/* The mobile configurator accepts the upstream repeater role string only.
+ * Repeater-bridge is an implementation variant, not a protocol role. */
 #define FIRMWARE_ROLE "repeater"
 
 #ifndef MAX_NEIGHBOURS
@@ -82,11 +84,18 @@ struct RepeaterStats {
     uint32_t n_recv_errors;
 };
 
+typedef bool (*RepeaterLocalCommandHandler)(const char *command, char *reply);
+
 class RepeaterMesh : public mesh::Mesh, public CommonCLICallbacks {
     mesh::MainBoard& _board;
     RepeaterDataStore* _store;
     uint32_t last_millis;
     uint64_t uptime_millis;
+    uint64_t battery_check_at = 0;
+    int64_t battery_last_alert_at = 0;
+    bool battery_alert_sent = false;
+    RepeaterBatteryPrefs battery_prefs;
+    uint8_t battery_low_samples = 0;
     unsigned long next_local_advert, next_flood_advert;
     bool _logging;
     NodePrefs _prefs;
@@ -110,6 +119,7 @@ class RepeaterMesh : public mesh::Mesh, public CommonCLICallbacks {
     unsigned long pending_discover_until;
     bool region_load_active;
     unsigned long dirty_contacts_expiry;
+    RepeaterLocalCommandHandler _local_command_handler;
 #if MAX_NEIGHBOURS > 0
     NeighbourInfo neighbours[MAX_NEIGHBOURS];
 #endif
@@ -140,6 +150,8 @@ class RepeaterMesh : public mesh::Mesh, public CommonCLICallbacks {
 
     void putNeighbour(const mesh::Identity& id, uint32_t timestamp, float snr);
     void timeSyncTick();
+    void batteryAlertTick();
+    bool handleBatteryCommand(const char* command, char* reply);
     uint8_t handleLoginReq(const mesh::Identity& sender, const uint8_t* secret, uint32_t sender_timestamp, const uint8_t* data, bool is_flood);
     uint8_t handleAnonRegionsReq(const mesh::Identity& sender, uint32_t sender_timestamp, const uint8_t* data, size_t data_len);
     uint8_t handleAnonOwnerReq(const mesh::Identity& sender, uint32_t sender_timestamp, const uint8_t* data, size_t data_len);
@@ -233,6 +245,10 @@ public:
                  mesh::RNG& rng, mesh::RTCClock& rtc, mesh::MeshTables& tables);
 
     void begin(RepeaterDataStore* store);
+
+    void setLocalCommandHandler(RepeaterLocalCommandHandler handler) {
+        _local_command_handler = handler;
+    }
 
     void sendNodeDiscoverReq();
 

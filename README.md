@@ -27,8 +27,14 @@ the [Board Porting Guide](zephcore/boards/example_board/README.md).
 
 ## Device Roles
 
+This branch is based on author release **1.17.4-zephcore**, with ShadoW
+extensions layered over the upstream firmware. See
+[custom features and migration](docs/SHADOW_FEATURES.md).
+
 - **Companion** (default) -- connects to MeshCore mobile apps via BLE/USB. Contacts, channels, offline message queue.
 - **Repeater** -- forwards packets, configured via USB serial CLI. See the [Repeater CLI Command Reference](docs/Repeater_CLI_commands.md) for all available commands.
+- **Repeater Bridge** -- repeater plus a keyed inter-band link over ESP-NOW
+  (ESP32) or BLE (ESP32/nRF), with reconnect, ping and duplicate suppression.
 - **Room Server** -- store-and-forward shared message room (a "BBS"). Clients log in with an admin or guest password and post messages; the server pushes each new post to every other logged-in client. No BLE; configured via the same USB serial CLI as the repeater.
 - **Observer** (ESP32 only) -- listen-only node that publishes received LoRa packets to MQTT over WiFi STA. Configured at runtime via serial CLI.
 

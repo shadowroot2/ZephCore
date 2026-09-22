@@ -8,6 +8,7 @@
 
 #include "ZephyrDataStore.h"
 #include "ZephyrFsFormat.h"
+#include <helpers/ShadowPrefs.h>
 #include <AdvertDataHelpers.h>   // ADV_TYPE_NONE (transient/anon contacts)
 #include <zephyr/fs/fs.h>
 #include <zephyr/fs/littlefs.h>
@@ -621,6 +622,9 @@ void ZephyrDataStore::loadPrefs(NodePrefs &prefs)
 		return;
 	}
 	LOG_DBG("loadPrefs: loaded %d bytes from %s", (int)len, PREFS_FILE);
+	const size_t stored_len = len;
+	const bool legacy_shadow = len == 202;
+	if (legacy_shadow) len = 163;
 
 	size_t off = 0;
 	memcpy(&prefs.airtime_factor, &buf[off], sizeof(float));
@@ -908,7 +912,14 @@ void ZephyrDataStore::loadPrefs(NodePrefs &prefs)
 		prefs.leds_hb_mode = buf[off++];
 	}
 
+	if (legacy_shadow) {
+		ShadowPrefs::decodePayload(prefs, buf + 163);
+	} else if (stored_len < 174 ||
+	           !ShadowPrefs::decode(prefs, buf + 174, stored_len - 174)) {
+		prefs.ui_timezone_offset_minutes = (int16_t)prefs.tz_offset * 60;
+	}
 	sanitizeNodePrefs(&prefs);
+	prefs.tz_offset = (int8_t)(prefs.ui_timezone_offset_minutes / 60);
 }
 
 void ZephyrDataStore::savePrefs(const NodePrefs &prefs)
@@ -1022,7 +1033,9 @@ void ZephyrDataStore::savePrefs(const NodePrefs &prefs)
 	/* Offset 172-173: leds_radio_mode / leds_hb_mode (ZephCore extension). */
 	buf[off++] = prefs.leds_radio_mode;
 	buf[off++] = prefs.leds_hb_mode;
-	/* Total: 174 bytes */
+	/* Versioned custom tail, committed in the same atomic write. */
+	ShadowPrefs::encode(prefs, buf + off);
+	off += ShadowPrefs::record_size;
 
 	bool ok = atomicReplaceFile(PREFS_FILE, buf, off);
 	LOG_DBG("savePrefs: wrote %s, ok=%d (%d bytes), name='%.16s'",
