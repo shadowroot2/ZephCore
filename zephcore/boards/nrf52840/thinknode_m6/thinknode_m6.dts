@@ -88,7 +88,7 @@
 		compatible = "zephcore,input-multi-tap";
 		input-codes = <INPUT_KEY_A>;
 		tap-codes = <INPUT_KEY_1 INPUT_KEY_B INPUT_KEY_D INPUT_KEY_C INPUT_KEY_E>;
-		tap-delay-ms = <400>;
+		tap-delay-ms = <500>;
 	};
 
 	/* Battery ADC on AIN4 (P0.28), 1.75:1 voltage divider.
@@ -96,6 +96,7 @@
 	zephyr,user {
 		io-channels = <&adc 4>;
 		vbat-mv-multiplier = <6332>;  /* 1.75:1 divider, 3.6V ref; +0.5% for nRF SAADC gain error */
+		charge-power-mw = <6000>;     /* M6 integrated solar panel rating */
 	};
 
 	/* Board power enable (PIN_PWR_EN = P0.27) — must be HIGH for peripherals */
@@ -104,6 +105,16 @@
 		regulator-name = "pwr-enable";
 		enable-gpios = <&gpio0 27 GPIO_ACTIVE_HIGH>;
 		regulator-boot-on;
+	};
+
+	charge_status_gpios: charge-status-gpios {
+		compatible = "gpio-leds";
+
+		/* Solar charger status (EXT_CHRG_DETECT = P0.15, active-LOW). */
+		charge_detect: charge_detect {
+			gpios = <&gpio0 15 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+			label = "Charge Detect";
+		};
 	};
 
 	/* ADC_CTRL (PIN_ADC_CTRL = P0.11) — enables the VBAT resistor divider only
@@ -146,6 +157,7 @@
 		 * GPS_STANDBY (P0.30) is hogged HIGH in &gpio0; GPS_RESET (P0.29)
 		 * is left floating — see the note there. */
 		gps-enable = &gps_enable_pin;
+		charge-detect = &charge_detect;
 	};
 };
 
