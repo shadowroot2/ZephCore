@@ -18,6 +18,13 @@ enum class LocalCLIHelpRole {
 	RoomServer,
 };
 
+#define CLI_UI_RADIO_HELP \
+	"get/set leds.radio\r\nget/set leds.hb\r\n" \
+	"get/set display.rotate\r\nget/set input.rotate\r\n" \
+	"get/set tz.offset (hours)\r\n" \
+	"get/set radio.fem.rxgain\r\nget/set extra.sf\r\n" \
+	"get gps diag\r\n"
+
 static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line)
 {
 	if (strcmp(line, "help") != 0 && strcmp(line, "?") != 0) {
@@ -32,13 +39,13 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"password <value>\r\nclear stats\r\n"
 		"log [start|stop|erase]\r\nstats-packets\r\nstats-radio\r\nstats-core\r\n"
 		"get/set dutycycle\r\nget/set af\r\nget/set int.thresh\r\n"
-		"get/set agc.reset.interval\r\nget/set multi.acks\r\n"
+		"get/set multi.acks\r\n"
 		"get/set allow.read.only\r\nget/set flood.advert.interval\r\n"
 		"get/set advert.interval\r\nget/set guest.password\r\n"
 		"get/set prv.key\r\nget/set name\r\nget/set repeat\r\n"
 		"get/set lat\r\nget/set lon\r\nget/set radio\r\n"
 		"get/set radio.rxgain\r\nget/set rxdelay\r\nget/set txdelay\r\n"
-		"get/set apc.margin\r\nget/set flood.max.advert\r\n"
+		"get/set flood.max.advert\r\n"
 		"get/set flood.max.unscoped\r\nget/set flood.max\r\n"
 		"get/set direct.txdelay\r\nget/set backoff.multiplier\r\n"
 		"get/set owner.info\r\nget/set path.hash.mode\r\n"
@@ -47,7 +54,7 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"get/set gps duty\r\nget/set meshtimesync\r\nget/set tz\r\n"
 		"get public.key\r\nget role\r\nget bootloader.ver\r\n"
 		"get dc.restarts\r\nget tx apc\r\nget cad\r\n"
-		"set cad.auto\r\nset cad.offset\r\nset cad.probe.interval\r\n"
+		"set cad.auto\r\nset cad.offset\r\nset probe.interval\r\n"
 		"set cad.busycap\r\nset cad.reset\r\n"
 		"sensor get <key>\r\nsensor set <key> <value>\r\n"
 		"sensor list [start]\r\nstart dfu\r\nstart ota\r\n"
@@ -57,6 +64,8 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"reboot\r\nclkreboot\r\nerase\r\nhelp";
 	static const char companion[] =
 		"CLI companion:\r\n"
+		CLI_UI_RADIO_HELP
+		"get/set buzzer off|on|vibrate|sound\r\n"
 		"ver\r\nboard\r\nuptime\r\nadvert\r\nadvert.zerohop\r\n"
 		"clock [sync]\r\ntime <epoch>\r\ngps [on|off|setloc|advert]\r\n"
 		"offgrid [on|off]\r\n"
@@ -70,12 +79,12 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"password <value>\r\nclear stats\r\n"
 		"stats-packets\r\nstats-radio\r\nstats-core\r\n"
 		"get/set dutycycle\r\nget/set af\r\nget/set int.thresh\r\n"
-		"get/set agc.reset.interval\r\nget/set multi.acks\r\n"
+		"get/set multi.acks\r\n"
 		"get/set flood.advert.interval\r\nget/set advert.interval\r\n"
 		"get/set prv.key\r\nget/set name\r\nget/set repeat\r\n"
 		"get/set lat\r\nget/set lon\r\nget/set radio\r\n"
 		"get/set radio.rxgain\r\n"
-		"get/set apc.margin\r\nget/set flood.max.advert\r\n"
+		"get/set flood.max.advert\r\n"
 		"get/set flood.max.unscoped\r\nget/set flood.max\r\n"
 		"get/set owner.info\r\nget/set path.hash.mode\r\n"
 		"get/set tx\r\nget/set freq\r\n"
@@ -83,7 +92,7 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"get/set gps duty\r\nget/set meshtimesync\r\nget/set tz\r\n"
 		"get public.key\r\nget role\r\nget bootloader.ver\r\n"
 		"get dc.restarts\r\nget tx apc\r\nget cad\r\n"
-		"set cad.auto\r\nset cad.offset\r\nset cad.probe.interval\r\n"
+		"set cad.auto\r\nset cad.offset\r\nset probe.interval\r\n"
 		"set cad.busycap\r\nset cad.reset\r\n"
 		"get/set v.contact\r\nget/set v.batteryalert\r\n"
 
@@ -115,6 +124,7 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 	#else
 		"CLI repeater:\r\n"
 	#endif
+		CLI_UI_RADIO_HELP
 		"ver\r\nboard\r\nuptime\r\nadvert\r\nadvert.zerohop\r\n"
 		"clock [sync]\r\ntime <epoch>\r\ngps [on|off|setloc|advert]\r\n"
 #if DT_NODE_HAS_PROP(DT_ALIAS(led0), gpios) || DT_NODE_HAS_PROP(DT_ALIAS(led1), gpios)
@@ -178,6 +188,7 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"reboot\r\nclkreboot\r\nerase\r\nshutdown [y]\r\nhelp";
 	static const char room_server[] =
 		"CLI room server:\r\n"
+		CLI_UI_RADIO_HELP
 		"setperm <permissions> <pubkey>\r\nget acl\r\n"
 		"region def|get|put|remove|list|load|save\r\n"
 		"region allowf|denyf|home|default\r\n"
@@ -191,13 +202,13 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"password <value>\r\nclear stats\r\n"
 		"stats-packets\r\nstats-radio\r\nstats-core\r\n"
 		"get/set dutycycle\r\nget/set af\r\nget/set int.thresh\r\n"
-		"get/set agc.reset.interval\r\nget/set multi.acks\r\n"
+		"get/set multi.acks\r\n"
 		"get/set allow.read.only\r\nget/set flood.advert.interval\r\n"
 		"get/set advert.interval\r\nget/set guest.password\r\n"
 		"get/set prv.key\r\nget/set name\r\nget/set repeat\r\n"
 		"get/set lat\r\nget/set lon\r\nget/set radio\r\n"
 		"get/set radio.rxgain\r\n"
-		"get/set apc.margin\r\nget/set flood.max.advert\r\n"
+		"get/set flood.max.advert\r\n"
 		"get/set flood.max.unscoped\r\nget/set flood.max\r\n"
 		"get/set backoff.multiplier\r\n"
 		"get/set owner.info\r\nget/set path.hash.mode\r\n"
@@ -209,7 +220,7 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"get/set meshtimesync\r\nget/set tz\r\n"
 		"get public.key\r\nget role\r\n"
 		"get dc.restarts\r\nget tx apc\r\nget cad\r\n"
-		"set cad.auto\r\nset cad.offset\r\nset cad.probe.interval\r\n"
+		"set cad.auto\r\nset cad.offset\r\nset probe.interval\r\n"
 		"set cad.busycap\r\nset cad.reset\r\n"
 #if !defined(CONFIG_BOARD_RPI_PICO)
 		"sensor get <key>\r\nsensor set <key> <value>\r\n"
@@ -231,3 +242,5 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 	}
 	return nullptr;
 }
+
+#undef CLI_UI_RADIO_HELP
