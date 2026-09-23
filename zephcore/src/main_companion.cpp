@@ -222,6 +222,7 @@ K_TIMER_DEFINE(maintenance_timer, maintenance_timer_fn, NULL);
 /* Forward declarations */
 #ifdef ZEPHCORE_LORA
 static CompanionMesh *companion_mesh_ptr;
+static uint32_t companion_custom_ms_until_next(void);
 #endif
 
 static void arm_maintenance_wake(void)
@@ -231,6 +232,8 @@ static void arm_maintenance_wake(void)
 #ifdef ZEPHCORE_LORA
 	if (companion_mesh_ptr) {
 		uint32_t next = companion_mesh_ptr->msUntilNextMaintenance();
+		if (next < delay) delay = next;
+		next = companion_custom_ms_until_next();
 		if (next < delay) delay = next;
 	}
 #endif
@@ -573,9 +576,6 @@ static void mesh_event_loop(void)
 		}
 		/* Deadline-driven maintenance plus Companion's 30-second battery/UI pass. */
 		if (events & MESH_EVENT_MAINTENANCE) {
-			companion_sos_process();
-			companion_tracking_process();
-
 			/* Radio maintenance: noise floor calibration, adaptive-CAD
 			 * probe, RX watchdog. Separated from loop() so these
 			 * never run on packet-driven events. */
@@ -662,6 +662,12 @@ static void mesh_event_loop(void)
 		}
 #endif
 
+#ifdef ZEPHCORE_LORA
+		/* Absolute deadlines must also advance while packet events keep
+		 * postponing the one-shot maintenance timer. */
+		companion_sos_process();
+		companion_tracking_process();
+#endif
 		/* Recompute after every event: RX, CLI and GPS activity may add or
 		 * clear a radio deadline. */
 		arm_maintenance_wake();
@@ -1337,13 +1343,36 @@ struct companion_tracking_state {
 	bool gps_started_by_tracking;
 	uint32_t saved_gps_duty_sec;
 	uint32_t started_ms;
-	uint32_t next_report_ms;
+	int64_t next_report_ms;
 	bool has_last_sent_position;
 	int64_t last_sent_lat_ndeg;
 	int64_t last_sent_lon_ndeg;
 };
 
 static struct companion_tracking_state companion_tracking;
+
+static uint32_t companion_custom_ms_until_next(void)
+{
+	const uint32_t now = k_uptime_get_32();
+	uint32_t next = UINT32_MAX;
+	auto include = [&](uint32_t deadline) {
+		int32_t remaining = (int32_t)(deadline - now);
+		uint32_t delay = remaining <= 0 ? 0 : (uint32_t)remaining;
+		if (delay < next) next = delay;
+	};
+	if (companion_sos.pending) {
+		include(companion_sos.started_ms + SOS_FIX_TIMEOUT_MS);
+		include(companion_sos.next_waiting_message_ms);
+	}
+	if (companion_fall_alarm_state.active)
+		include(companion_fall_alarm_state.next_alarm_ms);
+	if (companion_tracking.enabled) {
+		int64_t remaining = companion_tracking.next_report_ms - k_uptime_get();
+		if (remaining <= 0) next = 0;
+		else if ((uint64_t)remaining < next) next = (uint32_t)remaining;
+	}
+	return next;
+}
 
 static uint32_t companion_tracking_interval_ms(void)
 {
@@ -1424,7 +1453,7 @@ static bool companion_tracking_set_enabled(bool enabled, char *reply)
 		companion_tracking.gps_started_by_tracking = !gps_was_enabled;
 		companion_tracking.saved_gps_duty_sec = gps_get_poll_interval_sec();
 		companion_tracking.started_ms = k_uptime_get_32();
-		companion_tracking.next_report_ms = companion_tracking.started_ms +
+		companion_tracking.next_report_ms = k_uptime_get() +
 			companion_tracking_interval_ms();
 		gps_set_poll_interval_sec(0);
 		if (!gps_was_enabled) {
@@ -1475,8 +1504,8 @@ static void companion_tracking_process(void)
 		return;
 	}
 
-	uint32_t now = k_uptime_get_32();
-	if ((int32_t)(now - companion_tracking.next_report_ms) < 0) {
+	int64_t now = k_uptime_get();
+	if (now < companion_tracking.next_report_ms) {
 		return;
 	}
 	/* A delayed maintenance pass still begins the next full interval now. */
@@ -2065,7 +2094,7 @@ static bool handle_tracking_cli(const char *line, char *reply)
 		}
 		companion_mesh.prefs.tracking_interval_minutes = (uint16_t)minutes;
 		if (companion_tracking.enabled) {
-			companion_tracking.next_report_ms = k_uptime_get_32() +
+			companion_tracking.next_report_ms = k_uptime_get() +
 				companion_tracking_interval_ms();
 		}
 		k_event_post(&mesh_events, MESH_EVENT_PREFS_DIRTY);

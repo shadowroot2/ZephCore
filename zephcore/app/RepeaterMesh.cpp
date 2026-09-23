@@ -1449,13 +1449,13 @@ static const char *repeater_remote_help(const char *command)
 		"Help 2/12: password <value>; clear stats. help 3";
 #endif
 	static const char page3[] =
-		"Help 3/12: get <key> | set <key> <value>. Keys: dutycycle, af, int.thresh, multi.acks. help 4";
+		"Help 3/12: get <key> | set <key> <value>. Keys: dutycycle, af, int.thresh, multi.acks, leds.radio, leds.hb. help 4";
 	static const char page4[] =
-		"Help 4/12: get/set keys: flood.advert.interval, advert.interval, name, repeat. set prv.key <key>. help 5";
+		"Help 4/12: get/set keys: flood.advert.interval, advert.interval, name, repeat, display.rotate, input.rotate. set prv.key <key>. help 5";
 	static const char page5[] =
-		"Help 5/12: get/set keys: lat, lon, radio, radio.rxgain, flood.max.advert, flood.max.unscoped, flood.max. help 6";
+		"Help 5/12: get/set keys: lat, lon, radio, radio.rxgain, radio.fem.rxgain, extra.sf, flood.max.advert, flood.max.unscoped, flood.max. help 6";
 	static const char page6[] =
-		"Help 6/12: get/set keys: owner.info, path.hash.mode, tx, freq, adc.multiplier, gps duty, meshtimesync, tz. help 7";
+		"Help 6/12: get/set keys: owner.info, path.hash.mode, tx, freq, adc.multiplier, gps duty, meshtimesync, tz (min), tz.offset (h). get gps diag. help 7";
 	static const char page7[] =
 		"Help 7/12: get public.key|role|bootloader.ver|dc.restarts|tx apc|cad; "
 		"set cad.auto|cad.offset|cad.busycap|cad.reset|probe.interval. help 8";

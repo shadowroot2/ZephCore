@@ -958,6 +958,10 @@ static void t1000_led_flash_pattern(uint8_t count)
 void ui_led_flash_msg(void)
 {
 #if HAS_HEARTBEAT_LED
+	uint8_t mode = zephcore_leds_hb_mode();
+	if (mode == LEDS_HB_OFF || mode == LEDS_HB_HB) {
+		return;
+	}
 	if (zephcore_led_status_priority_active()) {
 		return;
 	}
