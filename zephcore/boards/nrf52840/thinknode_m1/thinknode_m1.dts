@@ -44,6 +44,7 @@
 		lora0 = &lora;
 		led0 = &led_red;
 		led1 = &led_blue;
+		ble-status-led = &led_blue;
 		lora-tx-led = &led_blue;
 		sw0 = &user_button;
 		watchdog0 = &wdt0;
