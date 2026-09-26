@@ -427,7 +427,7 @@ bool RepeaterDataStore::loadPrefs(NodePrefs& prefs) {
     /* Everything else that came off flash — bounds, NaNs, and the char fields,
      * which the file format stores without terminators. */
     sanitizeNodePrefs(&prefs);
-    prefs.tz_offset = (int8_t)(prefs.ui_timezone_offset_minutes / 60);
+    prefs.ui_timezone_offset_minutes = (int16_t)prefs.tz_offset * 60;
 
 
     /* One-time format upgrade: old files (< 294 bytes) never saved the ZephCore

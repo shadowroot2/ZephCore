@@ -1432,33 +1432,33 @@ static const char *repeater_remote_help(const char *command)
 #else
 		"advert.zerohop; "
 #endif
-		"clock [sync]; time <epoch>; gps [on|off|setloc|advert]"
+		"clock sync; time <epoch>; gps on|off|setloc|advert; get gps diag"
 #if DT_NODE_HAS_PROP(DT_ALIAS(led0), gpios) || DT_NODE_HAS_PROP(DT_ALIAS(led1), gpios)
-		"; leds [on|off]"
+		"; leds on|off"
 #endif
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
-		"; buzz [on|off]"
+		"; buzz on|off"
 #endif
 		". help 2";
 #if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
 	static const char page2[] =
-		"Help 2/12: bridge [on|off|ping|keygen|unpair]; get/set bridge.type; get/set bridge.priority; "
-		"get bridge.delay; get/set bridge.peer; set bridge.key. help 3";
+		"Help 2/12: bridge on|off|ping|keygen|unpair; get bridge.delay; get/set bridge.type; "
+		"get/set bridge.priority; get/set bridge.peer; set bridge.key. help 3";
 #else
 	static const char page2[] =
 		"Help 2/12: password <value>; clear stats. help 3";
 #endif
 	static const char page3[] =
-		"Help 3/12: get <key> | set <key> <value>. Keys: dutycycle, af, int.thresh, multi.acks, leds.radio, leds.hb. help 4";
+		"Help 3/12: get public.key|role|bootloader.ver|dc.restarts|tx apc|cad; "
+		"set cad.auto|cad.offset|cad.busycap|cad.reset|probe.interval. help 4";
 	static const char page4[] =
-		"Help 4/12: get/set keys: flood.advert.interval, advert.interval, name, repeat, display.rotate, input.rotate. set prv.key <key>. help 5";
+		"Help 4/12: get <key> | set <key> <value>. Keys: dutycycle, af, int.thresh, multi.acks, leds.radio, leds.hb. help 5";
 	static const char page5[] =
-		"Help 5/12: get/set keys: lat, lon, radio, radio.rxgain, radio.fem.rxgain, extra.sf, flood.max.advert, flood.max.unscoped, flood.max. help 6";
+		"Help 5/12: get/set keys: flood.advert.interval, advert.interval, name, repeat, display.rotate, input.rotate. set prv.key <key>. help 6";
 	static const char page6[] =
-		"Help 6/12: get/set keys: owner.info, path.hash.mode, tx, freq, adc.multiplier, gps duty, meshtimesync, tz (min), tz.offset (h). get gps diag. help 7";
+		"Help 6/12: get/set keys: lat, lon, radio, radio.rxgain, radio.fem.rxgain, extra.sf, flood.max.advert, flood.max.unscoped, flood.max. help 7";
 	static const char page7[] =
-		"Help 7/12: get public.key|role|bootloader.ver|dc.restarts|tx apc|cad; "
-		"set cad.auto|cad.offset|cad.busycap|cad.reset|probe.interval. help 8";
+		"Help 7/12: get/set owner.info|path.hash.mode|tx|freq|adc.multiplier|gps duty|meshtimesync|tz.offset (h). help 8";
 	static const char page8[] =
 		"Help 8/12: battery; get/set battery.alert on|off; battery.threshold 0..5000mV (def "
 		STRINGIFY(ZEPHCORE_BATTERY_ALERT_DEFAULT_MV) "); "
@@ -1476,18 +1476,18 @@ static const char *repeater_remote_help(const char *command)
 	static const char page11[] =
 		"Help 11/12: region def|get|put|remove|list|load|save; region allowf|denyf|home|default; tempradio <freq> <bw> <sf> <cr> <minutes>. help 12";
 	static const char page12[] =
-		"Help 12/12: setperm <permissions> <pubkey>; start dfu; reboot; clkreboot; shutdown [y]. Uplink: help uplink.";
+		"Help 12/12: setperm <permissions> <pubkey>; start dfu; reboot; clkreboot; shutdown y. Uplink: help uplink.";
 #else
 	static const char page11[] =
 		"Help 11/12: region def|get|put|remove|list|load|save; region allowf|denyf|home|default; tempradio <freq> <bw> <sf> <cr> <minutes>. help 12";
 	static const char page12[] =
-		"Help 12/12: setperm <permissions> <pubkey>; start dfu; reboot; clkreboot; shutdown [y].";
+		"Help 12/12: setperm <permissions> <pubkey>; start dfu; reboot; clkreboot; shutdown y.";
 #endif
 #if IS_ENABLED(CONFIG_ZEPHCORE_REPEATER_UPLINK) && IS_ENABLED(CONFIG_MQTT_LIB)
 	static const char uplink1[] =
-		"Uplink 1/2: get/set uplink.enable; get/set uplink.wifi.ssid; set uplink.wifi.psk <password>; get/set uplink.mqtt.host|port|tls. help uplink 2";
+		"Uplink 1/2: get uplink.status; get/set uplink.enable; get/set uplink.wifi.ssid; set uplink.wifi.psk <password>. help uplink 2";
 	static const char uplink2[] =
-		"Uplink 2/2: get/set uplink.mqtt.user|iata; set uplink.mqtt.password <password>; get uplink.status.";
+		"Uplink 2/2: get/set uplink.mqtt.host|port|tls|user|iata; set uplink.mqtt.password <password>.";
 #endif
 
 	static_assert(sizeof(page1) <= CLI_REMOTE_REPLY_SIZE - 3);

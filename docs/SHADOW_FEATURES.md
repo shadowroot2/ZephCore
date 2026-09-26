@@ -11,7 +11,22 @@
 - Repeater Bridge includes the repeater and supports bridge on/off, ping,
   key generation, peer configuration, transport and forwarding priority.
   Runtime help is the command catalogue for the selected role.
-- Custom 433/868 radio profiles, minute-resolution display timezone and uptime.
+- Custom 433/868 radio profiles and uptime. The display uses the author's
+  whole-hour `get/set tz.offset`; the former minute-resolution `tz` CLI is gone.
+
+## Heltec V4.3 output-power presets
+
+`get output.power` and `set output.power 22|28|default` are V4.3-only CLI
+commands. They keep `get/set tx` as the SX1262 chip-power setting. The nominal
+22/28 dBm presets select chip power 10/22 dBm respectively, using the two
+Heltec V4 settings documented in
+[MeshCore FAQ §7.7](https://github.com/meshcore-dev/MeshCore/blob/main/docs/faq.md).
+The selected chip power is saved through the existing TX preference, including
+across reboots; there is no second conflicting power preference. `default`
+restores the board's TX default. Other chip settings report output as
+uncalibrated. These are nominal PA output presets, not measured RF power or
+EIRP; no interpolated calibration curve is assumed. The SX1262 22 dBm limit
+remains in force. Actual output needs RF measurement and must meet local limits.
 
 ## Settings migration
 

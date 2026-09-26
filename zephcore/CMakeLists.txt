@@ -695,6 +695,7 @@ add_definitions(-DFIRMWARE_BUILD_EPOCH=${ZEPHCORE_BUILD_EPOCH}u)
 # the matching firmware date.
 set(ZEPHCORE_BUILD_STAMP_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
 set(ZEPHCORE_BUILD_STAMP "${ZEPHCORE_BUILD_STAMP_DIR}/zephcore_build_stamp.h")
+set(ZEPHCORE_BUILD_EPOCH_SOURCE "${ZEPHCORE_BUILD_STAMP_DIR}/zephcore_build_epoch.c")
 set(ZEPHCORE_BUILD_STAMP_TRIGGER "${ZEPHCORE_BUILD_STAMP_DIR}/zephcore_build_stamp.trigger")
 file(MAKE_DIRECTORY "${ZEPHCORE_BUILD_STAMP_DIR}")
 
@@ -703,14 +704,15 @@ add_custom_target(zephcore_build_stamp_tick ALL
 	COMMAND "${CMAKE_COMMAND}" -E touch "${ZEPHCORE_BUILD_STAMP_TRIGGER}"
 	VERBATIM)
 add_custom_command(
-	OUTPUT "${ZEPHCORE_BUILD_STAMP}"
+	OUTPUT "${ZEPHCORE_BUILD_STAMP}" "${ZEPHCORE_BUILD_EPOCH_SOURCE}"
 	COMMAND "${CMAKE_COMMAND}"
 		-DZEPHCORE_BUILD_STAMP=${ZEPHCORE_BUILD_STAMP}
+		-DZEPHCORE_BUILD_EPOCH_SOURCE=${ZEPHCORE_BUILD_EPOCH_SOURCE}
 		-P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/UpdateBuildStamp.cmake"
 	DEPENDS "${ZEPHCORE_BUILD_STAMP_TRIGGER}"
 		"${CMAKE_CURRENT_SOURCE_DIR}/cmake/UpdateBuildStamp.cmake"
 	VERBATIM)
-add_custom_target(zephcore_build_stamp DEPENDS "${ZEPHCORE_BUILD_STAMP}")
+add_custom_target(zephcore_build_stamp DEPENDS "${ZEPHCORE_BUILD_STAMP}" "${ZEPHCORE_BUILD_EPOCH_SOURCE}")
 add_dependencies(zephcore_build_stamp zephcore_build_stamp_tick)
 
 # Single source of truth for the firmware version string (vMAJOR.MINOR.PATCH-zephyr).
@@ -731,7 +733,7 @@ add_definitions(-DFIRMWARE_DISPLAY_VERSION="${ZEPHCORE_DISPLAY_VERSION}")
 add_subdirectory(lib/monocypher)
 target_link_libraries(app PRIVATE monocypher)
 add_dependencies(app zephcore_build_stamp)
-target_sources(app PRIVATE "${ZEPHCORE_BUILD_STAMP}")
+target_sources(app PRIVATE "${ZEPHCORE_BUILD_STAMP}" "${ZEPHCORE_BUILD_EPOCH_SOURCE}")
 target_compile_options(app PRIVATE "-include${ZEPHCORE_BUILD_STAMP}")
 
 target_include_directories(app PRIVATE

@@ -919,7 +919,7 @@ void ZephyrDataStore::loadPrefs(NodePrefs &prefs)
 		prefs.ui_timezone_offset_minutes = (int16_t)prefs.tz_offset * 60;
 	}
 	sanitizeNodePrefs(&prefs);
-	prefs.tz_offset = (int8_t)(prefs.ui_timezone_offset_minutes / 60);
+	prefs.ui_timezone_offset_minutes = (int16_t)prefs.tz_offset * 60;
 }
 
 void ZephyrDataStore::savePrefs(const NodePrefs &prefs)

@@ -6,6 +6,7 @@
 #pragma once
 
 #include <mesh/RTC.h>
+#include <helpers/FirmwareBuild.h>
 
 namespace mesh {
 
@@ -15,7 +16,7 @@ public:
 	void setCurrentTime(uint32_t time) override;
 
 private:
-	uint32_t epoch_offset = 0;
+	uint32_t epoch_offset = zephcore_firmware_build_epoch();
 };
 
 } /* namespace mesh */

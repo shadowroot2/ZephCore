@@ -38,6 +38,37 @@ extensions layered over the upstream firmware. See
 - **Room Server** -- store-and-forward shared message room (a "BBS"). Clients log in with an admin or guest password and post messages; the server pushes each new post to every other logged-in client. No BLE; configured via the same USB serial CLI as the repeater.
 - **Observer** (ESP32 only) -- listen-only node that publishes received LoRa packets to MQTT over WiFi STA. Configured at runtime via serial CLI.
 
+## Updating from ShadoW 1.16.8 to 1.17.4
+
+This is an **author-first update**: ZephCore 1.17.4 is the base, with the
+ShadoW SOS/Fall, tracking, charging, repeater battery alerts, 433/868 presets,
+and repeater-bridge features layered back on top. The upstream changes are
+documented in the [1.17.4 release notes](releasenotes/RELEASE_NOTES_1.17.4-zephcore.md).
+
+- **Storage is safer, but role changes are destructive.** `erase` now performs
+  a full factory reset. A normal same-role update keeps identity and settings;
+  changing between companion and repeater formats storage on first boot.
+  Export the identity before changing roles. Moving from another firmware may
+  also trigger first-boot cleanup.
+- **LoRa recovery improved.** LR1110 listen-before-talk thresholds now use the
+  correct radio and bandwidth tables, and a node stuck seeing a busy channel
+  can recover. After upgrading an LR1110 board, run `set cad.reset` once to
+  discard tuning learned against the old table.
+- **Companion vContact key is corrected.** If an app still shows the old
+  `v<name>` contact alongside the new one, remove the old entry manually.
+  USB and vContact now serve the same local CLI help catalogue.
+- **More control and clearer measurements.** The author added independent
+  `leds.radio`/`leds.hb` modes, whole-hour `tz.offset`, native USB companion
+  support on supported ESP32-S3 boards, corrected discharge telemetry and
+  transmit-airtime accounting, and stricter `set ... default` parsing.
+
+The ShadoW LED charging priorities and the separate repeater-bridge BLE
+security policy remain board/role-specific. The initial 1.17.4 integration
+was clean-built for T1000-E, M1, M3, T-ECHO, XIAO nRF, M6 bridge and Heltec
+V3 bridge 433/868. Subsequent CLI/clock changes were rebuilt for T1000-E and
+M1 (M1 predates the final help reordering). Long-running hardware validation
+of this integration is still pending.
+
 ## Building
 
 Prerequisites: [Zephyr SDK >=1.0.1 (!)](https://docs.zephyrproject.org/latest/develop/getting_started/index.html) and `west` installed (required by Zephyr 4.4.0, which is pinned in `west.yml`).
@@ -181,7 +212,7 @@ Key Kconfig options (set in board configs or via `-D` flags):
 | `CONFIG_ZEPHCORE_BLE_PASSKEY` | 123456 | BLE pairing PIN |
 | `CONFIG_ZEPHCORE_GPS_POLL_INTERVAL_SEC` | 300 | Companion GPS duty interval between fixes (seconds, 10–86400); always-on is a runtime setting (`set gps duty 0`) |
 | `CONFIG_ZEPHCORE_GPS_FIRST_FIX_TIMEOUT_SEC` | 300 | Cold-start window for the very first fix (longer to allow almanac download) |
-| `CONFIG_ZEPHCORE_REPEATER_GPS_INTERVAL_SEC` | 172800 | Repeater/room-server GPS duty interval boot default (48 h); 0 = always-on |
+| `CONFIG_ZEPHCORE_REPEATER_GPS_INTERVAL_SEC` | 43200 | Repeater/room-server GPS duty interval boot default (12 h); 0 = always-on |
 | `CONFIG_ZEPHCORE_WIFI_OTA` | n | WiFi AP + HTTP OTA updates (ESP32 repeaters, requires `--sysbuild`) |
 | `CONFIG_ZEPHCORE_REPEATER_UPLINK` | n | Repeater WiFi+MQTT uplink (ESP32) |
 | `CONFIG_ZEPHCORE_PACKET_LOGGING` | n | Arduino-compatible mesh packet logging |

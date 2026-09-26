@@ -441,6 +441,7 @@ static inline void initNodePrefs(NodePrefs* prefs) {
 	prefs->auto_shutdown_mv = 0;
 #endif
 	prefs->ui_timezone_offset_minutes = CONFIG_ZEPHCORE_UI_TIMEZONE_OFFSET_MINUTES;
+	prefs->tz_offset = (int8_t)(prefs->ui_timezone_offset_minutes / 60);
 	prefs->auto_shutdown_emergency = 1; // Default ON — send the low-battery emergency notice
 	prefs->tracking_interval_minutes = 10;
 	strcpy(prefs->tracking_group_name, "#tracks");

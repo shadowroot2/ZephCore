@@ -382,12 +382,9 @@ static enum m3_charge_state m3_charge_state_get(void)
 		last_voltage_sample_ms = now;
 		voltage_sampled = true;
 		s_m3_charge_pct = mv ? battery_curve_lookup(&battery_curve_default, mv) : 0;
-#if HAS_TECHO_CHARGE_STATUS
-		/* T-ECHO's existing curve reaches 100% at 4100 mV. */
+		/* Use each board's curve for the full-charge indication. M3 reaches
+		 * 100% at 4130 mV; T-ECHO reaches it at 4100 mV. */
 		full_voltage = mv != 0 && s_m3_charge_pct == 100;
-#else
-		full_voltage = mv >= CHARGE_FULL_MV;
-#endif
 	}
 	return full_voltage ? M3_CHARGE_FULL : M3_CHARGE_ACTIVE;
 }
@@ -542,10 +539,18 @@ static void led_off_work_handler(struct k_work *work)
 	}
 
 #if HAS_MSG_LED
+	#if !defined(CONFIG_BOARD_THINKNODE_M1)
 	gpio_pin_set_dt(&s_msg_led, 0);
+	#else
+	if (!zephcore_led_radio_holds_pin()) gpio_pin_set_dt(&s_msg_led, 0);
+	#endif
 #endif
 #if HAS_BLE_STATUS_LED
+	#if !defined(CONFIG_BOARD_THINKNODE_M1)
 	gpio_pin_set_dt(&s_ble_status_led, 0);
+	#else
+	if (!zephcore_led_radio_holds_pin()) gpio_pin_set_dt(&s_ble_status_led, 0);
+	#endif
 #endif
 
 	if (s_heartbeat_blinks_left > 0) {
@@ -595,6 +600,18 @@ static void led_off_work_handler(struct k_work *work)
 static void led_on_work_handler(struct k_work *work)
 {
 	ARG_UNUSED(work);
+#if HAS_T1000_CHARGE_STATUS
+	/* TX keeps this work paused for two seconds. Poll while it is active so
+	 * newly attached external power can take over without waiting for TX end. */
+	if (s_tx_led_active) {
+		if (t1000_charge_state_get() == T1000_CHARGE_NONE) {
+			k_work_reschedule(&s_led_on_work, K_MSEC(100));
+			return;
+		}
+		k_work_cancel_delayable(&s_tx_led_off_work);
+		s_tx_led_active = false;
+	}
+#endif
 	uint16_t mc = ui_led_get_msg_count();
 	if (zephcore_leds_hb_mode() == LEDS_HB_HB) {
 		mc = 0;
@@ -685,7 +702,11 @@ static void led_on_work_handler(struct k_work *work)
 			heartbeat_led_set(true);
 		}
 		#elif !HEARTBEAT_IS_BLE_STATUS_LED
+		#if defined(CONFIG_BOARD_THINKNODE_M1)
+		if (!ble_waiting || s_heartbeat_low_batt_cycle) heartbeat_led_set(true);
+		#else
 		heartbeat_led_set(true);
+		#endif
 		#else
 		if (ble_waiting) {
 			heartbeat_led_set(true);
@@ -693,12 +714,18 @@ static void led_on_work_handler(struct k_work *work)
 		#endif
 #if HAS_MSG_LED && !defined(CONFIG_BOARD_LILYGO_TECHO)
 		if (mc > 0 && !s_heartbeat_charging_cycle) {
+			#if defined(CONFIG_BOARD_THINKNODE_M1)
+			if (!zephcore_led_radio_holds_pin())
+			#endif
 			gpio_pin_set_dt(&s_msg_led, 1);
 		}
 #endif
 		#if HAS_BLE_STATUS_LED && !HEARTBEAT_IS_BLE_STATUS_LED && \
 			!defined(CONFIG_BOARD_LILYGO_TECHO)
 		if (ble_waiting) {
+			#if defined(CONFIG_BOARD_THINKNODE_M1)
+			if (!zephcore_led_radio_holds_pin())
+			#endif
 			gpio_pin_set_dt(&s_ble_status_led, 1);
 		}
 		#endif
@@ -712,6 +739,10 @@ static void led_on_work_handler(struct k_work *work)
 static void msg_blink_work_handler(struct k_work *work)
 {
 	ARG_UNUSED(work);
+	if (zephcore_led_status_priority_active()) {
+		k_work_reschedule(&s_led_on_work, K_NO_WAIT);
+		return;
+	}
 
 	if ((s_msg_blink_phase & 1U) == 0U) {
 		/* End one of the requested ON phases. */
@@ -737,6 +768,10 @@ static void tx_led_off_work_handler(struct k_work *work)
 {
 	ARG_UNUSED(work);
 	s_tx_led_active = false;
+	if (zephcore_led_status_priority_active()) {
+		k_work_reschedule(&s_led_on_work, K_NO_WAIT);
+		return;
+	}
 	heartbeat_led_set(false);
 	if (!zephcore_leds_disabled()) {
 		k_work_reschedule(&s_led_on_work, K_MSEC(LED_CYCLE_MS));
@@ -937,6 +972,9 @@ void ui_set_leds_disabled(bool disabled)
 #if HAS_HEARTBEAT_LED && defined(CONFIG_BOARD_T1000_E)
 static void t1000_led_flash_pattern(uint8_t count)
 {
+	if (zephcore_led_status_priority_active()) {
+		return;
+	}
 	if (count == 0 || !gpio_is_ready_dt(&s_heartbeat_led)) {
 		return;
 	}
@@ -1009,6 +1047,9 @@ void ui_led_confirm_state(bool enabled)
 void ui_led_force_tx(void)
 {
 #if HAS_HEARTBEAT_LED && defined(CONFIG_BOARD_T1000_E)
+	if (zephcore_led_status_priority_active()) {
+		return;
+	}
 	if (gpio_is_ready_dt(&s_heartbeat_led)) {
 		k_work_cancel_delayable(&s_led_on_work);
 		k_work_cancel_delayable(&s_led_off_work);
@@ -1016,6 +1057,7 @@ void ui_led_force_tx(void)
 		k_work_cancel_delayable(&s_msg_blink_work);
 		s_tx_led_active = true;
 		heartbeat_led_set(true);
+		k_work_reschedule(&s_led_on_work, K_MSEC(100));
 		k_work_reschedule(&s_tx_led_off_work, K_SECONDS(2));
 	}
 #endif

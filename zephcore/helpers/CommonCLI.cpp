@@ -4,6 +4,7 @@
  */
 
 #include "CommonCLI.h"
+#include "FirmwareBuild.h"
 #include "battery_curve.h"
 #include "led_gate.h"
 #include "buzzer_gate.h"
@@ -40,6 +41,23 @@ static uint32_t _atoi(const char* sp) {
     }
     return n;
 }
+
+#if defined(CONFIG_BOARD_HELTEC_WIFI_LORA32_V43)
+/* Nominal Heltec V4 presets, not a measured KCT8103L calibration curve.
+ * Source: meshcore-dev/MeshCore docs/faq.md, section 7.7.
+ * Intermediate chip settings have no documented output mapping here. */
+static void v43_format_output_power(char *reply, int8_t radio_dbm) {
+    int nominal = radio_dbm == 10 ? 22 : (radio_dbm == 22 ? 28 : 0);
+    if (nominal) {
+        snprintf(reply, CLI_REPLY_SIZE,
+                 "output.power nominal %d dBm (SX1262 %d dBm; not measured)",
+                 nominal, (int)radio_dbm);
+    } else {
+        snprintf(reply, CLI_REPLY_SIZE,
+                 "output.power uncalibrated (SX1262 %d dBm)", (int)radio_dbm);
+    }
+}
+#endif
 
 /* ---- "default" keyword + strict numeric parsing for the `set` path ----
  *
@@ -321,7 +339,9 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
         strcpy(reply, "OK - rebooting");
         scheduleReboot(REBOOT_NORMAL);
     } else if (memcmp(command, "clkreboot", 9) == 0) {
-        getRTCClock()->setCurrentTime(1715770351);  // 15 May 2024, 8:50pm
+        uint32_t build_epoch = zephcore_firmware_build_epoch();
+        getRTCClock()->setCurrentTime(build_epoch);
+        zephcore_rtc_save(build_epoch);
         /* Deferred like every other reboot path: called inline this reset the
          * board before the reply — and before any delivery-ack — could leave
          * the TX queue. */
@@ -532,6 +552,10 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
         } else if (strcmp(config, "tx") == 0) {
             /* Plain number, matching upstream Arduino MeshCore's "> %d". */
             snprintf(reply, CLI_REPLY_SIZE, "> %d", (int)_prefs->tx_power_dbm);
+#if defined(CONFIG_BOARD_HELTEC_WIFI_LORA32_V43)
+        } else if (strcmp(config, "output.power") == 0) {
+            v43_format_output_power(reply, _prefs->tx_power_dbm);
+#endif
         } else if (memcmp(config, "freqerr", 7) == 0) {
             /* MUST stay above "freq" — that is a 4-char prefix match and
              * would swallow this one.
@@ -587,11 +611,6 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
 #endif
         } else if (memcmp(config, "input.rotate", 12) == 0) {
             snprintf(reply, CLI_REPLY_SIZE, "> %d", zephcore_input_is_flipped() ? 1 : 0);
-        } else if (strcmp(config, "tz") == 0) {
-            char tz[12];
-            ui_timezone_format_label(tz, sizeof(tz));
-            snprintf(reply, CLI_REPLY_SIZE, "> %s (%d min)", tz,
-                     (int)_prefs->ui_timezone_offset_minutes);
         } else if (strcmp(config, "tz.offset") == 0) {
             snprintf(reply, CLI_REPLY_SIZE, "> %d", (int)_prefs->tz_offset);
         } else if (memcmp(config, "gps diag", 8) == 0) {
@@ -763,8 +782,7 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
 #ifndef ZEPHCORE_REPEATER
         } else if (memcmp(config, "buzzer ", 7) == 0) {
             /* 0 = silent, 1 = sound + vibration, 2 = vibration only,
-             * 3 = sound only. Modes 2 and 3 only mean something on a board
-             * with a vibration motor, which most boards don't have. */
+             * 3 = sound only. SOUND works on boards without a motor. */
             const char* val = &config[7];
             int mode;
             if (memcmp(val, "vibrate", 7) == 0 || val[0] == '2') {
@@ -782,9 +800,9 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
             }
             if (mode < 0) {
                 strcpy(reply, "Error: 0 (silent), 1 (sound+vib), 2 (vibrate), 3 (sound) or default");
-            } else if ((mode == ZEPHCORE_BUZZER_VIBRATE || mode == ZEPHCORE_BUZZER_SOUND) &&
+            } else if (mode == ZEPHCORE_BUZZER_VIBRATE &&
                        !zephcore_buzzer_has_vibrate()) {
-                strcpy(reply, "Error: no vibration motor on this board - use 0 or 1");
+                strcpy(reply, "Error: no vibration motor on this board - use off, on or sound");
             } else {
                 _prefs->buzzer_quiet = zephcore_buzzer_prefs_from_mode((uint8_t)mode);
                 zephcore_buzzer_set_mode((uint8_t)mode, false);
@@ -1157,6 +1175,28 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
                 snprintf(reply, CLI_REPLY_SIZE, "OK - tx power=%d dBm",
                          (int)_prefs->tx_power_dbm);
             }
+#if defined(CONFIG_BOARD_HELTEC_WIFI_LORA32_V43)
+        } else if (memcmp(config, "output.power ", 13) == 0) {
+            long requested;
+            int radio_dbm;
+            if (cliIsDefault(&config[13])) {
+                radio_dbm = cliDefaults()->tx_power_dbm;
+            } else if (cliNum(&config[13], 0, &requested) &&
+                       (requested == 22 || requested == 28)) {
+                radio_dbm = requested == 22 ? 10 : 22;
+            } else {
+                strcpy(reply, "Error: output.power 22|28|default (nominal dBm)");
+                return;
+            }
+            if (radio_dbm > CONFIG_ZEPHCORE_MAX_TX_POWER_DBM) {
+                strcpy(reply, "Error: output.power exceeds board TX limit");
+            } else {
+                _prefs->tx_power_dbm = (int8_t)radio_dbm;
+                savePrefs();
+                _callbacks->setTxPower(_prefs->tx_power_dbm);
+                v43_format_output_power(reply, _prefs->tx_power_dbm);
+            }
+#endif
         } else if (sender_timestamp == 0 && memcmp(config, "freq ", 5) == 0) {
             float f;
             if (cliFloat(&config[5], cliDefaults()->freq, &f) &&
@@ -1320,18 +1360,6 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
             } else {
                 strcpy(reply, "Error: must be 0, 1, on, or off");
             }
-        } else if (memcmp(config, "tz ", 3) == 0) {
-            long minutes;
-            if (!cliNum(&config[3], cliDefaults()->ui_timezone_offset_minutes, &minutes) ||
-                minutes < -1439 || minutes > 1439) {
-                strcpy(reply, "usage: set tz <-1439..1439|default> (minutes)");
-                return;
-            }
-            _prefs->ui_timezone_offset_minutes = (int16_t)minutes;
-            _prefs->tz_offset = (int8_t)(minutes / 60);
-            ui_set_timezone_offset_minutes((int16_t)minutes);
-            savePrefs();
-            snprintf(reply, CLI_REPLY_SIZE, "OK - tz=%ld min", minutes);
         } else if (memcmp(config, "tz.offset ", 10) == 0) {
             // Whole-hour offset from UTC for the ON-DEVICE CLOCK DISPLAY only.
             // The RTC, `clock` and `time <epoch>` all stay UTC: they round-trip
