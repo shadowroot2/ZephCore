@@ -342,7 +342,9 @@ enum m3_charge_state {
 	M3_CHARGE_FULL,
 };
 
+#if !HAS_TECHO_CHARGE_STATUS
 static uint8_t s_m3_charge_pct;
+#endif
 
 #if HAS_M3_CHARGE_STATUS
 static bool m3_gpio_is_active(const struct gpio_dt_spec *spec)
@@ -358,6 +360,12 @@ static bool m3_gpio_is_active(const struct gpio_dt_spec *spec)
 
 static enum m3_charge_state m3_charge_state_get(void)
 {
+#if HAS_TECHO_CHARGE_STATUS
+	/* T-ECHO's ADC rises with VBUS (4.841 V observed at 68% on battery).
+	 * USB presence is reliable; charge percentage/completion is not. */
+	return s_power_source_provider && s_power_source_provider() ?
+		M3_CHARGE_ACTIVE : M3_CHARGE_NONE;
+#else
 	static uint32_t last_voltage_sample_ms;
 	static bool full_voltage;
 	static bool voltage_sampled;
@@ -382,17 +390,19 @@ static enum m3_charge_state m3_charge_state_get(void)
 		last_voltage_sample_ms = now;
 		voltage_sampled = true;
 		s_m3_charge_pct = mv ? battery_curve_lookup(&battery_curve_default, mv) : 0;
-		/* Use each board's curve for the full-charge indication. M3 reaches
-		 * 100% at 4130 mV; T-ECHO reaches it at 4100 mV. */
+		/* Use each board's curve for full-charge indication. */
 		full_voltage = mv != 0 && s_m3_charge_pct == 100;
 	}
 	return full_voltage ? M3_CHARGE_FULL : M3_CHARGE_ACTIVE;
+#endif
 }
 
+#if !HAS_TECHO_CHARGE_STATUS
 static uint8_t m3_charge_blink_count(void)
 {
 	return s_m3_charge_pct < 50 ? 1 : (s_m3_charge_pct < 75 ? 2 : 3);
 }
+#endif
 #endif
 
 #if HAS_XIAO_CHARGE_STATUS
@@ -630,19 +640,31 @@ static void led_on_work_handler(struct k_work *work)
 		return;
 	}
 	m3_charging = m3_charge_state == M3_CHARGE_ACTIVE;
-	if (m3_charging && s_heartbeat_blinks_left == 0) {
+#if HAS_TECHO_CHARGE_STATUS
+	if (!m3_charging && s_heartbeat_charging_cycle) {
+		heartbeat_sequence_reset();
+	}
+#endif
+	if (m3_charging && (s_heartbeat_blinks_left == 0 ||
+			   (HAS_TECHO_CHARGE_STATUS && !s_heartbeat_charging_cycle))) {
 		/* Do not finish a queued heartbeat/unread-message sequence in green.
 		 * Charging owns the RGB LED immediately and exclusively. */
 		heartbeat_sequence_reset();
 		s_heartbeat_charging_cycle = true;
+#if HAS_TECHO_CHARGE_STATUS
+		/* Red USB indicator only; the charger's own LED reports completion. */
+		s_heartbeat_blinks_total = 1;
+		s_heartbeat_on_ms = LED_CHARGING_BLINK_MS;
+#else
 		s_heartbeat_charge_percent_cycle = true;
 		s_heartbeat_blinks_total = m3_charge_blink_count();
-		s_heartbeat_blinks_left = s_heartbeat_blinks_total;
 		s_heartbeat_on_ms = CHARGE_PERCENT_BLINK_MS;
+#endif
+		s_heartbeat_blinks_left = s_heartbeat_blinks_total;
 		if (!zephcore_leds_disabled()) {
 			heartbeat_led_set(true);
 		}
-		k_work_reschedule(&s_led_off_work, K_MSEC(CHARGE_PERCENT_BLINK_MS));
+		k_work_reschedule(&s_led_off_work, K_MSEC(s_heartbeat_on_ms));
 		return;
 	}
 #endif
@@ -702,11 +724,7 @@ static void led_on_work_handler(struct k_work *work)
 			heartbeat_led_set(true);
 		}
 		#elif !HEARTBEAT_IS_BLE_STATUS_LED
-		#if defined(CONFIG_BOARD_THINKNODE_M1)
-		if (!ble_waiting || s_heartbeat_low_batt_cycle) heartbeat_led_set(true);
-		#else
 		heartbeat_led_set(true);
-		#endif
 		#else
 		if (ble_waiting) {
 			heartbeat_led_set(true);

@@ -2,6 +2,68 @@
 
 Краткий контекст нашей работы над форком ZephCore.
 
+## BLE bridge M6 868 ↔ Heltec V3 433 — проверка 2026-09-27/28
+
+- Собраны образы 1.17.4 из текущего dev, включая прежние незакоммиченные
+  изменения CLI/help и USB TX. Коммит/push в этой задаче не выполнялись.
+- Найдены и исправлены причины зависания/неудачного восстановления:
+  - scan/retry deadlines оставались активными на установленном ACL и могли
+    давать бесконечные нулевые maintenance wakes; теперь таймеры учитываются
+    только в соответствующей фазе, а BLE callbacks будят dispatcher при
+    изменении дедлайнов (важно на тихой LoRa-сети);
+  - Zephyr ATT может НЕ вызвать completion при уничтожении TX на disconnect.
+    Убран исчерпаемый пул из четырёх callback-контекстов; immutable generation
+    передаётся как непрозрачный ticket, поздний callback не освобождает новый TX;
+  - подписка GATT теперь VOLATILE/NO_RESUB: её node удаляется при разрыве до
+    повторного использования params; ready выставляется после ответа на CCC;
+  - HELLO/READY/ACK/PING/PONG старого линка не переживают disconnect;
+    READY/ACK повторяются, MTU/ENOMEM ожидаются до TTL, просроченный TX удаляется;
+  - зависшая LE create отменяется через bt_conn_disconnect, off запрещает
+    принятие позднего connect; configure останавливает advertising до reset;
+  - BLE settings загружаются один раз, только subtree bt; обычный RF/LL разрыв
+    НЕ стирает bond. Автоочистка только для missing/rejected key или явной команды;
+  - ручной ping и health используют разные token-пространства; единичный
+    диагностический ping timeout не рвёт ACL, health watchdog продолжает работать;
+  - удалённый bridge CLI получал лимит 256 при реальном LoRa-буфере 161 байт.
+    Теперь учитывается реальная ёмкость и трёхбайтный префикс команды;
+  - входящие BLE/ESP-NOW кадры перед injectRaw также проверяются на разрешённый
+    flood GRP_TXT/GRP_DATA/ADVERT. Direct/admin/login/ACK через мост не проходят.
+- Host regression: `python3 zephcore/tools/tests/ble_bridge_regression.py`.
+  Используются тела production-функций с транспортными/OS заглушками,
+  ASan/UBSan: 500 циклов потерянного TX completion, поздние callbacks,
+  таймеры/wakes, резерв control, MTU/TTL, повтор handshake, health watchdog,
+  canary за удалённым CLI-буфером. PASS. Это НЕ эмуляция SMP/HCI или аппаратный soak.
+- Дополнительный прогон 2026-09-28 по запросу пользователя: ASan/UBSan PASS.
+  Тест расширен: production reset/detach/stop/start/unpair/disconnected вместо
+  reset-заглушки; повторный off, однократная загрузка bt settings, ошибки
+  unpair, чужой disconnect, сохранение bond при 0x08/0x16/0x22/0x3E;
+  100000 детерминированных смешанных операций очереди, переход generation через
+  UINT32_MAX, production RX parser/hash с проверками peer/L2/established/key,
+  дубликаты, полная RX-очередь, длины 0..300 и 10000 случайных повреждённых кадров.
+  Заглушки BT/OS не моделируют SMP/HCI, реальную конкуренцию потоков и RF.
+  В этом дополнительном прогоне менялись только тест и контекст; firmware-код
+  и ранее выданные образы не изменены, пересборка не требовалась.
+- Продолжение 2026-09-29: host regression дополнен production callbacks
+  connected/security_changed/service/characteristic/CCC/subscribed/notification.
+  Проверены центральная цепочка GATT до READY/ACK, readiness только после
+  ответа CCC, VOLATILE/NO_RESUB, отсутствие/ошибки сервиса и handles,
+  ошибки subscribe, потеря Notify, чужие/поздние callbacks, connect после off,
+  повтор security event, восстановленная L2 security, все 10 bt_security_err
+  (при level<L2), ограничение unpair одной попыткой до успешного handshake,
+  timeout peripheral без HELLO и возврат к advertising. PASS с ASan/UBSan
+  без оптимизации и с `BRIDGE_TEST_CXXFLAGS=-O2`. Это проверка callback-логики,
+  а не реальный SMP/GATT обмен. Production-код и образы не изменены.
+- Образы в `firmware/1.17.4/`:
+  - `thinknode_m6-repeater-bridge-868-2026-09-27-ble-recovery.uf2`:
+    Flash 386140 B / 696320 B (55.45%), RAM 117036 B / 262144 B (44.65%).
+  - `heltec-v3-repeater-bridge-433-2026-09-27-ble-recovery-merged.bin`:
+    app Flash 891028 B, DRAM 301336 B (78.42%), IRAM 64980 B (16.22%).
+    Полный BIN на 0x0: MCUboot 0x0, signed app 0x10000 по итоговому DTS.
+- Проверены UF2 family/blocks/address/payload и точное совпадение частей merged;
+  role bridge, диапазоны, SMP L2/bonding, PHY update off, PM off. Настройки
+  пользователя не стираются. Нужны обе новые прошивки; не требовать unpair
+  профилактически. Аппаратная длительная стабильность ещё НЕ подтверждена.
+
 ## Переход на авторскую 1.17.4 — состояние на 2026-09-25
 
 - Основа `dev`: авторская ZephCore 1.17.4 (предыдущий ShadoW-релиз был на
@@ -45,6 +107,7 @@
 ### Полная сборка cc4615d подтверждена
 
 - Последующая M1 companion 868 сборка с исправлением синего BLE heartbeat и `set buzzer sound`: `build_verify_1174_m1_hbfix`, UF2 `firmware/1.17.4/thinknode_m1-companion-868-hbfix.uf2`. Flash 411580 B (59.11%), RAM 175272 B (66.86%). В devicetree `ble-status-led` и `lora-tx-led` оба указывают на синий P0.13; при BLE waiting HB синий, при низком заряде красное предупреждение сохранено. Проверены порядок/формат help в ELF и синтаксис CommonCLI/UI; аппаратно ещё не подтверждено.
+- 2026-09-29: для M1 устранено подавление красного heartbeat при BLE waiting: красный и синий мигают вместе; защита синего LED от конфликта с LoRa TX сохранена. Собраны companion 868: `firmware/1.17.4/thinknode_m1-companion-868-2026-09-29-dual-hb.uf2` и `firmware/1.17.4/heltec_t114-companion-868-2026-09-29.uf2`. Оба build успешны, аппаратно пока не проверены.
 - По уточнению пользователя все восемь артефактов 1.17.4 также находятся в `firmware/1.17.4/`; историческая папка с датой сохранена, старые файлы не удалялись. Новая M1 сборка имеет отдельное имя `hbfix`, поэтому не перезаписывает прежнюю.
 
 - Дополнительно собран ThinkNode M1 companion 868 без Love Edition: `build_verify_1174_m1`, UF2 `firmware/2026-09-23-1.17.4-cc4615d/thinknode_m1-companion-868.uf2`. Flash 411420 B (59.08%), RAM 175208 B (66.84%). Роль companion и профиль 868 подтверждены в .config; аппаратная проверка не выполнена.
@@ -166,6 +229,15 @@
   (Heltec: адрес 0x0). Устранение аппаратного зависания пока не подтверждено.
 
 ## LilyGo T-Echo
+
+- 2026-09-27: пользователь подтвердил: при USB показания ADC — 4841 мВ,
+  приложение показывает 100%; после отключения USB — 68%. Это подтверждённое
+  завышение при внешнем питании, а не основание менять кривую/множитель 6000.
+  По согласованию отключено определение полного заряда по ADC для LED T-ECHO:
+  USB означает только красное мигание 1 с / 1 с, без процентных серий и
+  постоянного зелёного. Завершение зарядки показывает штатный аппаратный LED.
+  Кривая 4100 мВ = 100% для батарейного режима сохранена. Новый вариант LED
+  пока не проверен на железе; показания ADC/процента при USB этим не исправлены.
 
 - Companion-прошивка 433 МГц с профилем `434.030 MHz` и `50 mW` собрана в
   `firmware/lilygo_techo-companion-2026-08-13-433-434030-50mw.uf2`.

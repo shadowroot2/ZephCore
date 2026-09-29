@@ -120,7 +120,8 @@ static const struct gpio_dt_spec led1 = GPIO_DT_SPEC_GET(LED1_NODE, gpios);
 #define MESH_EVENT_INIT_ADVERT   BIT(7)  /* Deferred boot advert — send on main thread */
 #define MESH_EVENT_WAKE          BIT(8)  /* Off-main state set; run loop() promptly */
 #define MESH_EVENT_UI_ACTION     BIT(9)  /* Button action requested off-main */
-#define MESH_EVENT_ALL           (MESH_EVENT_LORA_RX | MESH_EVENT_LORA_TX_DONE | MESH_EVENT_CLI_RX | MESH_EVENT_MAINTENANCE | MESH_EVENT_GPS_ACTION | MESH_EVENT_TX_DRAIN | MESH_EVENT_RTC_SAVE | MESH_EVENT_INIT_ADVERT | MESH_EVENT_WAKE | MESH_EVENT_UI_ACTION)
+#define MESH_EVENT_CLI_TX        BIT(10) /* CLI output has room again */
+#define MESH_EVENT_ALL           (MESH_EVENT_LORA_RX | MESH_EVENT_LORA_TX_DONE | MESH_EVENT_CLI_RX | MESH_EVENT_MAINTENANCE | MESH_EVENT_GPS_ACTION | MESH_EVENT_TX_DRAIN | MESH_EVENT_RTC_SAVE | MESH_EVENT_INIT_ADVERT | MESH_EVENT_WAKE | MESH_EVENT_UI_ACTION | MESH_EVENT_CLI_TX)
 
 /* Maintenance is deadline-driven, not periodic: after every pass the loop asks
  * the mesh when its soonest pending deadline is (msUntilNextMaintenance) and
@@ -166,6 +167,8 @@ static void request_rtc_save(uint32_t epoch)
 static const struct device *usb_dev;
 static uint8_t usb_ring_buf_data[USB_RING_BUF_SIZE];
 static struct ring_buf usb_ring_buf;
+RING_BUF_DECLARE(cli_tx_ring, REPEATER_CLI_TX_BUF_SIZE);
+static struct k_spinlock cli_tx_lock;
 static char cli_line_buf[CLI_LINE_BUF_SIZE];
 static char cli_reply_buf[256];
 static uint16_t cli_line_idx;
@@ -202,12 +205,20 @@ static void refresh_repeater_ui_radio_state(void);
 #endif
 
 /* Print string to USB serial */
-static void cli_print(const char *str)
+static bool cli_print(const char *str)
 {
-	if (!usb_dev) return;
-	while (*str) {
-		uart_poll_out(usb_dev, *str++);
+	if (!usb_dev) return false;
+	size_t len = strlen(str);
+	k_spinlock_key_t key = k_spin_lock(&cli_tx_lock);
+	if (ring_buf_space_get(&cli_tx_ring) < len) {
+		k_spin_unlock(&cli_tx_lock, key);
+		return false;
 	}
+	ring_buf_put(&cli_tx_ring, (const uint8_t *)str, len);
+	/* Serialize enable with the ISR's empty/disable decision. */
+	uart_irq_tx_enable(usb_dev);
+	k_spin_unlock(&cli_tx_lock, key);
+	return true;
 }
 
 /* USB CDC UART interrupt callback */
@@ -216,6 +227,21 @@ static void cli_uart_isr(const struct device *dev, void *user_data)
 	ARG_UNUSED(user_data);
 
 	while (uart_irq_update(dev) && uart_irq_is_pending(dev)) {
+		if (uart_irq_tx_ready(dev)) {
+			uint8_t *data;
+			k_spinlock_key_t key = k_spin_lock(&cli_tx_lock);
+			uint32_t len = ring_buf_get_claim(&cli_tx_ring, &data, 64);
+			int sent = len ? uart_fifo_fill(dev, data, len) : 0;
+			ring_buf_get_finish(&cli_tx_ring, sent > 0 ? sent : 0);
+			if (ring_buf_is_empty(&cli_tx_ring)) uart_irq_tx_disable(dev);
+			k_spin_unlock(&cli_tx_lock, key);
+			if (sent > 0) {
+				k_event_post(&mesh_events, MESH_EVENT_CLI_TX);
+				k_work_submit(&cli_rx_work);
+			}
+			/* Leave unsent bytes queued; the next TX-ready callback retries. */
+			if (len && sent <= 0) break;
+		}
 		if (uart_irq_rx_ready(dev)) {
 			uint8_t buf[64];
 			int recv_len = uart_fifo_read(dev, buf, sizeof(buf));
@@ -235,7 +261,17 @@ static void cli_rx_work_fn(struct k_work *work)
 	ARG_UNUSED(work);
 	uint8_t byte;
 
-	while (ring_buf_get(&usb_ring_buf, &byte, 1) == 1) {
+	while (ring_buf_peek(&usb_ring_buf, &byte, 1) == 1) {
+		/* Do not consume input whose echo/command cannot yet be queued. */
+		if (byte == '\r' || byte == '\n') {
+			if (k_msgq_num_free_get(&cli_cmd_queue) == 0) break;
+		} else if (byte == 0x7F || byte == 0x08) {
+			if (cli_line_idx && !cli_print("\b \b")) break;
+		} else if (cli_line_idx < sizeof(cli_line_buf) - 1) {
+			char echo[] = { (char)byte, '\0' };
+			if (!cli_print(echo)) break;
+		}
+		ring_buf_get(&usb_ring_buf, &byte, 1);
 		const uint8_t prev = cli_prev_byte;
 		cli_prev_byte = byte;
 
@@ -277,17 +313,9 @@ static void cli_rx_work_fn(struct k_work *work)
 			/* Backspace - echo backspace sequence */
 			if (cli_line_idx > 0) {
 				cli_line_idx--;
-				if (usb_dev) {
-					uart_poll_out(usb_dev, '\b');
-					uart_poll_out(usb_dev, ' ');
-					uart_poll_out(usb_dev, '\b');
-				}
 			}
 		} else if (cli_line_idx < sizeof(cli_line_buf) - 1) {
 			/* Echo character back (like Arduino) */
-			if (usb_dev) {
-				uart_poll_out(usb_dev, byte);
-			}
 			cli_line_buf[cli_line_idx++] = (char)byte;
 		}
 	}
@@ -299,22 +327,30 @@ static void cli_rx_work_fn(struct k_work *work)
  * a reply, then a trailing "\r\n". */
 static void process_cli_commands(void)
 {
+	/* Persist output across TX backpressure; never execute a command twice. */
+	static const char *pending;
+	static unsigned int phase;
 	struct cli_cmd_line c;
-	while (repeater_mesh_ptr && k_msgq_get(&cli_cmd_queue, &c, K_NO_WAIT) == 0) {
+	while (repeater_mesh_ptr) {
+		if (pending) {
+			const char *part = phase == 0 ? "\r\n  -> " :
+				phase == 1 ? pending : "\r\n";
+			if (!cli_print(part)) return;
+			if (++phase != 3) continue;
+			pending = nullptr;
+		}
+		if (k_msgq_get(&cli_cmd_queue, &c, K_NO_WAIT) != 0) break;
+		k_work_submit(&cli_rx_work);
 		const char *help = local_cli_help(LocalCLIHelpRole::Repeater, c.buf);
 		if (help != nullptr) {
-			cli_print("\r\n  -> ");
-			cli_print(help);
+			pending = help;
 		} else {
 			cli_reply_buf[0] = '\0';
 			repeater_mesh_ptr->handleCommand(0, c.buf, cli_reply_buf);
 			refresh_repeater_ui_radio_state();
-			if (cli_reply_buf[0] != '\0') {
-				cli_print("\r\n  -> ");
-				cli_print(cli_reply_buf);
-			}
+			pending = cli_reply_buf;
 		}
-		cli_print("\r\n");
+		phase = pending[0] ? 0 : 2;
 	}
 }
 #endif
@@ -727,7 +763,7 @@ static void repeater_event_loop(void)
 		/* Run queued CLI commands here (main thread) BEFORE loop() drains
 		 * any outbound packets they enqueued — keeps all mesh-state
 		 * mutation on the main thread (see cli_cmd_queue). */
-		if (events & MESH_EVENT_CLI_RX) {
+		if (events & (MESH_EVENT_CLI_RX | MESH_EVENT_CLI_TX)) {
 			process_cli_commands();
 #if ZEPHCORE_HAS_UI && IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
 			char bridge_local[18];
