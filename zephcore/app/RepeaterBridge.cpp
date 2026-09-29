@@ -285,9 +285,9 @@ const char *repeater_bridge_status(void)
 	if (!s_store || !s_store->loadBridgePrefs(prefs) || !mac_is_set(prefs.peer_mac)) {
 		return "no peer";
 	}
+	if (repeater_bridge_is_connected()) return "connected";
 	if (s_diagnostic == BRIDGE_DIAG_TIMEOUT) return "timeout";
 	if (s_diagnostic == BRIDGE_DIAG_ERROR) return "error";
-	if (repeater_bridge_is_connected()) return "connected";
 	return s_transport == BRIDGE_BLE ? "waiting" : "error";
 }
 
@@ -600,14 +600,15 @@ bool repeater_bridge_handle_command(const char *command, char *reply, size_t rep
 	return handled;
 }
 
-void repeater_bridge_note_inbound_raw(const uint8_t *raw, size_t raw_len)
+bool repeater_bridge_note_inbound_raw(const uint8_t *raw, size_t raw_len)
 {
-	if (!raw || raw_len < 2 || raw_len > MAX_TRANS_UNIT) return;
+	if (!raw || raw_len < 2 || raw_len > MAX_TRANS_UNIT) return false;
 	mesh::Packet packet;
-	if (!packet.readFrom(raw, (uint8_t)raw_len) || !packet_is_bridgeable(packet)) return;
+	if (!packet.readFrom(raw, (uint8_t)raw_len) || !packet_is_bridgeable(packet)) return false;
 	uint8_t fingerprint[MAX_HASH_SIZE];
 	packet_fingerprint(packet, fingerprint);
 	(void)fingerprint_seen_or_remember(fingerprint);
+	return true;
 }
 
 void repeater_bridge_peer_observed(const uint8_t fingerprint[MAX_HASH_SIZE])

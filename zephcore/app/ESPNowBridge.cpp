@@ -467,8 +467,9 @@ void espnow_bridge_drain(mesh::Dispatcher *dispatcher)
 {
     BridgeFrame frame;
     while (k_msgq_get(&espnow_bridge_rx_queue, &frame, K_NO_WAIT) == 0) {
-        repeater_bridge_note_inbound_raw(frame.raw, frame.raw_len);
-        dispatcher->injectRaw(frame.raw, frame.raw_len);
+        if (repeater_bridge_note_inbound_raw(frame.raw, frame.raw_len)) {
+            dispatcher->injectRaw(frame.raw, frame.raw_len);
+        }
     }
 }
 
