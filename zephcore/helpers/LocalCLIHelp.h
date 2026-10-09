@@ -53,10 +53,9 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"buzz on|off\r\n"
 #endif
 		"offgrid on|off\r\n"
-		"password <value>\r\n"
 		"stats-packets\r\nstats-radio\r\nstats-core\r\nclear stats\r\n"
 		"get role\r\nget public.key\r\nget gps diag\r\n"
-		"get dc.restarts\r\nget tx apc\r\nget cad\r\nget bootloader.ver\r\n"
+		"get dc.restarts\r\nget cad\r\nget bootloader.ver\r\n"
 		"set cad.auto\r\nset cad.offset\r\nset probe.interval\r\n"
 		"set cad.busycap\r\nset cad.reset\r\n"
 		"get/set adc.multiplier\r\nget/set advert.interval\r\nget/set af\r\n"
@@ -126,7 +125,8 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 #endif
 		"password <value>\r\n"
 #if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
-		"bridge on|off|ping|keygen|unpair (keygen: local)\r\n"
+		"bridge on|off|ping|logs|keygen|unpair (keygen: local)\r\n"
+		"bridge logs N|clear\r\n"
 #endif
 		"neighbors\r\n"
 		"neighbor.remove <pubkey>\r\n"
@@ -150,9 +150,12 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"get gps diag\r\n"
 #endif
 		"get dc.restarts\r\n"
-		"get tx apc\r\n"
 		"get cad\r\n"
 		"get bootloader.ver\r\n"
+#if defined(CONFIG_BOARD_XIAO_NRF52840) && IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER) && \
+	IS_ENABLED(CONFIG_ZEPHCORE_RADIO_NATIVE)
+		"get radio.diag\r\n"
+#endif
 #if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
 		"get bridge.delay\r\n"
 #endif
@@ -176,7 +179,6 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"get/set adc.multiplier\r\n"
 		"get/set advert.interval\r\n"
 		"get/set af\r\n"
-		"get/set allow.read.only\r\n"
 		"get/set backoff.multiplier\r\n"
 		"get/set battery.alert on|off (default on)\r\n"
 		"get/set battery.group <name> (default #zephcore)\r\n"
@@ -194,9 +196,13 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 #if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE) && !defined(CONFIG_SOC_FAMILY_ESPRESSIF_ESP32)
 		"get/set bridge.type ble\r\n"
 #endif
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
 		"get/set display.rotate\r\n"
+#endif
 		"get/set dutycycle\r\n"
+#if IS_ENABLED(CONFIG_ZEPHCORE_RADIO_LR2021)
 		"get/set extra.sf\r\n"
+#endif
 		"get/set flood.advert.interval\r\n"
 		"get/set flood.max\r\n"
 		"get/set flood.max.advert\r\n"
@@ -204,7 +210,9 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"get/set freq\r\n"
 		"get/set gps duty\r\n"
 		"get/set guest.password\r\n"
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_JOYSTICK) || IS_ENABLED(CONFIG_ZEPHCORE_UI_KEYBOARD)
 		"get/set input.rotate\r\n"
+#endif
 		"get/set int.thresh\r\n"
 		"get/set lat\r\n"
 		"get/set leds.hb\r\n"
@@ -221,12 +229,16 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"get/set path.hash.mode\r\n"
 		"get/set prv.key\r\n"
 		"get/set radio\r\n"
+#if DT_NODE_HAS_PROP(DT_ALIAS(lora0), lna_bypass_gpios)
 		"get/set radio.fem.rxgain\r\n"
+#endif
 		"get/set radio.rxgain\r\n"
 		"get/set repeat\r\n"
 		"get/set rxduty\r\n"
 		"get/set tx\r\n"
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
 		"get/set tz.offset (hours)\r\n"
+#endif
 #if IS_ENABLED(CONFIG_ZEPHCORE_REPEATER_UPLINK) && IS_ENABLED(CONFIG_MQTT_LIB)
 		"get/set uplink.enable\r\n"
 #endif
@@ -270,7 +282,7 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"password <value>\r\n"
 		"stats-packets\r\nstats-radio\r\nstats-core\r\nclear stats\r\n"
 		"get acl\r\nget public.key\r\nget role\r\n"
-		"get dc.restarts\r\nget tx apc\r\nget cad\r\n"
+		"get dc.restarts\r\nget cad\r\n"
 		CLI_UI_RADIO_HELP
 		"get/set dutycycle\r\nget/set af\r\nget/set int.thresh\r\n"
 		"get/set multi.acks\r\n"

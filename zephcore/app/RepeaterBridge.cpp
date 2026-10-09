@@ -317,9 +317,34 @@ void repeater_bridge_get_metrics(uint8_t *priority, uint32_t *forwarded, uint32_
 	if (skipped) *skipped = (uint32_t)atomic_get(&s_skipped_count);
 }
 
-bool repeater_bridge_handle_command(const char *command, char *reply, size_t reply_len)
+bool repeater_bridge_handle_command(const char *command, char *reply, size_t reply_len,
+	uint32_t now_epoch)
 {
 	if (!command || !reply || reply_len == 0) return false;
+	if (strcmp(command, "bridge logs") == 0 || strcmp(command, "bridge logs clear") == 0 ||
+	    strncmp(command, "bridge logs ", 12) == 0) {
+		if (s_transport != BRIDGE_BLE) {
+			snprintf(reply, reply_len, "ERR: bridge logs requires BLE");
+			return true;
+		}
+		if (strcmp(command, "bridge logs clear") == 0) {
+			ble_bridge_clear_logs();
+			snprintf(reply, reply_len, "OK: bridge logs cleared");
+			return true;
+		}
+		unsigned int page = 1;
+		if (strcmp(command, "bridge logs") != 0) {
+			char *end = nullptr;
+			unsigned long requested = strtoul(command + 12, &end, 10);
+			if (end == command + 12 || *end != '\0' || requested == 0 || requested > 32) {
+				snprintf(reply, reply_len, "ERR: use bridge logs or bridge logs 1..32");
+				return true;
+			}
+			page = (unsigned int)requested;
+		}
+		ble_bridge_get_logs(reply, reply_len, now_epoch, page);
+		return true;
+	}
 	if (strcmp(command, "bridge ping") == 0) {
 		if (!s_enabled) {
 			snprintf(reply, reply_len, "ERR: bridge is off");

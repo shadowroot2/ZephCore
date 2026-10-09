@@ -25,6 +25,8 @@ bool ble_bridge_start(RepeaterDataStore *store, mesh::Dispatcher *dispatcher);
 void ble_bridge_stop();
 bool ble_bridge_get_local_mac(char *out, size_t out_len);
 void ble_bridge_get_diagnostics(char *out, size_t out_len);
+void ble_bridge_get_logs(char *out, size_t out_len, uint32_t now_epoch, unsigned int page);
+void ble_bridge_clear_logs(void);
 bool ble_bridge_unpair(void);
 bool ble_bridge_is_connected(void);
 bool ble_bridge_ping(char *reply, size_t reply_len);
