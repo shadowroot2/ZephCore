@@ -1155,9 +1155,8 @@ void ui_invalidate_battery_cache(void)
  *   - hold every power-enable GPIO LOW so external chips don't keep drawing
  *   - hold the LoRa radio in HW reset (its internal duty cycle would
  *     otherwise keep cycling autonomously, drawing mA)
- *   - configure SENSE on sw0 so a button press wakes the chip (the nRF GPIO
- *     driver doesn't honour the DT wakeup-source property, so the dtsi
- *     marker is inert without this)
+ *   - configure SENSE on sw0 so a button press wakes the chip, except on
+ *     XIAO nRF52840 where only a new USB VBUS connection should wake it
  *
  * Non-nRF platforms skip the SENSE block; they rely on Zephyr's wakeup-source
  * DT property which is honoured by their respective GPIO drivers.
@@ -1205,6 +1204,8 @@ void ui_prepare_for_system_off(void)
 	/* 5. Configure GPIO SENSE for sw0 button wakeup, after waiting for the
 	 * user to release any held button (otherwise DETECT is already asserted
 	 * when we enter System OFF and the chip never sleeps cleanly).
+	 * XIAO nRF52840 wakes on a new USB VBUS edge: its Wio-SX1262 button is
+	 * on sw0/D0, so disable its interrupt and all GPIO SENSE sources instead.
 	 * nRF only — other platforms rely on the DT wakeup-source property. */
 #if defined(CONFIG_SOC_FAMILY_NORDIC_NRF) && DT_NODE_EXISTS(DT_ALIAS(sw0))
 	{
@@ -1215,6 +1216,23 @@ void ui_prepare_for_system_off(void)
 
 		static const struct gpio_dt_spec sw0 =
 			GPIO_DT_SPEC_GET(DT_ALIAS(sw0), gpios);
+#if defined(CONFIG_BOARD_XIAO_NRF52840)
+		(void)gpio_pin_interrupt_configure_dt(&sw0, GPIO_INT_DISABLE);
+		/* Other drivers can arm SENSE too. GPIO DETECT must be inactive
+		 * before System OFF, or the SoC wakes immediately. */
+		for (uint32_t pin = 0; pin < 32; ++pin) {
+			nrf_gpio_cfg_sense_set(NRF_GPIO_PIN_MAP(0, pin),
+					       NRF_GPIO_PIN_NOSENSE);
+		}
+		for (uint32_t pin = 0; pin < 16; ++pin) {
+			nrf_gpio_cfg_sense_set(NRF_GPIO_PIN_MAP(1, pin),
+					       NRF_GPIO_PIN_NOSENSE);
+		}
+		nrf_gpio_port_detect_latch_set(NRF_P0, false);
+		nrf_gpio_port_detect_latch_set(NRF_P1, false);
+		uint32_t latched[2];
+		nrf_gpio_latches_read_and_clear(0, ARRAY_SIZE(latched), latched);
+#else
 		gpio_pin_configure_dt(&sw0, GPIO_INPUT);
 
 		int64_t deadline = k_uptime_get() + 5000;
@@ -1229,6 +1247,7 @@ void ui_prepare_for_system_off(void)
 						       NRF_GPIO_PIN_NOPULL,
 			(_SW0_FLAGS & GPIO_ACTIVE_LOW) ? NRF_GPIO_PIN_SENSE_LOW
 						       : NRF_GPIO_PIN_SENSE_HIGH);
+#endif
 #undef _SW0_NODE
 #undef _SW0_PORT
 #undef _SW0_PIN

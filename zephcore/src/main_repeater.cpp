@@ -572,6 +572,14 @@ extern "C" void mesh_set_bridge_enabled(bool enabled)
 
 static bool handle_repeater_ui_cli(const char *line, char *reply)
 {
+#if defined(CONFIG_BOARD_XIAO_NRF52840) && IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER) && \
+	IS_ENABLED(CONFIG_ZEPHCORE_RADIO_NATIVE)
+	if (strcmp(line, "get radio.diag") == 0) {
+		lora_radio.formatRecoveryStatus(reply, CLI_REMOTE_REPLY_SIZE);
+		return true;
+	}
+#endif
+
 	if (strcmp(line, "shutdown") == 0) {
 		strcpy(reply, "To confirm use with y");
 		return true;
@@ -961,14 +969,10 @@ int main(void)
 		}
 	}
 
-	/* Set GPS to repeater mode: power off now, wake every 12h for time sync only.
-	 * This prevents GPS from draining power on boards that have it (e.g., Wio Tracker). */
+	/* Register GPS callbacks before loading the repeater state. */
 	if (gps_is_available()) {
 		gps_set_fix_callback(gps_fix_callback);
 		gps_set_event_callback(gps_event_callback);
-		/* Apply persisted GPS duty interval (repeater default 12h; 0 = always on) */
-		gps_set_poll_interval_sec(repeater_mesh.getNodePrefs()->gps_interval);
-		gps_set_repeater_mode(true);
 	}
 
 	/* Initialize UI (display + buttons).  Shows splash screen, then auto-
@@ -1022,6 +1026,12 @@ int main(void)
 	 * settings: CLI readback looked correct but the hardware stayed on EU.
 	 * Mirrors the temp_prefs pattern in main_companion.cpp. */
 	data_store.loadPrefs(*repeater_mesh.getNodePrefs());
+	/* Both repeater roles share this startup path. Apply the saved duty (or
+	 * the 43200 s repeater default) before starting the initial GPS fix. */
+	if (gps_is_available()) {
+		gps_set_poll_interval_sec(repeater_mesh.getNodePrefs()->gps_interval);
+		gps_set_repeater_mode(true);
+	}
 	ui_set_timezone_offset_minutes(repeater_mesh.getNodePrefs()->ui_timezone_offset_minutes);
 	ui_set_leds_disabled(repeater_mesh.getNodePrefs()->leds_disabled != 0);
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)

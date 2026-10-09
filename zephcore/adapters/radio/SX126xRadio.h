@@ -15,6 +15,7 @@ public:
 		    NodePrefs *prefs = nullptr);
 
 	void begin() override;
+	void radioMaintenance() override;
 
 	/* Select the external FEM's LNA or its bypass path for RX
 	 * (radio.fem.rxgain).  Delegates to the driver, which owns the
@@ -25,6 +26,12 @@ public:
 	/* Duty-cycle preamble false-positive stats (SX126x-specific) */
 	uint32_t getDutyCycleTimeoutRestarts() const override;
 	void resetDutyCycleTimeoutRestarts() override;
+	int formatRecoveryStatus(char *buf, size_t cap) const;
+
+private:
+	uint32_t _rx_stall_since_ms = 0;
+	uint32_t _rx_recover_at_ms = 0;
+	uint32_t _rx_recovery_count = 0;
 
 protected:
 	/* Hardware primitives */

@@ -25,17 +25,27 @@ extern "C" {
 #define MELODY_ACK         "ack:d=32,o=8,b=120:c"
 #define MELODY_BUZZER_ON   "bon:d=16,o=7,b=200:c,p,c,p,c,p,p,8e"
 #define MELODY_BUZZER_OFF  "bof:d=16,o=7,b=200:c,p,c,p,c,p,p,8g5"
-/* Tracking: six count beeps, then the same rising/falling ON/OFF tail. */
+#if defined(CONFIG_BOARD_T1000_E) || defined(CONFIG_BOARD_THINKNODE_M3)
+/* T1000-E/M3 count beeps match their 2/4/5-tap Tracking/LED/GPS gestures. */
+#define MELODY_TRACKING_ON  "ton:d=16,o=7,b=200:c,p,c,p,p,8e"
+#define MELODY_TRACKING_OFF "tof:d=16,o=7,b=200:c,p,c,p,p,8g5"
+#define MELODY_GPS_ON       "gon:d=16,o=7,b=200:c,p,c,p,c,p,c,p,c,p,p,8e"
+#define MELODY_GPS_OFF      "gof:d=16,o=7,b=200:c,p,c,p,c,p,c,p,c,p,p,8g5"
+#define MELODY_LED_ON       "lon:d=16,o=7,b=200:c,p,c,p,c,p,c,p,p,8e"
+#define MELODY_LED_OFF      "lof:d=16,o=7,b=200:c,p,c,p,c,p,c,p,p,8g5"
+#else
+/* Other boards retain their existing action-identifying melodies. */
 #define MELODY_TRACKING_ON  "ton:d=16,o=7,b=200:c,p,c,p,c,p,c,p,c,p,c,p,p,8e"
 #define MELODY_TRACKING_OFF "tof:d=16,o=7,b=200:c,p,c,p,c,p,c,p,c,p,c,p,p,8g5"
+#define MELODY_GPS_ON       "gon:d=16,o=7,b=200:c,p,c,p,c,p,c,p,p,8e"
+#define MELODY_GPS_OFF      "gof:d=16,o=7,b=200:c,p,c,p,c,p,c,p,c,p,p,8g5"
+#define MELODY_LED_ON       "lon:d=16,o=7,b=200:c,p,c,p,8e"
+#define MELODY_LED_OFF      "lof:d=16,o=7,b=200:c,p,c,p,8g5"
+#endif
 /* Short Morse "TR" (- .-.), played after a location is queued. */
 #define MELODY_TRACKING_SENT "TR:d=32,o=6,b=120:" \
 	"16c6.,p,p,p,"                         /* T - */ \
 	"c6,p,16c6.,p,c6"                     /* R .-. */
-#define MELODY_GPS_ON       "gon:d=16,o=7,b=200:c,p,c,p,c,p,c,p,p,8e"
-#define MELODY_GPS_OFF      "gof:d=16,o=7,b=200:c,p,c,p,c,p,c,p,c,p,p,8g5"
-#define MELODY_LED_ON      "lon:d=16,o=7,b=200:c,p,c,p,8e"
-#define MELODY_LED_OFF     "lof:d=16,o=7,b=200:c,p,c,p,8g5"
 #define MELODY_SOS_CONFIRM "sok:d=16,o=7,b=200:c,p,e,p,g"
 /* Short falling acknowledgement after a Fall alarm is cancelled. */
 #define MELODY_FALL_CANCELED "fcan:d=16,o=7,b=220:g,e,c"

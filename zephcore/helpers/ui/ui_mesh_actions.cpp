@@ -309,15 +309,25 @@ extern "C" void mesh_handle_ui_actions(void)
 
 	if (actions & UI_ACTION_GPS_TOGGLE) {
 		bool gps_en = atomic_get(&pending_gps_enabled) != 0;
+		bool changed = (s_mesh->prefs.gps_enabled != 0) != gps_en;
 		s_mesh->prefs.gps_enabled = gps_en ? 1 : 0;
 		LOG_INF("GPS %s (button)", gps_en ? "on" : "off");
+		if (changed) s_mesh->vcontactNotify(gps_en ? "GPS: on" : "GPS: off");
 		need_save = true;
 	}
 
 	if (actions & UI_ACTION_BUZZER_TOGGLE) {
 		uint8_t mode = (uint8_t)atomic_get(&pending_buzzer_mode);
-		s_mesh->prefs.buzzer_quiet = zephcore_buzzer_prefs_from_mode(mode);
+		uint8_t prefs_mode = zephcore_buzzer_prefs_from_mode(mode);
+		bool changed = s_mesh->prefs.buzzer_quiet != prefs_mode;
+		s_mesh->prefs.buzzer_quiet = prefs_mode;
 		LOG_INF("buzzer mode=%u (button)", mode);
+		if (changed) {
+			const char *status = mode == ZEPHCORE_BUZZER_OFF ? "Buzzer: off" :
+				mode == ZEPHCORE_BUZZER_VIBRATE ? "Buzzer: vibrate" :
+				mode == ZEPHCORE_BUZZER_SOUND ? "Buzzer: sound" : "Buzzer: on";
+			s_mesh->vcontactNotify(status);
+		}
 		need_save = true;
 	}
 
@@ -325,6 +335,8 @@ extern "C" void mesh_handle_ui_actions(void)
 		bool og = atomic_get(&pending_offgrid_enabled) != 0;
 		s_mesh->prefs.client_repeat = og ? 1 : 0;
 		LOG_INF("client_repeat=%d (button)", og);
+		/* Joystick UI updates prefs before posting this action. */
+		s_mesh->vcontactNotify(og ? "Offgrid: on" : "Offgrid: off");
 		need_save = true;
 	}
 
@@ -332,13 +344,16 @@ extern "C" void mesh_handle_ui_actions(void)
 		bool ld = atomic_get(&pending_leds_disabled) != 0;
 		s_mesh->prefs.leds_disabled = ld ? 1 : 0;
 		LOG_INF("leds_disabled=%d (button)", ld);
+		s_mesh->vcontactNotify(ld ? "LEDs: off" : "LEDs: on");
 		need_save = true;
 	}
 
 	if (actions & UI_ACTION_BLE_TOGGLE) {
 		bool bd = atomic_get(&pending_ble_disabled) != 0;
+		bool changed = (s_mesh->prefs.ble_disabled != 0) != bd;
 		s_mesh->prefs.ble_disabled = bd ? 1 : 0;
 		LOG_INF("ble_disabled=%d (button)", bd);
+		if (changed) s_mesh->vcontactNotify(bd ? "BLE: off" : "BLE: on");
 		need_save = true;
 	}
 
@@ -350,8 +365,12 @@ extern "C" void mesh_handle_ui_actions(void)
 	}
 
 	if (actions & UI_ACTION_WAKE_ON_MSG_SAVE) {
-		s_mesh->prefs.wake_on_msg = atomic_get(&pending_wake_on_msg) ? 1 : 0;
+		bool enabled = atomic_get(&pending_wake_on_msg) != 0;
+		bool changed = (s_mesh->prefs.wake_on_msg != 0) != enabled;
+		s_mesh->prefs.wake_on_msg = enabled ? 1 : 0;
 		LOG_INF("wake_on_msg=%d (button)", s_mesh->prefs.wake_on_msg);
+		if (changed) s_mesh->vcontactNotify(enabled ?
+			"Wake on message: on" : "Wake on message: off");
 		need_save = true;
 	}
 
@@ -362,14 +381,22 @@ extern "C" void mesh_handle_ui_actions(void)
 	}
 
 	if (actions & UI_ACTION_DISPLAY_ROTATE_SAVE) {
-		s_mesh->prefs.display_rotate = atomic_get(&pending_display_rotate) ? 1 : 0;
+		bool rotated = atomic_get(&pending_display_rotate) != 0;
+		bool changed = (s_mesh->prefs.display_rotate != 0) != rotated;
+		s_mesh->prefs.display_rotate = rotated ? 1 : 0;
 		LOG_INF("display_rotate=%d (button)", s_mesh->prefs.display_rotate);
+		if (changed) s_mesh->vcontactNotify(rotated ?
+			"Display rotation: on" : "Display rotation: off");
 		need_save = true;
 	}
 
 	if (actions & UI_ACTION_INPUT_ROTATE_SAVE) {
-		s_mesh->prefs.input_rotate = atomic_get(&pending_input_rotate) ? 1 : 0;
+		bool rotated = atomic_get(&pending_input_rotate) != 0;
+		bool changed = (s_mesh->prefs.input_rotate != 0) != rotated;
+		s_mesh->prefs.input_rotate = rotated ? 1 : 0;
 		LOG_INF("input_rotate=%d (button)", s_mesh->prefs.input_rotate);
+		if (changed) s_mesh->vcontactNotify(rotated ?
+			"Input rotation: on" : "Input rotation: off");
 		need_save = true;
 	}
 

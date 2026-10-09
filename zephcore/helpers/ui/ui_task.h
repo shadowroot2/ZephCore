@@ -256,7 +256,8 @@ void ui_refresh_battery(void);
 /**
  * Prepare the device for sys_poweroff(): stop heartbeat LED, blank the
  * display, power off GPS + sensor regulators, hold LoRa in HW reset,
- * configure SENSE on sw0 (nRF only) for button wakeup.
+ * configure SENSE on sw0 (nRF only) for button wakeup, except on XIAO
+ * nRF52840 where GPIO wake is disabled and a new USB VBUS connection wakes it.
  *
  * Caller is responsible for any shutdown chime BEFORE this call and the
  * final sys_poweroff() AFTER. Both UI variants share this so the System

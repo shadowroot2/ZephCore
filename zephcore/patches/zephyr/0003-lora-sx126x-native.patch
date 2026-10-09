@@ -1770,11 +1770,11 @@ index 30243ba5dc7..d512fb59afc 100644
 +		return;
 +	}
 +
-+	/* Non-DC continuous RX safety net: SetRx(0xFFFFFF) means no symbol
-+	 * timer, so IRQ_RX_TX_TIMEOUT should not normally fire here.  But if
-+	 * any future setup (or a chip glitch) does fire it while async RX is
-+	 * active, re-arm rather than silently falling back to sleep. */
-+	if (!data->rx_duty_cycle_enabled && rx_cb != NULL) {
++	/* Non-DC continuous RX safety net: re-arm on an RX timeout, but never
++	 * consume a TX timeout while the RX callback remains registered.
++	 * The TX tail below must clear state and signal the sender. */
++	if (!data->rx_duty_cycle_enabled && rx_cb != NULL &&
++	    atomic_get(&data->state) != SX126X_STATE_TX) {
 +		int ret = sx126x_restart_rx(dev, data);
 +
 +		if (ret < 0) {

@@ -5,6 +5,7 @@
 
 #include "SX126xRadio.h"
 #include <zephyr/kernel.h>
+#include <stdio.h>
 
 /* Native SX126x driver extension API */
 extern "C" {
@@ -36,6 +37,50 @@ void SX126xRadio::begin()
 	sx126x_apply_heltec_reg_patch(_dev);
 	LOG_INF("Applied Heltec reg 0x8B5 RX patch");
 #endif
+}
+
+void SX126xRadio::radioMaintenance()
+{
+	LoRaRadioBase::radioMaintenance();
+
+#if defined(CONFIG_BOARD_XIAO_NRF52840) && IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER)
+	/* Do not infer a fault from silence or a busy channel. Require failed
+	 * RX re-entry while no TX is active; a live TX may legitimately keep
+	 * RX down for its entire airtime. */
+	if (atomic_get(&_tx_active) || atomic_get(&_in_recv_mode)) {
+		_rx_stall_since_ms = 0;
+		_rx_recover_at_ms = 0;
+		return;
+	}
+
+	uint32_t now = k_uptime_get_32();
+	if (_rx_stall_since_ms == 0) {
+		_rx_stall_since_ms = now ? now : 1;
+		return;
+	}
+	if (_rx_recover_at_ms == 0 && now - _rx_stall_since_ms >= 15000U) {
+		LOG_WRN("RX unavailable for 15 s: restarting SX126x receive path");
+		_rx_recover_at_ms = now ? now : 1;
+		++_rx_recovery_count;
+		recoverRxState();
+		return;
+	}
+	if (_rx_recover_at_ms != 0 && now - _rx_recover_at_ms >= 45000U) {
+		LOG_ERR("RX still unavailable after recovery: rebooting repeater");
+		_board->reboot();
+	}
+#endif
+}
+
+int SX126xRadio::formatRecoveryStatus(char *buf, size_t cap) const
+{
+	uint32_t now = k_uptime_get_32();
+	uint32_t stalled_s = _rx_stall_since_ms ?
+		(now - _rx_stall_since_ms) / 1000U : 0;
+	return snprintf(buf, cap, "radio: rx=%d; tx=%d; stalled=%us; recoveries=%u",
+		       (int)atomic_get(&_in_recv_mode),
+		       (int)atomic_get(&_tx_active),
+		       (unsigned)stalled_s, (unsigned)_rx_recovery_count);
 }
 
 /* ── Hardware primitives ──────────────────────────────────────────────── */

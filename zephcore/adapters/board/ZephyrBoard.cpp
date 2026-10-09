@@ -636,9 +636,8 @@ bool ZephyrBoard::isBatteryCharging()
 	if (gpio_is_ready_dt(&charge_detect)) {
 		int level = gpio_pin_get_dt(&charge_detect);
 		if (level >= 0) {
-			/* gpio_pin_get_dt() returns the physical level; unlike set_dt(),
-			 * it does not apply GPIO_ACTIVE_LOW. */
-			return (charge_detect.dt_flags & GPIO_ACTIVE_LOW) ? level == 0 : level != 0;
+			/* Zephyr already applies GPIO_ACTIVE_LOW to the logical level. */
+			return level != 0;
 		}
 	}
 #endif

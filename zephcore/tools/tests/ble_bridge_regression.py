@@ -15,7 +15,7 @@ source = SOURCE.read_text()
 mesh_source = SOURCE.with_name("RepeaterMesh.cpp").read_text()
 assert "size_t reply_capacity = sender_timestamp ? CLI_REMOTE_REPLY_SIZE : CLI_REPLY_SIZE;" in mesh_source
 assert "reply_capacity -= 3;" in mesh_source
-assert "repeater_bridge_handle_command(command, reply, reply_capacity)" in mesh_source
+assert "repeater_bridge_handle_command(command, reply, reply_capacity," in mesh_source
 
 
 def block(text, start):
@@ -50,6 +50,7 @@ shim = r'''
 #include <cstring>
 #include <cerrno>
 #include <cstdio>
+#include <ctime>
 #include <algorithm>
 #include <vector>
 #define __packed __attribute__((packed))
@@ -61,8 +62,12 @@ shim = r'''
 #define LOG_ERR(...)
 #define IS_ENABLED(x) (x)
 #define CONFIG_SETTINGS 1
+#define CONFIG_BT_PRIVACY 0
+#define ARRAY_SIZE(a) (sizeof(a)/sizeof((a)[0]))
 #define MAX(a,b) std::max(a,b)
+#define MIN(a,b) std::min(a,b)
 using atomic_t = int32_t;
+using atomic_val_t = int32_t;
 static int32_t atomic_get(const atomic_t *p) { return *p; }
 static int32_t atomic_set(atomic_t *p, int32_t n) { auto old=*p; *p=n; return old; }
 static int32_t atomic_inc(atomic_t *p) { return atomic_set(p, uint32_t(*p)+1); }
@@ -74,6 +79,7 @@ static void k_spin_unlock(k_spinlock *, int) {}
 struct k_work {};
 static int64_t now_ms = 1000;
 static int64_t k_uptime_get() { return now_ms; }
+static uint32_t k_uptime_get_32() { return uint32_t(now_ms); }
 static void k_sem_give(int *) {}
 static unsigned rx_queued;
 #define K_NO_WAIT 0
@@ -134,6 +140,10 @@ enum bt_security_err {
     BT_SECURITY_ERR_PAIR_NOT_SUPPORTED, BT_SECURITY_ERR_PAIR_NOT_ALLOWED,
     BT_SECURITY_ERR_INVALID_PARAM, BT_SECURITY_ERR_KEY_REJECTED, BT_SECURITY_ERR_UNSPECIFIED
 };
+static void pairing_failed(bt_conn *, bt_security_err);
+struct bt_conn_auth_info_cb { void (*pairing_failed)(bt_conn *, bt_security_err); };
+static bt_conn_auth_info_cb bridge_auth_info_callbacks{pairing_failed};
+static int bt_conn_auth_info_cb_register(bt_conn_auth_info_cb *) { return 0; }
 static int bt_conn_set_security(bt_conn *,int) { ++security_requests; return security_request_error; }
 static bt_conn fake_conn;
 static bt_addr_le_t fake_peer;
@@ -147,14 +157,23 @@ static uint16_t mtu = 247;
 static uint16_t bt_gatt_get_mtu(bt_conn *) { return mtu; }
 static int transport_error;
 static unsigned sends, cancels, scans, adverts, disconnects, observed, unpairs, purges;
+static unsigned scan_stops, adv_stops;
+static int scan_start_error_once, adv_start_error_once, scan_stop_error, adv_stop_error;
 static unsigned settings_loads;
 static int unpair_error;
+static bool unpair_had_addr;
+static bt_addr_le_t last_unpair_addr;
 static void k_msgq_purge(int *) { ++purges; }
 #define BT_ID_DEFAULT 0
 #define BT_HCI_ERR_REMOTE_USER_TERM_CONN 0x13
+#define BT_HCI_ERR_TERM_DUE_TO_MIC_FAIL 0x3d
 static bt_conn *bt_conn_lookup_addr_le(int, const bt_addr_le_t *) { ++cancels; return &fake_conn; }
 static int bt_conn_disconnect(bt_conn *, uint8_t) { ++disconnects; return 0; }
-static int bt_unpair(int, const void *) { ++unpairs; return unpair_error; }
+static int bt_unpair(int, const bt_addr_le_t *addr) {
+    ++unpairs; unpair_had_addr=addr!=nullptr;
+    if (addr) last_unpair_addr=*addr;
+    return unpair_error;
+}
 static int bt_enable(void *) { return 0; }
 static int settings_load_subtree(const char *name) {
     assert(strcmp(name,"bt")==0); ++settings_loads; return 0;
@@ -175,10 +194,28 @@ static int bt_gatt_notify_cb(bt_conn *, bt_gatt_notify_params *p) {
 }
 static bool mac_is_set(const uint8_t *p) { return p[0] != 0; }
 static void repeater_bridge_peer_observed(const uint8_t *) { ++observed; }
-static int bt_le_adv_stop() { return 0; }
-static int bt_le_scan_stop() { return 0; }
-static void start_scan() { ++scans; }
-static void start_advertising() { ++adverts; }
+struct net_buf_simple {};
+static void scan_found(const bt_addr_le_t *, int8_t, uint8_t, net_buf_simple *) {}
+#define BT_LE_SCAN_PASSIVE nullptr
+static int bt_le_scan_start(const void *, void (*)(const bt_addr_le_t *, int8_t,
+                                                  uint8_t, net_buf_simple *)) {
+    ++scans; int err=scan_start_error_once; scan_start_error_once=0; return err;
+}
+static int bt_le_scan_stop() { ++scan_stops; return scan_stop_error; }
+struct bt_data { int value; };
+static bt_data bridge_ad[2]{};
+struct bt_le_adv_param { int id; uint32_t options; int interval_min, interval_max; };
+#define BT_LE_ADV_OPT_CONN 1
+#define BT_LE_ADV_OPT_USE_IDENTITY 2
+#define BT_GAP_ADV_FAST_INT_MIN_1 48
+#define BT_GAP_ADV_FAST_INT_MAX_1 96
+static int bt_le_adv_start(const bt_le_adv_param *, const bt_data *, size_t,
+                           const bt_data *, size_t) {
+    ++adverts; int err=adv_start_error_once; adv_start_error_once=0; return err;
+}
+static int bt_le_adv_stop() { ++adv_stops; return adv_stop_error; }
+static void start_scan();
+static void start_advertising();
 static bool send_control(uint8_t, const uint8_t *);
 static void maintain_tx_queue(int64_t);
 static const uint8_t s_default_lmk[16]{};
@@ -195,6 +232,7 @@ static void repeater_bridge_get_addresses(char *local,size_t l,char *peer,size_t
 functions = [
     'static void schedule_retry(uint32_t delay_ms = RETRY_MS)',
     'static bool is_active_link(const struct bt_conn *conn)',
+    'static bool link_has_conn()',
     'static bool link_is_established()',
     'static bool connection_is_peer(const struct bt_conn *conn)',
     'static uint32_t frame_hash(const uint8_t *raw, size_t len)',
@@ -206,12 +244,15 @@ functions = [
     'static void cancel_pending_connection()',
     'static void reset_link(const struct bt_conn *expected = nullptr)',
     'static bool clear_peer_bond()',
+    'static void recover_peer_bond_on_security_failure(enum bt_security_err err, bool pairing_failed = false)',
     'static void clear_discovery_state()',
     'static bool configure_peer()',
     'bool ble_bridge_start(RepeaterDataStore *store, mesh::Dispatcher *dispatcher)',
     'void ble_bridge_stop()',
     'bool ble_bridge_unpair(void)',
     'static void disconnected(struct bt_conn *conn, uint8_t reason)',
+    'static void start_scan()',
+    'static void start_advertising()',
     'static void link_established()',
     'static void mark_link_ready(bool central)',
     'static uint32_t new_handshake_token()',
@@ -227,12 +268,15 @@ functions = [
     'static uint8_t characteristic_discovery_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr,\n\t\t\t\t\t\t   struct bt_gatt_discover_params *params)',
     'static uint8_t service_discovery_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr,\n\t\t\t\t\t  struct bt_gatt_discover_params *params)',
     'static void security_changed(struct bt_conn *conn, bt_security_t level, enum bt_security_err err)',
+    'static void pairing_failed(struct bt_conn *conn, enum bt_security_err reason)',
     'static void connected(struct bt_conn *conn, uint8_t err)',
     'static void tx_work_handler(struct k_work *work)',
     'void ble_bridge_maintain(void)',
     'uint32_t ble_bridge_ms_until_next(void)',
     'static const char *fault_name(int fault)',
     'void ble_bridge_get_diagnostics(char *out, size_t out_len)',
+    'void ble_bridge_clear_logs(void)',
+    'void ble_bridge_get_logs(char *out, size_t out_len, uint32_t now_epoch, unsigned int page)',
 ]
 
 tests = r'''
@@ -240,19 +284,26 @@ static void maintain_tx_queue(int64_t) { tx_work_handler(nullptr); }
 static void fresh(bool connected=true) {
     purge_tx_queue(); s_started=1; s_prefs.peer_mac[0]=1;
     s_conn=connected ? &fake_conn : nullptr;
-    s_is_central=true; s_link_ready=connected; s_link_established=connected;
+    atomic_set(&s_is_central,1); s_link_ready=connected; s_link_established=connected;
     s_peer_value_handle=1; s_connect_deadline_ms=0; s_setup_deadline_ms=0;
     s_handshake_retry_ms=0; s_retry_at_ms=0; s_transport_refresh_ms=0;
     s_health_due_ms=0; s_health_deadline_ms=0; s_health_token=0;
     s_handshake_token=0; s_ping_token=0; s_drop_count=0;
     now_ms=1000; mtu=247; transport_error=0;
     sends=cancels=scans=adverts=disconnects=unpairs=purges=0;
-    unpair_error=0;
+    scan_stops=adv_stops=0;
+    scan_start_error_once=adv_start_error_once=scan_stop_error=adv_stop_error=0;
+    unpair_error=0; unpair_had_addr=false; last_unpair_addr={};
     memcpy(fake_peer.a.val,s_prefs.peer_mac,6); fake_peer.type=s_prefs.peer_addr_type;
     rx_queued=0; security_level=2; memset(s_seen,0,sizeof(s_seen));
     discovers=subscribes=security_requests=0;
     discovery_error=subscribe_error=security_request_error=0;
     s_discovery_started=false; s_bond_recovery_attempted=0;
+    atomic_set(&s_adv_running,0);
+    atomic_set(&s_scan_running,0);
+    s_unspecified_security_failures=0;
+    s_security_failure_recorded=0; s_bond_recovery_pending=0;
+    s_auto_unpair_count=0; s_last_peer_rssi=127;
     s_last_fault=BRIDGE_FAULT_NONE; s_last_security_error=0; s_reconnect_count=0;
     clear_discovery_state();
 }
@@ -268,6 +319,28 @@ static unsigned queued() {
 }
 int main() {
     mesh::Dispatcher dispatcher; s_dispatcher=&dispatcher;
+    fresh(false); char phase[128]{};
+    ble_bridge_get_diagnostics(phase,sizeof(phase));
+    assert(strstr(phase,"p=retry")!=nullptr);
+    scan_start_error_once=-EALREADY;
+    start_scan();
+    assert(scans==2 && scan_stops==1 && atomic_get(&s_scan_running));
+    ble_bridge_get_diagnostics(phase,sizeof(phase));
+    assert(strstr(phase,"p=scan")!=nullptr);
+    fresh(false); scan_start_error_once=-EALREADY; scan_stop_error=-EIO;
+    start_scan();
+    assert(scans==1 && !atomic_get(&s_scan_running) && s_retry_at_ms==now_ms+RETRY_MS);
+    fresh(false); atomic_set(&s_is_central,0); adv_start_error_once=-EALREADY;
+    start_advertising();
+    assert(adverts==2 && adv_stops==1 && atomic_get(&s_adv_running));
+    ble_bridge_get_diagnostics(phase,sizeof(phase));
+    assert(strstr(phase,"p=adv")!=nullptr);
+    fresh(false); atomic_set(&s_is_central,0); atomic_set(&s_adv_running,1);
+    s_transport_refresh_ms=now_ms; adv_stop_error=-EIO;
+    ble_bridge_maintain();
+    assert(atomic_get(&s_adv_running) && adverts==0 && s_retry_at_ms==now_ms+RETRY_MS);
+    adv_stop_error=0; now_ms+=RETRY_MS; ble_bridge_maintain();
+    assert(atomic_get(&s_adv_running) && adverts==1 && adv_stops==2);
     fresh(); unsigned wake_before=wakes;
     schedule_retry(); assert(wakes==wake_before+1);
     s_link_established=false;
@@ -335,7 +408,7 @@ int main() {
     fresh(); s_link_established=false; s_handshake_token=7;
     assert(handle_control(control(CONTROL_READY,7)) && s_link_established);
     purge_tx_queue(); assert(handle_control(control(CONTROL_READY,7)) && queued()==1);
-    fresh(); s_is_central=false; s_link_established=false;
+    fresh(); atomic_set(&s_is_central,0); s_link_established=false;
     assert(handle_control(control(CONTROL_HELLO,7)));
     assert(s_handshake_retry_ms==now_ms+RETRY_MS);
     purge_tx_queue(); now_ms+=RETRY_MS; ble_bridge_maintain();
@@ -386,6 +459,9 @@ int main() {
         assert(!s_conn && !s_tx_in_flight && unpairs==0 && queued()==1);
         assert(s_retry_at_ms==now_ms+RETRY_MS);
     }
+    fresh(); disconnected(&fake_conn,0x3d);
+    assert(s_bond_recovery_pending==BT_SECURITY_ERR_KEY_REJECTED && !unpairs);
+    ble_bridge_maintain(); assert(unpairs==1 && s_auto_unpair_count==1);
 
     fresh(); RepeaterDataStore store; stored_prefs.peer_mac[0]=1;
     assert(send_frame(data_frame(),true,false)==0); tx_work_handler(nullptr);
@@ -463,8 +539,8 @@ int main() {
     connected(&fake_conn,0x3e); assert(disconnects==1 && !s_retry_at_ms);
     fresh(false); connected(&fake_conn,0x3e);
     assert(s_retry_at_ms==now_ms+RETRY_MS && s_reconnect_count==1 && !s_conn);
-    fresh(false); s_is_central=false; s_adv_running=true; fake_peer.a.val[0]^=1;
-    connected(&fake_conn,0); assert(disconnects==1 && !s_conn && !s_adv_running);
+    fresh(false); atomic_set(&s_is_central,0); atomic_set(&s_adv_running,1); fake_peer.a.val[0]^=1;
+    connected(&fake_conn,0); assert(disconnects==1 && !s_conn && !atomic_get(&s_adv_running));
     disconnected(&fake_conn,0x13); assert(s_retry_at_ms==now_ms+RETRY_MS && !unpairs);
     fresh(); connected(&foreign,0); assert(disconnects==1 && s_conn==&fake_conn);
 
@@ -525,27 +601,118 @@ int main() {
     assert(!s_link_ready && !disconnects);
     assert(notification_cb(&foreign,&s_subscribe,nullptr,0)==BT_GATT_ITER_STOP && s_conn);
 
-    // SMP error policy: unpair only missing/rejected keys, at most once until success.
+    // One bad SMP callback per connection; bond recovery runs in main, not in BT callback.
     for (int code=0;code<=BT_SECURITY_ERR_UNSPECIFIED;++code) {
         fresh(); auto error=static_cast<bt_security_err>(code);
         security_changed(&fake_conn,1,error);
-        bool clear=code==BT_SECURITY_ERR_PIN_OR_KEY_MISSING || code==BT_SECURITY_ERR_KEY_REJECTED;
-        assert(disconnects==1 && unpairs==unsigned(clear));
+        bool clear=code==BT_SECURITY_ERR_AUTH_FAIL ||
+                   code==BT_SECURITY_ERR_PIN_OR_KEY_MISSING ||
+                   code==BT_SECURITY_ERR_KEY_REJECTED ||
+                   code==BT_SECURITY_ERR_AUTH_REQUIREMENT;
+        const unsigned expected_disconnects=code==BT_SECURITY_ERR_UNSPECIFIED ? 0U : 1U;
+        assert(disconnects==expected_disconnects && unpairs==0 &&
+               bool(s_bond_recovery_pending)==clear);
         security_changed(&fake_conn,1,error);
-        assert(disconnects==2 && unpairs==unsigned(clear));
+        assert(disconnects==2*expected_disconnects && unpairs==0);
+        ble_bridge_maintain();
+        assert(unpairs==unsigned(clear) && s_auto_unpair_count==int(clear));
     }
+    // M6 reports AUTH_REQUIREMENT (s=4) when its old bond cannot reach L2.
+    fresh(false); atomic_set(&s_is_central,0); security_level=1;
+    connected(&fake_conn,0);
+    security_changed(&fake_conn,1,BT_SECURITY_ERR_AUTH_REQUIREMENT);
+    assert(s_bond_recovery_pending==BT_SECURITY_ERR_AUTH_REQUIREMENT && unpairs==0);
+    disconnected(&fake_conn,0x16);
+    ble_bridge_maintain();
+    assert(unpairs==1 && s_auto_unpair_count==1 && unpair_had_addr);
+    assert(last_unpair_addr.type==s_prefs.peer_addr_type);
+    assert(memcmp(last_unpair_addr.a.val,s_prefs.peer_mac,6)==0);
+    char diagnostics[96]{};
+    s_last_peer_rssi=-48;
+    ble_bridge_get_diagnostics(diagnostics,sizeof(diagnostics));
+    assert(strstr(diagnostics,"rs=-48")!=nullptr);
+    // A generic security=9 alone is not evidence of a bad bond.
+    fresh(false); security_level=1;
+    for (int i=0;i<3;++i) {
+        connected(&fake_conn,0);
+        security_changed(&fake_conn,1,BT_SECURITY_ERR_UNSPECIFIED);
+        assert(unpairs==0);
+        disconnected(&fake_conn,0x3e);
+    }
+    ble_bridge_maintain();
+    assert(unpairs==0 && s_auto_unpair_count==0);
+    // Zephyr can call security_changed before pairing_failed for one SMP
+    // failure. The former must not disconnect before the latter is observed.
+    for (int i=0;i<3;++i) {
+        connected(&fake_conn,0);
+        security_changed(&fake_conn,1,BT_SECURITY_ERR_UNSPECIFIED);
+        assert(disconnects==0 && s_conn==&fake_conn);
+        pairing_failed(&fake_conn,BT_SECURITY_ERR_UNSPECIFIED);
+        disconnected(&fake_conn,0x3e);
+    }
+    ble_bridge_maintain();
+    assert(unpairs==1 && s_auto_unpair_count==1);
+    // The other Zephyr path can deliver pairing_failed before security_changed.
+    fresh(false); security_level=1;
+    for (int i=0;i<3;++i) {
+        connected(&fake_conn,0);
+        pairing_failed(&fake_conn,BT_SECURITY_ERR_UNSPECIFIED);
+        security_changed(&fake_conn,1,BT_SECURITY_ERR_UNSPECIFIED);
+        disconnected(&fake_conn,0x3e);
+    }
+    ble_bridge_maintain(); assert(unpairs==1 && s_auto_unpair_count==1);
+    now_ms+=120000;
+    for (int i=0;i<3;++i) {
+        connected(&fake_conn,0);
+        security_changed(&fake_conn,1,BT_SECURITY_ERR_UNSPECIFIED);
+        pairing_failed(&fake_conn,BT_SECURITY_ERR_UNSPECIFIED);
+        disconnected(&fake_conn,0x3e);
+    }
+    ble_bridge_maintain();
+    assert(unpairs==1);
+    fresh(false); security_level=1;
+    connected(&fake_conn,0);
+    security_changed(&fake_conn,1,BT_SECURITY_ERR_UNSPECIFIED);
+    assert(disconnects==0 && s_setup_deadline_ms==now_ms+SETUP_TIMEOUT_MS);
+    disconnected(&fake_conn,0x3e);
+    connected(&fake_conn,0);
+    security_level=2;
+    security_changed(&fake_conn,2,BT_SECURITY_ERR_SUCCESS);
+    assert(s_unspecified_security_failures==0 && unpairs==0);
+    fresh(false); security_level=1; connected(&fake_conn,0);
+    security_changed(&fake_conn,1,BT_SECURITY_ERR_UNSPECIFIED);
+    now_ms+=SETUP_TIMEOUT_MS; ble_bridge_maintain();
+    assert(disconnects==1 && !s_conn && !unpairs);
     fresh(); security_changed(&foreign,1,BT_SECURITY_ERR_PIN_OR_KEY_MISSING);
     assert(!unpairs && !disconnects);
     fresh(); s_bond_recovery_attempted=1; link_established();
     assert(!s_bond_recovery_attempted);
+    fresh(); s_last_security_error=BT_SECURITY_ERR_UNSPECIFIED;
+    s_last_disconnect_reason=0x3e; s_last_connect_error=0x08;
+    link_established();
+    assert(s_last_security_error==0 && s_last_disconnect_reason==-1 &&
+           s_last_connect_error==0 && s_last_fault==BRIDGE_FAULT_NONE);
     fresh(false); security_request_error=-EALREADY; connected(&fake_conn,0);
     assert(discovers==1 && !disconnects); // restored bonded encryption
-    fresh(false); s_is_central=false; connected(&fake_conn,0);
+    fresh(false); atomic_set(&s_is_central,0); connected(&fake_conn,0);
     assert(s_link_ready && !s_link_established && !discovers);
     now_ms+=SETUP_TIMEOUT_MS; ble_bridge_maintain();
     assert(!s_conn && disconnects==1); // peer never sends HELLO
     now_ms+=RETRY_MS; ble_bridge_maintain(); assert(adverts==1);
-    puts("BLE bridge: PASS (queue stress; RX fuzz; lifecycle; central GATT chain; discovery failures; SMP recovery policy; late callbacks; watchdogs; CLI bounds)");
+    // Two timestamped entries fit the remote LoRa reply, with paging and a canary.
+    fresh(); ble_bridge_clear_logs(); bridge_log(BRIDGE_LOG_ADV,0);
+    bridge_log(BRIDGE_LOG_MATCH,-60); bridge_log(BRIDGE_LOG_CONNECT,0);
+    struct { char reply[161]; uint8_t guard[32]; } log_buffer;
+    memset(&log_buffer,0xa5,sizeof(log_buffer)); memcpy(log_buffer.reply,"01|",3);
+    ble_bridge_get_logs(log_buffer.reply+3,sizeof(log_buffer.reply)-3,1720000000,1);
+    assert(strstr(log_buffer.reply,"logs C 1/2") && strstr(log_buffer.reply,"acl=00"));
+    assert(strstr(log_buffer.reply,"seen-rssi=-60") && strlen(log_buffer.reply)<161);
+    for (auto byte:log_buffer.guard) assert(byte==0xa5);
+    ble_bridge_get_logs(log_buffer.reply,sizeof(log_buffer.reply),0,2);
+    assert(strstr(log_buffer.reply,"up+1s") && strstr(log_buffer.reply,"adv=0"));
+    ble_bridge_clear_logs(); ble_bridge_get_logs(log_buffer.reply,sizeof(log_buffer.reply),0,1);
+    assert(strcmp(log_buffer.reply,"bridge logs: empty")==0);
+    puts("BLE bridge: PASS (queue stress; RX fuzz; lifecycle; scan/advertise recovery; central GATT chain; SMP callback orders; late callbacks; watchdogs; CLI bounds)");
 }
 '''
 

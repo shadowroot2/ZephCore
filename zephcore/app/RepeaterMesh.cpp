@@ -400,7 +400,10 @@ int RepeaterMesh::handleRequest(ClientInfo* sender, uint32_t sender_timestamp, u
                 lpp.addPower(CH_SELF, charging ? charge_power_w : 0.0f);
             }
             if (charge_current_a > 0.0f) {
-                lpp.addCurrent(CH_SELF, charging ? charge_current_a : 0.0f);
+                /* XIAO reports the configured charger limit, not measured
+                 * battery current. /CHG deasserts at full charge, while USB
+                 * can still be present. */
+                lpp.addCurrent(CH_SELF, _board.isExternalPowered() ? charge_current_a : 0.0f);
             }
         }
 
@@ -1459,7 +1462,7 @@ static const char *repeater_remote_help(const char *command)
 	static const char page3[] =
 		"Help 3/18: "
 #if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
-		"bridge on|off|ping|keygen|unpair (keygen local); "
+		"bridge on|off|ping|logs|keygen|unpair (keygen local); "
 #endif
 		"neighbors; "
 		"neighbor.remove <pubkey>; "
@@ -1486,12 +1489,16 @@ static const char *repeater_remote_help(const char *command)
     DT_HAS_COMPAT_STATUS_OKAY(luatos_air530z)
 		"gps diag|"
 #endif
-		"dc.restarts|tx apc|cad; "
+		"dc.restarts|cad; "
 		"help 6";
 	static_assert(sizeof(page5) <= CLI_REMOTE_REPLY_SIZE - 3);
 	static const char page6[] =
 		"Help 6/18: "
 		"get bootloader.ver; "
+#if defined(CONFIG_BOARD_XIAO_NRF52840) && IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER) && \
+	IS_ENABLED(CONFIG_ZEPHCORE_RADIO_NATIVE)
+		"get radio.diag; "
+#endif
 #if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
 		"get bridge.delay; "
 #endif
@@ -1523,7 +1530,6 @@ static const char *repeater_remote_help(const char *command)
 		"get/set adc.multiplier; "
 		"get/set advert.interval; "
 		"get/set af; "
-		"get/set allow.read.only; "
 		"get/set backoff.multiplier; "
 		"help 9";
 	static_assert(sizeof(page8) <= CLI_REMOTE_REPLY_SIZE - 3);
@@ -1553,9 +1559,13 @@ static const char *repeater_remote_help(const char *command)
 #if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE) && !defined(CONFIG_SOC_FAMILY_ESPRESSIF_ESP32)
 		"get/set bridge.type ble; "
 #endif
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
 		"get/set display.rotate; "
+#endif
 		"get/set dutycycle; "
+#if IS_ENABLED(CONFIG_ZEPHCORE_RADIO_LR2021)
 		"get/set extra.sf; "
+#endif
 		"help 12";
 	static_assert(sizeof(page11) <= CLI_REMOTE_REPLY_SIZE - 3);
 	static const char page12[] =
@@ -1564,14 +1574,16 @@ static const char *repeater_remote_help(const char *command)
 		"get/set flood.max; "
 		"get/set flood.max.advert; "
 		"get/set flood.max.unscoped; "
-		"get/set freq; "
+		"get freq; "
 		"help 13";
 	static_assert(sizeof(page12) <= CLI_REMOTE_REPLY_SIZE - 3);
 	static const char page13[] =
 		"Help 13/18: "
 		"get/set gps duty; "
 		"get/set guest.password; "
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_JOYSTICK) || IS_ENABLED(CONFIG_ZEPHCORE_UI_KEYBOARD)
 		"get/set input.rotate; "
+#endif
 		"get/set int.thresh; "
 		"get/set lat; "
 		"get/set leds.hb; "
@@ -1594,18 +1606,22 @@ static const char *repeater_remote_help(const char *command)
 #endif
 		"get/set owner.info; "
 		"get/set path.hash.mode; "
-		"get/set prv.key; "
+		"set prv.key (get local); "
 		"get/set radio; "
 		"help 16";
 	static_assert(sizeof(page15) <= CLI_REMOTE_REPLY_SIZE - 3);
 	static const char page16[] =
 		"Help 16/18: "
+#if DT_NODE_HAS_PROP(DT_ALIAS(lora0), lna_bypass_gpios)
 		"get/set radio.fem.rxgain; "
+#endif
 		"get/set radio.rxgain; "
 		"get/set repeat; "
 		"get/set rxduty; "
 		"get/set tx; "
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
 		"get/set tz.offset (hours); "
+#endif
 		"help 17";
 	static_assert(sizeof(page16) <= CLI_REMOTE_REPLY_SIZE - 3);
 	static const char page17[] =
@@ -1706,6 +1722,30 @@ void RepeaterMesh::handleCommand(uint32_t sender_timestamp, char* command, char*
         return;
     }
 
+    /* CommonCLI exposes stats only on the local CLI. Remote-admin replies
+     * have a smaller packet buffer, so format into a full-sized scratch buffer
+     * and copy only when the complete JSON fits on the wire. */
+    if (sender_timestamp != 0 &&
+        (strcmp(command, "stats-packets") == 0 ||
+         strcmp(command, "stats-radio") == 0 ||
+         strcmp(command, "stats-core") == 0)) {
+        char stats[CLI_REPLY_SIZE];
+        if (strcmp(command, "stats-packets") == 0) {
+            formatPacketStatsReply(stats);
+        } else if (strcmp(command, "stats-radio") == 0) {
+            formatRadioStatsReply(stats);
+        } else {
+            formatStatsReply(stats);
+        }
+        size_t len = strnlen(stats, sizeof(stats));
+        if (len >= sizeof(stats) || len >= reply_capacity - 3) {
+            strcpy(reply, "ERR: stats reply too long");
+        } else {
+            memcpy(reply, stats, len + 1);
+        }
+        return;
+    }
+
     if (_local_command_handler && _local_command_handler(command, reply)) {
         return;
     }
@@ -1718,7 +1758,8 @@ void RepeaterMesh::handleCommand(uint32_t sender_timestamp, char* command, char*
 		strcpy(reply, "ERR: bridge keygen is local only");
 		return;
 	}
-    if (repeater_bridge_handle_command(command, reply, reply_capacity)) {
+    if (repeater_bridge_handle_command(command, reply, reply_capacity,
+                                       getRTCClock()->getCurrentTime())) {
         return;
     }
 #endif

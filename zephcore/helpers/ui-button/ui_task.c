@@ -23,6 +23,7 @@
  *   KEY_G     → GPS switch on/off        (hardware toggle, ThinkNode M1)
  *   KEY_POWER / KEY_F → ui_shutdown() (long press — boards that emit these)
  *   Headless: KEY_1 then long → SOS; bare long → deep sleep
+ *   T1000-E/M3: KEY_1 without a confirming hold → flood advert after 3 seconds
  *   KEY_ENTER → action_page_enter()      (long press — Pocket / Heltec; joystick center Wio)
  *   KEY_RIGHT → action_page_next()       (joystick, Wio Tracker)
  *
@@ -49,6 +50,7 @@
 #endif
 
 #include <zephyr/kernel.h>
+#include <zephyr/sys/atomic.h>
 
 #ifdef CONFIG_ZEPHCORE_EASTER_EGG_DOOM
 #include "doom_game.h"
@@ -83,9 +85,8 @@ LOG_MODULE_REGISTER(ui_task, CONFIG_ZEPHCORE_BOARD_LOG_LEVEL);
 /* Action feedback melodies.
  * b=200, d=16 → each chirp ~75ms, rest ~75ms = clear separation.
  *
- * The chirp count identifies the action, not the tap count — the two are only
- * equal on boards using the stock tap-codes order, and LED already differs
- * there (2 taps, 5 chirps).  Do not "fix" a count to match a gesture.
+ * Other boards retain action-identifying chirp counts; T1000-E and M3 match
+ * the physical 1/2/3/4/5-tap mapping.
  *
  * advert sent (zero-hop or flood): chirp-chirp
  * buzzer / notification mode:      chirp×3 + high(ON) or low(OFF)
@@ -95,6 +96,7 @@ LOG_MODULE_REGISTER(ui_task, CONFIG_ZEPHCORE_BOARD_LOG_LEVEL);
  * ON tail:  high E7 (~2637Hz) = "enabled"
  * OFF tail: low G5 (~784Hz)   = "disabled"  */
 #define MELODY_BEEP_2     "b2:d=16,o=7,b=200:c,p,c"
+#define MELODY_BEEP_1     "b1:d=16,o=7,b=200:c"
 /* Five presses: five count beeps, a word break, then "ad-vert". */
 #define MELODY_BEEP_5     "adv:d=16,o=7,b=200:c,p,c,p,c,p,c,p,c,p,p,16a,16d,8g"
 
@@ -118,7 +120,15 @@ static bool ui_initialized;
 static bool splash_active;
 #if !IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
 #define HEADLESS_GESTURE_ARM_WINDOW_MS 3000
+#if defined(CONFIG_BOARD_T1000_E) || defined(CONFIG_BOARD_THINKNODE_M3)
+#define ZEPHCORE_HEADLESS_ADVERT_GESTURE 1
+#else
 static uint32_t headless_sos_armed_until;
+#endif
+#endif
+#ifdef ZEPHCORE_HEADLESS_ADVERT_GESTURE
+static atomic_t headless_sos_deadline;
+static struct k_work_delayable headless_single_advert_work;
 #endif
 
 /* ========== Doom Easter Egg Activation ========== */
@@ -160,6 +170,39 @@ static struct k_work_delayable render_work;
 static struct k_work_delayable splash_work;
 /* Deferred zero-hop advert — waits for possible double-press upgrade to flood */
 static struct k_work_delayable advert_defer_work;
+
+static void action_flood_advert(unsigned int feedback_beeps);
+
+#ifdef ZEPHCORE_HEADLESS_ADVERT_GESTURE
+static void headless_single_advert_cancel(void)
+{
+	atomic_set(&headless_sos_deadline, 0);
+	k_work_cancel_delayable(&headless_single_advert_work);
+}
+
+static void headless_single_advert_handler(struct k_work *work)
+{
+	ARG_UNUSED(work);
+	atomic_val_t deadline = atomic_get(&headless_sos_deadline);
+	if (deadline == 0 ||
+	    (int32_t)(k_uptime_get_32() - (uint32_t)deadline) < 0 ||
+	    !atomic_cas(&headless_sos_deadline, deadline, 0) ||
+	    ui_shutdown_in_progress()) {
+		return;
+	}
+	action_flood_advert(1);
+}
+
+static bool headless_single_advert_claim_sos(void)
+{
+	atomic_val_t deadline = atomic_get(&headless_sos_deadline);
+	bool armed = deadline != 0 &&
+		(int32_t)((uint32_t)deadline - k_uptime_get_32()) >= 0 &&
+		atomic_cas(&headless_sos_deadline, deadline, 0);
+	headless_single_advert_cancel();
+	return armed;
+}
+#endif
 
 /* ========== Work Handlers ========== */
 
@@ -261,7 +304,6 @@ static void action_page_prev(void)
 }
 
 /* Forward declarations for page-enter dispatch */
-static void action_flood_advert(unsigned int feedback_beeps);
 static void action_sos(void);
 static void action_gps_toggle(void);
 static void action_buzzer_toggle(void);
@@ -440,7 +482,8 @@ static void action_flood_advert(unsigned int feedback_beeps)
 {
 	LOG_INF("flood advert requested");
 #ifdef CONFIG_ZEPHCORE_UI_BUZZER
-	buzzer_play(feedback_beeps == 5 ? MELODY_BEEP_5 : MELODY_BEEP_2);
+	buzzer_play(feedback_beeps == 1 ? MELODY_BEEP_1 :
+		    feedback_beeps == 5 ? MELODY_BEEP_5 : MELODY_BEEP_2);
 #endif
 	mesh_send_flood_advert();
 #ifdef CONFIG_ZEPHCORE_UI_DISPLAY
@@ -831,19 +874,33 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 	 * Since INPUT_CALLBACK_DEFINE(NULL) sees events from all devices,
 	 * the raw KEY_A events fall through to default: break.
 	 */
+#ifdef ZEPHCORE_HEADLESS_ADVERT_GESTURE
+	if (code == INPUT_KEY_H || code == INPUT_KEY_D ||
+	    code == INPUT_KEY_B || code == INPUT_KEY_C) {
+		headless_single_advert_cancel();
+	}
+#endif
 	switch (code) {
 	/* ===== Multi-tap outputs ===== */
-	case INPUT_KEY_1:
+	case INPUT_KEY_1: {
 		/* Single tap: page next, except the T1000-E SOS arm gesture. */
 	#if !IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
 		/* A headless node uses a single tap to arm SOS; the following >=1 s hold
-		 * must arrive within three seconds. */
+		 * must arrive within three seconds. T1000-E/M3 advertises if it does not. */
+	#if defined(ZEPHCORE_HEADLESS_ADVERT_GESTURE)
+		uint32_t deadline = k_uptime_get_32() + HEADLESS_GESTURE_ARM_WINDOW_MS;
+		atomic_set(&headless_sos_deadline, deadline ? deadline : 1);
+		k_work_reschedule(&headless_single_advert_work,
+			K_MSEC(HEADLESS_GESTURE_ARM_WINDOW_MS));
+	#else
 		headless_sos_armed_until = k_uptime_get_32() + HEADLESS_GESTURE_ARM_WINDOW_MS;
+	#endif
 	#else
 
 		action_page_next();
 	#endif
 		break;
+	}
 
 	case INPUT_KEY_B:
 		/* Toggle LED heartbeat (2 taps stock, 3 on T096) */
@@ -868,7 +925,7 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 		break;
 
 	case INPUT_KEY_H:
-		/* Six short presses directly toggle Tracking on headless nodes. */
+		/* Two short presses on T1000-E/M3; six on older headless mappings. */
 	#if !IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY) && !defined(ZEPHCORE_REPEATER)
 		mesh_tracking_toggle();
 	#endif
@@ -880,6 +937,12 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 	case INPUT_KEY_F:
 		/* Long press (≥1s): deep sleep */
 	#if !IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
+	#if defined(ZEPHCORE_HEADLESS_ADVERT_GESTURE)
+		if (headless_single_advert_claim_sos()) {
+			mesh_send_sos();
+			break;
+		}
+	#else
 		if (headless_sos_armed_until != 0 &&
 		    (int32_t)(headless_sos_armed_until - k_uptime_get_32()) >= 0) {
 			headless_sos_armed_until = 0;
@@ -887,6 +950,7 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 			mesh_send_sos();
 			break;
 		}
+	#endif
 	#endif
 		ui_shutdown();
 		break;
@@ -934,6 +998,9 @@ int ui_init(void)
 	k_work_init_delayable(&render_work, render_work_handler);
 	k_work_init_delayable(&splash_work, splash_work_handler);
 	k_work_init_delayable(&advert_defer_work, advert_defer_handler);
+#ifdef ZEPHCORE_HEADLESS_ADVERT_GESTURE
+	k_work_init_delayable(&headless_single_advert_work, headless_single_advert_handler);
+#endif
 
 	/* Initialize buzzer (optional - may not be present) */
 #ifdef CONFIG_ZEPHCORE_UI_BUZZER

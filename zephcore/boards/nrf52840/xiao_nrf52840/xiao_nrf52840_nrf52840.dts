@@ -281,4 +281,4 @@ zephyr_udc0: &usbd {
 		};
 	};
 };
-#include "../../common/nrf52_wakeup.dtsi"
+/* D0 button remains usable while on; no GPIO wake from System OFF. */

@@ -269,6 +269,11 @@ public:
 	void queueLocalSentChannelMessage(uint8_t channel_idx, uint32_t timestamp,
 			const char *text, bool heard_repeat);
 
+	/* Mirror a device-generated LoRa message into its actual channel in the
+	 * connected app. Unlike joystick feedback, delivery is not known here. */
+	void queueLocalAutomatedChannelMessage(const mesh::GroupChannel &channel,
+			uint32_t timestamp, const char *text);
+
 	/* DataStoreHost interface */
 	bool onContactLoaded(const ContactInfo &c) override;
 	bool getContactForSave(uint32_t idx, ContactInfo &c) override;
@@ -502,6 +507,8 @@ private:
 	static size_t serializeContact(uint8_t *buf, const ContactInfo &c, uint8_t header = 0);
 
 	void queueOfflineMessage(const uint8_t *data, size_t len);
+	void queueLocalChannelMessage(uint8_t channel_idx, uint32_t timestamp,
+			const char *text, const char *marker);
 	bool dequeueOfflineMessage(uint8_t *dest, size_t &len);
 	bool peekOfflineMessage(uint8_t *dest, size_t &len);
 	void confirmOfflineMessage();
@@ -527,7 +534,7 @@ private:
 	static const uint8_t VCONTACT_DEDUP_SLOTS = 16;
 	uint32_t _vcontact_recent_ts[VCONTACT_DEDUP_SLOTS];
 	uint8_t _vcontact_recent_head;
-	char _vcontact_pending[2][64];   /* notices buffered while the clock is invalid */
+	char _vcontact_pending[8][64];   /* button statuses and notices before time sync */
 	uint8_t _vcontact_pending_count;
 	/* Suppress a v-contact notice's MSG_WAITING push during the app's initial
 	 * sync. Sent before/mid sync (e.g. the reboot-cause notice flushed at

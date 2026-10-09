@@ -999,6 +999,19 @@ static void companion_fall_cancel_pending(void)
 	companion_sos_ui_clear();
 }
 
+static bool companion_send_visible_group_message(ChannelDetails &channel,
+						const char *text)
+{
+	uint32_t timestamp = rtc_clock.getCurrentTimeUnique();
+	if (!companion_mesh_ptr->sendGroupMessage(timestamp, channel.channel,
+			companion_mesh_ptr->prefs.node_name, text, (int)strlen(text))) {
+		return false;
+	}
+	companion_mesh_ptr->queueLocalAutomatedChannelMessage(channel.channel,
+			timestamp, text);
+	return true;
+}
+
 static void companion_send_fall_canceled_message(void)
 {
 	ChannelDetails sos_channel;
@@ -1007,10 +1020,7 @@ static void companion_send_fall_canceled_message(void)
 	if (!companion_get_public_channel("#sos", sos_channel)) {
 		return;
 	}
-	if (!companion_mesh_ptr->sendGroupMessage(rtc_clock.getCurrentTimeUnique(),
-						  sos_channel.channel,
-						  companion_mesh_ptr->prefs.node_name,
-						  text, sizeof(text) - 1U)) {
+	if (!companion_send_visible_group_message(sos_channel, text)) {
 		LOG_WRN("fall: unable to queue cancel message");
 		return;
 	}
@@ -1059,10 +1069,7 @@ static bool companion_send_sos_waiting_message(void)
 		return false;
 	}
 
-	if (!companion_mesh_ptr->sendGroupMessage(rtc_clock.getCurrentTimeUnique(),
-						  sos_channel.channel,
-						  companion_mesh_ptr->prefs.node_name,
-						  text, (int)strlen(text))) {
+	if (!companion_send_visible_group_message(sos_channel, text)) {
 		LOG_WRN("emergency: unable to queue waiting message");
 		return false;
 	}
@@ -1129,10 +1136,7 @@ static bool companion_send_sos_message(bool allow_coordinates)
 
 	uint32_t packets_before = lora_radio.getPacketsSent();
 	bool tx_was_active = lora_radio.isTxActive();
-	if (!companion_mesh_ptr->sendGroupMessage(rtc_clock.getCurrentTimeUnique(),
-							  sos_channel.channel,
-							  companion_mesh_ptr->prefs.node_name,
-							  text, (int)strlen(text))) {
+	if (!companion_send_visible_group_message(sos_channel, text)) {
 		LOG_WRN("SOS: unable to queue #sos message");
 		return false;
 	}
@@ -1419,10 +1423,7 @@ static bool companion_send_tracking_message(const struct gps_position &pos)
 	char text[160];
 	snprintf(text, sizeof(text), "🐾 https://maps.google.com/?q=%.5f,%.5f",
 		 pos.latitude_ndeg / 1e9, pos.longitude_ndeg / 1e9);
-	if (!companion_mesh_ptr->sendGroupMessage(rtc_clock.getCurrentTimeUnique(),
-						  tracks_channel.channel,
-						  companion_mesh.prefs.node_name,
-						  text, (int)strlen(text))) {
+	if (!companion_send_visible_group_message(tracks_channel, text)) {
 		LOG_WRN("tracking: unable to queue %s message", group_name);
 		return false;
 	}
@@ -1490,7 +1491,10 @@ static bool companion_tracking_set_enabled(bool enabled, char *reply)
 extern "C" void companion_tracking_toggle_from_ui(void)
 {
 	char reply[CLI_REPLY_SIZE];
-	companion_tracking_set_enabled(!companion_tracking.enabled, reply);
+	if (companion_tracking_set_enabled(!companion_tracking.enabled, reply)) {
+		companion_mesh_ptr->vcontactNotify(companion_tracking.enabled ?
+			"Tracking: on" : "Tracking: off");
+	}
 }
 
 extern "C" bool companion_tracking_gps_control_allowed(void)
@@ -2296,6 +2300,11 @@ static void companion_cli_exec(const char *line, char *reply)
 		return;
 	}
 	if (handle_vcontact_cli(line, reply)) {
+		return;
+	}
+	/* Admin password belongs to repeater/room-server, not companion. */
+	if (strcmp(line, "password") == 0 || strncmp(line, "password ", 9) == 0) {
+		strcpy(reply, "Unknown command");
 		return;
 	}
 #if ZEPHCORE_HAS_AUTO_SHUTDOWN
