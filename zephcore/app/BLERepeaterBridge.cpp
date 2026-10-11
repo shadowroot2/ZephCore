@@ -45,7 +45,9 @@ constexpr uint32_t CONNECT_TIMEOUT_MS = 12000;
 constexpr uint32_t SETUP_TIMEOUT_MS = 15000;
 constexpr uint32_t RETRY_MS = 1500;
 constexpr uint8_t UNSPECIFIED_SECURITY_RETRY_COUNT = 3;
+constexpr uint32_t UNSPECIFIED_SECURITY_RECOVERY_MS = 120000;
 constexpr uint32_t TRANSPORT_REFRESH_MS = 30000;
+constexpr uint32_t ADV_REFRESH_MS = 300000;
 constexpr uint32_t HEALTH_INTERVAL_MS = 30000;
 constexpr uint32_t HEALTH_TIMEOUT_MS = 6000;
 /* One full bridge frame is 244 bytes.  Keep the transport deliberately
@@ -60,6 +62,7 @@ constexpr uint8_t TX_MAX_ATTEMPTS = 4;
 constexpr uint32_t TX_IN_FLIGHT_TIMEOUT_MS = 8000;
 constexpr size_t BRIDGE_LOG_SLOTS = 64;
 constexpr size_t BRIDGE_LOG_PAGE_SIZE = 2;
+constexpr int64_t BRIDGE_LOG_REPEAT_MS = 300000;
 
 #define ZEPHCORE_BRIDGE_SERVICE_UUID \
 	BT_UUID_128_ENCODE(0x7c6462e1, 0x7a4f, 0x4765, 0x98cf, 0x2cd2f1a65001)
@@ -153,6 +156,8 @@ static atomic_t s_unspecified_security_failures;
 static atomic_t s_security_failure_recorded;
 static atomic_t s_bond_recovery_pending;
 static atomic_t s_auto_unpair_count;
+/* Guarded by s_state_lock, including on 32-bit targets. */
+static int64_t s_unspecified_security_since_ms;
 static int64_t s_connect_deadline_ms;
 static int64_t s_setup_deadline_ms;
 static int64_t s_handshake_retry_ms;
@@ -186,12 +191,13 @@ K_SEM_DEFINE(ble_bridge_ping_sem, 0, 1);
 enum BridgeLogKind : uint8_t {
 	BRIDGE_LOG_START, BRIDGE_LOG_STOP, BRIDGE_LOG_ROLE,
 	BRIDGE_LOG_ADV, BRIDGE_LOG_ADV_STOP, BRIDGE_LOG_SCAN, BRIDGE_LOG_SCAN_STOP,
-	BRIDGE_LOG_MATCH, BRIDGE_LOG_CREATE,
+	BRIDGE_LOG_CREATE,
 	BRIDGE_LOG_CONNECT, BRIDGE_LOG_FOREIGN, BRIDGE_LOG_SECURITY_REQUEST,
 	BRIDGE_LOG_SECURITY, BRIDGE_LOG_PAIRING_FAILED, BRIDGE_LOG_DISCONNECT,
 	BRIDGE_LOG_READY, BRIDGE_LOG_ESTABLISHED, BRIDGE_LOG_CONNECT_TIMEOUT,
 	BRIDGE_LOG_WATCHDOG, BRIDGE_LOG_BOND_DELETE,
 	BRIDGE_LOG_UNPAIR_AUTO, BRIDGE_LOG_UNPAIR_MANUAL,
+	BRIDGE_LOG_KIND_COUNT,
 };
 
 struct BridgeLogEntry {
@@ -206,11 +212,53 @@ static struct k_spinlock s_bridge_log_lock;
 static uint16_t s_bridge_log_head;
 static uint16_t s_bridge_log_count;
 static uint32_t s_bridge_log_sequence;
+struct BridgeLogRepeat {
+	int64_t uptime_ms;
+	int16_t code;
+	bool valid;
+};
+static BridgeLogRepeat s_bridge_log_repeat[BRIDGE_LOG_KIND_COUNT];
+
+/* Keep the first failure and one reminder per five minutes during a retry loop. */
+static bool bridge_log_repeatable(BridgeLogKind kind)
+{
+	switch (kind) {
+	case BRIDGE_LOG_ADV:
+	case BRIDGE_LOG_ADV_STOP:
+	case BRIDGE_LOG_SCAN:
+	case BRIDGE_LOG_SCAN_STOP:
+	case BRIDGE_LOG_CREATE:
+	case BRIDGE_LOG_CONNECT:
+	case BRIDGE_LOG_FOREIGN:
+	case BRIDGE_LOG_SECURITY_REQUEST:
+	case BRIDGE_LOG_SECURITY:
+	case BRIDGE_LOG_PAIRING_FAILED:
+	case BRIDGE_LOG_DISCONNECT:
+	case BRIDGE_LOG_READY:
+	case BRIDGE_LOG_CONNECT_TIMEOUT:
+	case BRIDGE_LOG_WATCHDOG:
+		return true;
+	default:
+		return false;
+	}
+}
 
 static void bridge_log(BridgeLogKind kind, int code = 0)
 {
 	const int64_t now = k_uptime_get();
 	k_spinlock_key_t key = k_spin_lock(&s_bridge_log_lock);
+	if (kind == BRIDGE_LOG_START || kind == BRIDGE_LOG_ESTABLISHED ||
+	    kind == BRIDGE_LOG_UNPAIR_AUTO || kind == BRIDGE_LOG_UNPAIR_MANUAL) {
+		memset(s_bridge_log_repeat, 0, sizeof(s_bridge_log_repeat));
+	} else if (bridge_log_repeatable(kind)) {
+		BridgeLogRepeat &last = s_bridge_log_repeat[kind];
+		if (last.valid && last.code == code && now >= last.uptime_ms &&
+		    now - last.uptime_ms < BRIDGE_LOG_REPEAT_MS) {
+			k_spin_unlock(&s_bridge_log_lock, key);
+			return;
+		}
+		last = {now, static_cast<int16_t>(code), true};
+	}
 	s_bridge_log[s_bridge_log_head] = {now, ++s_bridge_log_sequence,
 		static_cast<int16_t>(code), kind};
 	s_bridge_log_head = (s_bridge_log_head + 1) % BRIDGE_LOG_SLOTS;
@@ -398,25 +446,41 @@ static bool clear_peer_bond()
 	return true;
 }
 
-static void recover_peer_bond_on_security_failure(enum bt_security_err err, bool pairing_failed = false)
+static void clear_unspecified_security_failures()
 {
-	bool recover = err == BT_SECURITY_ERR_AUTH_FAIL ||
-		       err == BT_SECURITY_ERR_PIN_OR_KEY_MISSING ||
-		       err == BT_SECURITY_ERR_KEY_REJECTED ||
-		       err == BT_SECURITY_ERR_AUTH_REQUIREMENT;
-	if (err == BT_SECURITY_ERR_UNSPECIFIED && pairing_failed) {
-		const int failures = atomic_inc(&s_unspecified_security_failures) + 1;
-		recover = failures >= UNSPECIFIED_SECURITY_RETRY_COUNT;
-	} else if (err != BT_SECURITY_ERR_UNSPECIFIED) {
-		atomic_set(&s_unspecified_security_failures, 0);
-	}
-	if (!recover) return;
-	if (atomic_set(&s_bond_recovery_attempted, 1)) return;
+	k_spinlock_key_t key = k_spin_lock(&s_state_lock);
 	atomic_set(&s_unspecified_security_failures, 0);
+	s_unspecified_security_since_ms = 0;
+	k_spin_unlock(&s_state_lock, key);
+}
+
+static void queue_peer_bond_recovery(enum bt_security_err err)
+{
+	if (atomic_set(&s_bond_recovery_attempted, 1)) return;
+	clear_unspecified_security_failures();
 	/* bt_unpair() disconnects the ACL and writes settings. Do that from the
 	 * repeater loop, not from Zephyr's security callback. */
 	atomic_set(&s_bond_recovery_pending, err);
 	if (s_dispatcher) s_dispatcher->notifyWake();
+}
+
+static void recover_peer_bond_on_security_failure(enum bt_security_err err)
+{
+	if (atomic_get(&s_bond_recovery_attempted)) return;
+	bool recover = err == BT_SECURITY_ERR_AUTH_FAIL ||
+		       err == BT_SECURITY_ERR_PIN_OR_KEY_MISSING ||
+		       err == BT_SECURITY_ERR_KEY_REJECTED ||
+		       err == BT_SECURITY_ERR_AUTH_REQUIREMENT;
+	if (err == BT_SECURITY_ERR_UNSPECIFIED) {
+		k_spinlock_key_t key = k_spin_lock(&s_state_lock);
+		const int failures = atomic_inc(&s_unspecified_security_failures) + 1;
+		if (failures == 1) s_unspecified_security_since_ms = k_uptime_get();
+		k_spin_unlock(&s_state_lock, key);
+		return;
+	}
+	clear_unspecified_security_failures();
+	if (!recover) return;
+	queue_peer_bond_recovery(err);
 }
 
 static const char *fault_name(int fault)
@@ -552,6 +616,7 @@ static void link_established()
 	s_health_send_failures = 0;
 	atomic_set(&s_bond_recovery_attempted, 0);
 	atomic_set(&s_unspecified_security_failures, 0);
+	s_unspecified_security_since_ms = 0;
 	atomic_set(&s_bond_recovery_pending, 0);
 	atomic_set(&s_last_fault, BRIDGE_FAULT_NONE);
 	atomic_set(&s_last_security_error, 0);
@@ -1024,6 +1089,11 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 	if (was_active && reason == BT_HCI_ERR_TERM_DUE_TO_MIC_FAIL) {
 		recover_peer_bond_on_security_failure(BT_SECURITY_ERR_KEY_REJECTED);
 	}
+	/* An unspecified encryption failure need not emit pairing_failed(). Wait
+	 * for the failed ACL to close before deleting its bond. */
+	const bool repeated_security_failure = was_active &&
+		atomic_get(&s_security_failure_recorded) &&
+		atomic_get(&s_unspecified_security_failures) >= UNSPECIFIED_SECURITY_RETRY_COUNT;
 	atomic_set(&s_last_disconnect_reason, reason);
 	atomic_inc(&s_reconnect_count);
 	struct bt_conn *owned = detach_link(conn);
@@ -1036,6 +1106,7 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 	 * stopped advertising.  Re-enter the selected role in both cases. */
 	atomic_set(&s_adv_running, 0);
 	schedule_retry();
+	if (repeated_security_failure) queue_peer_bond_recovery(BT_SECURITY_ERR_UNSPECIFIED);
 }
 
 static void security_changed(struct bt_conn *conn, bt_security_t level, enum bt_security_err err)
@@ -1047,13 +1118,13 @@ static void security_changed(struct bt_conn *conn, bt_security_t level, enum bt_
 		atomic_set(&s_last_fault, BRIDGE_FAULT_SECURITY);
 		atomic_set(&s_last_security_error, err);
 		const bool first_failure = atomic_set(&s_security_failure_recorded, 1) == 0;
-		if (first_failure) {
+		if (first_failure || (err != BT_SECURITY_ERR_UNSPECIFIED &&
+				 err != BT_SECURITY_ERR_SUCCESS)) {
 			recover_peer_bond_on_security_failure(err);
 		}
-		/* Zephyr may invoke pairing_failed() after security_changed() in the
-		 * same SMP completion path. Do not tear down the active link before
-		 * that callback records an otherwise ambiguous error 9. The setup
-		 * watchdog will disconnect if the host leaves the failed ACL up. */
+		/* An encryption failure may report only security_changed(), without
+		 * pairing_failed(). Count it once per ACL. Leave an ambiguous error 9
+		 * connected until the setup watchdog allows a late SMP callback. */
 		if (err == BT_SECURITY_ERR_UNSPECIFIED) {
 			k_spinlock_key_t key = k_spin_lock(&s_state_lock);
 			if (first_failure) s_setup_deadline_ms = k_uptime_get() + SETUP_TIMEOUT_MS;
@@ -1065,9 +1136,10 @@ static void security_changed(struct bt_conn *conn, bt_security_t level, enum bt_
 		return;
 	}
 	bridge_log(BRIDGE_LOG_SECURITY, 0);
-	atomic_set(&s_unspecified_security_failures, 0);
 	bool is_central;
 	k_spinlock_key_t lock_key = k_spin_lock(&s_state_lock);
+	atomic_set(&s_unspecified_security_failures, 0);
+	s_unspecified_security_since_ms = 0;
 	is_central = atomic_get(&s_is_central);
 	if (is_central && s_discovery_started) {
 		k_spin_unlock(&s_state_lock, lock_key);
@@ -1103,7 +1175,10 @@ static void pairing_failed(struct bt_conn *conn, enum bt_security_err reason)
 {
 	if (!is_active_link(conn)) return;
 	bridge_log(BRIDGE_LOG_PAIRING_FAILED, reason);
-	recover_peer_bond_on_security_failure(reason, true);
+	if (!atomic_set(&s_security_failure_recorded, 1) ||
+	    reason != BT_SECURITY_ERR_UNSPECIFIED) {
+		recover_peer_bond_on_security_failure(reason);
+	}
 }
 
 static struct bt_conn_auth_info_cb bridge_auth_info_callbacks = {
@@ -1130,9 +1205,8 @@ static void scan_found(const bt_addr_le_t *addr, int8_t rssi, uint8_t type, stru
 		addr->type != peer_addr_type ||
 		memcmp(addr->a.val, peer_mac, sizeof(peer_mac)) != 0) return;
 	atomic_set(&s_last_peer_rssi, rssi);
-	bridge_log(BRIDGE_LOG_MATCH, rssi);
 	int stop_err = bt_le_scan_stop();
-	bridge_log(BRIDGE_LOG_SCAN_STOP, stop_err);
+	if (stop_err != 0 && stop_err != -EALREADY) bridge_log(BRIDGE_LOG_SCAN_STOP, stop_err);
 	if (stop_err == 0 || stop_err == -EALREADY) atomic_set(&s_scan_running, 0);
 	if (stop_err != 0 && stop_err != -EALREADY) {
 		LOG_WRN("BLE bridge scan stop failed: %d", stop_err);
@@ -1151,7 +1225,7 @@ static void scan_found(const bt_addr_le_t *addr, int8_t rssi, uint8_t type, stru
 	if (s_dispatcher) s_dispatcher->notifyWake();
 	struct bt_conn *conn = nullptr;
 	int err = bt_conn_le_create(addr, BT_CONN_LE_CREATE_CONN, BT_LE_CONN_PARAM_DEFAULT, &conn);
-	bridge_log(BRIDGE_LOG_CREATE, err);
+	if (err || !conn) bridge_log(BRIDGE_LOG_CREATE, err ? err : -EIO);
 	if (err == 0 && conn) {
 		/* bridge off can race an advertisement already being processed. */
 		if (!atomic_get(&s_started) || !connection_is_peer(conn)) {
@@ -1179,14 +1253,14 @@ static void start_scan()
 		/* EALREADY does not install our scan callback. Recreate the explicit
 		 * scanner rather than reporting a healthy scan with a stale callback. */
 		const int stop_err = bt_le_scan_stop();
-		bridge_log(BRIDGE_LOG_SCAN_STOP, stop_err);
+		if (stop_err != 0) bridge_log(BRIDGE_LOG_SCAN_STOP, stop_err);
 		if (stop_err == 0) {
 			atomic_set(&s_scan_running, 0);
 			err = bt_le_scan_start(BT_LE_SCAN_PASSIVE, scan_found);
 		}
 		else err = stop_err;
 	}
-	bridge_log(BRIDGE_LOG_SCAN, err);
+	if (err) bridge_log(BRIDGE_LOG_SCAN, err);
 	if (err) {
 		LOG_WRN("BLE bridge scan failed: %d", err);
 		schedule_retry();
@@ -1221,17 +1295,19 @@ static void start_advertising()
 		/* An existing legacy advertiser need not be enabled. Recreate it so
 		 * the local flag cannot claim advertising on this return alone. */
 		const int stop_err = bt_le_adv_stop();
-		bridge_log(BRIDGE_LOG_ADV_STOP, stop_err);
+		if (stop_err != 0) bridge_log(BRIDGE_LOG_ADV_STOP, stop_err);
 		if (stop_err == 0) err = bt_le_adv_start(&adv_param, bridge_ad,
 			ARRAY_SIZE(bridge_ad), nullptr, 0);
 		else err = stop_err;
 	}
-	bridge_log(BRIDGE_LOG_ADV, err);
+	if (err) bridge_log(BRIDGE_LOG_ADV, err);
 	if (err == 0) {
 		atomic_set(&s_adv_running, 1);
 		k_spinlock_key_t lock_key = k_spin_lock(&s_state_lock);
 		s_retry_at_ms = 0;
-		s_transport_refresh_ms = k_uptime_get() + TRANSPORT_REFRESH_MS;
+		/* A successful advertiser stays active until it connects. Keep a slow
+		 * controller refresh, but do not interrupt reconnect every 30 seconds. */
+		s_transport_refresh_ms = k_uptime_get() + ADV_REFRESH_MS;
 		k_spin_unlock(&s_state_lock, lock_key);
 	}
 	else {
@@ -1244,17 +1320,19 @@ static bool configure_peer()
 {
 	if (!atomic_get(&s_started) || !mac_is_set(s_prefs.peer_mac)) return false;
 	const int scan_stop_err = bt_le_scan_stop();
-	bridge_log(BRIDGE_LOG_SCAN_STOP, scan_stop_err);
+	if (scan_stop_err != 0 && scan_stop_err != -EALREADY)
+		bridge_log(BRIDGE_LOG_SCAN_STOP, scan_stop_err);
 	if (scan_stop_err == 0) atomic_set(&s_scan_running, 0);
 	/* reset_link clears s_adv_running; stop the controller before that. */
 	const int adv_stop_err = bt_le_adv_stop();
-	bridge_log(BRIDGE_LOG_ADV_STOP, adv_stop_err);
+	if (adv_stop_err != 0 && adv_stop_err != -EALREADY)
+		bridge_log(BRIDGE_LOG_ADV_STOP, adv_stop_err);
 	reset_link();
 	purge_tx_queue();
 	atomic_set(&s_is_central, memcmp(s_local_addr.a.val, s_prefs.peer_mac, 6) < 0);
 	bridge_log(BRIDGE_LOG_ROLE, atomic_get(&s_is_central) ? 1 : 0);
 	atomic_set(&s_bond_recovery_attempted, 0);
-	atomic_set(&s_unspecified_security_failures, 0);
+	clear_unspecified_security_failures();
 	atomic_set(&s_bond_recovery_pending, 0);
 	if (atomic_get(&s_is_central)) start_scan();
 	else start_advertising();
@@ -1335,6 +1413,7 @@ bool ble_bridge_start(RepeaterDataStore *store, mesh::Dispatcher *dispatcher)
 	atomic_set(&s_reconnect_count, 0);
 	{
 		k_spinlock_key_t lock_key = k_spin_lock(&s_state_lock);
+		s_unspecified_security_since_ms = 0;
 		s_connect_deadline_ms = 0;
 		s_setup_deadline_ms = 0;
 		s_retry_at_ms = 0;
@@ -1414,6 +1493,7 @@ void ble_bridge_clear_logs(void)
 	k_spinlock_key_t key = k_spin_lock(&s_bridge_log_lock);
 	s_bridge_log_head = 0;
 	s_bridge_log_count = 0;
+	memset(s_bridge_log_repeat, 0, sizeof(s_bridge_log_repeat));
 	k_spin_unlock(&s_bridge_log_lock, key);
 }
 
@@ -1468,7 +1548,6 @@ void ble_bridge_get_logs(char *out, size_t out_len, uint32_t now_epoch, unsigned
 		case BRIDGE_LOG_ADV_STOP: snprintf(event, sizeof(event), "adv-stop=%d", code); break;
 		case BRIDGE_LOG_SCAN: snprintf(event, sizeof(event), "scan=%d", code); break;
 		case BRIDGE_LOG_SCAN_STOP: snprintf(event, sizeof(event), "scan-stop=%d", code); break;
-		case BRIDGE_LOG_MATCH: snprintf(event, sizeof(event), "seen-rssi=%d", code); break;
 		case BRIDGE_LOG_CREATE: snprintf(event, sizeof(event), "create=%d", code); break;
 		case BRIDGE_LOG_CONNECT: snprintf(event, sizeof(event), "acl=%02X", code); break;
 		case BRIDGE_LOG_FOREIGN: snprintf(event, sizeof(event), "foreign=%d", code); break;
@@ -1498,7 +1577,7 @@ bool ble_bridge_unpair(void)
 	bridge_log(BRIDGE_LOG_UNPAIR_MANUAL, cleared ? 0 : -1);
 	if (!cleared) return false;
 	atomic_set(&s_bond_recovery_attempted, 0);
-	atomic_set(&s_unspecified_security_failures, 0);
+	clear_unspecified_security_failures();
 	atomic_set(&s_bond_recovery_pending, 0);
 	return true;
 }
@@ -1761,7 +1840,27 @@ void ble_bridge_drain(mesh::Dispatcher *dispatcher)
 void ble_bridge_maintain(void)
 {
 	if (!atomic_get(&s_started) || !mac_is_set(s_prefs.peer_mac)) return;
+	const int64_t now = k_uptime_get();
+	k_spinlock_key_t recovery_key = k_spin_lock(&s_state_lock);
+	const bool security_stalled = !s_conn &&
+		atomic_get(&s_unspecified_security_failures) > 0 &&
+		now - s_unspecified_security_since_ms >= UNSPECIFIED_SECURITY_RECOVERY_MS &&
+		!atomic_get(&s_bond_recovery_attempted);
+	if (security_stalled) {
+		atomic_set(&s_bond_recovery_attempted, 1);
+		atomic_set(&s_unspecified_security_failures, 0);
+		s_unspecified_security_since_ms = 0;
+		atomic_set(&s_bond_recovery_pending, BT_SECURITY_ERR_UNSPECIFIED);
+	}
+	k_spin_unlock(&s_state_lock, recovery_key);
+	if (security_stalled && s_dispatcher) s_dispatcher->notifyWake();
 	const int recovery_error = atomic_set(&s_bond_recovery_pending, 0);
+	if (recovery_error == BT_SECURITY_ERR_UNSPECIFIED && link_has_conn()) {
+		/* A new ACL may have started while recovery was queued. Let its
+		 * security/handshake finish before touching the stored bond. */
+		if (!link_is_established()) atomic_set(&s_bond_recovery_pending, recovery_error);
+		return;
+	}
 	if (recovery_error) {
 		reset_link();
 		const bool cleared = clear_peer_bond();
@@ -1773,7 +1872,6 @@ void ble_bridge_maintain(void)
 		}
 		return;
 	}
-	const int64_t now = k_uptime_get();
 	bool tx_timeout = false;
 	k_spinlock_key_t tx_key = k_spin_lock(&s_tx_lock);
 	if (s_tx_in_flight && s_tx_in_flight_deadline_ms && now >= s_tx_in_flight_deadline_ms) {
@@ -1855,7 +1953,7 @@ void ble_bridge_maintain(void)
 		else {
 			if (atomic_get(&s_adv_running)) {
 				const int stop_err = bt_le_adv_stop();
-				bridge_log(BRIDGE_LOG_ADV_STOP, stop_err);
+				if (stop_err != 0) bridge_log(BRIDGE_LOG_ADV_STOP, stop_err);
 				if (stop_err != 0) {
 					LOG_WRN("BLE bridge advertising stop failed: %d", stop_err);
 					schedule_retry();
@@ -1911,8 +2009,15 @@ uint32_t ble_bridge_ms_until_next(void)
 		s_conn || s_connect_deadline_ms ? 0 : s_transport_refresh_ms,
 		s_conn && s_link_established && !atomic_get(&s_health_token) ? s_health_due_ms : 0,
 		s_conn && s_link_established ? s_health_deadline_ms : 0 };
+	const int64_t security_recovery = !s_conn &&
+		atomic_get(&s_unspecified_security_failures) > 0 &&
+		!atomic_get(&s_bond_recovery_attempted) ?
+		s_unspecified_security_since_ms + UNSPECIFIED_SECURITY_RECOVERY_MS : 0;
 	for (const int64_t candidate : candidates) {
 		if (candidate && (!deadline || candidate < deadline)) deadline = candidate;
+	}
+	if (security_recovery && (!deadline || security_recovery < deadline)) {
+		deadline = security_recovery;
 	}
 	k_spin_unlock(&s_state_lock, lock_key);
 	lock_key = k_spin_lock(&s_tx_lock);
@@ -1940,10 +2045,12 @@ void ble_bridge_stop()
 	bridge_log(BRIDGE_LOG_STOP);
 	atomic_set(&s_bond_recovery_pending, 0);
 	const int scan_stop_err = bt_le_scan_stop();
-	bridge_log(BRIDGE_LOG_SCAN_STOP, scan_stop_err);
+	if (scan_stop_err != 0 && scan_stop_err != -EALREADY)
+		bridge_log(BRIDGE_LOG_SCAN_STOP, scan_stop_err);
 	atomic_set(&s_scan_running, 0);
 	const int adv_stop_err = bt_le_adv_stop();
-	bridge_log(BRIDGE_LOG_ADV_STOP, adv_stop_err);
+	if (adv_stop_err != 0 && adv_stop_err != -EALREADY)
+		bridge_log(BRIDGE_LOG_ADV_STOP, adv_stop_err);
 	cancel_pending_connection();
 	struct bt_conn *conn = detach_link();
 	if (conn) {

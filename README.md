@@ -29,7 +29,8 @@ the [Board Porting Guide](zephcore/boards/example_board/README.md).
 
 This branch is based on author release **1.17.4-zephcore**, with ShadoW
 extensions layered over the upstream firmware. See
-[custom features and migration](docs/SHADOW_FEATURES.md).
+[the full ShadoW feature list](SHADOW_FEATURES.MD),
+[CLI commands by role](COMMANDS.MD), and the [hardware/validation log](SHADOW_CONTEXT.md).
 
 - **Companion** (default) -- connects to MeshCore mobile apps via BLE/USB. Contacts, channels, offline message queue.
 - **Repeater** -- forwards packets, configured via USB serial CLI. See the [Repeater CLI Command Reference](docs/Repeater_CLI_commands.md) for all available commands.
@@ -37,6 +38,20 @@ extensions layered over the upstream firmware. See
   (ESP32) or BLE (ESP32/nRF), with reconnect, ping and duplicate suppression.
 - **Room Server** -- store-and-forward shared message room (a "BBS"). Clients log in with an admin or guest password and post messages; the server pushes each new post to every other logged-in client. No BLE; configured via the same USB serial CLI as the repeater.
 - **Observer** (ESP32 only) -- listen-only node that publishes received LoRa packets to MQTT over WiFi STA. Configured at runtime via serial CLI.
+
+## ShadoW extensions
+
+| Area | Added or changed behavior |
+| --- | --- |
+| Companion safety | GPS-aware SOS with interim messages and a five-minute fallback; Fall detection on M3/T-1000E with adjustable sensitivity, repeating alarm and physical cancellation. Fall remains audible when the buzzer is muted; manual SOS respects mute. |
+| Tracking and vContact | Configurable tracking group/interval. Outgoing SOS/Fall and Tracking messages also appear locally in their configured groups; button toggles report their new state in vContact. Local display does not confirm LoRa delivery. |
+| Repeater battery | `battery` status plus configurable alert, threshold, interval and destination group. Defaults: on, 12 hours, 3250 mV on nRF52 (3500 mV elsewhere), `#zephcore`. Three low readings are required; the alert uses the last GPS fix or saved location without waking GPS and does not shut down the repeater. |
+| Inter-band bridge | ESP-NOW or BLE backhaul with keyed forwarding of group floods and adverts only; direct/admin packets stay on their LoRa network. Duplicate suppression, delayed forwarding, `bridge ping`, automatic reconnect and `bridge logs` diagnostics are included. BLE bond recovery handles confirmed authentication failures; long-duration hardware reconnect is not yet certified. |
+| Controls and indicators | T-1000E/M3: one tap arms SOS for a hold (otherwise flood advert), then 2/3/4/5 taps toggle Tracking/buzzer/LEDs/GPS. Board-specific charging indication, calibrated battery curves, M1 dual heartbeat when BLE is disconnected, and T-ECHO USB charging indication are preserved. |
+| XIAO nRF + Wio-SX1262 | Repeater System OFF after `shutdown y` (confirmed on hardware), 100 mA charge-current setting and nominal `0.1 A` USB telemetry, plus RX recovery/reboot watchdog and `get radio.diag`. An optional L76K companion variant is documented in [GPS_L76K.md](zephcore/boards/nrf52840/xiao_nrf52840/GPS_L76K.md); the ordinary build stays GPS-free. |
+| CLI, profiles and storage | Shared companion USB/vContact help, `uptime`, sorted commands, build-date `clkreboot`, 867.935 MHz/434.030 MHz defaults, versioned custom settings tail, and upstream role-change erase behavior. Export identity before switching companion ↔ repeater. |
+
+Other board adaptations include M1 battery/heartbeat, M3 AHT10/ADC/Fall, T-1000E sensors, M6 GPS/charge sensing, M5 E-Ink/USB CLI, Heltec V3 battery/serial fixes, T-ECHO LED polarity, ProMicro GPS/display, Pico/Pico W radio/settings, and Heltec V4.3 `output.power` presets. Companion builds also exist for Wireless Tracker V2; RAK4631 repeater 868 has been clean-built. Exact behavior, limitations and hardware-validation status are in [SHADOW_FEATURES.MD](SHADOW_FEATURES.MD).
 
 ## Updating from ShadoW 1.16.8 to 1.17.4
 
@@ -63,11 +78,12 @@ documented in the [1.17.4 release notes](releasenotes/RELEASE_NOTES_1.17.4-zephc
   transmit-airtime accounting, and stricter `set ... default` parsing.
 
 The ShadoW LED charging priorities and the separate repeater-bridge BLE
-security policy remain board/role-specific. The initial 1.17.4 integration
-was clean-built for T1000-E, M1, M3, T-ECHO, XIAO nRF, M6 bridge and Heltec
-V3 bridge 433/868. Subsequent CLI/clock changes were rebuilt for T1000-E and
-M1 (M1 predates the final help reordering). Long-running hardware validation
-of this integration is still pending.
+security policy remain board/role-specific. Later builds include T-1000E/M3/M1
+with local vContact messages, M6 ↔ Heltec V3 BLE bridge, XIAO nRF repeater,
+and RAK4631 repeater 868. The XIAO shutdown fix and 22 hours of continuous
+operation of the current M6/Heltec bridge pair were confirmed on devices;
+sustained bridge auto-reconnect, the
+optional XIAO L76K variant, and other new hardware paths still need validation.
 
 ## Building
 
@@ -91,6 +107,10 @@ west build -b wio_tracker_l1 zephcore --pristine -- \
 # Repeater
 west build -b rak4631 zephcore --pristine -- \
   -DEXTRA_CONF_FILE="boards/common/repeater.conf"
+
+# XIAO nRF52840 companion with optional L76K GNSS; read GPS_L76K.md first
+west build -b xiao_nrf52840 zephcore --pristine -- \
+  -DEXTRA_CONF_FILE="boards/nrf52840/xiao_nrf52840/gps_l76k.conf"
 
 # Repeater (debug logging)
 west build -b rak4631 zephcore --pristine -- \
@@ -188,7 +208,7 @@ The old `txdelay`, `rxdelay`, and `direct.txdelay` commands are still accepted f
 
 - **LoRa RX duty cycle**: chip-autonomous receive windowing (sniff mode) reduces LoRa RX current from ~10-15mA to ~3-5mA. Off by default; toggle at runtime with `set rxduty on/off` (SX126x only — unsupported on LR1110 due to a mid-preamble lock issue, and on SX127x). Window timing is auto-sized per SF/BW/preamble from the SX126x datasheet constraints.
 - **Production by default**: No logging, no asserts, reboot-on-fatal. Add `debug.conf` to enable logging.
-- **GPIO-gated GPS**: Powered on only during fix acquisition
+- **GPS duty cycling**: Boards with a switchable GNSS supply power it for fix acquisition. The optional XIAO L76K add-on has no power switch and stays powered even when `gps off` stops polling.
 
 ## Configuration
 
@@ -207,10 +227,11 @@ Key Kconfig options (set in board configs or via `-D` flags):
 | `CONFIG_ZEPHCORE_APC` | y (compiled in, runtime OFF) | Adaptive Power Control — enable at runtime via CLI |
 | `CONFIG_ZEPHCORE_DEFAULT_TX_POWER_DBM` | 22 | Initial TX power; lower for boards with external PA |
 | `CONFIG_ZEPHCORE_MAX_TX_POWER_DBM` | 22 | Hard cap (radio adapter clamps above this) |
-| `CONFIG_ZEPHCORE_MAX_CONTACTS` | 350 | Contact storage slots (companion) |
+| `CONFIG_ZEPHCORE_MAX_CONTACTS` | 200 | Contact storage slots (companion) |
 | `CONFIG_ZEPHCORE_MAX_CHANNELS` | 40 | Channel slots (companion) |
+| `CONFIG_ZEPHCORE_OFFLINE_QUEUE_SIZE` | 100 | Offline message slots (companion) |
 | `CONFIG_ZEPHCORE_BLE_PASSKEY` | 123456 | BLE pairing PIN |
-| `CONFIG_ZEPHCORE_GPS_POLL_INTERVAL_SEC` | 300 | Companion GPS duty interval between fixes (seconds, 10–86400); always-on is a runtime setting (`set gps duty 0`) |
+| `CONFIG_ZEPHCORE_GPS_POLL_INTERVAL_SEC` | 300 | Companion GPS duty interval between fixes (seconds, 0–86400); 0 means always-on (`set gps duty 0`) |
 | `CONFIG_ZEPHCORE_GPS_FIRST_FIX_TIMEOUT_SEC` | 300 | Cold-start window for the very first fix (longer to allow almanac download) |
 | `CONFIG_ZEPHCORE_REPEATER_GPS_INTERVAL_SEC` | 43200 | Repeater/room-server GPS duty interval boot default (12 h); 0 = always-on |
 | `CONFIG_ZEPHCORE_WIFI_OTA` | n | WiFi AP + HTTP OTA updates (ESP32 repeaters, requires `--sysbuild`) |
