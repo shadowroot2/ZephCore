@@ -244,7 +244,9 @@ functions = [
     'static void cancel_pending_connection()',
     'static void reset_link(const struct bt_conn *expected = nullptr)',
     'static bool clear_peer_bond()',
-    'static void recover_peer_bond_on_security_failure(enum bt_security_err err, bool pairing_failed = false)',
+    'static void clear_unspecified_security_failures()',
+    'static void queue_peer_bond_recovery(enum bt_security_err err)',
+    'static void recover_peer_bond_on_security_failure(enum bt_security_err err)',
     'static void clear_discovery_state()',
     'static bool configure_peer()',
     'bool ble_bridge_start(RepeaterDataStore *store, mesh::Dispatcher *dispatcher)',
@@ -333,6 +335,9 @@ int main() {
     fresh(false); atomic_set(&s_is_central,0); adv_start_error_once=-EALREADY;
     start_advertising();
     assert(adverts==2 && adv_stops==1 && atomic_get(&s_adv_running));
+    assert(s_transport_refresh_ms==now_ms+ADV_REFRESH_MS);
+    now_ms+=TRANSPORT_REFRESH_MS; ble_bridge_maintain();
+    assert(adverts==2 && adv_stops==1);
     ble_bridge_get_diagnostics(phase,sizeof(phase));
     assert(strstr(phase,"p=adv")!=nullptr);
     fresh(false); atomic_set(&s_is_central,0); atomic_set(&s_adv_running,1);
@@ -631,7 +636,8 @@ int main() {
     s_last_peer_rssi=-48;
     ble_bridge_get_diagnostics(diagnostics,sizeof(diagnostics));
     assert(strstr(diagnostics,"rs=-48")!=nullptr);
-    // A generic security=9 alone is not evidence of a bad bond.
+    // Repeated security=9 without pairing_failed must recover too. Each ACL
+    // contributes once; a plain 0x3e disconnect is not a security failure.
     fresh(false); security_level=1;
     for (int i=0;i<3;++i) {
         connected(&fake_conn,0);
@@ -640,14 +646,35 @@ int main() {
         disconnected(&fake_conn,0x3e);
     }
     ble_bridge_maintain();
-    assert(unpairs==0 && s_auto_unpair_count==0);
+    assert(unpairs==1 && s_auto_unpair_count==1);
+    fresh(false); security_level=1;
+    for (int i=0;i<3;++i) {
+        connected(&fake_conn,0);
+        security_changed(&fake_conn,1,BT_SECURITY_ERR_UNSPECIFIED);
+        disconnected(&fake_conn,0x3e);
+    }
+    assert(s_bond_recovery_pending==BT_SECURITY_ERR_UNSPECIFIED);
+    connected(&fake_conn,0);
+    ble_bridge_maintain(); // do not unpair an in-progress replacement ACL
+    assert(!unpairs && s_bond_recovery_pending==BT_SECURITY_ERR_UNSPECIFIED);
+    s_link_ready=true; link_established();
+    ble_bridge_maintain(); assert(!unpairs && !s_bond_recovery_pending);
+    fresh(false); security_level=1;
+    connected(&fake_conn,0);
+    security_changed(&fake_conn,1,BT_SECURITY_ERR_UNSPECIFIED);
+    pairing_failed(&fake_conn,BT_SECURITY_ERR_AUTH_REQUIREMENT);
+    assert(s_bond_recovery_pending==BT_SECURITY_ERR_AUTH_REQUIREMENT);
+    disconnected(&fake_conn,0x3e);
+    ble_bridge_maintain(); assert(unpairs==1);
     // Zephyr can call security_changed before pairing_failed for one SMP
-    // failure. The former must not disconnect before the latter is observed.
+    // failure. Both callbacks must count as only one failed ACL.
+    fresh(false); security_level=1;
     for (int i=0;i<3;++i) {
         connected(&fake_conn,0);
         security_changed(&fake_conn,1,BT_SECURITY_ERR_UNSPECIFIED);
         assert(disconnects==0 && s_conn==&fake_conn);
         pairing_failed(&fake_conn,BT_SECURITY_ERR_UNSPECIFIED);
+        if (i<2) assert(s_unspecified_security_failures==i+1);
         disconnected(&fake_conn,0x3e);
     }
     ble_bridge_maintain();
@@ -658,6 +685,7 @@ int main() {
         connected(&fake_conn,0);
         pairing_failed(&fake_conn,BT_SECURITY_ERR_UNSPECIFIED);
         security_changed(&fake_conn,1,BT_SECURITY_ERR_UNSPECIFIED);
+        if (i<2) assert(s_unspecified_security_failures==i+1);
         disconnected(&fake_conn,0x3e);
     }
     ble_bridge_maintain(); assert(unpairs==1 && s_auto_unpair_count==1);
@@ -670,6 +698,24 @@ int main() {
     }
     ble_bridge_maintain();
     assert(unpairs==1);
+    // Peripheral may get one failed ACL, then only advertise. Recover its
+    // local bond after two minutes without a new protected connection.
+    fresh(false); security_level=1;
+    connected(&fake_conn,0);
+    security_changed(&fake_conn,1,BT_SECURITY_ERR_UNSPECIFIED);
+    disconnected(&fake_conn,0x3e);
+    assert(s_unspecified_security_failures==1);
+    s_retry_at_ms=0; s_transport_refresh_ms=0;
+    now_ms+=UNSPECIFIED_SECURITY_RECOVERY_MS-1;
+    assert(ble_bridge_ms_until_next()==1);
+    ble_bridge_maintain(); assert(!unpairs);
+    ++now_ms; ble_bridge_maintain();
+    assert(unpairs==1 && s_auto_unpair_count==1);
+    now_ms+=UNSPECIFIED_SECURITY_RECOVERY_MS;
+    ble_bridge_maintain(); assert(unpairs==1);
+    fresh(false); disconnected(&fake_conn,0x3e);
+    now_ms+=UNSPECIFIED_SECURITY_RECOVERY_MS;
+    ble_bridge_maintain(); assert(!unpairs);
     fresh(false); security_level=1;
     connected(&fake_conn,0);
     security_changed(&fake_conn,1,BT_SECURITY_ERR_UNSPECIFIED);
@@ -678,7 +724,7 @@ int main() {
     connected(&fake_conn,0);
     security_level=2;
     security_changed(&fake_conn,2,BT_SECURITY_ERR_SUCCESS);
-    assert(s_unspecified_security_failures==0 && unpairs==0);
+    assert(s_unspecified_security_failures==0 && !s_unspecified_security_since_ms && unpairs==0);
     fresh(false); security_level=1; connected(&fake_conn,0);
     security_changed(&fake_conn,1,BT_SECURITY_ERR_UNSPECIFIED);
     now_ms+=SETUP_TIMEOUT_MS; ble_bridge_maintain();
@@ -699,19 +745,35 @@ int main() {
     now_ms+=SETUP_TIMEOUT_MS; ble_bridge_maintain();
     assert(!s_conn && disconnects==1); // peer never sends HELLO
     now_ms+=RETRY_MS; ble_bridge_maintain(); assert(adverts==1);
-    // Two timestamped entries fit the remote LoRa reply, with paging and a canary.
-    fresh(); ble_bridge_clear_logs(); bridge_log(BRIDGE_LOG_ADV,0);
-    bridge_log(BRIDGE_LOG_MATCH,-60); bridge_log(BRIDGE_LOG_CONNECT,0);
+    // Normal scan/advertise refreshes must not fill the RAM ring.
+    fresh(false); ble_bridge_clear_logs(); start_scan();
+    assert(s_bridge_log_count==0);
+    fresh(false); atomic_set(&s_is_central,0); start_advertising();
+    assert(s_bridge_log_count==0);
+    adv_start_error_once=-EIO; atomic_set(&s_adv_running,0); start_advertising();
+    assert(s_bridge_log_count==1);
+    // Keep failure breadcrumbs without filling the RAM ring with retries.
+    fresh(); ble_bridge_clear_logs(); bridge_log(BRIDGE_LOG_START);
+    bridge_log(BRIDGE_LOG_CONNECT,0); bridge_log(BRIDGE_LOG_SECURITY,9);
     struct { char reply[161]; uint8_t guard[32]; } log_buffer;
     memset(&log_buffer,0xa5,sizeof(log_buffer)); memcpy(log_buffer.reply,"01|",3);
     ble_bridge_get_logs(log_buffer.reply+3,sizeof(log_buffer.reply)-3,1720000000,1);
     assert(strstr(log_buffer.reply,"logs C 1/2") && strstr(log_buffer.reply,"acl=00"));
-    assert(strstr(log_buffer.reply,"seen-rssi=-60") && strlen(log_buffer.reply)<161);
+    assert(strstr(log_buffer.reply,"security=9") && strlen(log_buffer.reply)<161);
     for (auto byte:log_buffer.guard) assert(byte==0xa5);
     ble_bridge_get_logs(log_buffer.reply,sizeof(log_buffer.reply),0,2);
-    assert(strstr(log_buffer.reply,"up+1s") && strstr(log_buffer.reply,"adv=0"));
+    assert(strstr(log_buffer.reply,"up+1s") && strstr(log_buffer.reply,"start"));
+    for (int i=0;i<100;++i) bridge_log(BRIDGE_LOG_SECURITY,9);
+    assert(s_bridge_log_count==3);
+    now_ms+=BRIDGE_LOG_REPEAT_MS-1; bridge_log(BRIDGE_LOG_SECURITY,9);
+    assert(s_bridge_log_count==3);
+    ++now_ms; bridge_log(BRIDGE_LOG_SECURITY,9);
+    assert(s_bridge_log_count==4);
+    bridge_log(BRIDGE_LOG_ESTABLISHED); bridge_log(BRIDGE_LOG_SECURITY,9);
+    assert(s_bridge_log_count==6);
     ble_bridge_clear_logs(); ble_bridge_get_logs(log_buffer.reply,sizeof(log_buffer.reply),0,1);
     assert(strcmp(log_buffer.reply,"bridge logs: empty")==0);
+    bridge_log(BRIDGE_LOG_SECURITY,9); assert(s_bridge_log_count==1);
     puts("BLE bridge: PASS (queue stress; RX fuzz; lifecycle; scan/advertise recovery; central GATT chain; SMP callback orders; late callbacks; watchdogs; CLI bounds)");
 }
 '''

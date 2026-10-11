@@ -1,46 +1,9 @@
-# ShadoW extensions over ZephCore 1.17.4
+# ShadoW extensions
 
-- Companion SOS, GPS-wait notifications and tracking; Fall detection on
-  supported boards. Fall overrides buzzer mute; manual SOS respects it.
-- Board-specific charge indication and battery calibration. XIAO charging
-  uses an independent green LED; M3/T1000/T-ECHO retain their charge priorities.
-- M3 AHT10 temperature/humidity with enclosure correction. T1000 uses the
-  upstream analog driver without MCU-temperature substitution.
-- Repeater battery alerts: configurable destination, voltage threshold and
-  interval; default on, 3250 mV, 12 hours. No forced GPS wake or shutdown.
-- Repeater Bridge includes the repeater and supports bridge on/off, ping,
-  key generation, peer configuration, transport and forwarding priority.
-  Runtime help is the command catalogue for the selected role.
-- Custom 433/868 radio profiles and uptime. The display uses the author's
-  whole-hour `get/set tz.offset`; the former minute-resolution `tz` CLI is gone.
+The maintained feature list is [SHADOW_FEATURES.MD](../SHADOW_FEATURES.MD).
+It covers companion SOS/Fall/Tracking, repeater battery alerts, BLE/ESP-NOW
+bridge recovery, board-specific controls and indicators, GPS and telemetry,
+CLI, storage migration, and hardware-validation limits.
 
-## Heltec V4.3 output-power presets
-
-`get output.power` and `set output.power 22|28|default` are V4.3-only CLI
-commands. They keep `get/set tx` as the SX1262 chip-power setting. The nominal
-22/28 dBm presets select chip power 10/22 dBm respectively, using the two
-Heltec V4 settings documented in
-[MeshCore FAQ §7.7](https://github.com/meshcore-dev/MeshCore/blob/main/docs/faq.md).
-The selected chip power is saved through the existing TX preference, including
-across reboots; there is no second conflicting power preference. `default`
-restores the board's TX default. Other chip settings report output as
-uncalibrated. These are nominal PA output presets, not measured RF power or
-EIRP; no interpolated calibration curve is assumed. The SX1262 22 dBm limit
-remains in force. Actual output needs RF measurement and must meet local limits.
-
-## Settings migration
-
-The upstream settings prefix remains unchanged. A versioned SHPF tail stores
-custom fields in the same atomic prefs write. The deployed custom companion
-202-byte layout and repeater 303-byte layout are read without interpreting their
-custom bytes as upstream extra-SF/orientation fields. Bridge and battery settings
-retain their separate files. Migration does not erase identity or contacts.
-Upstream role-change formatting remains intentional and unchanged.
-
-RP2040 retains upstream cryptographic RNG requirements: the old non-cryptographic
-fallback is not restored. RP2040 builds require a compatible entropy provider.
-The relaxed BLE authentication configuration applies only to repeater-bridge.
-
-T1000 gestures: a short press arms SOS for three seconds, followed by a hold of
-at least one second; six taps toggle tracking. Repeater GPS duty defaults to
-12 hours. Upstream radio drivers, SDK and their patches are retained.
+For commands, see [COMMANDS.MD](../COMMANDS.MD). For the chronological
+hardware and build record, see [SHADOW_CONTEXT.md](../SHADOW_CONTEXT.md).
