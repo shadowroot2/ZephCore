@@ -321,6 +321,14 @@ bool repeater_bridge_handle_command(const char *command, char *reply, size_t rep
 	uint32_t now_epoch)
 {
 	if (!command || !reply || reply_len == 0) return false;
+	if (strcmp(command, "bridge bonds") == 0) {
+		if (s_transport != BRIDGE_BLE) {
+			snprintf(reply, reply_len, "ERR: bridge bonds requires BLE");
+		} else {
+			ble_bridge_get_bonds(reply, reply_len);
+		}
+		return true;
+	}
 	if (strcmp(command, "bridge logs") == 0 || strcmp(command, "bridge logs clear") == 0 ||
 	    strncmp(command, "bridge logs ", 12) == 0) {
 		if (s_transport != BRIDGE_BLE) {
@@ -429,19 +437,18 @@ bool repeater_bridge_handle_command(const char *command, char *reply, size_t rep
 		return true;
 	}
 	if (strcmp(command, "bridge") == 0) {
-		char local[18];
-		char peer[18];
 		/* This reply also travels through LoRa, whose CLI payload cap is 161
 		 * bytes. Keep the full bridge diagnosis compact enough for that path. */
-		char diagnostics[96] = {};
+		char diagnostics[128] = {};
+		char link_metrics[40] = {};
 
-		repeater_bridge_get_addresses(local, sizeof(local), peer, sizeof(peer));
-		RepeaterBridgePrefs prefs{};
-		const unsigned int priority = s_store && s_store->loadBridgePrefs(prefs) ?
-			prefs.forward_priority : FORWARD_PRIORITY_MAX;
-		if (s_transport == BRIDGE_BLE) ble_bridge_get_diagnostics(diagnostics, sizeof(diagnostics));
-		snprintf(reply, reply_len, "bridge=%s;type=%s;pri=%u;mc=%s;pr=%s%s%s",
-			 repeater_bridge_status(), transport_name(s_transport), priority, local, peer,
+		if (s_transport == BRIDGE_BLE) {
+			ble_bridge_get_link_metrics(link_metrics, sizeof(link_metrics));
+			ble_bridge_get_diagnostics(diagnostics, sizeof(diagnostics));
+		}
+		snprintf(reply, reply_len, "%s;bridge=%s%s%s%s%s",
+			 CONFIG_ZEPHCORE_BOARD_NAME, repeater_bridge_status(),
+			 link_metrics[0] ? ";" : "", link_metrics,
 			 diagnostics[0] ? ";" : "", diagnostics);
 		return true;
 	}
