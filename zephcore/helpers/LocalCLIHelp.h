@@ -126,6 +126,7 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"password <value>\r\n"
 #if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
 		"bridge on|off|ping|logs|keygen|unpair (keygen: local)\r\n"
+		"bridge bonds\r\n"
 		"bridge logs N|clear\r\n"
 #endif
 		"neighbors\r\n"
@@ -158,6 +159,7 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 #endif
 #if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
 		"get bridge.delay\r\n"
+		"get bridge.mac\r\n"
 #endif
 #if IS_ENABLED(CONFIG_ZEPHCORE_REPEATER_UPLINK) && IS_ENABLED(CONFIG_MQTT_LIB)
 		"get uplink.status\r\n"

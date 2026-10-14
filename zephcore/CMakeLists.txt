@@ -464,6 +464,18 @@ if(ZEPHCORE_BOARD_CONF_EFFECTIVE AND EXISTS ${ZEPHCORE_BOARD_CONF_EFFECTIVE})
     zephcore_auto_pair_overlay("${ZEPHCORE_BOARD_CONF}")
 endif()
 
+# Repeater-bridge needs BLE TX power even though the companion BLE fragments
+# are skipped for repeater builds. Keep these settings role- and SoC-specific.
+if(EXTRA_CONF_FILE MATCHES "(^|[;/])([^;/]*)repeater_ble_bridge\\.conf($|[;/])")
+    if(ZEPHCORE_PLATFORM_CONF MATCHES "nrf(52|54l)_common")
+        list(APPEND ZEPHCORE_CONF_FILES
+             "${CMAKE_CURRENT_SOURCE_DIR}/boards/common/repeater_ble_bridge_nrf_tx.conf")
+    elseif(ZEPHCORE_PLATFORM_CONF MATCHES "esp32_common")
+        list(APPEND ZEPHCORE_CONF_FILES
+             "${CMAKE_CURRENT_SOURCE_DIR}/boards/common/repeater_ble_bridge_esp32_tx.conf")
+    endif()
+endif()
+
 # Production is the default. Debug logging is opt-in via debug.conf.
 
 # Auto-include WiFi OTA for ESP32 repeater builds.

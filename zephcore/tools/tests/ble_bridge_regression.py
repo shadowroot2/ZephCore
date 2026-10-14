@@ -42,6 +42,8 @@ records = source[source.index("struct __packed BridgeFrame"):
                  source.index("static RepeaterDataStore *s_store")]
 globals_ = source[source.index("static RepeaterDataStore *s_store"):
                   source.index("static const uint8_t s_default_lmk")]
+bond_records = source[source.index("struct BridgeBondSnapshot {"):
+                      source.index("static void bridge_bond_seen(")]
 
 shim = r'''
 #include <cassert>
@@ -63,6 +65,7 @@ shim = r'''
 #define IS_ENABLED(x) (x)
 #define CONFIG_SETTINGS 1
 #define CONFIG_BT_PRIVACY 0
+#define CONFIG_ZEPHCORE_BOARD_NAME "ThinkNode M6"
 #define ARRAY_SIZE(a) (sizeof(a)/sizeof((a)[0]))
 #define MAX(a,b) std::max(a,b)
 #define MIN(a,b) std::min(a,b)
@@ -97,6 +100,11 @@ static unsigned wakes;
 namespace mesh { struct Dispatcher { void notifyWake() { ++wakes; } }; }
 struct bt_conn {};
 struct bt_addr_le_t { uint8_t type; struct { uint8_t val[6]; } a; };
+struct bt_bond_info { bt_addr_le_t addr; };
+static int bt_addr_le_cmp(const bt_addr_le_t *a, const bt_addr_le_t *b) {
+    if (a->type != b->type) return int(a->type)-int(b->type);
+    return memcmp(a->a.val,b->a.val,sizeof(a->a.val));
+}
 struct bt_uuid { int value; };
 struct { bt_uuid uuid; } bridge_service_uuid{{1}}, bridge_data_uuid{{2}};
 static bt_uuid ccc_uuid{3};
@@ -124,10 +132,13 @@ struct bt_gatt_subscribe_params {
     void (*subscribe)(bt_conn *,uint8_t,bt_gatt_subscribe_params *);
     int min_security; atomic_t flags[1];
 };
+struct bt_gatt_exchange_params {
+    void (*func)(bt_conn *,uint8_t,bt_gatt_exchange_params *);
+};
 static int bt_uuid_cmp(const bt_uuid *a,const bt_uuid *b) { return a->value-b->value; }
 static uint16_t bt_gatt_attr_value_handle(const bt_gatt_attr *a) { return a->value_handle; }
-static unsigned discovers,subscribes,security_requests;
-static int discovery_error,subscribe_error,security_request_error;
+static unsigned discovers,subscribes,security_requests,mtu_exchanges;
+static int discovery_error,subscribe_error,security_request_error,mtu_exchange_error;
 static bt_gatt_discover_params *last_discovery;
 static int bt_gatt_discover(bt_conn *,bt_gatt_discover_params *p) {
     ++discovers; last_discovery=p; return discovery_error;
@@ -141,8 +152,12 @@ enum bt_security_err {
     BT_SECURITY_ERR_INVALID_PARAM, BT_SECURITY_ERR_KEY_REJECTED, BT_SECURITY_ERR_UNSPECIFIED
 };
 static void pairing_failed(bt_conn *, bt_security_err);
-struct bt_conn_auth_info_cb { void (*pairing_failed)(bt_conn *, bt_security_err); };
-static bt_conn_auth_info_cb bridge_auth_info_callbacks{pairing_failed};
+static void pairing_complete(bt_conn *, bool);
+struct bt_conn_auth_info_cb {
+    void (*pairing_complete)(bt_conn *, bool);
+    void (*pairing_failed)(bt_conn *, bt_security_err);
+};
+static bt_conn_auth_info_cb bridge_auth_info_callbacks{pairing_complete,pairing_failed};
 static int bt_conn_auth_info_cb_register(bt_conn_auth_info_cb *) { return 0; }
 static int bt_conn_set_security(bt_conn *,int) { ++security_requests; return security_request_error; }
 static bt_conn fake_conn;
@@ -153,16 +168,50 @@ static int security_level=2;
 static int bt_conn_get_security(bt_conn *) { return security_level; }
 static bt_conn *bt_conn_ref(bt_conn *c) { return c; }
 static void bt_conn_unref(bt_conn *) {}
+#define BT_HCI_OP_READ_RSSI 0x1405
+struct bt_hci_cp_read_rssi { uint16_t handle; };
+struct bt_hci_rp_read_rssi { uint8_t status; uint16_t handle; int8_t rssi; };
+struct net_buf { uint8_t data[8]; size_t len; };
+static net_buf fake_hci_cmd{}, fake_hci_rsp{};
+static int8_t link_rssi=-48;
+static bool link_rssi_available=true;
+static unsigned rssi_reads;
+static uint16_t sys_cpu_to_le16(uint16_t value) { return value; }
+static uint16_t sys_le16_to_cpu(uint16_t value) { return value; }
+static int bt_hci_get_conn_handle(bt_conn *, uint16_t *handle) { *handle=0x0042; return 0; }
+static net_buf *bt_hci_cmd_alloc(int) { fake_hci_cmd.len=0; return &fake_hci_cmd; }
+static void *net_buf_add(net_buf *buf, size_t len) {
+    auto *p=buf->data+buf->len; buf->len+=len; assert(buf->len<=sizeof(buf->data)); return p;
+}
+static int bt_hci_cmd_send_sync(uint16_t opcode, net_buf *cmd, net_buf **rsp) {
+    assert(opcode==BT_HCI_OP_READ_RSSI && cmd==&fake_hci_cmd);
+    assert(((bt_hci_cp_read_rssi *)cmd->data)->handle==0x0042);
+    ++rssi_reads;
+    if (!link_rssi_available) { *rsp=nullptr; return -EIO; }
+    bt_hci_rp_read_rssi result{0,0x0042,link_rssi};
+    memcpy(fake_hci_rsp.data,&result,sizeof(result)); fake_hci_rsp.len=sizeof(result);
+    *rsp=&fake_hci_rsp; return 0;
+}
+static void net_buf_unref(net_buf *) {}
 static uint16_t mtu = 247;
 static uint16_t bt_gatt_get_mtu(bt_conn *) { return mtu; }
+static int bt_gatt_exchange_mtu(bt_conn *,bt_gatt_exchange_params *) {
+    ++mtu_exchanges; return mtu_exchange_error;
+}
 static int transport_error;
 static unsigned sends, cancels, scans, adverts, disconnects, observed, unpairs, purges;
 static unsigned scan_stops, adv_stops;
 static int scan_start_error_once, adv_start_error_once, scan_stop_error, adv_stop_error;
 static unsigned settings_loads;
 static int unpair_error;
+static int unpair_all_error;
 static bool unpair_had_addr;
 static bt_addr_le_t last_unpair_addr;
+static bool stored_bond_present;
+static bt_addr_le_t stored_bond;
+static void bt_foreach_bond(int, void (*func)(const bt_bond_info *, void *), void *data) {
+    if (stored_bond_present) { bt_bond_info info{stored_bond}; func(&info,data); }
+}
 static void k_msgq_purge(int *) { ++purges; }
 #define BT_ID_DEFAULT 0
 #define BT_HCI_ERR_REMOTE_USER_TERM_CONN 0x13
@@ -171,8 +220,14 @@ static bt_conn *bt_conn_lookup_addr_le(int, const bt_addr_le_t *) { ++cancels; r
 static int bt_conn_disconnect(bt_conn *, uint8_t) { ++disconnects; return 0; }
 static int bt_unpair(int, const bt_addr_le_t *addr) {
     ++unpairs; unpair_had_addr=addr!=nullptr;
-    if (addr) last_unpair_addr=*addr;
-    return unpair_error;
+    if (addr) {
+        last_unpair_addr=*addr;
+        if (unpair_error==0 && stored_bond_present && bt_addr_le_cmp(addr,&stored_bond)==0)
+            stored_bond_present=false;
+        return unpair_error;
+    }
+    if (unpair_all_error==0) stored_bond_present=false;
+    return unpair_all_error;
 }
 static int bt_enable(void *) { return 0; }
 static int settings_load_subtree(const char *name) {
@@ -240,9 +295,12 @@ functions = [
     'static struct bt_conn *link_conn_ref(bool require_ready, bool require_established,\n\t\tbool *is_central, uint16_t *peer_value_handle)',
     'static void purge_tx_queue()',
     'static void retry_in_flight_tx()',
+    'static void finish_link_uptime_locked(int64_t now)',
     'static struct bt_conn *detach_link(const struct bt_conn *expected = nullptr)',
     'static void cancel_pending_connection()',
     'static void reset_link(const struct bt_conn *expected = nullptr)',
+    'static void bridge_bond_seen(const struct bt_bond_info *info, void *user_data)',
+    'static BridgeBondSnapshot bridge_bonds(const bt_addr_le_t &peer)',
     'static bool clear_peer_bond()',
     'static void clear_unspecified_security_failures()',
     'static void queue_peer_bond_recovery(enum bt_security_err err)',
@@ -269,15 +327,22 @@ functions = [
     'static uint8_t ccc_discovery_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr,\n\t\t\t\t\tstruct bt_gatt_discover_params *params)',
     'static uint8_t characteristic_discovery_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr,\n\t\t\t\t\t\t   struct bt_gatt_discover_params *params)',
     'static uint8_t service_discovery_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr,\n\t\t\t\t\t  struct bt_gatt_discover_params *params)',
+    'static void mtu_exchange_complete(struct bt_conn *conn, uint8_t err,\n\t\t\t\t  struct bt_gatt_exchange_params *params)',
+    'static void advance_secure_link()',
     'static void security_changed(struct bt_conn *conn, bt_security_t level, enum bt_security_err err)',
     'static void pairing_failed(struct bt_conn *conn, enum bt_security_err reason)',
+    'static void pairing_complete(struct bt_conn *conn, bool bonded)',
     'static void connected(struct bt_conn *conn, uint8_t err)',
     'static void tx_work_handler(struct k_work *work)',
     'void ble_bridge_maintain(void)',
     'uint32_t ble_bridge_ms_until_next(void)',
     'static const char *fault_name(int fault)',
+    'static void format_mac(char *out, size_t out_len, const uint8_t mac[6])',
     'void ble_bridge_get_diagnostics(char *out, size_t out_len)',
+    'static bool read_link_rssi(struct bt_conn *conn, int8_t *rssi)',
+    'void ble_bridge_get_link_metrics(char *out, size_t out_len)',
     'void ble_bridge_clear_logs(void)',
+    'void ble_bridge_get_bonds(char *out, size_t out_len)',
     'void ble_bridge_get_logs(char *out, size_t out_len, uint32_t now_epoch, unsigned int page)',
 ]
 
@@ -290,22 +355,29 @@ static void fresh(bool connected=true) {
     s_peer_value_handle=1; s_connect_deadline_ms=0; s_setup_deadline_ms=0;
     s_handshake_retry_ms=0; s_retry_at_ms=0; s_transport_refresh_ms=0;
     s_health_due_ms=0; s_health_deadline_ms=0; s_health_token=0;
+    s_link_up_since_ms=-1; s_last_link_up_ms=-1;
+    s_link_rssi=127; s_link_rssi_at_ms=0;
+    s_security_ready=false; s_pairing_required=false; s_pairing_complete=false;
+    s_mtu_started=false; s_mtu_ready=false; s_mtu_error=0; s_mtu_retry_at_ms=0;
     s_handshake_token=0; s_ping_token=0; s_drop_count=0;
     now_ms=1000; mtu=247; transport_error=0;
     sends=cancels=scans=adverts=disconnects=unpairs=purges=0;
     scan_stops=adv_stops=0;
     scan_start_error_once=adv_start_error_once=scan_stop_error=adv_stop_error=0;
-    unpair_error=0; unpair_had_addr=false; last_unpair_addr={};
+    unpair_error=unpair_all_error=0; unpair_had_addr=false; last_unpair_addr={};
+    stored_bond_present=false; stored_bond={};
     memcpy(fake_peer.a.val,s_prefs.peer_mac,6); fake_peer.type=s_prefs.peer_addr_type;
     rx_queued=0; security_level=2; memset(s_seen,0,sizeof(s_seen));
-    discovers=subscribes=security_requests=0;
-    discovery_error=subscribe_error=security_request_error=0;
+    discovers=subscribes=security_requests=mtu_exchanges=0;
+    discovery_error=subscribe_error=security_request_error=mtu_exchange_error=0;
     s_discovery_started=false; s_bond_recovery_attempted=0;
+    s_bond_recovery_retry_at_ms=0;
     atomic_set(&s_adv_running,0);
     atomic_set(&s_scan_running,0);
     s_unspecified_security_failures=0;
     s_security_failure_recorded=0; s_bond_recovery_pending=0;
     s_auto_unpair_count=0; s_last_peer_rssi=127;
+    link_rssi=-48; link_rssi_available=true; rssi_reads=0;
     s_last_fault=BRIDGE_FAULT_NONE; s_last_security_error=0; s_reconnect_count=0;
     clear_discovery_state();
 }
@@ -321,14 +393,49 @@ static unsigned queued() {
 }
 int main() {
     mesh::Dispatcher dispatcher; s_dispatcher=&dispatcher;
-    fresh(false); char phase[128]{};
+    fresh(false); char phase[128]{}; char metrics[40]{};
     ble_bridge_get_diagnostics(phase,sizeof(phase));
-    assert(strstr(phase,"p=retry")!=nullptr);
+    assert(strstr(phase,"phase=retry")!=nullptr);
+    ble_bridge_get_link_metrics(metrics,sizeof(metrics));
+    assert(strcmp(metrics,"up=na")==0 && rssi_reads==0);
+    char waiting_status[161]{};
+    assert(status_reply("bridge",waiting_status,sizeof(waiting_status)));
+    assert(strstr(waiting_status,";up=na;")!=nullptr);
+    assert(strstr(waiting_status,"dBm")==nullptr);
+    fresh(); s_link_established=false; link_established();
+    now_ms+=12500;
+    ble_bridge_get_diagnostics(phase,sizeof(phase));
+    ble_bridge_get_link_metrics(metrics,sizeof(metrics));
+    assert(strstr(phase,"phase=connected")!=nullptr && strcmp(metrics,"-48 dBm;up=12s")==0);
+    detach_link(); now_ms+=10000;
+    ble_bridge_get_link_metrics(metrics,sizeof(metrics));
+    assert(strcmp(metrics,"up=12s")==0 && rssi_reads==1);
+    s_conn=&fake_conn; s_link_ready=true; s_link_established=false;
+    link_established(); now_ms+=2000;
+    ble_bridge_get_link_metrics(metrics,sizeof(metrics));
+    assert(strcmp(metrics,"-48 dBm;up=2s")==0);
+    fresh(); s_link_up_since_ms=1000;
+    now_ms=1000 + (4 * 86400 + 7 * 3600 + 30) * 1000;
+    ble_bridge_get_link_metrics(metrics,sizeof(metrics));
+    assert(strcmp(metrics,"-48 dBm;up=4d7h30s")==0);
+    ble_bridge_get_link_metrics(metrics,sizeof(metrics));
+    assert(strcmp(metrics,"-48 dBm;up=4d7h30s")==0 && rssi_reads==1);
+    now_ms+=LINK_RSSI_REFRESH_MS;
+    link_rssi_available=false;
+    ble_bridge_get_link_metrics(metrics,sizeof(metrics));
+    assert(strcmp(metrics,"n/a dBm;up=4d7h35s")==0 && rssi_reads==2);
+    fresh(); atomic_set(&s_last_connect_error,0x08);
+    ble_bridge_get_diagnostics(phase,sizeof(phase));
+    assert(strstr(phase,";conn=08")!=nullptr);
+    atomic_set(&s_last_connect_error,0);
+    ble_bridge_get_diagnostics(phase,sizeof(phase));
+    assert(strstr(phase,";conn=")==nullptr);
+    fresh(false);
     scan_start_error_once=-EALREADY;
     start_scan();
     assert(scans==2 && scan_stops==1 && atomic_get(&s_scan_running));
     ble_bridge_get_diagnostics(phase,sizeof(phase));
-    assert(strstr(phase,"p=scan")!=nullptr);
+    assert(strstr(phase,"phase=scan")!=nullptr);
     fresh(false); scan_start_error_once=-EALREADY; scan_stop_error=-EIO;
     start_scan();
     assert(scans==1 && !atomic_get(&s_scan_running) && s_retry_at_ms==now_ms+RETRY_MS);
@@ -339,7 +446,7 @@ int main() {
     now_ms+=TRANSPORT_REFRESH_MS; ble_bridge_maintain();
     assert(adverts==2 && adv_stops==1);
     ble_bridge_get_diagnostics(phase,sizeof(phase));
-    assert(strstr(phase,"p=adv")!=nullptr);
+    assert(strstr(phase,"phase=adv")!=nullptr);
     fresh(false); atomic_set(&s_is_central,0); atomic_set(&s_adv_running,1);
     s_transport_refresh_ms=now_ms; adv_stop_error=-EIO;
     ble_bridge_maintain();
@@ -411,7 +518,9 @@ int main() {
     tx_work_handler(nullptr); assert(queued()==0 && sends==before && s_drop_count==1);
 
     fresh(); s_link_established=false; s_handshake_token=7;
-    assert(handle_control(control(CONTROL_READY,7)) && s_link_established);
+    assert(handle_control(control(CONTROL_READY,7)) && !s_link_established);
+    tx_work_handler(nullptr); assert(!s_link_established);
+    tx_complete(&fake_conn,last_ticket); assert(s_link_established);
     purge_tx_queue(); assert(handle_control(control(CONTROL_READY,7)) && queued()==1);
     fresh(); atomic_set(&s_is_central,0); s_link_established=false;
     assert(handle_control(control(CONTROL_HELLO,7)));
@@ -426,13 +535,28 @@ int main() {
     assert(handle_control(control(CONTROL_PONG,health)));
     assert(s_health_token==0 && s_health_deadline_ms==0 && s_ping_token==1);
     fresh(); s_health_due_ms=now_ms; ble_bridge_maintain();
+    now_ms+=HEALTH_TIMEOUT_MS; ble_bridge_maintain(); assert(!disconnects && s_conn);
+    tx_complete(&fake_conn,last_ticket);
     now_ms+=HEALTH_TIMEOUT_MS; ble_bridge_maintain(); assert(disconnects==1 && !s_conn);
+    fresh(); s_health_due_ms=now_ms; ble_bridge_maintain();
+    BridgeFrame incoming=control(CONTROL_PING,77);
+    incoming.magic=BRIDGE_MAGIC; incoming.version=BRIDGE_VERSION;
+    incoming.hash=frame_hash(incoming.raw,incoming.raw_len);
+    assert(accept_frame(&fake_conn,&incoming,offsetof(BridgeFrame,raw)+incoming.raw_len));
+    assert(s_health_token==0 && s_health_deadline_ms==0);
+    tx_complete(&fake_conn,last_ticket);
+    now_ms+=HEALTH_TIMEOUT_MS; ble_bridge_maintain(); assert(!disconnects && s_conn);
     fresh(); assert(send_frame(data_frame(),true,false)==0); tx_work_handler(nullptr);
     now_ms+=TX_IN_FLIGHT_TIMEOUT_MS; ble_bridge_maintain(); assert(disconnects==1 && !s_conn);
     fresh(); s_started=0;
     assert(ble_bridge_ms_until_next()==UINT32_MAX);
     assert(send_frame(data_frame(),true,false)==-ENOTCONN);
     // Remote reply has 161 bytes, including the optional three-byte prefix.
+    fresh(); char bridge_status[161]{};
+    assert(status_reply("bridge",bridge_status,sizeof(bridge_status)));
+    assert(strstr(bridge_status,"ThinkNode M6;bridge=connected;-48 dBm;up=na;")==bridge_status);
+    assert(strstr(bridge_status,";mc=")==nullptr && strstr(bridge_status,";pr=")==nullptr);
+    assert(strstr(bridge_status,";conn=")==nullptr);
     fresh(); s_last_fault=BRIDGE_FAULT_SECURITY_REQUEST;
     s_last_disconnect_reason=0x3e; s_last_security_error=-12345;
     s_reconnect_count=INT32_MAX;
@@ -450,6 +574,24 @@ int main() {
     assert(!s_conn && !s_link_ready && !s_link_established);
     assert(unpairs==1 && s_bond_recovery_attempted==0 && queued()==1);
     assert(s_retry_at_ms==now_ms+RETRY_MS);
+    char bonds[96];
+    ble_bridge_get_bonds(bonds,sizeof(bonds)); assert(strcmp(bonds,"bonds=0;peer=0")==0);
+    fresh(); stored_bond_present=true; stored_bond=fake_peer;
+    ble_bridge_get_bonds(bonds,sizeof(bonds));
+    assert(strstr(bonds,"bonds=1;peer=1;")!=nullptr);
+    assert(ble_bridge_unpair() && unpairs==1 && !stored_bond_present);
+    fresh(); stored_bond_present=true; stored_bond=fake_peer;
+    stored_bond.a.val[0] ^= 0x80; // bt_unpair(peer) succeeds without finding this key.
+    ble_bridge_get_bonds(bonds,sizeof(bonds));
+    assert(strstr(bonds,"bonds=1;peer=0;")!=nullptr);
+    ble_bridge_clear_logs();
+    assert(ble_bridge_unpair() && unpairs==2 && !stored_bond_present);
+    ble_bridge_get_bonds(bonds,sizeof(bonds)); assert(strcmp(bonds,"bonds=0;peer=0")==0);
+    char bond_log[161]; ble_bridge_get_logs(bond_log,sizeof(bond_log),0,1);
+    assert(strstr(bond_log,"bonds-after=0/0")!=nullptr);
+    fresh(); stored_bond_present=true; stored_bond=fake_peer;
+    stored_bond.a.val[0] ^= 0x80; unpair_all_error=-EIO;
+    assert(!ble_bridge_unpair() && unpairs==2 && stored_bond_present);
     fresh(); unpair_error=-EIO; assert(!ble_bridge_unpair() && !s_conn);
     fresh(); unpair_error=-ENOENT; assert(ble_bridge_unpair());
     fresh(); s_started=0; assert(!ble_bridge_unpair() && unpairs==0);
@@ -467,6 +609,27 @@ int main() {
     fresh(); disconnected(&fake_conn,0x3d);
     assert(s_bond_recovery_pending==BT_SECURITY_ERR_KEY_REJECTED && !unpairs);
     ble_bridge_maintain(); assert(unpairs==1 && s_auto_unpair_count==1);
+    fresh(false); stored_bond_present=true; stored_bond=fake_peer;
+    stored_bond.a.val[0] ^= 0x80;
+    s_bond_recovery_pending=BT_SECURITY_ERR_AUTH_REQUIREMENT;
+    ble_bridge_maintain();
+    assert(unpairs==2 && !stored_bond_present && s_auto_unpair_count==1);
+    fresh(false); queue_peer_bond_recovery(BT_SECURITY_ERR_AUTH_REQUIREMENT);
+    ble_bridge_maintain(); assert(unpairs==1 && s_auto_unpair_count==1);
+    stored_bond_present=true; stored_bond=fake_peer;
+    now_ms+=BOND_RECOVERY_COOLDOWN_MS-1;
+    queue_peer_bond_recovery(BT_SECURITY_ERR_AUTH_REQUIREMENT);
+    ble_bridge_maintain(); assert(unpairs==1 && stored_bond_present);
+    ++now_ms;
+    queue_peer_bond_recovery(BT_SECURITY_ERR_AUTH_REQUIREMENT);
+    ble_bridge_maintain(); assert(unpairs==2 && !stored_bond_present && s_auto_unpair_count==2);
+    fresh(false); queue_peer_bond_recovery(BT_SECURITY_ERR_UNSPECIFIED);
+    ble_bridge_maintain(); assert(unpairs==1);
+    s_unspecified_security_failures=1; s_unspecified_security_since_ms=now_ms;
+    now_ms+=BOND_RECOVERY_COOLDOWN_MS-1;
+    ble_bridge_maintain(); assert(unpairs==1);
+    ++now_ms;
+    ble_bridge_maintain(); assert(unpairs==2);
 
     fresh(); RepeaterDataStore store; stored_prefs.peer_mac[0]=1;
     assert(send_frame(data_frame(),true,false)==0); tx_work_handler(nullptr);
@@ -556,8 +719,33 @@ int main() {
     assert(s_conn && !s_link_ready && !discovers && security_requests==1);
     assert(s_setup_deadline_ms==now_ms+SETUP_TIMEOUT_MS);
     security_changed(&fake_conn,2,BT_SECURITY_ERR_SUCCESS);
+    advance_secure_link(); assert(!discovers && !mtu_exchanges); // wait for SMP bond
+    pairing_complete(&fake_conn,true); advance_secure_link();
+    assert(mtu_exchanges==1 && !discovers);
+    mtu_exchange_complete(&fake_conn,0,&s_mtu_exchange); advance_secure_link();
     assert(discovers==1 && s_discovery_started && !s_link_ready);
-    security_changed(&fake_conn,2,BT_SECURITY_ERR_SUCCESS); assert(discovers==1);
+    security_changed(&fake_conn,2,BT_SECURITY_ERR_SUCCESS);
+    advance_secure_link(); assert(discovers==1);
+    fresh(false); security_level=1; connected(&fake_conn,0);
+    security_changed(&fake_conn,2,BT_SECURITY_ERR_SUCCESS);
+    pairing_complete(&fake_conn,true);
+    mtu_exchange_error=-ENOMEM; advance_secure_link();
+    assert(mtu_exchanges==1 && !s_mtu_started && !discovers);
+    now_ms+=TX_RETRY_MS; mtu_exchange_error=0; advance_secure_link();
+    assert(mtu_exchanges==2 && s_mtu_started && !discovers);
+    mtu_exchange_complete(&fake_conn,0x05,&s_mtu_exchange);
+    advance_secure_link(); assert(!s_conn && s_last_fault==BRIDGE_FAULT_MTU);
+    fresh(false); atomic_set(&s_is_central,0); security_level=1;
+    connected(&fake_conn,0); security_changed(&fake_conn,2,BT_SECURITY_ERR_SUCCESS);
+    mtu=23; advance_secure_link(); assert(!s_link_ready);
+    pairing_complete(&fake_conn,true); advance_secure_link(); assert(!s_link_ready);
+    mtu=247; now_ms+=TX_RETRY_MS; advance_secure_link();
+    assert(s_link_ready && !s_link_established && !discovers);
+    fresh(false); security_level=1; connected(&fake_conn,0);
+    security_changed(&fake_conn,2,BT_SECURITY_ERR_SUCCESS);
+    pairing_complete(&fake_conn,true); advance_secure_link();
+    mtu_exchange_complete(&fake_conn,0,&s_mtu_exchange); advance_secure_link();
+    assert(discovers==1);
 
     // Full central callback chain: service -> value -> CCC -> confirmed subscription.
     bt_gatt_service_val service{30};
@@ -577,7 +765,10 @@ int main() {
     assert(s_link_ready && !s_link_established && s_handshake_retry_ms==now_ms);
     ble_bridge_maintain(); assert(queued()==1 && s_handshake_token);
     uint32_t hello=s_handshake_token;
-    handle_control(control(CONTROL_READY,hello)); assert(s_link_established);
+    handle_control(control(CONTROL_READY,hello)); assert(!s_link_established);
+    tx_work_handler(nullptr); tx_complete(&fake_conn,last_ticket);
+    tx_work_handler(nullptr); tx_complete(&fake_conn,last_ticket);
+    assert(s_link_established);
     notification_cb(&fake_conn,&s_subscribe,nullptr,0);
     assert(!s_conn && !s_link_established && s_last_fault==BRIDGE_FAULT_NOTIFY_LOST);
     assert(s_retry_at_ms==now_ms+RETRY_MS && !unpairs);
@@ -633,9 +824,11 @@ int main() {
     assert(last_unpair_addr.type==s_prefs.peer_addr_type);
     assert(memcmp(last_unpair_addr.a.val,s_prefs.peer_mac,6)==0);
     char diagnostics[96]{};
-    s_last_peer_rssi=-48;
-    ble_bridge_get_diagnostics(diagnostics,sizeof(diagnostics));
-    assert(strstr(diagnostics,"rs=-48")!=nullptr);
+    ble_bridge_get_link_metrics(diagnostics,sizeof(diagnostics));
+    assert(strstr(diagnostics,"dBm")==nullptr);
+    fresh(); atomic_set(&s_is_central,0);
+    ble_bridge_get_link_metrics(diagnostics,sizeof(diagnostics));
+    assert(strstr(diagnostics,"-48 dBm")!=nullptr);
     // Repeated security=9 without pairing_failed must recover too. Each ACL
     // contributes once; a plain 0x3e disconnect is not a security failure.
     fresh(false); security_level=1;
@@ -697,7 +890,7 @@ int main() {
         disconnected(&fake_conn,0x3e);
     }
     ble_bridge_maintain();
-    assert(unpairs==1);
+    assert(unpairs==2 && s_auto_unpair_count==2);
     // Peripheral may get one failed ACL, then only advertise. Recover its
     // local bond after two minutes without a new protected connection.
     fresh(false); security_level=1;
@@ -731,16 +924,20 @@ int main() {
     assert(disconnects==1 && !s_conn && !unpairs);
     fresh(); security_changed(&foreign,1,BT_SECURITY_ERR_PIN_OR_KEY_MISSING);
     assert(!unpairs && !disconnects);
-    fresh(); s_bond_recovery_attempted=1; link_established();
-    assert(!s_bond_recovery_attempted);
-    fresh(); s_last_security_error=BT_SECURITY_ERR_UNSPECIFIED;
+    fresh(); s_link_established=false; s_bond_recovery_attempted=1; link_established();
+    assert(!s_bond_recovery_attempted && !s_bond_recovery_retry_at_ms);
+    fresh(); s_link_established=false; s_last_security_error=BT_SECURITY_ERR_UNSPECIFIED;
     s_last_disconnect_reason=0x3e; s_last_connect_error=0x08;
     link_established();
     assert(s_last_security_error==0 && s_last_disconnect_reason==-1 &&
            s_last_connect_error==0 && s_last_fault==BRIDGE_FAULT_NONE);
-    fresh(false); security_request_error=-EALREADY; connected(&fake_conn,0);
+    fresh(false); stored_bond_present=true; stored_bond=fake_peer;
+    security_request_error=-EALREADY; connected(&fake_conn,0);
+    advance_secure_link(); assert(mtu_exchanges==1 && !discovers);
+    mtu_exchange_complete(&fake_conn,0,&s_mtu_exchange); advance_secure_link();
     assert(discovers==1 && !disconnects); // restored bonded encryption
-    fresh(false); atomic_set(&s_is_central,0); connected(&fake_conn,0);
+    fresh(false); atomic_set(&s_is_central,0); stored_bond_present=true;
+    stored_bond=fake_peer; connected(&fake_conn,0); advance_secure_link();
     assert(s_link_ready && !s_link_established && !discovers);
     now_ms+=SETUP_TIMEOUT_MS; ble_bridge_maintain();
     assert(!s_conn && disconnects==1); // peer never sends HELLO
@@ -752,6 +949,17 @@ int main() {
     assert(s_bridge_log_count==0);
     adv_start_error_once=-EIO; atomic_set(&s_adv_running,0); start_advertising();
     assert(s_bridge_log_count==1);
+    // Alternating disconnect reasons must not evict SMP breadcrumbs from the ring.
+    fresh(); ble_bridge_clear_logs();
+    for (int i=0;i<100;++i) {
+        bridge_log(BRIDGE_LOG_DISCONNECT,0x13);
+        bridge_log(BRIDGE_LOG_DISCONNECT,0x3e);
+    }
+    assert(s_bridge_log_count==2);
+    // A local SMP completion must remain distinguishable from an established bridge.
+    fresh(); ble_bridge_clear_logs(); pairing_complete(&fake_conn,true);
+    assert(s_bridge_log_count==1);
+    assert(s_bridge_log[0].kind==BRIDGE_LOG_PAIRING_COMPLETE && s_bridge_log[0].code==1);
     // Keep failure breadcrumbs without filling the RAM ring with retries.
     fresh(); ble_bridge_clear_logs(); bridge_log(BRIDGE_LOG_START);
     bridge_log(BRIDGE_LOG_CONNECT,0); bridge_log(BRIDGE_LOG_SECURITY,9);
@@ -774,14 +982,14 @@ int main() {
     ble_bridge_clear_logs(); ble_bridge_get_logs(log_buffer.reply,sizeof(log_buffer.reply),0,1);
     assert(strcmp(log_buffer.reply,"bridge logs: empty")==0);
     bridge_log(BRIDGE_LOG_SECURITY,9); assert(s_bridge_log_count==1);
-    puts("BLE bridge: PASS (queue stress; RX fuzz; lifecycle; scan/advertise recovery; central GATT chain; SMP callback orders; late callbacks; watchdogs; CLI bounds)");
+    puts("BLE bridge: PASS (queue stress; RX fuzz; SMP/MTU/GATT stages; ACK TX; health timing; bond recovery; late callbacks; CLI bounds)");
 }
 '''
 
 with tempfile.TemporaryDirectory(prefix="zephcore-bridge-test-") as temp:
     unit = Path(temp) / "test.cpp"
     binary = Path(temp) / "test"
-    unit.write_text(shim + constants + records + globals_ +
+    unit.write_text(shim + constants + records + globals_ + bond_records +
                     "\n".join(definition(f) for f in functions) +
                     'static bool status_reply(const char *command, char *reply, size_t reply_len) {\n' +
                     status_branch + 'return false;\n}\n' + tests)
