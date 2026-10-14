@@ -396,6 +396,7 @@ int main() {
     fresh(false); char phase[128]{}; char metrics[40]{};
     ble_bridge_get_diagnostics(phase,sizeof(phase));
     assert(strstr(phase,"phase=retry")!=nullptr);
+    assert(strstr(phase,";unpair=")<strstr(phase,";queue="));
     ble_bridge_get_link_metrics(metrics,sizeof(metrics));
     assert(strcmp(metrics,"up=na")==0 && rssi_reads==0);
     char waiting_status[161]{};

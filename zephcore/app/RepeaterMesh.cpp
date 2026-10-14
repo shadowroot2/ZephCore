@@ -1463,6 +1463,7 @@ static const char *repeater_remote_help(const char *command)
 		"Help 3/18: "
 #if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
 		"bridge on|off|ping|logs|keygen|unpair (keygen local); "
+		"bridge bonds; "
 #endif
 		"neighbors; "
 		"neighbor.remove <pubkey>; "
@@ -1501,6 +1502,7 @@ static const char *repeater_remote_help(const char *command)
 #endif
 #if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
 		"get bridge.delay; "
+		"get bridge.mac; "
 #endif
 #if IS_ENABLED(CONFIG_ZEPHCORE_REPEATER_UPLINK) && IS_ENABLED(CONFIG_MQTT_LIB)
 		"get uplink.status; "
