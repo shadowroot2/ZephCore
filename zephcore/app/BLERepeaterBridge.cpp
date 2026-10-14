@@ -1692,18 +1692,18 @@ void ble_bridge_get_diagnostics(char *out, size_t out_len)
 	k_spin_unlock(&s_tx_lock, lock_key);
 	if (disc >= 0) {
 		snprintf(out, out_len,
-			 "phase=%s;fault=%s;sec=%d;disc=%02X%s;retry=%u;queue=%u/%u;unpair=%u",
+			 "phase=%s;fault=%s;sec=%d;disc=%02X%s;retry=%u;unpair=%u;queue=%u/%u",
 			 phase, fault_name(fault),
 			 security, disc, connect_text, (unsigned int)atomic_get(&s_reconnect_count),
-			 (unsigned int)queued, tx_busy ? 1U : 0U,
-			 (unsigned int)atomic_get(&s_auto_unpair_count));
+			 (unsigned int)atomic_get(&s_auto_unpair_count),
+			 (unsigned int)queued, tx_busy ? 1U : 0U);
 	} else {
 		snprintf(out, out_len,
-			 "phase=%s;fault=%s;sec=%d%s;retry=%u;queue=%u/%u;unpair=%u",
+			 "phase=%s;fault=%s;sec=%d%s;retry=%u;unpair=%u;queue=%u/%u",
 			 phase, fault_name(fault),
 			 security, connect_text, (unsigned int)atomic_get(&s_reconnect_count),
-			 (unsigned int)queued, tx_busy ? 1U : 0U,
-			 (unsigned int)atomic_get(&s_auto_unpair_count));
+			 (unsigned int)atomic_get(&s_auto_unpair_count),
+			 (unsigned int)queued, tx_busy ? 1U : 0U);
 	}
 }
 
