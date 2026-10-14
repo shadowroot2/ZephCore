@@ -218,7 +218,6 @@
 		dio2-tx-enable;
 		dio3-tcxo-voltage = <SX126X_DIO3_TCXO_3V3>;
 		tcxo-power-startup-delay-ms = <10>;
-		startup-delay-ms = <10>;
 		rx-boosted;
 	};
 };
