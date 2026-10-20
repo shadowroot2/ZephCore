@@ -29,6 +29,8 @@ LOG_MODULE_REGISTER(zephcore_usb, CONFIG_ZEPHCORE_USB_LOG_LEVEL);
 #define USB_TX_RING_BUF_SIZE  2048    /* USB TX ring buffer (~13 contact frames of headroom) */
 #define USB_FRAME_TIMEOUT_MS  2000    /* Partial frame timeout - reset parser after 2s of no completion */
 #define USB_RECV_QUEUE_DEPTH  4       /* complete frames waiting for the main thread */
+#define COMPANION_SERIAL_POLLING IS_ENABLED(CONFIG_ZEPHCORE_COMPANION_SERIAL_POLLING)
+#define COMPANION_SERIAL_POLL_INTERVAL_MS 10
 
 /* Companion serial framing (MeshCore ArduinoSerialInterface):
  *   app  → device:  '<' len_lo len_hi <payload...>
@@ -133,6 +135,45 @@ static inline void usb_cli_echo(const char *s, size_t n)
 static void usb_rx_work_fn(struct k_work *work);
 
 K_WORK_DEFINE(usb_rx_work, usb_rx_work_fn);
+
+#if COMPANION_SERIAL_POLLING
+static struct k_work_delayable usb_uart_poll_work;
+static struct k_work usb_poll_tx_drain_work;
+static struct k_mutex usb_poll_tx_mutex;
+
+static void usb_uart_poll_work_fn(struct k_work *work)
+{
+	ARG_UNUSED(work);
+	bool received = false;
+	uint8_t byte;
+
+	for (int i = 0; i < 64 && uart_poll_in(usb_dev, &byte) == 0; ++i) {
+		ring_buf_put(&usb_ring_buf, &byte, 1);
+		received = true;
+	}
+	if (received) {
+		k_work_submit(&usb_rx_work);
+	}
+	k_work_schedule(&usb_uart_poll_work, K_MSEC(COMPANION_SERIAL_POLL_INTERVAL_MS));
+}
+
+static void usb_poll_tx_drain_work_fn(struct k_work *work)
+{
+	ARG_UNUSED(work);
+	if (s_link && s_link->on_tx_idle) {
+		s_link->on_tx_idle();
+	}
+}
+
+static void usb_poll_write(const uint8_t *data, size_t len)
+{
+	k_mutex_lock(&usb_poll_tx_mutex, K_FOREVER);
+	for (size_t i = 0; i < len; ++i) {
+		uart_poll_out(usb_dev, data[i]);
+	}
+	k_mutex_unlock(&usb_poll_tx_mutex);
+}
+#endif
 
 /* USB CDC UART interrupt callback - puts bytes in ring buffer */
 static void usb_uart_isr(const struct device *dev, void *user_data)
@@ -432,6 +473,14 @@ size_t zephcore_usb_companion_write_frame(const uint8_t *src, size_t len)
 	};
 	size_t total = sizeof(hdr) + len;
 
+#if COMPANION_SERIAL_POLLING
+	ARG_UNUSED(total);
+	usb_poll_write(hdr, sizeof(hdr));
+	usb_poll_write(src, len);
+	k_work_submit(&usb_poll_tx_drain_work);
+	return len;
+#else
+
 	k_spinlock_key_t key = k_spin_lock(&usb_tx_lock);
 	if (ring_buf_space_get(&usb_tx_ring_buf) < total) {
 		k_spin_unlock(&usb_tx_lock, key);
@@ -446,6 +495,7 @@ size_t zephcore_usb_companion_write_frame(const uint8_t *src, size_t len)
 
 	LOG_DBG("usb_write_frame: queued len=%u hdr=0x%02x", (unsigned)len, src[0]);
 	return len;
+#endif
 }
 
 /* True if the TX ring can hold one more frame of `payload_len` (+3 framing).
@@ -468,10 +518,15 @@ bool zephcore_usb_companion_tx_has_space(size_t payload_len)
 	if (!usb_dev) {
 		return false;
 	}
+#if COMPANION_SERIAL_POLLING
+	ARG_UNUSED(payload_len);
+	return true;
+#else
 	k_spinlock_key_t key = k_spin_lock(&usb_tx_lock);
 	bool ok = ring_buf_space_get(&usb_tx_ring_buf) >= payload_len + 3;
 	k_spin_unlock(&usb_tx_lock, key);
 	return ok;
+#endif
 }
 
 size_t zephcore_usb_companion_recv(uint8_t *dest)
@@ -518,10 +573,14 @@ void zephcore_usb_companion_write_text(const char *text, size_t len)
 	if (!usb_dev || !text || len == 0) {
 		return;
 	}
+#if COMPANION_SERIAL_POLLING
+	usb_poll_write((const uint8_t *)text, len);
+#else
 	k_spinlock_key_t key = k_spin_lock(&usb_tx_lock);
 	ring_buf_put(&usb_tx_ring_buf, (const uint8_t *)text, len);
 	k_spin_unlock(&usb_tx_lock, key);
 	uart_irq_tx_enable(usb_dev);
+#endif
 }
 
 void zephcore_usb_companion_init(const struct companion_link_cbs *link)
@@ -538,10 +597,16 @@ void zephcore_usb_companion_init(const struct companion_link_cbs *link)
 		ring_buf_init(&usb_ring_buf, sizeof(usb_ring_buf_data), usb_ring_buf_data);
 		ring_buf_init(&usb_tx_ring_buf, sizeof(usb_tx_ring_buf_data), usb_tx_ring_buf_data);
 
-		/* Set up UART interrupt callback (RX enabled now, TX enabled on demand
-		 * by write_frame and disabled by the ISR when the TX ring drains). */
+		/* ZEPHCORE: selected bridges need polling; CDC stays interrupt driven. */
+#if COMPANION_SERIAL_POLLING
+		k_work_init_delayable(&usb_uart_poll_work, usb_uart_poll_work_fn);
+		k_work_init(&usb_poll_tx_drain_work, usb_poll_tx_drain_work_fn);
+		k_mutex_init(&usb_poll_tx_mutex);
+		k_work_schedule(&usb_uart_poll_work, K_NO_WAIT);
+#else
 		uart_irq_callback_set(usb_dev, usb_uart_isr);
 		uart_irq_rx_enable(usb_dev);
+#endif
 
 #if COMPANION_HAS_DTR
 		/* DTR state changes (including disconnect) reach us via the

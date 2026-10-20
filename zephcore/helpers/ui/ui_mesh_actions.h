@@ -55,6 +55,10 @@ void mesh_housekeeping_ui_refresh(void);
  */
 void mesh_send_flood_advert(void);
 void mesh_send_zerohop_advert(void);
+void mesh_send_sos(void); /* ZEPHCORE: safety actions */
+void mesh_fall_alarm_acknowledge(void);
+void mesh_tracking_toggle(void);
+void mesh_set_bridge_enabled(bool enabled);
 void mesh_gps_set_enabled(bool enable);
 void mesh_ble_set_enabled(bool enable);
 void mesh_set_buzzer_mode(uint8_t mode);

@@ -199,6 +199,14 @@ struct NodePrefs {
 	char wifi_ssid[33];
 	char wifi_pwd[64];
 	uint8_t wifi_enabled;           // 1 = join wifi_ssid when set (upstream default)
+
+	/* ShadoW companion settings. Stored only under prefs.json/zc. */
+	int16_t ui_timezone_offset_minutes;
+	uint8_t auto_shutdown_emergency;
+	uint16_t tracking_interval_minutes;
+	char tracking_group_name[32];
+	uint8_t fall_sensitivity;
+	uint8_t fall_enabled;
 };
 
 /* Range guards for prefs that came off flash: a blob can be intact and
@@ -275,6 +283,7 @@ static inline void sanitizeNodePrefs(NodePrefs* p) {
 	p->default_scope_name[sizeof(p->default_scope_name) - 1] = '\0';
 	p->wifi_ssid[sizeof(p->wifi_ssid) - 1] = '\0';
 	p->wifi_pwd[sizeof(p->wifi_pwd) - 1] = '\0';
+	p->tracking_group_name[sizeof(p->tracking_group_name) - 1] = '\0';
 	p->wifi_enabled = saneBool(p->wifi_enabled, (uint8_t)1);
 
 	p->airtime_factor = sanePrefFloat(p->airtime_factor, 0.0f, 9.0f, 9.0f);
@@ -306,7 +315,7 @@ static inline void sanitizeNodePrefs(NodePrefs* p) {
 	p->client_repeat       = saneBool<uint8_t>(p->client_repeat, 0);
 	p->manual_add_contacts = saneBool<uint8_t>(p->manual_add_contacts, 0);
 	p->multi_acks          = saneBool<uint8_t>(p->multi_acks, 0);
-	p->buzzer_quiet        = saneBool<uint8_t>(p->buzzer_quiet, 0);
+	p->buzzer_quiet        = saneEnum(p->buzzer_quiet, 3);
 	p->gps_enabled         = saneBool<uint8_t>(p->gps_enabled, 0);
 	p->gps_enabled_set     = saneBool<uint8_t>(p->gps_enabled_set, 0);
 	p->auto_shutdown_set   = saneBool<uint8_t>(p->auto_shutdown_set, 0);
@@ -330,6 +339,8 @@ static inline void sanitizeNodePrefs(NodePrefs* p) {
 	p->fem_rxgain          = saneBool<uint8_t>(p->fem_rxgain, 1);
 	p->wake_on_msg         = saneBool<uint8_t>(p->wake_on_msg, 1);
 	p->v_contact_enabled   = saneBool<uint8_t>(p->v_contact_enabled, 1);
+	p->auto_shutdown_emergency = saneBool<uint8_t>(p->auto_shutdown_emergency, 1);
+	p->fall_enabled        = saneBool<uint8_t>(p->fall_enabled, 1);
 	/* Never let a corrupt byte take the radio off the air or hide BLE — both
 	 * remove the only ways left to fix the node. */
 	p->ble_disabled        = saneBool<uint8_t>(p->ble_disabled, 0);
@@ -356,6 +367,20 @@ static inline void sanitizeNodePrefs(NodePrefs* p) {
 	if (p->cad_offset < CAD_OFFSET_MIN || p->cad_offset > CAD_OFFSET_MAX) p->cad_offset = 0;
 	/* UTC, not a boundary zone, for a byte that carries no user intent. */
 	if (p->tz_offset < TZ_OFFSET_MIN || p->tz_offset > TZ_OFFSET_MAX) p->tz_offset = 0;
+	if (p->ui_timezone_offset_minutes < -1439 || p->ui_timezone_offset_minutes > 1439) {
+#ifdef CONFIG_ZEPHCORE_UI_TIMEZONE_OFFSET_MINUTES
+		p->ui_timezone_offset_minutes = CONFIG_ZEPHCORE_UI_TIMEZONE_OFFSET_MINUTES;
+#else
+		p->ui_timezone_offset_minutes = 300;
+#endif
+	}
+	if (p->tracking_interval_minutes < 5) p->tracking_interval_minutes = 10;
+	if (p->fall_sensitivity < 1 || p->fall_sensitivity > 5) p->fall_sensitivity = 3;
+	if (p->tracking_group_name[0] != '#' ||
+	    strchr(p->tracking_group_name, '\r') != nullptr ||
+	    strchr(p->tracking_group_name, '\n') != nullptr) {
+		strcpy(p->tracking_group_name, "#tracks");
+	}
 	if (p->probe_interval != 0 && p->probe_interval < 10) p->probe_interval = 10;
 
 	/* 6-digit BLE passkey — anything else is rejected at pairing time and
@@ -449,6 +474,16 @@ static inline void initNodePrefs(NodePrefs* prefs) {
 	prefs->v_contact_enabled = 1;     // Default ON — v-contact loopback admin chat (companion)
 	prefs->v_battery_alert_mv = 0xFFFF; // Sentinel: derive from board auto-shutdown threshold
 	prefs->wifi_enabled = 1;          // as upstream: WiFi still stays off until an SSID is set
+#ifdef CONFIG_ZEPHCORE_UI_TIMEZONE_OFFSET_MINUTES
+	prefs->ui_timezone_offset_minutes = CONFIG_ZEPHCORE_UI_TIMEZONE_OFFSET_MINUTES;
+#else
+	prefs->ui_timezone_offset_minutes = 300;
+#endif
+	prefs->auto_shutdown_emergency = 1;
+	prefs->tracking_interval_minutes = 10;
+	strcpy(prefs->tracking_group_name, "#tracks");
+	prefs->fall_sensitivity = 3;
+	prefs->fall_enabled = 1;
 	/* Companion-only default, set here so every caller of initNodePrefs() sees
 	 * it. 0 means disabled and is a legal stored value. */
 #ifdef CONFIG_ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS

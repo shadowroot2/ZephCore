@@ -29,6 +29,9 @@ extern "C" {
 /* true = every LED stays dark, including message and shutdown flashes. */
 bool zephcore_leds_disabled(void);
 
+/* A status pattern owns a shared LED pin and suppresses radio activity. */
+bool zephcore_led_status_priority_active(void);
+
 /* Set the gate. Any LED currently lit is dealt with by zephcore_leds_ui_sync()
  * below; the momentary TX LED clears itself at the end of the transmit in
  * progress. Safe to call from any role, with or without a UI. */

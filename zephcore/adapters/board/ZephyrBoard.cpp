@@ -16,6 +16,11 @@
 #include <stdio.h>
 #include <string.h>
 
+#if defined(CONFIG_SOC_RP2040) && \
+	defined(CONFIG_RETENTION_BOOT_MODE)
+#include <zephyr/retention/bootmode.h>
+#endif
+
 #if defined(CONFIG_SOC_SERIES_NRF52)
 #include <hal/nrf_power.h>
 /* Adafruit bootloader GPREGRET magic values */
@@ -106,6 +111,22 @@ static inline void tx_led_write(bool on)
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(zephcore_board, CONFIG_ZEPHCORE_BOARD_LOG_LEVEL);
 
+#define ZEPHYR_USER_NODE DT_PATH(zephyr_user)
+
+#if DT_NODE_EXISTS(ZEPHYR_USER_NODE) && \
+    DT_NODE_HAS_PROP(ZEPHYR_USER_NODE, charge_power_mw)
+#define CHARGE_POWER_MW DT_PROP(ZEPHYR_USER_NODE, charge_power_mw)
+#else
+#define CHARGE_POWER_MW 0
+#endif
+
+#if DT_NODE_EXISTS(ZEPHYR_USER_NODE) && \
+    DT_NODE_HAS_PROP(ZEPHYR_USER_NODE, charge_current_ma)
+#define CHARGE_CURRENT_MA DT_PROP(ZEPHYR_USER_NODE, charge_current_ma)
+#else
+#define CHARGE_CURRENT_MA 0
+#endif
+
 #if DT_NODE_EXISTS(DT_PATH(zephyr_user)) && \
 	DT_NODE_HAS_PROP(DT_PATH(zephyr_user), io_channels)
 #include <zephyr/drivers/adc.h>
@@ -126,13 +147,18 @@ static const struct device *vbat_enable_dev = NULL;
  * Battery_mV = raw * VBAT_MV_MULTIPLIER / 4096. Devicetree
  * (zephyr,user vbat-mv-multiplier) wins over the Kconfig fallback.
  */
-#define ZEPHYR_USER_NODE DT_PATH(zephyr_user)
 #if DT_NODE_HAS_PROP(ZEPHYR_USER_NODE, vbat_mv_multiplier)
 #define VBAT_MV_MULTIPLIER DT_PROP(ZEPHYR_USER_NODE, vbat_mv_multiplier)
 #else
 #define VBAT_MV_MULTIPLIER CONFIG_ZEPHCORE_VBAT_MV_MULTIPLIER
 #endif
 #define VBAT_ADC_SAMPLES   8
+#endif
+
+#if DT_NODE_HAS_STATUS_OKAY(DT_NODELABEL(temp))
+#define MCU_TEMP_NODE DT_NODELABEL(temp)
+#elif DT_NODE_HAS_STATUS_OKAY(DT_NODELABEL(die_temp))
+#define MCU_TEMP_NODE DT_NODELABEL(die_temp)
 #endif
 
 /* Battery fuel gauge (AXP2101 PMU etc.) — preferred over the ADC divider when
@@ -401,7 +427,7 @@ void ZephyrBoard::onBeforeTransmit()
 	 * flipped mid-transmit can't strand it lit. */
 #if HAS_TX_LED_PWM || HAS_TX_LED
 	uint8_t mode = zephcore_leds_radio_mode();
-	if (!zephcore_leds_disabled() &&
+	if (!zephcore_leds_disabled() && !zephcore_led_status_priority_active() &&
 	    (mode == LEDS_RADIO_TX || mode == LEDS_RADIO_ALL)) {
 		/* A receive blink may still be in flight; take the pin from it so its
 		 * handler doesn't clear the LED partway through this transmit. */
@@ -430,7 +456,7 @@ void ZephyrBoard::onPacketReceived()
 {
 #if HAS_TX_LED_PWM || HAS_TX_LED
 	uint8_t mode = zephcore_leds_radio_mode();
-	if (zephcore_leds_disabled() ||
+	if (zephcore_leds_disabled() || zephcore_led_status_priority_active() ||
 	    (mode != LEDS_RADIO_RX && mode != LEDS_RADIO_ALL)) {
 		return;
 	}
@@ -489,6 +515,14 @@ void ZephyrBoard::rebootToBootloader()
 	 * controller it lands on is settled by the PHY mux below, after the
 	 * detach. */
 	REG_SET_BIT(RTC_CNTL_OPTION1_REG, RTC_CNTL_FORCE_DOWNLOAD_BOOT);
+#endif
+#if defined(CONFIG_RPI_PICO_ROM_BOOTLOADER) && \
+	defined(CONFIG_RETENTION_BOOT_MODE)
+	/* The RP2040 ROM checks this retained byte early after reset and enters
+	 * its USB mass-storage bootloader. */
+	if (bootmode_set(BOOT_MODE_TYPE_BOOTLOADER) != 0) {
+		LOG_ERR("Cannot request RP2040 ROM bootloader");
+	}
 #endif
 	k_msleep(50);  /* Let UART/USB flush */
 #ifdef ZEPHCORE_USBD_DETACH

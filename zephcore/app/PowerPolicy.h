@@ -28,7 +28,7 @@ public:
 		/* An app should hear about a low-battery shutdown now: send the notice
 		 * live and return true (the power-off then waits a short grace for
 		 * the app to fetch it), or return false (none connected). */
-		bool (*notify_shutdown)(void);
+		bool (*notify_shutdown)(uint16_t battery_mv);
 		/* The alert threshold was crossed (once per discharge). */
 		void (*battery_alert)(uint16_t mv, uint16_t threshold_mv);
 		/* The alert is wanted at all (the v-contact is on). */
@@ -42,6 +42,7 @@ public:
 
 	/* Every housekeeping tick; self-throttled to one reading per 30 s. */
 	void tick();
+	bool isShuttingDown() const { return _shutting_down; }
 
 	/* `get|set autoshutdown`; true if the line was one. */
 	bool handleCommand(const char *line, char *reply, size_t cap);

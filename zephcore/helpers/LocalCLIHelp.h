@@ -125,7 +125,8 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 #endif
 		"password <value>\r\n"
 #if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
-		"bridge on|off|ping|logs|keygen|unpair (keygen: local)\r\n"
+		"bridge on|off|ping|logs|keygen (keygen: local)\r\n"
+		"bridge unpair (bond reset after disconnect)\r\n"
 		"bridge bonds\r\n"
 		"bridge logs N|clear\r\n"
 #endif
@@ -153,10 +154,6 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"get dc.restarts\r\n"
 		"get cad\r\n"
 		"get bootloader.ver\r\n"
-#if defined(CONFIG_BOARD_XIAO_NRF52840) && IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER) && \
-	IS_ENABLED(CONFIG_ZEPHCORE_RADIO_NATIVE)
-		"get radio.diag\r\n"
-#endif
 #if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
 		"get bridge.delay\r\n"
 		"get bridge.mac\r\n"

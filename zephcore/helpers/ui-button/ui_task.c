@@ -46,6 +46,7 @@
 #endif
 
 #include <zephyr/kernel.h>
+#include <zephyr/sys/atomic.h>
 
 #ifdef CONFIG_ZEPHCORE_EASTER_EGG_DOOM
 #include "doom_game.h"
@@ -79,16 +80,8 @@ LOG_MODULE_REGISTER(ui_task, CONFIG_ZEPHCORE_BOARD_LOG_LEVEL);
  *   GPS toggle:                  chirp x4 + high or low
  *   LED heartbeat toggle:        chirp x5 + high or low */
 #define MELODY_BEEP_2     "b2:d=16,o=7,b=200:c,p,c"
-
-#define MELODY_BUZZER_ON  "bon:d=16,o=7,b=200:c,p,c,p,c,p,p,8e"
-#define MELODY_BUZZER_OFF "bof:d=16,o=7,b=200:c,p,c,p,c,p,p,8g5"
-
-#define MELODY_GPS_ON     "gon:d=16,o=7,b=200:c,p,c,p,c,p,c,p,p,8e"
-#define MELODY_GPS_OFF    "gof:d=16,o=7,b=200:c,p,c,p,c,p,c,p,p,8g5"
-
-#define MELODY_LED_ON     "lon:d=16,o=7,b=200:c,p,c,p,c,p,c,p,c,p,p,8e"
-#define MELODY_LED_OFF    "lof:d=16,o=7,b=200:c,p,c,p,c,p,c,p,c,p,p,8g5"
-
+#define MELODY_BEEP_1     "b1:d=16,o=7,b=200:c"
+#define MELODY_BEEP_5     "adv:d=16,o=7,b=200:c,p,c,p,c,p,c,p,c,p,p,16a,16d,8g"
 
 /* ========== Deep Sleep / System OFF ========== */
 /* On nRF52840, sys_poweroff() = System OFF (~1µA).
@@ -108,6 +101,18 @@ static struct ui_state local_ui_state;
 /* ========== State ========== */
 static bool ui_initialized;
 static bool splash_active;
+#if !IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
+#define HEADLESS_GESTURE_ARM_WINDOW_MS 3000
+#if defined(CONFIG_BOARD_T1000_E) || defined(CONFIG_BOARD_THINKNODE_M3)
+#define ZEPHCORE_HEADLESS_ADVERT_GESTURE 1
+#else
+static uint32_t headless_sos_armed_until;
+#endif
+#endif
+#ifdef ZEPHCORE_HEADLESS_ADVERT_GESTURE
+static atomic_t headless_sos_deadline;
+static struct k_work_delayable headless_single_advert_work;
+#endif
 
 /* ========== Doom Easter Egg Activation ========== */
 #ifdef CONFIG_ZEPHCORE_EASTER_EGG_DOOM
@@ -149,13 +154,48 @@ static struct k_work_delayable splash_work;
 /* Deferred zero-hop advert — waits for possible double-press upgrade to flood */
 static struct k_work_delayable advert_defer_work;
 
+static void action_flood_advert(unsigned int feedback_beeps);
+
+#ifdef ZEPHCORE_HEADLESS_ADVERT_GESTURE
+static void headless_single_advert_cancel(void)
+{
+	atomic_set(&headless_sos_deadline, 0);
+	k_work_cancel_delayable(&headless_single_advert_work);
+}
+
+static void headless_single_advert_handler(struct k_work *work)
+{
+	ARG_UNUSED(work);
+	atomic_val_t deadline = atomic_get(&headless_sos_deadline);
+
+	if (deadline == 0 ||
+	    (int32_t)(k_uptime_get_32() - (uint32_t)deadline) < 0 ||
+	    !atomic_cas(&headless_sos_deadline, deadline, 0) ||
+	    ui_shutdown_in_progress()) {
+		return;
+	}
+	action_flood_advert(1);
+}
+
+static bool headless_single_advert_claim_sos(void)
+{
+	atomic_val_t deadline = atomic_get(&headless_sos_deadline);
+	bool armed = deadline != 0 &&
+		(int32_t)((uint32_t)deadline - k_uptime_get_32()) >= 0 &&
+		atomic_cas(&headless_sos_deadline, deadline, 0);
+
+	headless_single_advert_cancel();
+	return armed;
+}
+#endif
+
 /* ========== Work Handlers ========== */
 
 static void render_work_handler(struct k_work *work)
 {
 	ARG_UNUSED(work);
 
-	if (!ui_initialized) {
+	if (!ui_initialized || ui_shutdown_in_progress()) {
 		return;
 	}
 
@@ -222,6 +262,13 @@ static void schedule_render(void)
 #endif
 }
 
+void ui_request_render(void)
+{
+	if (ui_initialized) {
+		schedule_render();
+	}
+}
+
 /* ========== Button Action Functions ========== */
 /* Each action checks capabilities internally — no #ifdef in the switch. */
 
@@ -242,15 +289,19 @@ static void action_page_prev(void)
 }
 
 /* Forward declarations for page-enter dispatch */
-static void action_flood_advert(void);
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
+static void action_sos(void);
+#endif
 static void action_gps_toggle(void);
 static void action_buzzer_toggle(void);
 static void action_leds_toggle(void);
+#if defined(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+static void action_bridge_toggle(void);
+#endif
 #ifdef CONFIG_ZEPHCORE_UI_DISPLAY
 static void action_ble_toggle(void);
 static void action_enter_dfu(void);
 #endif
-static void action_deep_sleep(void);
 
 static void action_page_enter(void)
 {
@@ -271,11 +322,22 @@ static void action_page_enter(void)
 		if (k_work_delayable_is_pending(&advert_defer_work)) {
 			/* Second press — cancel deferred zero-hop, send flood */
 			k_work_cancel_delayable(&advert_defer_work);
-			action_flood_advert();
+			action_flood_advert(2);
 		} else {
 			/* First press — start deferred zero-hop */
 			k_work_reschedule(&advert_defer_work, K_MSEC(500));
 		}
+		break;
+
+	case UI_PAGE_TRACKING:
+#if !defined(ZEPHCORE_REPEATER)
+		mesh_tracking_toggle();
+#endif
+		schedule_render();
+		break;
+
+	case UI_PAGE_SOS:
+		action_sos();
 		break;
 
 	case UI_PAGE_GPS:
@@ -292,6 +354,12 @@ static void action_page_enter(void)
 		/* Toggle LED on/off */
 		action_leds_toggle();
 		break;
+
+#if defined(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+	case UI_PAGE_BRIDGE:
+		action_bridge_toggle();
+		break;
+#endif
 
 	case UI_PAGE_OFFGRID: {
 		/* Double-press confirmation (CONFIRM_WINDOW_MS window) */
@@ -339,7 +407,7 @@ static void action_page_enter(void)
 		if (st->shutdown_confirm_time != 0 &&
 			(now - st->shutdown_confirm_time) <= CONFIG_ZEPHCORE_UI_CONFIRM_WINDOW_MS) {
 			/* Confirmed — shut down */
-			action_deep_sleep();
+			ui_shutdown();
 		} else {
 			/* First press — enter confirmation state */
 			st->shutdown_confirm_time = now;
@@ -398,11 +466,12 @@ static void action_page_enter(void)
 #endif
 }
 
-static void action_flood_advert(void)
+static void action_flood_advert(unsigned int feedback_beeps)
 {
 	LOG_INF("flood advert requested");
 #ifdef CONFIG_ZEPHCORE_UI_BUZZER
-	buzzer_play(MELODY_BEEP_2);
+	buzzer_play(feedback_beeps == 1 ? MELODY_BEEP_1 :
+		    feedback_beeps == 5 ? MELODY_BEEP_5 : MELODY_BEEP_2);
 #endif
 	mesh_send_flood_advert();
 #ifdef CONFIG_ZEPHCORE_UI_DISPLAY
@@ -410,6 +479,15 @@ static void action_flood_advert(void)
 #endif
 	schedule_render();
 }
+
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
+static void action_sos(void)
+{
+	LOG_INF("SOS requested");
+	mesh_send_sos();
+	schedule_render();
+}
+#endif
 
 /* Cycles sound -> vibrate -> silent -> sound. Boards with no motor skip the
  * middle step, so they keep the plain on/off toggle they always had. */
@@ -433,6 +511,9 @@ static void action_buzzer_toggle(void)
 	mesh_set_buzzer_mode(mode);
 	get_state()->buzzer_mode = mode;
 	LOG_INF("buzzer mode=%u", mode);
+#if defined(CONFIG_BOARD_T1000_E)
+	ui_led_confirm_state(mode != ZEPHCORE_BUZZER_OFF);
+#endif
 #endif
 	schedule_render();
 }
@@ -444,12 +525,22 @@ static void action_leds_toggle(void)
 
 	ui_set_leds_disabled(new_disabled);
 	mesh_set_leds_disabled(new_disabled);
+#if defined(CONFIG_BOARD_T1000_E)
+	ui_led_confirm_state(!new_disabled);
+#endif
 #ifdef CONFIG_ZEPHCORE_UI_BUZZER
 	buzzer_play(new_disabled ? MELODY_LED_OFF : MELODY_LED_ON);
 #endif
 	LOG_INF("LEDs %s (user toggle)", new_disabled ? "disabled" : "enabled");
 	schedule_render();
 }
+
+#if defined(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+static void action_bridge_toggle(void)
+{
+	mesh_set_bridge_enabled(!get_state()->bridge_enabled);
+}
+#endif
 
 static void action_gps_toggle(void)
 {
@@ -466,6 +557,9 @@ static void action_gps_toggle(void)
 #endif
 	/* Use persistent wrapper — same path as BLE CMD_SET_CUSTOM_VAR "gps" */
 	mesh_gps_set_enabled(now_enabled);
+#if defined(CONFIG_BOARD_T1000_E)
+	ui_led_confirm_state(now_enabled);
+#endif
 	schedule_render();
 }
 
@@ -505,7 +599,7 @@ static void action_enter_dfu(void)
 }
 #endif /* CONFIG_ZEPHCORE_UI_DISPLAY */
 
-static void action_deep_sleep(void)
+void ui_shutdown(void)
 {
 #ifdef CONFIG_POWEROFF
 	LOG_INF("deep sleep: shutting down...");
@@ -578,6 +672,13 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 	 * through untouched, so the tap-code and longpress paths are unaffected. */
 	const uint16_t code = zephcore_input_map_code(evt->code);
 
+#if defined(ZEPHCORE_COMPANION)
+	/* ZEPHCORE: one press acknowledges a pending fall alarm. */
+	if (evt->value) {
+		mesh_fall_alarm_acknowledge();
+	}
+#endif
+
 #ifdef CONFIG_ZEPHCORE_EASTER_EGG_DOOM
 	/* When Doom is running, intercept ALL input (presses AND releases) */
 	if (doom_game_is_running()) {
@@ -611,6 +712,9 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 		LOG_INF("GPS switch → %s", gps_on ? "on" : "off");
 		if (gps_is_available()) {
 			mesh_gps_set_enabled(gps_on);
+#if defined(CONFIG_BOARD_T1000_E)
+			ui_led_confirm_state(gps_on);
+#endif
 #ifdef CONFIG_ZEPHCORE_UI_BUZZER
 			buzzer_play(gps_on ? MELODY_GPS_ON : MELODY_GPS_OFF);
 #endif
@@ -669,10 +773,21 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 	 * is not handled here: it feeds the multi-tap filter. */
 	switch (code) {
 	/* ===== Multi-tap outputs ===== */
-	case INPUT_KEY_1:
-		/* First tap-codes entry (400ms delayed): page next */
+	case INPUT_KEY_1: {
+#if !IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
+#if defined(ZEPHCORE_HEADLESS_ADVERT_GESTURE)
+		uint32_t deadline = k_uptime_get_32() + HEADLESS_GESTURE_ARM_WINDOW_MS;
+		atomic_set(&headless_sos_deadline, deadline ? deadline : 1);
+		k_work_reschedule(&headless_single_advert_work,
+			K_MSEC(HEADLESS_GESTURE_ARM_WINDOW_MS));
+#else
+		headless_sos_armed_until = k_uptime_get_32() + HEADLESS_GESTURE_ARM_WINDOW_MS;
+#endif
+#else
 		action_page_next();
+#endif
 		break;
+	}
 
 	case INPUT_KEY_B:
 		/* Toggle LED heartbeat (2 taps stock, 3 on T096) */
@@ -690,15 +805,34 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 		break;
 
 	case INPUT_KEY_E:
-		/* Flood advert (last tap-codes entry, so immediate) */
-		action_flood_advert();
+		action_flood_advert(5);
+		break;
+
+	case INPUT_KEY_H:
+#if !IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY) && !defined(ZEPHCORE_REPEATER)
+		mesh_tracking_toggle();
+#endif
 		break;
 
 	/* ===== Longpress output ===== */
 	case INPUT_KEY_POWER:
 	case INPUT_KEY_F:
-		/* Long press (≥1s): deep sleep */
-		action_deep_sleep();
+#if !IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
+#if defined(ZEPHCORE_HEADLESS_ADVERT_GESTURE)
+		if (headless_single_advert_claim_sos()) {
+			mesh_send_sos();
+			break;
+		}
+#else
+		if (headless_sos_armed_until != 0 &&
+		    (int32_t)(headless_sos_armed_until - k_uptime_get_32()) >= 0) {
+			headless_sos_armed_until = 0;
+			mesh_send_sos();
+			break;
+		}
+#endif
+#endif
+		ui_shutdown();
 		break;
 
 	/* ===== Joystick (Wio Tracker) ===== */
@@ -736,6 +870,9 @@ int ui_init(void)
 	k_work_init_delayable(&render_work, render_work_handler);
 	k_work_init_delayable(&splash_work, splash_work_handler);
 	k_work_init_delayable(&advert_defer_work, advert_defer_handler);
+#ifdef ZEPHCORE_HEADLESS_ADVERT_GESTURE
+	k_work_init_delayable(&headless_single_advert_work, headless_single_advert_handler);
+#endif
 
 	/* Initialize buzzer (optional - may not be present) */
 #ifdef CONFIG_ZEPHCORE_UI_BUZZER
@@ -1124,6 +1261,7 @@ void ui_set_ble_enabled(bool enabled)
 	struct ui_state *s = get_state();
 
 	s->ble_enabled = enabled;
+	ui_led_set_ble_enabled(enabled);
 }
 
 void ui_set_link_transports(uint8_t mask)
@@ -1134,6 +1272,7 @@ void ui_set_link_transports(uint8_t mask)
 		return;
 	}
 	s->link_transports = mask;
+	ui_led_set_ble_connected((mask & UI_LINK_BLE) != 0);
 	if (ui_initialized) {
 		schedule_render();
 	}
@@ -1178,6 +1317,63 @@ void ui_set_buzzer_mode(uint8_t mode)
 	struct ui_state *s = get_state();
 
 	s->buzzer_mode = mode;
+}
+
+void ui_set_bridge_enabled(bool enabled)
+{
+	struct ui_state *s = get_state();
+
+	if (s->bridge_enabled == enabled) return;
+	s->bridge_enabled = enabled;
+	if (!enabled) s->bridge_connected = false;
+	schedule_render();
+}
+
+void ui_set_bridge_connected(bool connected)
+{
+	struct ui_state *s = get_state();
+
+	if (s->bridge_connected == connected) return;
+	s->bridge_connected = connected;
+	schedule_render();
+}
+
+void ui_set_bridge_status(const char *status)
+{
+	struct ui_state *s = get_state();
+	const char *next = status ? status : "off";
+
+	if (strcmp(s->bridge_status, next) == 0) return;
+	strncpy(s->bridge_status, next, sizeof(s->bridge_status) - 1);
+	s->bridge_status[sizeof(s->bridge_status) - 1] = '\0';
+	schedule_render();
+}
+
+void ui_set_bridge_addresses(const char *local, const char *peer)
+{
+	struct ui_state *s = get_state();
+	const char *next_local = local ? local : "unavailable";
+	const char *next_peer = peer ? peer : "not set";
+
+	if (strcmp(s->bridge_local_mac, next_local) == 0 &&
+	    strcmp(s->bridge_peer_mac, next_peer) == 0) return;
+	strncpy(s->bridge_local_mac, next_local, sizeof(s->bridge_local_mac) - 1);
+	s->bridge_local_mac[sizeof(s->bridge_local_mac) - 1] = '\0';
+	strncpy(s->bridge_peer_mac, next_peer, sizeof(s->bridge_peer_mac) - 1);
+	s->bridge_peer_mac[sizeof(s->bridge_peer_mac) - 1] = '\0';
+	schedule_render();
+}
+
+void ui_set_bridge_metrics(uint8_t priority, uint32_t forwarded, uint32_t skipped)
+{
+	struct ui_state *s = get_state();
+
+	if (s->bridge_priority == priority && s->bridge_forwarded == forwarded &&
+	    s->bridge_skipped == skipped) return;
+	s->bridge_priority = priority;
+	s->bridge_forwarded = forwarded;
+	s->bridge_skipped = skipped;
+	schedule_render();
 }
 
 void ui_set_offgrid_mode(bool enabled)

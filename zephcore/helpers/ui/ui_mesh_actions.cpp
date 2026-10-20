@@ -32,6 +32,7 @@ LOG_MODULE_REGISTER(zephcore_ui_actions, CONFIG_ZEPHCORE_UI_ACTIONS_LOG_LEVEL);
 #include <joystick_ui_hooks.h>
 #include "ui_mesh_actions.h"
 #include "ui_radio_state.h"
+#include "ui_timezone.h"
 
 /* UI action bit flags — set from input thread, consumed by mesh event loop */
 #define UI_ACTION_FLOOD_ADVERT      BIT(0)
@@ -49,6 +50,14 @@ LOG_MODULE_REGISTER(zephcore_ui_actions, CONFIG_ZEPHCORE_UI_ACTIONS_LOG_LEVEL);
 #define UI_ACTION_GPS_DUTY_SAVE     BIT(12)
 #define UI_ACTION_DISPLAY_ROTATE_SAVE BIT(13)
 #define UI_ACTION_INPUT_ROTATE_SAVE BIT(14)
+#define UI_ACTION_SOS               BIT(15) /* ZEPHCORE: safety actions */
+#define UI_ACTION_TRACKING_TOGGLE   BIT(16)
+#define UI_ACTION_FALL_ACK          BIT(17)
+
+extern "C" void companion_sos_request_from_ui(void);
+extern "C" void companion_fall_alarm_acknowledge_from_ui(void);
+extern "C" void companion_tracking_toggle_from_ui(void);
+extern "C" bool companion_tracking_gps_control_allowed(void);
 
 /* Module-local pointers, set by init */
 static CompanionMesh *s_mesh;
@@ -107,8 +116,32 @@ extern "C" void mesh_send_zerohop_advert(void)
 	k_event_post(s_mesh_events, s_mesh_event_ui_action);
 }
 
+extern "C" void mesh_send_sos(void)
+{
+	atomic_or(&pending_ui_actions, UI_ACTION_SOS);
+	k_event_post(s_mesh_events, s_mesh_event_ui_action);
+}
+
+extern "C" void mesh_fall_alarm_acknowledge(void)
+{
+	if (!s_mesh_events) {
+		return;
+	}
+	atomic_or(&pending_ui_actions, UI_ACTION_FALL_ACK);
+	k_event_post(s_mesh_events, s_mesh_event_ui_action);
+}
+
+extern "C" void mesh_tracking_toggle(void)
+{
+	atomic_or(&pending_ui_actions, UI_ACTION_TRACKING_TOGGLE);
+	k_event_post(s_mesh_events, s_mesh_event_ui_action);
+}
+
 extern "C" void mesh_gps_set_enabled(bool enable)
 {
+	if (!companion_tracking_gps_control_allowed()) {
+		return;
+	}
 	/* Applied on the mesh thread with the prefs write: the GPS state
 	 * machine runs on the main thread only (ZephyrGPSManager.h). */
 	atomic_set(&pending_gps_enabled, enable ? 1 : 0);
@@ -176,6 +209,9 @@ extern "C" void mesh_save_path_hash_mode(uint8_t mode)
 
 extern "C" void mesh_save_gps_duty_sec(uint32_t sec)
 {
+	if (!companion_tracking_gps_control_allowed()) {
+		return;
+	}
 	/* Applied on the mesh thread, as mesh_gps_set_enabled. */
 	atomic_set(&pending_gps_duty_sec, (atomic_val_t)sec);
 	atomic_or(&pending_ui_actions, UI_ACTION_GPS_DUTY_SAVE);
@@ -237,6 +273,16 @@ extern "C" void mesh_handle_ui_actions(void)
 			LOG_INF("%s advert sent (button)",
 				flood ? "flood" : "zero-hop");
 		}
+	}
+
+	if (actions & UI_ACTION_SOS) {
+		companion_sos_request_from_ui();
+	}
+	if (actions & UI_ACTION_FALL_ACK) {
+		companion_fall_alarm_acknowledge_from_ui();
+	}
+	if (actions & UI_ACTION_TRACKING_TOGGLE) {
+		companion_tracking_toggle_from_ui();
 	}
 
 	/* Save prefs if any toggle action changed them */
@@ -352,7 +398,7 @@ extern "C" void mesh_housekeeping_ui_refresh(void)
 	 * display offset is a separate push so nothing downstream is tempted to
 	 * bake a timezone into a timestamp (see NodePrefs::tz_offset). */
 	ui_set_clock(s_rtc_clock->getCurrentTime());
-	ui_set_tz(s_mesh->prefs.tz_offset);
+	ui_set_timezone_offset_minutes(s_mesh->prefs.ui_timezone_offset_minutes);
 
 	ui_push_radio_state(*s_lora_radio);
 	/* The app and the CLI change it too. */

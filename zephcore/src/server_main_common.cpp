@@ -50,10 +50,14 @@ extern "C" void bt_ctlr_assert_handle(char *file, uint32_t line)
 #include "../adapters/datastore/ZephyrFsFormat.h"
 #include <helpers/LoopWakeStats.h>
 #include <helpers/pm_sleep_guard.h>
+#include <helpers/ui/ui_timezone.h>
 #include <Serial.h>
 #include <adapters/clock/ZephyrRTCDiscover.h>
 #include <ZephyrSensorManager.h>
 #include <zephyr_poweroff.h>
+#if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+#include <app/RepeaterBridge.h> /* ZEPHCORE: bridge UI */
+#endif
 
 /* UI subsystem (display, buttons, buzzer) */
 #include "ui_task.h"
@@ -89,7 +93,8 @@ static const struct gpio_dt_spec led1 = GPIO_DT_SPEC_GET(LED1_NODE, gpios);
 /* Event bits: the shared ones are in mesh_events.h. */
 #define MESH_EVENT_INIT_ADVERT   BIT(MESH_EVENT_ROLE_BASE)      /* Deferred boot advert — send on main thread */
 #define MESH_EVENT_WAKE          BIT(MESH_EVENT_ROLE_BASE + 1)  /* Off-main state set; run loop() promptly */
-#define MESH_EVENT_ALL           (MESH_EVENT_LORA_RX | MESH_EVENT_LORA_TX_DONE | MESH_EVENT_CLI_RX | MESH_EVENT_MAINTENANCE | MESH_EVENT_GPS_ACTION | MESH_EVENT_TX_DRAIN | MESH_EVENT_INIT_ADVERT | MESH_EVENT_WAKE)
+#define MESH_EVENT_BRIDGE_UI     BIT(MESH_EVENT_ROLE_BASE + 2)
+#define MESH_EVENT_ALL           (MESH_EVENT_LORA_RX | MESH_EVENT_LORA_TX_DONE | MESH_EVENT_CLI_RX | MESH_EVENT_MAINTENANCE | MESH_EVENT_GPS_ACTION | MESH_EVENT_TX_DRAIN | MESH_EVENT_INIT_ADVERT | MESH_EVENT_WAKE | MESH_EVENT_BRIDGE_UI)
 
 /* Maintenance is deadline-driven: after every pass a one-shot is armed for the
  * mesh's soonest deadline. MAINTENANCE_BACKSTOP_MS caps the wait,
@@ -99,6 +104,29 @@ static const struct gpio_dt_spec led1 = GPIO_DT_SPEC_GET(LED1_NODE, gpios);
 
 /* Event object for mesh loop */
 static struct k_event mesh_events;
+#if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+static atomic_t pending_bridge_enabled;
+
+extern "C" void mesh_set_bridge_enabled(bool enabled)
+{
+	atomic_set(&pending_bridge_enabled, enabled ? 1 : 0);
+	k_event_post(&mesh_events, MESH_EVENT_BRIDGE_UI);
+}
+
+static void refresh_bridge_ui(void)
+{
+	ui_set_bridge_enabled(repeater_bridge_is_enabled());
+	ui_set_bridge_connected(repeater_bridge_is_connected());
+	ui_set_bridge_status(repeater_bridge_status());
+	uint8_t priority;
+	uint32_t forwarded, skipped;
+	repeater_bridge_get_metrics(&priority, &forwarded, &skipped);
+	ui_set_bridge_metrics(priority, forwarded, skipped);
+	char local[18], peer[18];
+	repeater_bridge_get_addresses(local, sizeof(local), peer, sizeof(peer));
+	ui_set_bridge_addresses(local, peer);
+}
+#endif
 
 /* USB CDC state */
 static const struct device *usb_dev;
@@ -299,6 +327,9 @@ static void process_cli_commands(void)
 		cli_print("\r\n");
 		server_role->handle_command(c.buf, cli_reply_buf);
 		refresh_ui_radio_state();
+#if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+		refresh_bridge_ui();
+#endif
 		if (cli_reply_buf[0] != '\0') {
 			cli_print("  -> ");
 			cli_print(cli_reply_buf);
@@ -532,6 +563,16 @@ static void server_event_loop(void)
 			server_role->callbacks->sendSelfAdvertisement(500, false);
 		}
 
+#if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+		if (events & MESH_EVENT_BRIDGE_UI) {
+			char reply[64];
+			const bool enabled = atomic_get(&pending_bridge_enabled) != 0;
+			repeater_bridge_handle_command(enabled ? "bridge on" : "bridge off",
+					       reply, sizeof(reply));
+			refresh_bridge_ui();
+		}
+#endif
+
 		/* Packet processing — only on radio/CLI/TX events */
 		if (server_role &&
 		    (events & (MESH_EVENT_LORA_RX | MESH_EVENT_LORA_TX_DONE |
@@ -559,6 +600,9 @@ static void server_event_loop(void)
 			if (server_role) {
 				server_role->loop();
 			}
+#if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+			refresh_bridge_ui();
+#endif
 #endif
 
 #if ZEPHCORE_HAS_UI
@@ -718,6 +762,7 @@ int server_main(const ServerRole &role)
 	 * settings: CLI readback looked correct but the hardware stayed on EU.
 	 * Every role binds this way; begin() refuses to start without it. */
 	data_store.loadPrefs(*role.prefs);
+	ui_set_timezone_offset_minutes(role.prefs->ui_timezone_offset_minutes);
 	lora_radio.setPrefs(role.prefs);
 
 	/* LED gate and GPS duty from prefs.  After loadPrefs() and ui_init(),
@@ -729,6 +774,9 @@ int server_main(const ServerRole &role)
 
 	/* Start mesh with data store - loads ACL, regions */
 	role.begin(&data_store);
+#if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+	refresh_bridge_ui();
+#endif
 
 	/* Generate default node name from hardware device ID if not set.  The
 	 * role's bare prefix (its constructor default) counts as unset, and so

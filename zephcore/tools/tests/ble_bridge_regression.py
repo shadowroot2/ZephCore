@@ -13,8 +13,8 @@ import tempfile
 SOURCE = Path(__file__).resolve().parents[2] / "app/BLERepeaterBridge.cpp"
 source = SOURCE.read_text()
 mesh_source = SOURCE.with_name("RepeaterMesh.cpp").read_text()
-assert "size_t reply_capacity = sender_timestamp ? CLI_REMOTE_REPLY_SIZE : CLI_REPLY_SIZE;" in mesh_source
-assert "reply_capacity -= 3;" in mesh_source
+assert "CLI_REMOTE_REPLY_SIZE - hdr_used : CLI_REPLY_SIZE" in mesh_source
+assert 'strcmp(command, "bridge keygen") == 0' in mesh_source
 assert "repeater_bridge_handle_command(command, reply, reply_capacity," in mesh_source
 
 
@@ -209,6 +209,7 @@ static bool unpair_had_addr;
 static bt_addr_le_t last_unpair_addr;
 static bool stored_bond_present;
 static bt_addr_le_t stored_bond;
+static bool pending_acl;
 static void bt_foreach_bond(int, void (*func)(const bt_bond_info *, void *), void *data) {
     if (stored_bond_present) { bt_bond_info info{stored_bond}; func(&info,data); }
 }
@@ -216,7 +217,9 @@ static void k_msgq_purge(int *) { ++purges; }
 #define BT_ID_DEFAULT 0
 #define BT_HCI_ERR_REMOTE_USER_TERM_CONN 0x13
 #define BT_HCI_ERR_TERM_DUE_TO_MIC_FAIL 0x3d
-static bt_conn *bt_conn_lookup_addr_le(int, const bt_addr_le_t *) { ++cancels; return &fake_conn; }
+static bt_conn *bt_conn_lookup_addr_le(int, const bt_addr_le_t *) {
+    ++cancels; return pending_acl ? &fake_conn : nullptr;
+}
 static int bt_conn_disconnect(bt_conn *, uint8_t) { ++disconnects; return 0; }
 static int bt_unpair(int, const bt_addr_le_t *addr) {
     ++unpairs; unpair_had_addr=addr!=nullptr;
@@ -298,6 +301,7 @@ functions = [
     'static void finish_link_uptime_locked(int64_t now)',
     'static struct bt_conn *detach_link(const struct bt_conn *expected = nullptr)',
     'static void cancel_pending_connection()',
+    'static bool peer_acl_present()',
     'static void reset_link(const struct bt_conn *expected = nullptr)',
     'static void bridge_bond_seen(const struct bt_bond_info *info, void *user_data)',
     'static BridgeBondSnapshot bridge_bonds(const bt_addr_le_t &peer)',
@@ -366,6 +370,7 @@ static void fresh(bool connected=true) {
     scan_start_error_once=adv_start_error_once=scan_stop_error=adv_stop_error=0;
     unpair_error=unpair_all_error=0; unpair_had_addr=false; last_unpair_addr={};
     stored_bond_present=false; stored_bond={};
+    pending_acl=false;
     memcpy(fake_peer.a.val,s_prefs.peer_mac,6); fake_peer.type=s_prefs.peer_addr_type;
     rx_queued=0; security_level=2; memset(s_seen,0,sizeof(s_seen));
     discovers=subscribes=security_requests=mtu_exchanges=0;
@@ -376,6 +381,7 @@ static void fresh(bool connected=true) {
     atomic_set(&s_scan_running,0);
     s_unspecified_security_failures=0;
     s_security_failure_recorded=0; s_bond_recovery_pending=0;
+    s_manual_unpair_pending=0;
     s_auto_unpair_count=0; s_last_peer_rssi=127;
     link_rssi=-48; link_rssi_available=true; rssi_reads=0;
     s_last_fault=BRIDGE_FAULT_NONE; s_last_security_error=0; s_reconnect_count=0;
@@ -572,16 +578,19 @@ int main() {
     assert(send_control(CONTROL_HELLO,payload));
     assert(send_frame(data_frame(),true,false)==0);
     assert(ble_bridge_unpair());
+    assert(s_conn==&fake_conn && s_manual_unpair_pending==1 && unpairs==0);
+    disconnected(&fake_conn,0x13);
+    ble_bridge_maintain();
     assert(!s_conn && !s_link_ready && !s_link_established);
     assert(unpairs==1 && s_bond_recovery_attempted==0 && queued()==1);
     assert(s_retry_at_ms==now_ms+RETRY_MS);
     char bonds[96];
     ble_bridge_get_bonds(bonds,sizeof(bonds)); assert(strcmp(bonds,"bonds=0;peer=0")==0);
-    fresh(); stored_bond_present=true; stored_bond=fake_peer;
+    fresh(false); stored_bond_present=true; stored_bond=fake_peer;
     ble_bridge_get_bonds(bonds,sizeof(bonds));
     assert(strstr(bonds,"bonds=1;peer=1;")!=nullptr);
     assert(ble_bridge_unpair() && unpairs==1 && !stored_bond_present);
-    fresh(); stored_bond_present=true; stored_bond=fake_peer;
+    fresh(false); stored_bond_present=true; stored_bond=fake_peer;
     stored_bond.a.val[0] ^= 0x80; // bt_unpair(peer) succeeds without finding this key.
     ble_bridge_get_bonds(bonds,sizeof(bonds));
     assert(strstr(bonds,"bonds=1;peer=0;")!=nullptr);
@@ -590,11 +599,11 @@ int main() {
     ble_bridge_get_bonds(bonds,sizeof(bonds)); assert(strcmp(bonds,"bonds=0;peer=0")==0);
     char bond_log[161]; ble_bridge_get_logs(bond_log,sizeof(bond_log),0,1);
     assert(strstr(bond_log,"bonds-after=0/0")!=nullptr);
-    fresh(); stored_bond_present=true; stored_bond=fake_peer;
+    fresh(false); stored_bond_present=true; stored_bond=fake_peer;
     stored_bond.a.val[0] ^= 0x80; unpair_all_error=-EIO;
     assert(!ble_bridge_unpair() && unpairs==2 && stored_bond_present);
-    fresh(); unpair_error=-EIO; assert(!ble_bridge_unpair() && !s_conn);
-    fresh(); unpair_error=-ENOENT; assert(ble_bridge_unpair());
+    fresh(false); unpair_error=-EIO; assert(!ble_bridge_unpair() && !s_conn);
+    fresh(false); unpair_error=-ENOENT; assert(ble_bridge_unpair());
     fresh(); s_started=0; assert(!ble_bridge_unpair() && unpairs==0);
     fresh(); s_prefs.peer_mac[0]=0; assert(!ble_bridge_unpair() && unpairs==0);
 
@@ -616,6 +625,12 @@ int main() {
     ble_bridge_maintain();
     assert(unpairs==2 && !stored_bond_present && s_auto_unpair_count==1);
     fresh(false); queue_peer_bond_recovery(BT_SECURITY_ERR_AUTH_REQUIREMENT);
+    ble_bridge_maintain(); assert(unpairs==1 && s_auto_unpair_count==1);
+    fresh(false); pending_acl=true;
+    queue_peer_bond_recovery(BT_SECURITY_ERR_AUTH_REQUIREMENT);
+    ble_bridge_maintain();
+    assert(!unpairs && s_bond_recovery_pending==BT_SECURITY_ERR_AUTH_REQUIREMENT);
+    pending_acl=false;
     ble_bridge_maintain(); assert(unpairs==1 && s_auto_unpair_count==1);
     stored_bond_present=true; stored_bond=fake_peer;
     now_ms+=BOND_RECOVERY_COOLDOWN_MS-1;
@@ -801,6 +816,7 @@ int main() {
     // One bad SMP callback per connection; bond recovery runs in main, not in BT callback.
     for (int code=0;code<=BT_SECURITY_ERR_UNSPECIFIED;++code) {
         fresh(); auto error=static_cast<bt_security_err>(code);
+        s_link_established=false;
         security_changed(&fake_conn,1,error);
         bool clear=code==BT_SECURITY_ERR_AUTH_FAIL ||
                    code==BT_SECURITY_ERR_PIN_OR_KEY_MISSING ||
@@ -812,11 +828,17 @@ int main() {
         security_changed(&fake_conn,1,error);
         assert(disconnects==2*expected_disconnects && unpairs==0);
         ble_bridge_maintain();
+        if (clear) {
+            assert(unpairs==0 && s_bond_recovery_pending==code);
+            disconnected(&fake_conn,0x13);
+            ble_bridge_maintain();
+        }
         assert(unpairs==unsigned(clear) && s_auto_unpair_count==int(clear));
     }
     // M6 reports AUTH_REQUIREMENT (s=4) when its old bond cannot reach L2.
     fresh(false); atomic_set(&s_is_central,0); security_level=1;
     connected(&fake_conn,0);
+    assert(security_requests==0 && s_conn==&fake_conn);
     security_changed(&fake_conn,1,BT_SECURITY_ERR_AUTH_REQUIREMENT);
     assert(s_bond_recovery_pending==BT_SECURITY_ERR_AUTH_REQUIREMENT && unpairs==0);
     disconnected(&fake_conn,0x16);

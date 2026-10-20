@@ -8,6 +8,11 @@
 
 #include "server_main_common.h"
 #include <app/RepeaterMesh.h>
+#include <zephyr/logging/log.h>
+LOG_MODULE_REGISTER(zephcore_repeater_main, CONFIG_ZEPHCORE_MAIN_LOG_LEVEL);
+#if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+#include <app/RepeaterBridge.h>
+#endif
 
 #ifdef ZEPHCORE_LORA
 /* RepeaterMesh requires: board, radio, ms_clock, rng, rtc, tables */
@@ -21,7 +26,14 @@ static const ServerRole repeater_role = {
 	.mesh = &repeater_mesh,
 	.callbacks = &repeater_mesh,
 	.prefs = repeater_mesh.getNodePrefs(),
-	.begin = [](RepeaterDataStore *store) { repeater_mesh.begin(store); },
+	.begin = [](RepeaterDataStore *store) {
+		repeater_mesh.begin(store);
+#if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+		if (!repeater_bridge_start(store, &repeater_mesh)) {
+			LOG_ERR("Repeater bridge start failed");
+		}
+#endif
+	},
 	.loop = [] { repeater_mesh.loop(); },
 	.handle_command = [](char *command, char *reply) { repeater_mesh.handleCommand(0, command, reply); },
 	.note_gps_time_sync = [] { repeater_mesh.noteGPSTimeSync(); },

@@ -184,6 +184,8 @@ public:
 	 * "<marker> <node_name>: <text>"; the marker says whether a repeat was heard. */
 	void queueLocalSentChannelMessage(uint8_t channel_idx, uint32_t timestamp,
 			const char *text, bool heard_repeat);
+	void queueLocalAutomatedChannelMessage(const mesh::GroupChannel &channel,
+			uint32_t timestamp, const char *text);
 
 	/* DataStoreHost interface */
 	bool onContactLoaded(const ContactInfo &c) override;
@@ -482,6 +484,8 @@ private:
 
 	void queueMessage(const ContactInfo &contact, uint8_t txt_type, mesh::Packet *pkt,
 		 uint32_t sender_timestamp, const uint8_t *extra, int extra_len, const char *text);
+	void queueLocalChannelMessage(uint8_t channel_idx, uint32_t timestamp,
+		 const char *text, const char *marker);
 
 	CompanionCLICallback _cli_exec_cb;
 

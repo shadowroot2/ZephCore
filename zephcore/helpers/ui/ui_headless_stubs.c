@@ -36,6 +36,7 @@ WEAK void ui_notify(enum ui_event event)
 }
 
 WEAK void ui_request_render(void) { }
+WEAK bool ui_shutdown_in_progress(void) { return false; }
 
 WEAK void ui_set_msg_count(uint16_t count)
 {
@@ -109,10 +110,10 @@ WEAK void ui_set_gps_enabled(bool enabled)
 	ARG_UNUSED(enabled);
 }
 
-WEAK void ui_set_gps_state(uint8_t state, uint16_t satellites,
-			    uint32_t last_fix_age_s, uint32_t next_search_s)
+WEAK void ui_set_gps_state(uint8_t state, uint32_t last_fix_age_s,
+			    uint32_t next_search_s)
 {
-	ARG_UNUSED(state); ARG_UNUSED(satellites);
+	ARG_UNUSED(state);
 	ARG_UNUSED(last_fix_age_s); ARG_UNUSED(next_search_s);
 }
 
@@ -161,6 +162,8 @@ WEAK void ui_set_heartbeat_led(bool enabled)
 
 WEAK void ui_led_force_tx(void) { }
 WEAK void ui_led_confirm_state(bool enabled) { ARG_UNUSED(enabled); }
+WEAK void ui_led_set_ble_connected(bool connected) { ARG_UNUSED(connected); }
+WEAK void ui_led_set_ble_enabled(bool enabled) { ARG_UNUSED(enabled); }
 
 WEAK void ui_shutdown(void)
 {

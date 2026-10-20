@@ -910,8 +910,27 @@ void CompanionMesh::queueLocalSentContactMessage(const ContactInfo &contact,
 void CompanionMesh::queueLocalSentChannelMessage(uint8_t channel_idx,
 	uint32_t timestamp, const char *text, bool heard_repeat)
 {
+	queueLocalChannelMessage(channel_idx, timestamp, text,
+		heard_repeat ? "(>>\xe2\x9c\x93) " : "(>>\xe2\x9c\x97) ");
+}
+
+void CompanionMesh::queueLocalAutomatedChannelMessage(
+	const mesh::GroupChannel &channel, uint32_t timestamp, const char *text)
+{
+	int channel_idx = findChannelIdx(channel);
+	if (channel_idx < 0 || channel_idx >= MAX_GROUP_CHANNELS) {
+		LOG_WRN("local channel mirror: destination not found");
+		return;
+	}
+	queueLocalChannelMessage((uint8_t)channel_idx, timestamp, text, "(>>) ");
+}
+
+void CompanionMesh::queueLocalChannelMessage(uint8_t channel_idx,
+	uint32_t timestamp, const char *text, const char *marker)
+{
 	if (!text) return;
 	uint8_t frame[MAX_FRAME_SIZE];
+	const size_t frame_limit = sizeof(_offline_queue[0].buf);
 	int i = 0;
 
 	if (_app_target_ver >= 3) {
@@ -930,25 +949,18 @@ void CompanionMesh::queueLocalSentChannelMessage(uint8_t channel_idx,
 	put_le32(&frame[i], timestamp);
 	i += 4;
 
-	/* Channel wire-text is "<sender_name>: <body>" — the same prefix
-	 * BaseChatMesh::sendGroupMessage applied over LoRa.  Prepend a
-	 * heard/unheard marker so the phone app can distinguish whether the
-	 * mesh propagated our flood. */
-	const char *marker = heard_repeat ? "(>>\xe2\x9c\x93) "    /* (>>✓) UTF-8 */
-									  : "(>>\xe2\x9c\x97) ";   /* (>>✗) UTF-8 */
-	int n = snprintf((char *)&frame[i], sizeof(frame) - i, "%s%s: ", marker, prefs.node_name);
+	int n = snprintf((char *)&frame[i], frame_limit - i, "%s%s: ", marker, prefs.node_name);
 	if (n < 0) n = 0;
-	if ((size_t)n > sizeof(frame) - i) n = sizeof(frame) - i;
+	if ((size_t)n >= frame_limit - i) n = frame_limit - i - 1;
 	i += n;
 	size_t text_len = strlen(text);
-	if (i + text_len > sizeof(frame)) {
-		text_len = sizeof(frame) - i;
+	if (i + text_len > frame_limit) {
+		text_len = frame_limit - i;
 	}
 	memcpy(&frame[i], text, text_len);
 	i += text_len;
 
-	LOG_DBG("queueLocalSentChannelMessage: frame_len=%d channel_idx=%d heard=%d",
-		i, channel_idx, (int)heard_repeat);
+	LOG_DBG("queueLocalChannelMessage: frame_len=%d channel_idx=%d", i, channel_idx);
 	addToOfflineQueue(frame, i);
 	pushMsgWaiting();
 }
@@ -1249,6 +1261,15 @@ void CompanionMesh::logTx(mesh::Packet *pkt, int)
 {
 	packet_log_tx(getLogDateTime(), pkt);
 #if ZEPHCORE_HAS_UI_TASK
+#if defined(CONFIG_BOARD_T1000_E)
+	if (pkt != nullptr) {
+		uint8_t type = pkt->getPayloadType();
+		if (type == PAYLOAD_TYPE_TXT_MSG || type == PAYLOAD_TYPE_GRP_TXT ||
+		    type == PAYLOAD_TYPE_ADVERT) {
+			ui_led_force_tx();
+		}
+	}
+#endif
 	ui_notify_packet_sent();
 #endif
 }

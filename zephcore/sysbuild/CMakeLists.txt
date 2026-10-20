@@ -11,7 +11,11 @@ set(BOARD_ROOT "${APP_DIR}" CACHE STRING "" FORCE)
 # and cmake/zephyr_new_files.cmake.
 set(ZEPHCORE_SOURCE_DIR "${APP_DIR}")
 set(ZEPHCORE_ZEPHYR_DIR "$ENV{ZEPHYR_BASE}")
-get_filename_component(ZEPHCORE_MODULES_DIR "${APP_DIR}/../modules" ABSOLUTE)
+if(DEFINED ENV{ZEPHCORE_MODULES_DIR})
+    get_filename_component(ZEPHCORE_MODULES_DIR "$ENV{ZEPHCORE_MODULES_DIR}" ABSOLUTE)
+else()
+    get_filename_component(ZEPHCORE_MODULES_DIR "${APP_DIR}/../modules" ABSOLUTE)
+endif()
 include("${APP_DIR}/cmake/zephyr_patches.cmake")
 include("${APP_DIR}/cmake/zephyr_new_files.cmake")
 

@@ -142,6 +142,13 @@ protected:
 		def("vc_en", _p->v_contact_enabled);
 		def("vc_flags", _p->v_contact_flags);
 		def("vbat_mv", _p->v_battery_alert_mv);
+		def("tz_min", _p->ui_timezone_offset_minutes);
+		def("aoff_em", _p->auto_shutdown_emergency);
+		def("track_int", _p->tracking_interval_minutes);
+		def("track_group", _p->tracking_group_name,
+		    sizeof(_p->tracking_group_name));
+		def("fall_sens", _p->fall_sensitivity);
+		def("fall_en", _p->fall_enabled);
 		def("adc_mult", _p->adc_multiplier);
 		def("pwr_sav_en", _p->powersaving_enabled);
 		def("og_home", _p->offgrid_home_freq);
@@ -320,6 +327,8 @@ bool serverPrefsToJson(const NodePrefs &p, Stream &out)
 bool companionPrefsFromJson(NodePrefs &p, Stream &in)
 {
 	NodePrefs t = p;
+	const int16_t default_tz_minutes = t.ui_timezone_offset_minutes;
+	const int8_t default_tz_hours = t.tz_offset;
 	CompanionJson j(&t);
 
 	/* Absent keys keep the caller's value: clear the marker first, so a file
@@ -329,10 +338,16 @@ bool companionPrefsFromJson(NodePrefs &p, Stream &in)
 	if (!j.load(in)) {
 		return false;
 	}
+	/* Migrate prefs.json files written before the minute-resolution key. */
+	if (t.ui_timezone_offset_minutes == default_tz_minutes &&
+	    t.tz_offset != default_tz_hours) {
+		t.ui_timezone_offset_minutes = (int16_t)t.tz_offset * 60;
+	}
 	auto_shutdown_upgrade(&t);
 	powersaving_upgrade(&t);
 	saneRadio(t);
 	sanitizeNodePrefs(&t);
+	t.tz_offset = (int8_t)(t.ui_timezone_offset_minutes / 60);
 	p = t;
 	return true;
 }

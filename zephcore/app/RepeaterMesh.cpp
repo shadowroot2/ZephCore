@@ -6,6 +6,7 @@
 #include <Serial.h>
 #include <helpers/AdvertDataHelpers.h>
 #include <helpers/TxtDataHelpers.h>
+#include <helpers/battery_curve.h>
 #include <helpers/MeshcoreJson.h>
 #include <adapters/radio/LoRaRadio.h>
 #include <adapters/sensors/ZephyrSensorManager.h>
@@ -19,12 +20,28 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <math.h>
+#if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+#include "RepeaterBridge.h"
+#endif
 #if IS_ENABLED(CONFIG_ZEPHCORE_REPEATER_UPLINK) && IS_ENABLED(CONFIG_MQTT_LIB)
 #include "observer_creds.h"
 #include <ZephyrWiFiStation.h>
 #include <ZephyrMQTTPublisher.h>
 #endif
 #include <helpers/PacketLog.h>
+
+static constexpr uint32_t BATTERY_CHECK_MS = 30000;
+
+static void format_uptime(uint64_t uptime_ms, char *out, size_t out_len)
+{
+  uint64_t seconds = uptime_ms / 1000U;
+  snprintf(out, out_len, "%llud %02lluh %02llum %02llus",
+           (unsigned long long)(seconds / 86400U),
+           (unsigned long long)((seconds / 3600U) % 24U),
+           (unsigned long long)((seconds / 60U) % 60U),
+           (unsigned long long)(seconds % 60U));
+}
 
 /* Helper to get radio driver for stats — uses LoRaRadio (works for SX126x and LR1110) */
 static inline mesh::LoRaRadio& getRadioDriver(mesh::Radio* radio) {
@@ -642,6 +659,14 @@ void RepeaterMesh::logRx(mesh::Packet* pkt, int len, float score) {
   _uplink_last_score = score;
   publishUplinkPacket(pkt);
 #endif
+#if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+  const uint8_t type = pkt->getPayloadType();
+  if (pkt->isRouteFlood() &&
+      (type == PAYLOAD_TYPE_GRP_TXT || type == PAYLOAD_TYPE_GRP_DATA ||
+       type == PAYLOAD_TYPE_ADVERT)) {
+    repeater_bridge_forward_packet(pkt, _radio->getEstAirtimeFor(pkt->getRawLength()));
+  }
+#endif
 }
 
 // ZEPHCORE: ours. Packet logging through helpers/PacketLog.h.
@@ -1067,6 +1092,17 @@ RepeaterMesh::RepeaterMesh(mesh::MainBoard& board, mesh::Radio& radio, mesh::Mil
 void RepeaterMesh::begin(RepeaterDataStore* store) {
   _store = store;
 
+  _store->loadBatteryPrefs(battery_prefs);
+  uint32_t last_alert;
+  if (_store->loadBatteryAlertTime(last_alert)) {
+    const uint32_t epoch = getRTCClock()->getCurrentTime();
+    battery_alert_sent = true;
+    battery_last_alert_at = k_uptime_get();
+    if (last_alert >= 1577836800U && epoch >= last_alert) {
+      battery_last_alert_at -= (int64_t)(epoch - last_alert) * 1000;
+    }
+  }
+
   /* Prefs and identity are loaded by the caller (main_repeater.cpp) before
    * begin() — the radio reads freq/bw/sf/cr through _prefs during
    * Mesh::begin() → Dispatcher::begin() → Radio::begin(). */
@@ -1340,6 +1376,45 @@ void RepeaterMesh::handleCommand(uint32_t sender_timestamp, char* command, char*
    * Set unconditionally: a stale value would shrink the next reply. */
   _cli.setReplyHeaderUsed(hdr_used);
 
+  if (strcmp(command, "uptime") == 0 || strcmp(command, "get uptime") == 0) {
+    char formatted[32];
+    format_uptime((uint64_t)k_uptime_get(), formatted, sizeof(formatted));
+    snprintf(reply, sender_timestamp ? CLI_REMOTE_REPLY_SIZE - hdr_used : CLI_REPLY_SIZE,
+             "uptime: %s", formatted);
+    return;
+  }
+
+  if (sender_timestamp &&
+      (strcmp(command, "stats-packets") == 0 ||
+       strcmp(command, "stats-radio") == 0 ||
+       strcmp(command, "stats-core") == 0)) {
+    char stats[CLI_REPLY_SIZE];
+    if (strcmp(command, "stats-packets") == 0) formatPacketStatsReply(stats);
+    else if (strcmp(command, "stats-radio") == 0) formatRadioStatsReply(stats);
+    else formatStatsReply(stats);
+    const size_t capacity = CLI_REMOTE_REPLY_SIZE - hdr_used;
+    const size_t len = strnlen(stats, sizeof(stats));
+    if (len >= sizeof(stats) || len + 3 >= capacity) {
+      snprintf(reply, capacity, "ERR: stats reply too long");
+    } else {
+      memcpy(reply, stats, len + 1);
+    }
+    return;
+  }
+
+  if (handleBatteryCommand(command, reply)) return;
+
+#if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+  const size_t reply_capacity = sender_timestamp ?
+      CLI_REMOTE_REPLY_SIZE - hdr_used : CLI_REPLY_SIZE;
+  if (sender_timestamp && strcmp(command, "bridge keygen") == 0) {
+    snprintf(reply, reply_capacity, "ERR: bridge keygen is local only");
+    return;
+  }
+  if (repeater_bridge_handle_command(command, reply, reply_capacity,
+                                     getRTCClock()->getCurrentTime())) return;
+#endif
+
 #if IS_ENABLED(CONFIG_ZEPHCORE_REPEATER_UPLINK) && IS_ENABLED(CONFIG_MQTT_LIB)
   if (handleUplinkCommand(command, reply)) {
     return;
@@ -1414,8 +1489,199 @@ void RepeaterMesh::handleCommand(uint32_t sender_timestamp, char* command, char*
 }
 
 // ZEPHCORE: ours. Deadline-driven maintenance.
+bool RepeaterMesh::handleBatteryCommand(const char* command, char* reply) {
+    if (strcmp(command, "battery") == 0) {
+        const uint16_t mv = _board.getBattMilliVolts();
+        char charge[24];
+        if (mv != 0) {
+            snprintf(charge, sizeof(charge), "%u mV (%u%%)", (unsigned)mv,
+                     (unsigned)battery_curve_lookup(&battery_curve_default, mv));
+        } else {
+            strcpy(charge, "unavailable");
+        }
+        char uptime[32];
+        format_uptime((uint64_t)k_uptime_get(), uptime, sizeof(uptime));
+        snprintf(reply, CLI_REMOTE_REPLY_SIZE - 3,
+                 "battery: %s; uptime: %s; alert: %s; interval: %uh; threshold: %u mV",
+                 charge, uptime, battery_prefs.enabled ? "on" : "off",
+                 (unsigned)battery_prefs.interval_hours, (unsigned)battery_prefs.threshold_mv);
+        return true;
+    }
+    if (strcmp(command, "get battery.alert") == 0) {
+        sprintf(reply, "battery.alert: %s (below %u mV, %s)",
+                battery_prefs.enabled ? "on" : "off", battery_prefs.threshold_mv, battery_prefs.group_name);
+        return true;
+    }
+    if (strcmp(command, "get battery.threshold") == 0) {
+        sprintf(reply, "battery.threshold: %u mV", battery_prefs.threshold_mv);
+        return true;
+    }
+    if (strcmp(command, "get battery.interval") == 0) {
+        sprintf(reply, "battery.interval: %u hours", battery_prefs.interval_hours);
+        return true;
+    }
+    if (strcmp(command, "get battery.group") == 0) {
+        sprintf(reply, "battery.group: %s", battery_prefs.group_name);
+        return true;
+    }
+    RepeaterBatteryPrefs updated = battery_prefs;
+    bool enabling = false;
+    if (strncmp(command, "set battery.alert", 17) == 0 &&
+        (command[17] == ' ' || command[17] == '\0')) {
+        if (strcmp(command, "set battery.alert on") == 0) {
+            updated.enabled = true;
+        } else if (strcmp(command, "set battery.alert off") == 0) {
+            updated.enabled = false;
+        } else {
+            strcpy(reply, "ERR: set battery.alert on|off");
+            return true;
+        }
+        enabling = updated.enabled && !battery_prefs.enabled;
+    } else if (strncmp(command, "set battery.threshold", 21) == 0 &&
+               (command[21] == ' ' || command[21] == '\0')) {
+        const char* value = command + 21;
+        while (*value == ' ' || *value == '\t') ++value;
+        unsigned mv = 0;
+        bool valid = *value >= '0' && *value <= '9';
+        while (*value >= '0' && *value <= '9') {
+            mv = mv * 10 + (unsigned)(*value++ - '0');
+            if (mv > 5000) { valid = false; break; }
+        }
+        while (*value == ' ' || *value == '\t') ++value;
+        if (!valid || *value) {
+            strcpy(reply, "ERR: set battery.threshold <mV>: 0..5000");
+            return true;
+        }
+        updated.threshold_mv = mv;
+    } else if (strncmp(command, "set battery.interval", 20) == 0 &&
+               (command[20] == ' ' || command[20] == '\0')) {
+        const char* value = command + 20;
+        while (*value == ' ') ++value;
+        unsigned hours = 0;
+        bool valid = *value != '\0';
+        for (; *value; ++value) {
+            if (*value < '0' || *value > '9') { valid = false; break; }
+            hours = hours * 10 + (unsigned)(*value - '0');
+            if (hours > 168) { valid = false; break; }
+        }
+        if (!valid || hours < 1) {
+            strcpy(reply, "ERR: set battery.interval <hours>, 1..168");
+            return true;
+        }
+        updated.interval_hours = hours;
+    } else if (strncmp(command, "set battery.group", 17) == 0 &&
+               (command[17] == ' ' || command[17] == '\0')) {
+        const char* arg = command + 17;
+        while (*arg == ' ' || *arg == '\t') ++arg;
+        size_t len = strlen(arg);
+        while (len > 0 && (arg[len - 1] == ' ' || arg[len - 1] == '\t')) --len;
+        const bool add_hash = len > 0 && arg[0] != '#';
+        if (len == 0 || len + (add_hash ? 1U : 0U) >= sizeof(updated.group_name)) {
+            strcpy(reply, "ERR: group name must be 1-31 bytes including #");
+            return true;
+        }
+        for (size_t i = 0; i < len; ++i) {
+            if (arg[i] == '\r' || arg[i] == '\n') {
+                strcpy(reply, "ERR: invalid group name");
+                return true;
+            }
+        }
+        memset(updated.group_name, 0, sizeof(updated.group_name));
+        if (add_hash) updated.group_name[0] = '#';
+        memcpy(updated.group_name + (add_hash ? 1 : 0), arg, len);
+    } else {
+        return false;
+    }
+    const bool threshold_changed = updated.threshold_mv != battery_prefs.threshold_mv;
+    const bool changed = threshold_changed || updated.enabled != battery_prefs.enabled ||
+                         updated.interval_hours != battery_prefs.interval_hours ||
+                         strcmp(updated.group_name, battery_prefs.group_name) != 0;
+    if (changed && (!_store || !_store->saveBatteryPrefs(updated))) {
+        strcpy(reply, "ERR: battery settings save failed");
+        return true;
+    }
+    battery_prefs = updated;
+    if (!updated.enabled || enabling || threshold_changed) battery_low_samples = 0;
+    if (enabling || threshold_changed) battery_check_at = 0;
+    sprintf(reply, "OK: battery.alert %s; battery.threshold %u mV; battery.interval %u hours; battery.group %s",
+            updated.enabled ? "on" : "off", updated.threshold_mv, updated.interval_hours, updated.group_name);
+    return true;
+}
+
+void RepeaterMesh::batteryAlertTick() {
+    if (!battery_prefs.enabled || battery_prefs.threshold_mv == 0) return;
+    const uint64_t now = k_uptime_get();
+    if (now < battery_check_at) return;
+    battery_check_at = now + BATTERY_CHECK_MS;
+
+    if (_board.isExternalPowered()) {
+        battery_low_samples = 0;
+        return;
+    }
+    const uint16_t mv = _board.getBattMilliVolts();
+    if (mv == 0 || mv >= battery_prefs.threshold_mv) {
+        battery_low_samples = 0;
+        return;
+    }
+    if (battery_low_samples < 3) ++battery_low_samples;
+    const int64_t interval_ms = (int64_t)battery_prefs.interval_hours * 3600000;
+    if (battery_low_samples < 3 ||
+        (battery_alert_sent && (int64_t)now - battery_last_alert_at < interval_ms)) return;
+
+    const uint8_t percent = battery_curve_lookup(&battery_curve_default, mv);
+
+    double lat = _prefs.node_lat, lon = _prefs.node_lon;
+    struct gps_position pos = {};
+    if (gps_is_available() && gps_get_last_known_position(&pos) &&
+        (pos.latitude_ndeg != 0 || pos.longitude_ndeg != 0) &&
+        pos.latitude_ndeg >= -90000000000LL && pos.latitude_ndeg <= 90000000000LL &&
+        pos.longitude_ndeg >= -180000000000LL && pos.longitude_ndeg <= 180000000000LL) {
+        lat = pos.latitude_ndeg / 1e9;
+        lon = pos.longitude_ndeg / 1e9;
+    }
+    const bool has_location = isfinite(lat) && isfinite(lon) &&
+        lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180 &&
+        (lat != 0 || lon != 0);
+
+    /* Same public-channel PSK/hash and plaintext envelope as BaseChatMesh.
+     * 160 text bytes includes the sender prefix; no channel table is needed. */
+    mesh::GroupChannel channel = {};
+    const char* name = battery_prefs.group_name;
+    mesh::Utils::sha256(channel.secret, 16, (const uint8_t*)name, strlen(name));
+    mesh::Utils::sha256(channel.hash, sizeof(channel.hash), channel.secret, 16);
+    uint8_t data[5 + 160 + 1] = {};
+    uint32_t timestamp = getRTCClock()->getCurrentTimeUnique();
+    memcpy(data, &timestamp, sizeof(timestamp));
+    char* text = (char*)&data[5];
+    int len = snprintf(text, 161, "%.31s: Repeater battery low: %u%% (%u.%02uV). Please recharge.",
+                       _prefs.node_name, percent, mv / 1000U, (mv % 1000U) / 10U);
+    if (has_location && len > 0 && len < 160) {
+        snprintf(text + len, 161 - len, " https://maps.google.com/?q=%.5f,%.5f", lat, lon);
+    }
+    mesh::Packet* pkt = createGroupDatagram(PAYLOAD_TYPE_GRP_TXT, channel,
+                                           data, 5 + strlen(text));
+    if (!pkt) {
+        /* Pool exhausted: retry at the next sample, without consuming the interval. */
+        LOG_WRN("Battery alert: no packet available");
+        return;
+    }
+    sendFloodScoped(default_scope, pkt, 0, _prefs.path_hash_mode + 1);
+    battery_last_alert_at = now;
+    battery_alert_sent = true;
+    if (!_store->saveBatteryAlertTime(getRTCClock()->getCurrentTime())) {
+        LOG_WRN("Battery alert: cooldown not persisted; retained until reboot");
+    }
+    LOG_INF("Battery alert queued in %s: %u%%, %u mV", name, percent, mv);
+}
+
+
 void RepeaterMesh::loop() {
   mesh::Mesh::loop();
+  batteryAlertTick();
+
+#if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+  repeater_bridge_drain(this);
+#endif
 
   if (next_flood_advert && millisHasNowPassed(next_flood_advert)) {
     mesh::Packet* pkt = createSelfAdvert();
@@ -1552,6 +1818,12 @@ uint32_t RepeaterMesh::msUntilNextMaintenance() {
   uint32_t now = (uint32_t)_ms->getMillis();
   uint32_t next = mesh::Mesh::msUntilNextMaintenance();
 
+  if (battery_prefs.enabled && battery_prefs.threshold_mv != 0) {
+    const uint64_t uptime_now = k_uptime_get();
+    next = mesh::maintenanceSooner(next, battery_check_at > uptime_now ?
+        (uint32_t)(battery_check_at - uptime_now) : 0);
+  }
+
   /* Advert timers.  0 means "disabled" for both — flood defaults to 47 h,
    * periodic local advert is off unless configured. */
   if (next_flood_advert) {
@@ -1586,6 +1858,10 @@ uint32_t RepeaterMesh::msUntilNextMaintenance() {
     next = mesh::maintenanceSooner(
         next, _timesync.msUntilNextEval((uint32_t)(k_uptime_get() / 1000)));
   }
+
+#if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+  next = mesh::maintenanceSooner(next, repeater_bridge_ms_until_next());
+#endif
 
   return next;
 }

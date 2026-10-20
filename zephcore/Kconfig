@@ -163,6 +163,21 @@ config ZEPHCORE_ROLE_REPEATER
 	  No BLE stack. Has ACL authentication, region filtering,
 	  neighbor tracking, and full CLI command set.
 
+config ZEPHCORE_ROLE_REPEATER_BRIDGE
+	bool "Repeater Bridge (ESP-NOW / BLE)"
+	depends on SOC_FAMILY_ESPRESSIF_ESP32 || SOC_FAMILY_NORDIC_NRF
+	select NETWORKING if SOC_FAMILY_ESPRESSIF_ESP32
+	select WIFI if SOC_FAMILY_ESPRESSIF_ESP32
+	select WIFI_ESP32 if SOC_FAMILY_ESPRESSIF_ESP32
+	select BT
+	select BT_PERIPHERAL
+	select BT_CENTRAL
+	select BT_SMP
+	select BT_GATT_CLIENT
+	help
+	  Repeater with an encrypted ESP-NOW or BLE backhaul to another bridge.
+	  Only group/flood packets and adverts cross the bridge.
+
 config ZEPHCORE_ROLE_OBSERVER
 	bool "Observer (listen-only, WiFi+MQTT)"
 	help
@@ -193,6 +208,18 @@ config ZEPHCORE_ROLE_KISS_MODEM
 	  console.
 
 endchoice
+
+config ZEPHCORE_ROLE_REPEATER_BASE
+	bool
+	default y if ZEPHCORE_ROLE_REPEATER || ZEPHCORE_ROLE_REPEATER_BRIDGE
+
+config ZEPHCORE_ESPNOW_BRIDGE
+	bool
+	default y if ZEPHCORE_ROLE_REPEATER_BRIDGE && SOC_FAMILY_ESPRESSIF_ESP32
+
+config ZEPHCORE_BLE_REPEATER_BRIDGE
+	bool
+	default y if ZEPHCORE_ROLE_REPEATER_BRIDGE
 
 config ZEPHCORE_COMPANION_USB
 	bool "Enable USB CDC companion transport"
@@ -240,11 +267,19 @@ config ZEPHCORE_COMPANION_SERIAL
 	  On by default for a board without Bluetooth that names the chosen node
 	  (the LoRa-E5 mini): the UART is then its only companion link.
 
-if ZEPHCORE_ROLE_REPEATER || ZEPHCORE_ROLE_ROOM_SERVER
+config ZEPHCORE_COMPANION_SERIAL_POLLING
+	bool "Poll the plain-UART companion transport"
+	depends on ZEPHCORE_COMPANION_SERIAL
+	default n
+	help
+	  Use uart_poll_in()/uart_poll_out() for bridges which do not provide
+	  reliable UART interrupts. Native USB CDC is unaffected.
+
+if ZEPHCORE_ROLE_REPEATER_BASE || ZEPHCORE_ROLE_ROOM_SERVER
 
 config ZEPHCORE_REPEATER_UPLINK
 	bool "Enable repeater WiFi+MQTT uplink"
-	depends on ZEPHCORE_ROLE_REPEATER && SOC_FAMILY_ESPRESSIF_ESP32
+	depends on ZEPHCORE_ROLE_REPEATER_BASE && SOC_FAMILY_ESPRESSIF_ESP32
 	default n
 	help
 	  Adds observer-style WiFi station and MQTT packet publishing to
@@ -308,7 +343,7 @@ config ZEPHCORE_MAX_UNSYNCED_POSTS
 	  Size of the room server's circular post buffer.  When full, the
 	  oldest unsynced post is overwritten.  Matches upstream MeshCore (32).
 
-endif # ZEPHCORE_ROLE_REPEATER || ZEPHCORE_ROLE_ROOM_SERVER
+endif # ZEPHCORE_ROLE_REPEATER_BASE || ZEPHCORE_ROLE_ROOM_SERVER
 
 config ZEPHCORE_TIMESYNC_QUORUM
 	int "Mesh time sync: consensus quorum"
@@ -383,6 +418,12 @@ config ZEPHCORE_ADVERT_PATH_TABLE_SIZE
 	  Size of recently-heard advert path table.
 
 menu "BLE Configuration"
+
+config ZEPHCORE_BLE_BOOT_DIAG
+	bool "Print BLE boot diagnostics"
+	default n
+	help
+	  Print low-level BLE initialization checkpoints with printk().
 
 config ZEPHCORE_BLE_PASSKEY
 	int "BLE pairing passkey (6 digits)"
@@ -530,7 +571,7 @@ config ZEPHCORE_HOUSEKEEPING_INTERVAL_MS
 
 config ZEPHCORE_MAINTENANCE_BACKSTOP_MS
 	int "Repeater / room server maintenance backstop (ms)"
-	depends on ZEPHCORE_ROLE_REPEATER || ZEPHCORE_ROLE_ROOM_SERVER
+	depends on ZEPHCORE_ROLE_REPEATER_BASE || ZEPHCORE_ROLE_ROOM_SERVER
 	default 60000
 	range 15000 600000
 	help
@@ -686,8 +727,16 @@ config ZEPHCORE_RADIO_SX127X
 
 endchoice
 
+config ZEPHCORE_DEFAULT_LORA_433
+	bool "Use the 433 MHz LoRa default profile"
+	default n
+	help
+	  Use 434.030 MHz, 62.5 kHz bandwidth, SF8 and coding rate 4/8 for
+	  fresh preferences. Saved radio preferences take precedence.
+
 config ZEPHCORE_DEFAULT_TX_POWER_DBM
 	int "Default TX power (dBm)"
+	default 17 if ZEPHCORE_DEFAULT_LORA_433
 	default 22
 	range -9 22
 	help
@@ -1029,7 +1078,7 @@ config ZEPHCORE_GPS_NMEA_DUMP
 config ZEPHCORE_GPS_NAV_MODE
 	int "GNSS navigation dynamic model (CASIC $PCAS11)"
 	range -1 7
-	default 1 if ZEPHCORE_ROLE_REPEATER || ZEPHCORE_ROLE_ROOM_SERVER
+	default 1 if ZEPHCORE_ROLE_REPEATER_BASE || ZEPHCORE_ROLE_ROOM_SERVER
 	default 3
 	help
 	  Dynamic model sent to CASIC-family GNSS modules (Quectel L76K/L76KB,
@@ -1055,7 +1104,7 @@ config ZEPHCORE_GPS_SAT_DIAG
 	# this on for every GNSS-less repeater target.
 	depends on GNSS
 	select GNSS_SATELLITES
-	default y if ZEPHCORE_ROLE_REPEATER
+	default y if ZEPHCORE_ROLE_REPEATER_BASE
 	help
 	  Tally tracked satellites per constellation from GSV sentences and
 	  report them in "get gps" as sys=G<n>/R<n>/E<n>/B<n>/?<n>
@@ -1116,7 +1165,7 @@ menu "WiFi OTA Update"
 
 config ZEPHCORE_WIFI_OTA
 	bool "WiFi OTA firmware update"
-	depends on ZEPHCORE_ROLE_REPEATER
+	depends on ZEPHCORE_ROLE_REPEATER_BASE
 	help
 	  Enable WiFi AP + HTTP server for OTA firmware updates.
 	  Auto-enabled for ESP32 repeater builds via wifi_ota.conf.
@@ -1207,6 +1256,13 @@ config ZEPHCORE_UI_TIME_SOURCE_FRESH_HOURS
 	  Set to 0 to keep the last external source tag indefinitely
 	  (no freshness expiry). Drift on a 50 ppm crystal is ~4 s/day,
 	  so this is a trust/freshness signal, not an accuracy limit.
+
+config ZEPHCORE_UI_TIMEZONE_OFFSET_MINUTES
+	int "UI timezone offset from UTC (minutes)"
+	default 300
+	range -1439 1439
+	help
+	  Applied only while rendering local UI clocks. Protocol timestamps stay UTC.
 
 config ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS
 	int "Low-battery auto-shutdown threshold (mV, 0 = disabled)"

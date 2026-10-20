@@ -12,6 +12,7 @@
 #include "IdentityFile.h"
 #include "PrefsFile.h"
 #include <PrefsCodec.h>
+#include <ShadowPrefs.h>
 #include <AdvertDataHelpers.h>   // ADV_TYPE_NONE (transient/anon contacts)
 #include <zephyr/fs/fs.h>
 #include <zephyr/fs/littlefs.h>
@@ -372,7 +373,27 @@ bool ZephyrDataStore::loadLegacyPrefs(NodePrefs &prefs)
 		LOG_ERR("loadPrefs: %s too small (%d bytes, need 90)", PREFS_FILE, (int)len);
 		return false;
 	}
-	if (!companionPrefsDecode(prefs, buf, len)) {
+	bool decoded;
+	bool shadow_decoded = false;
+	if (len == 202) {
+		/* Deployed ShadoW layout: author fields end at 163, raw extension follows. */
+		decoded = companionPrefsDecode(prefs, buf, 163);
+		if (decoded) {
+			ShadowPrefs::decodePayload(prefs, buf + 163);
+			shadow_decoded = true;
+		}
+	} else {
+		decoded = companionPrefsDecode(prefs, buf, len);
+		if (decoded && len >= 174 + ShadowPrefs::record_size) {
+			shadow_decoded = ShadowPrefs::decode(prefs, buf + 174,
+								      ShadowPrefs::record_size);
+		}
+		if (decoded && !shadow_decoded && len >= COMPANION_PREFS_SIZE + ShadowPrefs::record_size) {
+			shadow_decoded = ShadowPrefs::decode(prefs, buf + COMPANION_PREFS_SIZE,
+								      ShadowPrefs::record_size);
+		}
+	}
+	if (!decoded) {
 		float freq, bw;
 
 		memcpy(&freq, &buf[56], sizeof(freq));
@@ -381,6 +402,12 @@ bool ZephyrDataStore::loadLegacyPrefs(NodePrefs &prefs)
 			"ignoring %s (incompatible format?)",
 			(double)freq, (int)buf[60], (double)bw, PREFS_FILE);
 		return false;
+	}
+	if (shadow_decoded) {
+		sanitizeNodePrefs(&prefs);
+		prefs.tz_offset = (int8_t)(prefs.ui_timezone_offset_minutes / 60);
+	} else {
+		prefs.ui_timezone_offset_minutes = (int16_t)prefs.tz_offset * 60;
 	}
 	/* That firmware's 3300 mV default is 3200 now (NodePrefs.h). */
 	prefs.auto_shutdown_set = 0;

@@ -17,7 +17,7 @@
 
 /dts-v1/;
 
-#include <espressif/esp32s3/esp32s3_wroom_n4.dtsi>
+#include <espressif/esp32s3/esp32s3.dtsi>
 #include "thinknode_m5-pinctrl.dtsi"
 #include <zephyr/dt-bindings/adc/adc.h>
 #include <zephyr/dt-bindings/input/input-event-codes.h>
@@ -245,7 +245,6 @@
 /delete-node/ &slot0_lpcore_partition;
 /delete-node/ &slot1_lpcore_partition;
 /delete-node/ &storage_partition;
-/delete-node/ &scratch_partition;
 /delete-node/ &coredump_partition;
 /delete-node/ &slot0_partition;
 /delete-node/ &slot1_partition;
@@ -257,20 +256,27 @@
 };
 
 &flash0 {
+	reg = <0x0 DT_SIZE_M(4)>;
+	ranges = <0x0 0x0 DT_SIZE_M(4)>;
+
 	partitions {
 		slot0_partition: partition@20000 {
+			compatible = "zephyr,mapped-partition";
 			label = "image-0";
 			reg = <0x20000 0x1BE000>;
 		};
 		slot1_partition: partition@1de000 {
+			compatible = "zephyr,mapped-partition";
 			label = "image-1";
 			reg = <0x1DE000 0x1BE000>;
 		};
 		storage_partition: partition@39c000 {
+			compatible = "zephyr,mapped-partition";
 			label = "storage";
 			reg = <0x39C000 0x4000>;
 		};
 		lfs_partition: partition@3a0000 {
+			compatible = "zephyr,mapped-partition";
 			label = "lfs";
 			reg = <0x3A0000 0x60000>;
 		};

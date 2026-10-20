@@ -9,6 +9,7 @@
 #include "buzzer_gate.h"
 #include "pm_sleep_guard.h"
 #include <helpers/ui/ui_task.h>
+#include <helpers/ui/ui_timezone.h>
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
 #include <helpers/ui/display.h>
 #endif
@@ -1725,6 +1726,8 @@ void CommonCLI::handleSetCmd(uint32_t sender_timestamp, const char* command, cha
 				 TZ_OFFSET_MIN, TZ_OFFSET_MAX);
 		} else {
 			_prefs->tz_offset = (int8_t)val;
+			_prefs->ui_timezone_offset_minutes = (int16_t)(val * 60);
+			ui_set_timezone_offset_minutes(_prefs->ui_timezone_offset_minutes);
 			savePrefs();
 			snprintf(reply, CLI_REPLY_SIZE, "OK - tz.offset=%d", (int)val);
 		}

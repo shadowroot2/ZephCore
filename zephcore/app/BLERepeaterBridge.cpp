@@ -169,6 +169,7 @@ static atomic_t s_bond_recovery_attempted;
 static atomic_t s_unspecified_security_failures;
 static atomic_t s_security_failure_recorded;
 static atomic_t s_bond_recovery_pending;
+static atomic_t s_manual_unpair_pending;
 static atomic_t s_auto_unpair_count;
 /* Guarded by s_state_lock, including on 32-bit targets. */
 static int64_t s_unspecified_security_since_ms;
@@ -442,12 +443,26 @@ static void cancel_pending_connection()
 	peer.type = s_prefs.peer_addr_type;
 	memcpy(peer.a.val, s_prefs.peer_mac, sizeof(peer.a.val));
 	k_spin_unlock(&s_prefs_lock, key);
-	struct bt_conn *conn = bt_conn_lookup_addr_le(BT_ID_DEFAULT, &peer);
+	struct bt_conn *conn = link_conn_ref(false, false, nullptr, nullptr);
+	if (!conn) conn = bt_conn_lookup_addr_le(BT_ID_DEFAULT, &peer);
 	if (conn) {
 		/* bt_conn_disconnect also cancels a pending LE create operation. */
 		(void)bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
 		bt_conn_unref(conn);
 	}
+}
+
+static bool peer_acl_present()
+{
+	bt_addr_le_t peer;
+	k_spinlock_key_t key = k_spin_lock(&s_prefs_lock);
+	peer.type = s_prefs.peer_addr_type;
+	memcpy(peer.a.val, s_prefs.peer_mac, sizeof(peer.a.val));
+	k_spin_unlock(&s_prefs_lock, key);
+	struct bt_conn *conn = bt_conn_lookup_addr_le(BT_ID_DEFAULT, &peer);
+	if (!conn) return false;
+	bt_conn_unref(conn);
+	return true;
 }
 
 static void reset_link(const struct bt_conn *expected = nullptr)
@@ -1288,7 +1303,11 @@ static void connected(struct bt_conn *conn, uint8_t err)
 	k_spin_unlock(&s_state_lock, lock_key);
 	if (s_dispatcher) s_dispatcher->notifyWake();
 	clear_discovery_state();
-	int sec_err = bt_conn_set_security(conn, BT_SECURITY_L2);
+	/* Only the central initiates SMP. The peripheral's simultaneous Security
+	 * Request can race central pairing/encryption after an asymmetric bond
+	 * reset (ESP32 has no key while nRF still has one). */
+	int sec_err = atomic_get(&s_is_central) ?
+		bt_conn_set_security(conn, BT_SECURITY_L2) : 0;
 	if (sec_err && sec_err != -EALREADY) {
 		bridge_log(BRIDGE_LOG_SECURITY_REQUEST, sec_err);
 		LOG_WRN("BLE bridge security request failed: %d", sec_err);
@@ -1625,6 +1644,7 @@ bool ble_bridge_start(RepeaterDataStore *store, mesh::Dispatcher *dispatcher)
 	atomic_set(&s_unspecified_security_failures, 0);
 	atomic_set(&s_security_failure_recorded, 0);
 	atomic_set(&s_bond_recovery_pending, 0);
+	atomic_set(&s_manual_unpair_pending, 0);
 	atomic_set(&s_auto_unpair_count, 0);
 	atomic_set(&s_last_disconnect_reason, -1);
 	atomic_set(&s_last_connect_error, 0);
@@ -1905,10 +1925,17 @@ void ble_bridge_get_logs(char *out, size_t out_len, uint32_t now_epoch, unsigned
 bool ble_bridge_unpair(void)
 {
 	if (!atomic_get(&s_started) || !mac_is_set(s_prefs.peer_mac)) return false;
+	if (link_has_conn() || peer_acl_present()) {
+		atomic_set(&s_manual_unpair_pending, 1);
+		cancel_pending_connection();
+		if (s_dispatcher) s_dispatcher->notifyWake();
+		return true;
+	}
 	reset_link();
 	const bool cleared = clear_peer_bond();
 	bridge_log(BRIDGE_LOG_UNPAIR_MANUAL, cleared ? 0 : -1);
 	if (!cleared) return false;
+	atomic_set(&s_manual_unpair_pending, 0);
 	k_spinlock_key_t key = k_spin_lock(&s_state_lock);
 	atomic_set(&s_bond_recovery_attempted, 0);
 	s_bond_recovery_retry_at_ms = 0;
@@ -1930,7 +1957,7 @@ bool ble_bridge_handle_command(const char *command, char *reply, size_t reply_le
 			snprintf(reply, reply_len, "ERR: bridge peer bond was not cleared");
 			return true;
 		}
-		snprintf(reply, reply_len, "OK: bridge peer bond cleared; reconnecting");
+		snprintf(reply, reply_len, "OK: bridge peer bond reset requested; reconnecting");
 		return true;
 	}
 	if (strcmp(command, "get bridge.mac") == 0 || strcmp(command, "get bridge.peer") == 0) {
@@ -2177,6 +2204,25 @@ void ble_bridge_maintain(void)
 {
 	if (!atomic_get(&s_started) || !mac_is_set(s_prefs.peer_mac)) return;
 	const int64_t now = k_uptime_get();
+	if (atomic_get(&s_manual_unpair_pending)) {
+		if (link_has_conn() || peer_acl_present()) {
+			cancel_pending_connection();
+			return;
+		}
+		reset_link();
+		const bool cleared = clear_peer_bond();
+		bridge_log(BRIDGE_LOG_UNPAIR_MANUAL, cleared ? 0 : -1);
+		atomic_set(&s_manual_unpair_pending, 0);
+		if (cleared) {
+			k_spinlock_key_t key = k_spin_lock(&s_state_lock);
+			atomic_set(&s_bond_recovery_attempted, 0);
+			s_bond_recovery_retry_at_ms = 0;
+			k_spin_unlock(&s_state_lock, key);
+			atomic_set(&s_bond_recovery_pending, 0);
+			clear_unspecified_security_failures();
+		}
+		return;
+	}
 	k_spinlock_key_t recovery_key = k_spin_lock(&s_state_lock);
 	const bool security_stalled = !s_conn &&
 		atomic_get(&s_unspecified_security_failures) > 0 &&
@@ -2193,13 +2239,18 @@ void ble_bridge_maintain(void)
 	k_spin_unlock(&s_state_lock, recovery_key);
 	if (security_stalled && s_dispatcher) s_dispatcher->notifyWake();
 	const int recovery_error = atomic_set(&s_bond_recovery_pending, 0);
-	if (recovery_error == BT_SECURITY_ERR_UNSPECIFIED && link_has_conn()) {
-		/* A new ACL may have started while recovery was queued. Let its
-		 * security/handshake finish before touching the stored bond. */
-		if (!link_is_established()) atomic_set(&s_bond_recovery_pending, recovery_error);
-		return;
-	}
 	if (recovery_error) {
+		/* Zephyr's bt_unpair() clears conn->le.keys immediately. Doing this
+		 * while SMP or ACL disconnect is still in progress turns a recoverable
+		 * stale bond into another unspecified security failure. */
+		if (link_has_conn() || peer_acl_present()) {
+			if (!link_is_established()) {
+				atomic_set(&s_bond_recovery_pending, recovery_error);
+				cancel_pending_connection();
+				return;
+			}
+			return;
+		}
 		reset_link();
 		const bool cleared = clear_peer_bond();
 		bridge_log(BRIDGE_LOG_UNPAIR_AUTO, cleared ? recovery_error : -1);

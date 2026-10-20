@@ -141,10 +141,22 @@ extern "C" void ui_notify(enum ui_event event)
 	}
 }
 
+extern "C" void ui_request_render(void)
+{
+	if (s_task) {
+		s_task->notify();
+	}
+}
+
 extern "C" void ui_notify_contact_msg(uint8_t path_len, const char *from_name,
 	const char *text, uint16_t msg_count)
 {
 	if (s_task) {
+	#if defined(CONFIG_BOARD_T1000_E)
+		if (!s_task->isBLEConnected()) {
+		ui_led_flash_msg();
+		}
+	#endif
 		s_task->newMsg(path_len, from_name, text, (int)msg_count);
 	}
 }
@@ -154,6 +166,11 @@ extern "C" void ui_notify_channel_msg(const char *channel_name, const char *text
 {
 	(void)msg_count;
 	if (s_task) {
+	#if defined(CONFIG_BOARD_T1000_E)
+		if (!s_task->isBLEConnected()) {
+		ui_led_flash_msg();
+		}
+	#endif
 		s_task->newChannelMsg(channel_name, text, ts, path_len);
 	}
 }
@@ -249,6 +266,7 @@ extern "C" void ui_set_battery(uint16_t mv, uint8_t pct)
 
 extern "C" void ui_set_ble_enabled(bool enabled)
 {
+	ui_led_set_ble_enabled(enabled);
 	if (s_task) {
 		s_task->setBLEEnabled(enabled);
 	}
