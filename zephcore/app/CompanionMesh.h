@@ -494,6 +494,8 @@ private:
 	CompanionCLIHelpCallback _cli_help_cb;
 	const char *_cli_reply_stream;
 	size_t _cli_reply_stream_offset;
+	uint8_t _cli_reply_stream_prefix[3];
+	uint8_t _cli_reply_stream_prefix_len;
 
 	/* ---- V-contact state (app/VContact.cpp) ---- */
 	/* _vcontact_lastmod == 0: not activated yet. The clock was invalid when it

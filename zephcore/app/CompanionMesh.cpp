@@ -86,6 +86,7 @@ CompanionMesh::CompanionMesh(mesh::Radio &radio, mesh::MillisecondClock &ms, mes
 	_cli_help_cb = nullptr;
 	_cli_reply_stream = nullptr;
 	_cli_reply_stream_offset = 0;
+	_cli_reply_stream_prefix_len = 0;
 	memset(_vcontact_pubkey, 0, sizeof(_vcontact_pubkey));
 	_vcontact_lastmod = 0;
 	memset(_vcontact_recent_ts, 0, sizeof(_vcontact_recent_ts));
@@ -1906,24 +1907,32 @@ bool CompanionMesh::handleCmdRunCliCommand(const uint8_t *data, size_t len)
 		size_t cmd_len = len - 1;
 		if (cmd_len > sizeof(line) - 1) cmd_len = sizeof(line) - 1;
 		memcpy(line, &data[1], cmd_len);
+		size_t begin = 0;
+		while (begin < cmd_len && (uint8_t)line[begin] <= 0x20) begin++;
+		size_t end = cmd_len;
+		while (end > begin && (uint8_t)line[end - 1] <= 0x20) end--;
+		cmd_len = end - begin;
+		if (begin != 0 && cmd_len != 0) memmove(line, &line[begin], cmd_len);
 		line[cmd_len] = '\0';
 		char *command = line;
-		while (*command == ' ' || *command == '\t' || *command == '\r' || *command == '\n') {
-			command++;
-		}
-		char *end = command + strlen(command);
-		while (end > command &&
-		       (end[-1] == ' ' || end[-1] == '\t' || end[-1] == '\r' || end[-1] == '\n')) {
-			*--end = '\0';
-		}
 		if (command[0] >= 'A' && command[0] <= 'Z') {
 			command[0] = (char)(command[0] - 'A' + 'a');
 		}
 
-		const char *help = _cli_help_cb ? _cli_help_cb(command) : nullptr;
+		const char *help_command = command;
+		uint8_t help_prefix_len = 0;
+		if (strlen(command) >= 4 && command[2] == '|') {
+			help_command += 3;
+			help_prefix_len = 3;
+		}
+		const char *help = _cli_help_cb ? _cli_help_cb(help_command) : nullptr;
 		if (help != nullptr) {
 			_cli_reply_stream = help;
 			_cli_reply_stream_offset = 0;
+			_cli_reply_stream_prefix_len = help_prefix_len;
+			if (help_prefix_len != 0) {
+				memcpy(_cli_reply_stream_prefix, command, help_prefix_len);
+			}
 			drainCLIReplyStream();
 			return true;
 		}
@@ -1957,6 +1966,7 @@ bool CompanionMesh::drainCLIReplyStream()
 		if (remaining == 0) {
 			_cli_reply_stream = nullptr;
 			_cli_reply_stream_offset = 0;
+			_cli_reply_stream_prefix_len = 0;
 			return true;
 		}
 
@@ -1967,10 +1977,11 @@ bool CompanionMesh::drainCLIReplyStream()
 			}
 		}
 
-		uint8_t rsp[1 + CHUNK_MAX];
+		uint8_t rsp[1 + sizeof(_cli_reply_stream_prefix) + CHUNK_MAX];
 		rsp[0] = PACKET_CLI_REPLY;
-		memcpy(&rsp[1], p, take);
-		if (!writeFrame(rsp, take + 1)) return false;
+		memcpy(&rsp[1], _cli_reply_stream_prefix, _cli_reply_stream_prefix_len);
+		memcpy(&rsp[1 + _cli_reply_stream_prefix_len], p, take);
+		if (!writeFrame(rsp, 1 + _cli_reply_stream_prefix_len + take)) return false;
 		_cli_reply_stream_offset += take;
 	}
 	return true;
