@@ -33,6 +33,7 @@ LOG_MODULE_REGISTER(zephcore_main, CONFIG_ZEPHCORE_MAIN_LOG_LEVEL);
 #define ZEPHCORE_FALL_DETECTOR 1
 #endif
 #include <helpers/time_sync.h>
+#include <helpers/LocalCLIHelp.h>
 #include "ui_task.h"
 #include "ui_radio_state.h"
 #include "ui_mesh_actions.h"
@@ -1920,6 +1921,14 @@ static void companion_cli_exec(const char *line, uint32_t sender_timestamp,
  * ("\r\n  -> <reply>\r\n") so web serial consoles render it the same. */
 static void companion_cli_run(const char *line)
 {
+	const char *help = local_cli_help(LocalCLIHelpRole::Companion, line);
+	if (help != nullptr) {
+		zephcore_usb_companion_write_text("\r\n  -> ", 7);
+		zephcore_usb_companion_write_text(help, strlen(help));
+		zephcore_usb_companion_write_text("\r\n", 2);
+		return;
+	}
+
 	char reply[COMPANION_CLI_PREFIX_ROOM + CLI_REPLY_SIZE];
 	companion_mesh.handleCommand(line, 0, reply);
 	if (reply[0] != '\0') {
