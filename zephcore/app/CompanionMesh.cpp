@@ -1887,7 +1887,7 @@ bool CompanionMesh::handleCmdAppStart(const uint8_t *data, size_t len)
 bool CompanionMesh::handleCmdRunCliCommand(const uint8_t *data, size_t len)
 {
 	/* Runs a CLI line on behalf of the connected app.  This is the same
-	 * local CLI the USB text sideband and the v-contact chat already reach,
+	 * local CLI the USB text sideband reaches,
 	 * over the same already-paired transport, so it adds no reach that an
 	 * app connected to this node did not already have — it is executed with
 	 * sender_timestamp 0 (local) for exactly that reason. */

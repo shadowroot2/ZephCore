@@ -1,9 +1,8 @@
 /*
  * SPDX-License-Identifier: MIT
  * The v-contact ("v<node_name>"): a chat contact that exists only toward the
- * connected app. Messages to it run the companion CLI; replies and notices
- * (battery alert, restart reason) come back as its messages via the offline
- * queue. Invariants:
+ * connected app. It carries local notifications; incoming messages receive a
+ * fixed redirect to the app's Command Line. Invariants:
  *   - it never enters the contacts table, so never the RF RX matching path;
  *   - it is intercepted before any send path, so no packet is ever created;
  *   - nobody holds its private key, so over-the-air traffic to it is inert.
@@ -268,7 +267,7 @@ bool CompanionMesh::vcontactHandleFrame(const uint8_t *data, size_t len)
 					  K_MSEC(VCONTACT_CONFIRM_DELAY_MS));
 
 			/* A resend reuses the timestamp: re-ack it (done above) without
-			 * re-running the CLI. */
+			 * queuing the redirect twice. */
 			bool dup = false;
 			if (msg_timestamp != 0) {
 				for (uint8_t i = 0; i < VCONTACT_DEDUP_SLOTS; i++) {
@@ -282,20 +281,11 @@ bool CompanionMesh::vcontactHandleFrame(const uint8_t *data, size_t len)
 			}
 
 			if (!dup) {
-				/* Undo a phone keyboard's autocapitalisation ("Get cad"), on
-				 * character 0 only: it is always inside the command verb.
-				 * Folding more once lowercased admin passwords. After the ack
-				 * hash, which covers the original text. */
-				if (line[0] >= 'A' && line[0] <= 'Z') {
-					line[0] = (char)(line[0] - 'A' + 'a');
-				}
-
-				LOG_INF("vcontact CLI: '%s'", line);
-				char reply[COMPANION_CLI_PREFIX_ROOM + COMPANION_CLI_REPLY_SIZE];
-				handleCommand(line, 0, reply);
-				if (reply[0] != '\0') vcontactQueueText(reply);
+				LOG_INF("vcontact inbound text ignored: '%s'", line);
+				vcontactQueueText("Please use the Command Line in Settings. "
+						  "This chat is for notifications only.");
 			} else {
-				LOG_DBG("vcontact CLI: dup ts=%u, re-ack only", msg_timestamp);
+				LOG_DBG("vcontact text: dup ts=%u, re-ack only", msg_timestamp);
 			}
 			return true;
 		}

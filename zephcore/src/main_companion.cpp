@@ -1419,8 +1419,7 @@ static void companion_tracking_process(void)
  * The CommonCLI behind CompanionMesh::handleCommand, whose front-ends are the
  * app's CMD_RUN_CLI_COMMAND, the USB text console (the '<' sync byte tells V3
  * frames from text; BLE NUS has no such marker, so it has no text console),
- * the v-contact chat, and over-the-air TXT_TYPE_CLI_COMMAND. Not gated on
- * ZEPHCORE_USB_STACK. */
+ * and over-the-air TXT_TYPE_CLI_COMMAND. Not gated on ZEPHCORE_USB_STACK. */
 
 /* No reply held, and every transport's TX drained. */
 static bool companion_transport_tx_idle(void)
@@ -1564,8 +1563,8 @@ static const char *companion_ble_cli_help(const char *line)
 		       "get/set tracking.interval";
 	}
 	if (strcmp(line, "help ui") == 0) {
-		return "findme\nleds on|off\nbuzz on|off\nget/set buzzer off|on|vibrate|sound\n"
-		       "get/set display.rotate\nget/set input.rotate\nget/set leds.hb\n"
+		return "findme\nleds on|off\nbuzz on|off\nget/set display.rotate\n"
+		       "get/set input.rotate\nget/set leds.hb\n"
 		       "get/set leds.radio";
 	}
 	if (strcmp(line, "help sensor") == 0) {
@@ -1583,8 +1582,8 @@ static const char *companion_ble_cli_help(const char *line)
 	return nullptr;
 }
 
-/* The `v.*` commands. True if the line was one. */
-static bool handle_vcontact_cli(const char *line, char *reply)
+/* Command-line settings for the notification-only v-contact. */
+static bool handle_vcontact_settings_cli(const char *line, char *reply)
 {
 	if (strcmp(line, "get v.contact") == 0) {
 		snprintf(reply, CLI_REPLY_SIZE, "v.contact: %s",
@@ -1925,7 +1924,7 @@ static bool handle_findme_cli(const char *line, char *reply)
 
 
 
-/* The CompanionMesh::handleCommand callback (main thread). The v-contact and
+/* The CompanionMesh::handleCommand callback (main thread). The v.* settings and
  * autoshutdown commands never see a remote sender: handleCommand stops those. */
 static_assert(COMPANION_CLI_REPLY_SIZE == CLI_REPLY_SIZE,
 	      "companion CLI reply buffer must match CommonCLI reply size");
@@ -1934,6 +1933,12 @@ static void companion_cli_exec(const char *line, uint32_t sender_timestamp,
 			       uint8_t reply_hdr_used, char *reply)
 {
 	reply[0] = '\0';
+	if (strncmp(line, "set leds ", 9) == 0 ||
+	    strncmp(line, "set buzzer ", 11) == 0) return;
+	if (strcmp(line, "leds on") == 0) line = "set leds on";
+	else if (strcmp(line, "leds off") == 0) line = "set leds off";
+	else if (strcmp(line, "buzz on") == 0) line = "set buzzer on";
+	else if (strcmp(line, "buzz off") == 0) line = "set buzzer off";
 	if (strcmp(line, "shutdown") == 0) {
 		strcpy(reply, "To confirm use shutdown y");
 		return;
@@ -1946,7 +1951,7 @@ static void companion_cli_exec(const char *line, uint32_t sender_timestamp,
 	if (handle_offgrid_cli(line, reply) || handle_tracking_cli(line, reply) ||
 	    handle_findme_cli(line, reply) ||
 	    handle_autoshutdown_emergency_cli(line, reply)) return;
-	if (handle_vcontact_cli(line, reply)) {
+	if (handle_vcontact_settings_cli(line, reply)) {
 		return;
 	}
 	if (power_policy.handleCommand(line, reply, CLI_REPLY_SIZE)) {

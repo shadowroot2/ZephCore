@@ -1,9 +1,8 @@
 /*
  * SPDX-License-Identifier: MIT
  * Local serial CLI help.  These strings are deliberately emitted only by
- * local UART/USB entry points and the loopback vContact: replies travelling
- * through LoRa retain their bounded packet buffers and never expose the
- * command catalogue.
+ * local UART/USB entry points. Replies travelling through LoRa retain their
+ * bounded packet buffers and never expose the command catalogue.
  */
 #pragma once
 
@@ -64,9 +63,6 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"get/set autoshutdown\r\nget/set autoshutdown.emergency\r\n"
 #endif
 
-#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
-		"get/set buzzer off|on|vibrate|sound\r\n"
-#endif
 		"get/set display.rotate\r\nget/set dutycycle\r\nget/set extra.sf\r\n"
 #if defined(CONFIG_BOARD_THINKNODE_M3) || defined(CONFIG_BOARD_T1000_E)
 		"get/set fall.sens (1-5)\r\n"

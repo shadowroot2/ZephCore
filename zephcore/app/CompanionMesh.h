@@ -121,8 +121,8 @@ public:
 	void setCLIHelpCallback(CompanionCLIHelpCallback cb) { _cli_help_cb = cb; }
 
 	/* The companion CLI (upstream MyMesh::handleCommand). Front-ends: the app's
-	 * CMD_RUN_CLI_COMMAND, the USB text console and the v-contact chat (all
-	 * local, sender_timestamp 0), and TXT_TYPE_CLI_COMMAND from a contact with
+	 * CMD_RUN_CLI_COMMAND and USB text console (local, sender_timestamp 0),
+	 * and TXT_TYPE_CLI_COMMAND from a contact with
 	 * flag 0x10. False for an unknown command. */
 	bool handleCommand(const char *command, uint32_t sender_timestamp, char *reply);
 
