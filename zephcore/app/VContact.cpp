@@ -293,9 +293,7 @@ bool CompanionMesh::vcontactHandleFrame(const uint8_t *data, size_t len)
 				LOG_INF("vcontact CLI: '%s'", line);
 				char reply[COMPANION_CLI_PREFIX_ROOM + COMPANION_CLI_REPLY_SIZE];
 				handleCommand(line, 0, reply);
-				if (reply[0] != '\0') {
-					vcontactQueueText(reply);
-				}
+				if (reply[0] != '\0') vcontactQueueText(reply);
 			} else {
 				LOG_DBG("vcontact CLI: dup ts=%u, re-ack only", msg_timestamp);
 			}

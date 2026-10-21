@@ -83,6 +83,9 @@ CompanionMesh::CompanionMesh(mesh::Radio &radio, mesh::MillisecondClock &ms, mes
 	memset(_send_scope.key, 0, sizeof(_send_scope.key));
 	_send_scope_force_unscoped = false;
 	_cli_exec_cb = nullptr;
+	_cli_help_cb = nullptr;
+	_cli_reply_stream = nullptr;
+	_cli_reply_stream_offset = 0;
 	memset(_vcontact_pubkey, 0, sizeof(_vcontact_pubkey));
 	_vcontact_lastmod = 0;
 	memset(_vcontact_recent_ts, 0, sizeof(_vcontact_recent_ts));
@@ -245,6 +248,7 @@ bool CompanionMesh::onContactPathRecv(ContactInfo &from, uint8_t *in_path, uint8
 void CompanionMesh::loop()
 {
 	BaseChatMesh::loop();
+	if (!drainCLIReplyStream()) return;
 	drainPendingChannelInfos();
 
 	/* Check for pending lazy contact/channel writes */
@@ -1904,6 +1908,14 @@ bool CompanionMesh::handleCmdRunCliCommand(const uint8_t *data, size_t len)
 		memcpy(line, &data[1], cmd_len);
 		line[cmd_len] = '\0';
 
+		const char *help = _cli_help_cb ? _cli_help_cb(line) : nullptr;
+		if (help != nullptr) {
+			_cli_reply_stream = help;
+			_cli_reply_stream_offset = 0;
+			drainCLIReplyStream();
+			return true;
+		}
+
 		/* Reply is built in place behind the frame type byte. */
 		uint8_t rsp[1 + COMPANION_CLI_PREFIX_ROOM + COMPANION_CLI_REPLY_SIZE];
 		char *reply = (char *)&rsp[1];
@@ -1920,6 +1932,34 @@ bool CompanionMesh::handleCmdRunCliCommand(const uint8_t *data, size_t len)
 		writeFrame(rsp, rlen + 1);
 	} else {
 		writeErrFrame(ERR_ILLEGAL_ARG);
+	}
+	return true;
+}
+
+bool CompanionMesh::drainCLIReplyStream()
+{
+	static const size_t CHUNK_MAX = 150;
+	while (_cli_reply_stream != nullptr) {
+		const char *p = _cli_reply_stream + _cli_reply_stream_offset;
+		size_t remaining = strlen(p);
+		if (remaining == 0) {
+			_cli_reply_stream = nullptr;
+			_cli_reply_stream_offset = 0;
+			return true;
+		}
+
+		size_t take = remaining > CHUNK_MAX ? CHUNK_MAX : remaining;
+		if (take < remaining) {
+			for (size_t i = take; i > CHUNK_MAX / 2; i--) {
+				if (p[i - 1] == '\n') { take = i; break; }
+			}
+		}
+
+		uint8_t rsp[1 + CHUNK_MAX];
+		rsp[0] = PACKET_CLI_REPLY;
+		memcpy(&rsp[1], p, take);
+		if (!writeFrame(rsp, take + 1)) return false;
+		_cli_reply_stream_offset += take;
 	}
 	return true;
 }

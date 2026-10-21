@@ -89,6 +89,7 @@ typedef void (*PinChangeCallback)(uint32_t new_pin);
 #define COMPANION_CLI_PREFIX_ROOM 3
 typedef void (*CompanionCLICallback)(const char *command, uint32_t sender_timestamp,
 	uint8_t reply_hdr_used, char *reply);
+typedef const char *(*CompanionCLIHelpCallback)(const char *command);
 
 class CompanionMesh : public BaseChatMesh, public DataStoreHost {
 public:
@@ -117,6 +118,7 @@ public:
 	void setRadioReconfigureCallback(RadioReconfigureCallback cb) { _radio_reconfig_cb = cb; }
 	void setPinChangeCallback(PinChangeCallback cb) { _pin_change_cb = cb; }
 	void setCLICallback(CompanionCLICallback cb) { _cli_exec_cb = cb; }
+	void setCLIHelpCallback(CompanionCLIHelpCallback cb) { _cli_help_cb = cb; }
 
 	/* The companion CLI (upstream MyMesh::handleCommand). Front-ends: the app's
 	 * CMD_RUN_CLI_COMMAND, the USB text console and the v-contact chat (all
@@ -481,6 +483,7 @@ private:
 	bool enqueuePendingChannelInfo(uint8_t idx);
 	bool sendChannelInfoFrame(uint8_t idx);
 	void drainPendingChannelInfos();
+	bool drainCLIReplyStream();
 
 	void queueMessage(const ContactInfo &contact, uint8_t txt_type, mesh::Packet *pkt,
 		 uint32_t sender_timestamp, const uint8_t *extra, int extra_len, const char *text);
@@ -488,6 +491,9 @@ private:
 		 const char *text, const char *marker);
 
 	CompanionCLICallback _cli_exec_cb;
+	CompanionCLIHelpCallback _cli_help_cb;
+	const char *_cli_reply_stream;
+	size_t _cli_reply_stream_offset;
 
 	/* ---- V-contact state (app/VContact.cpp) ---- */
 	/* _vcontact_lastmod == 0: not activated yet. The clock was invalid when it

@@ -1525,67 +1525,14 @@ static void power_policy_tick(void)
 	power_policy.tick();
 }
 
-/* Keep one command-mode reply below MAX_FRAME_SIZE (176 including type). */
-static constexpr size_t COMPANION_HELP_PAGE_BODY = 132;
-
-static const char *companion_help_page_end(const char *start)
+static const char *companion_cli_help(const char *line)
 {
-	const char *p = start;
-	size_t used = 0;
-
-	while (*p != '\0') {
-		const char *eol = strstr(p, "\r\n");
-		size_t line_len = eol ? (size_t)(eol + 2 - p) : strlen(p);
-		if (used != 0 && used + line_len > COMPANION_HELP_PAGE_BODY) break;
-		used += line_len;
-		p += line_len;
-	}
-	return p;
+	return local_cli_help(LocalCLIHelpRole::Companion, line);
 }
 
-static bool handle_companion_help(const char *line, char *reply)
-{
-	unsigned requested = 1;
-	if (strcmp(line, "help") != 0 && strcmp(line, "?") != 0) {
-		if (strncmp(line, "help ", 5) != 0) return false;
-		char *end;
-		unsigned long page = strtoul(line + 5, &end, 10);
-		while (*end == ' ') end++;
-		if (page == 0 || page > UINT16_MAX || *end != '\0') {
-			strcpy(reply, "ERROR: use help [page]");
-			return true;
-		}
-		requested = (unsigned)page;
-	}
-
-	const char *help = local_cli_help(LocalCLIHelpRole::Companion, "help");
-	unsigned pages = 0;
-	for (const char *p = help; *p != '\0'; p = companion_help_page_end(p)) pages++;
-	if (requested > pages) {
-		snprintf(reply, CLI_REPLY_SIZE, "ERROR: help pages 1-%u", pages);
-		return true;
-	}
-
-	const char *begin = help;
-	for (unsigned page = 1; page < requested; page++) {
-		begin = companion_help_page_end(begin);
-	}
-	const char *end = companion_help_page_end(begin);
-	int used = snprintf(reply, CLI_REPLY_SIZE, "Help %u/%u\r\n", requested, pages);
-	memcpy(reply + used, begin, (size_t)(end - begin));
-	used += (int)(end - begin);
-	if (*end != '\0') {
-		used += snprintf(reply + used, CLI_REPLY_SIZE - (size_t)used,
-				 "next: help %u", requested + 1);
-	}
-	reply[used] = '\0';
-	return true;
-}
-
-/* The `v.*` commands and paged local help. True if the line was one. */
+/* The `v.*` commands. True if the line was one. */
 static bool handle_vcontact_cli(const char *line, char *reply)
 {
-	if (handle_companion_help(line, reply)) return true;
 	if (strcmp(line, "get v.contact") == 0) {
 		snprintf(reply, CLI_REPLY_SIZE, "v.contact: %s",
 			 companion_mesh.prefs.v_contact_enabled ? "on" : "off");
@@ -1966,7 +1913,7 @@ static void companion_cli_exec(const char *line, uint32_t sender_timestamp,
  * ("\r\n  -> <reply>\r\n") so web serial consoles render it the same. */
 static void companion_cli_run(const char *line)
 {
-	const char *help = local_cli_help(LocalCLIHelpRole::Companion, line);
+	const char *help = companion_cli_help(line);
 	if (help != nullptr) {
 		zephcore_usb_companion_write_text("\r\n  -> ", 7);
 		zephcore_usb_companion_write_text(help, strlen(help));
@@ -2242,6 +2189,7 @@ int main(void)
 #endif
 	});
 	companion_mesh.setCLICallback(companion_cli_exec);
+	companion_mesh.setCLIHelpCallback(companion_cli_help);
 	companion_mesh_ptr = &companion_mesh;
 
 	lora_radio.setRxCallback(lora_rx_callback, nullptr);
