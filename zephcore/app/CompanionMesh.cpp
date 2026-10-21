@@ -1907,8 +1907,20 @@ bool CompanionMesh::handleCmdRunCliCommand(const uint8_t *data, size_t len)
 		if (cmd_len > sizeof(line) - 1) cmd_len = sizeof(line) - 1;
 		memcpy(line, &data[1], cmd_len);
 		line[cmd_len] = '\0';
+		char *command = line;
+		while (*command == ' ' || *command == '\t' || *command == '\r' || *command == '\n') {
+			command++;
+		}
+		char *end = command + strlen(command);
+		while (end > command &&
+		       (end[-1] == ' ' || end[-1] == '\t' || end[-1] == '\r' || end[-1] == '\n')) {
+			*--end = '\0';
+		}
+		if (command[0] >= 'A' && command[0] <= 'Z') {
+			command[0] = (char)(command[0] - 'A' + 'a');
+		}
 
-		const char *help = _cli_help_cb ? _cli_help_cb(line) : nullptr;
+		const char *help = _cli_help_cb ? _cli_help_cb(command) : nullptr;
 		if (help != nullptr) {
 			_cli_reply_stream = help;
 			_cli_reply_stream_offset = 0;
@@ -1920,8 +1932,8 @@ bool CompanionMesh::handleCmdRunCliCommand(const uint8_t *data, size_t len)
 		uint8_t rsp[1 + COMPANION_CLI_PREFIX_ROOM + COMPANION_CLI_REPLY_SIZE];
 		char *reply = (char *)&rsp[1];
 		rsp[0] = PACKET_CLI_REPLY;
-		if (!handleCommand(line, 0, reply)) {
-			strcat(reply, "Unknown command");  // reply may have cmd prefix from 'line'
+		if (!handleCommand(command, 0, reply)) {
+			strcat(reply, "Unknown command");  // reply may have cmd prefix from 'command'
 		}
 
 		/* A CommonCLI reply can be longer than one companion frame and the
