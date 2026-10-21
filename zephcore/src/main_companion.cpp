@@ -1530,6 +1530,59 @@ static const char *companion_cli_help(const char *line)
 	return local_cli_help(LocalCLIHelpRole::Companion, line);
 }
 
+static const char *companion_ble_cli_help(const char *line)
+{
+	if (strcmp(line, "help") == 0 || strcmp(line, "?") == 0) {
+		return "Groups: core rf cad mesh flood gps ui sensor power identity\n"
+		       "Use: help <group>";
+	}
+	if (strcmp(line, "help core") == 0) {
+		return "ver\nboard\nuptime\nclock sync\ntime <epoch>\nstats-packets\n"
+		       "stats-radio\nstats-core\nclear stats\nget role\nget dc.restarts\n"
+		       "get bootloader.ver\nget/set tz.offset";
+	}
+	if (strcmp(line, "help rf") == 0) {
+		return "get/set radio\nget/set freq\nget/set tx\nget/set af\n"
+		       "get/set dutycycle\nget/set extra.sf\nget/set int.thresh\n"
+		       "get/set radio.rxgain\nget/set radio.fem.rxgain";
+	}
+	if (strcmp(line, "help cad") == 0) {
+		return "get cad\nset cad.auto\nset cad.offset\nset probe.interval\n"
+		       "set cad.busycap\nset cad.reset";
+	}
+	if (strcmp(line, "help mesh") == 0) {
+		return "advert\nadvert.zerohop\nget/set advert.interval\nget/set multi.acks\n"
+		       "get/set meshtimesync\nget/set path.hash.mode";
+	}
+	if (strcmp(line, "help flood") == 0) {
+		return "get/set flood.advert.interval\nget/set flood.max\n"
+		       "get/set flood.max.advert\nget/set flood.max.unscoped";
+	}
+	if (strcmp(line, "help gps") == 0) {
+		return "gps on|off|setloc|advert\ntracking on|off\nget gps diag\n"
+		       "get/set gps duty\nget/set lat\nget/set lon\nget/set tracking.group\n"
+		       "get/set tracking.interval";
+	}
+	if (strcmp(line, "help ui") == 0) {
+		return "findme\nleds on|off\nbuzz on|off\nget/set buzzer off|on|vibrate|sound\n"
+		       "get/set display.rotate\nget/set input.rotate\nget/set leds.hb\n"
+		       "get/set leds.radio";
+	}
+	if (strcmp(line, "help sensor") == 0) {
+		return "fall on|off\nget/set fall.sens (1-5)";
+	}
+	if (strcmp(line, "help power") == 0) {
+		return "sos\noffgrid on|off\nget/set adc.multiplier\nget/set autoshutdown\n"
+		       "get/set autoshutdown.emergency\nget/set v.batteryalert\n"
+		       "get/set v.contact\nreboot\nclkreboot\nshutdown y";
+	}
+	if (strcmp(line, "help identity") == 0) {
+		return "get public.key\nget/set prv.key\nget/set name\nget/set owner.info\n"
+		       "start ota\nstart dfu\nerase";
+	}
+	return nullptr;
+}
+
 /* The `v.*` commands. True if the line was one. */
 static bool handle_vcontact_cli(const char *line, char *reply)
 {
@@ -2189,7 +2242,7 @@ int main(void)
 #endif
 	});
 	companion_mesh.setCLICallback(companion_cli_exec);
-	companion_mesh.setCLIHelpCallback(companion_cli_help);
+	companion_mesh.setCLIHelpCallback(companion_ble_cli_help);
 	companion_mesh_ptr = &companion_mesh;
 
 	lora_radio.setRxCallback(lora_rx_callback, nullptr);

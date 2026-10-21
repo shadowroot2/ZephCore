@@ -483,7 +483,6 @@ private:
 	bool enqueuePendingChannelInfo(uint8_t idx);
 	bool sendChannelInfoFrame(uint8_t idx);
 	void drainPendingChannelInfos();
-	bool drainCLIReplyStream();
 
 	void queueMessage(const ContactInfo &contact, uint8_t txt_type, mesh::Packet *pkt,
 		 uint32_t sender_timestamp, const uint8_t *extra, int extra_len, const char *text);
@@ -492,10 +491,6 @@ private:
 
 	CompanionCLICallback _cli_exec_cb;
 	CompanionCLIHelpCallback _cli_help_cb;
-	const char *_cli_reply_stream;
-	size_t _cli_reply_stream_offset;
-	uint8_t _cli_reply_stream_prefix[3];
-	uint8_t _cli_reply_stream_prefix_len;
 
 	/* ---- V-contact state (app/VContact.cpp) ---- */
 	/* _vcontact_lastmod == 0: not activated yet. The clock was invalid when it

@@ -84,9 +84,6 @@ CompanionMesh::CompanionMesh(mesh::Radio &radio, mesh::MillisecondClock &ms, mes
 	_send_scope_force_unscoped = false;
 	_cli_exec_cb = nullptr;
 	_cli_help_cb = nullptr;
-	_cli_reply_stream = nullptr;
-	_cli_reply_stream_offset = 0;
-	_cli_reply_stream_prefix_len = 0;
 	memset(_vcontact_pubkey, 0, sizeof(_vcontact_pubkey));
 	_vcontact_lastmod = 0;
 	memset(_vcontact_recent_ts, 0, sizeof(_vcontact_recent_ts));
@@ -249,7 +246,6 @@ bool CompanionMesh::onContactPathRecv(ContactInfo &from, uint8_t *in_path, uint8
 void CompanionMesh::loop()
 {
 	BaseChatMesh::loop();
-	if (!drainCLIReplyStream()) return;
 	drainPendingChannelInfos();
 
 	/* Check for pending lazy contact/channel writes */
@@ -1915,25 +1911,26 @@ bool CompanionMesh::handleCmdRunCliCommand(const uint8_t *data, size_t len)
 		if (begin != 0 && cmd_len != 0) memmove(line, &line[begin], cmd_len);
 		line[cmd_len] = '\0';
 		char *command = line;
-		if (command[0] >= 'A' && command[0] <= 'Z') {
-			command[0] = (char)(command[0] - 'A' + 'a');
-		}
 
-		const char *help_command = command;
+		char *help_command = command;
 		uint8_t help_prefix_len = 0;
 		if (strlen(command) >= 4 && command[2] == '|') {
 			help_command += 3;
 			help_prefix_len = 3;
 		}
+		if (help_command[0] >= 'A' && help_command[0] <= 'Z') {
+			help_command[0] = (char)(help_command[0] - 'A' + 'a');
+		}
 		const char *help = _cli_help_cb ? _cli_help_cb(help_command) : nullptr;
 		if (help != nullptr) {
-			_cli_reply_stream = help;
-			_cli_reply_stream_offset = 0;
-			_cli_reply_stream_prefix_len = help_prefix_len;
-			if (help_prefix_len != 0) {
-				memcpy(_cli_reply_stream_prefix, command, help_prefix_len);
-			}
-			drainCLIReplyStream();
+			uint8_t rsp[MAX_FRAME_SIZE];
+			rsp[0] = PACKET_CLI_REPLY;
+			memcpy(&rsp[1], command, help_prefix_len);
+			size_t rlen = strlen(help);
+			size_t room = sizeof(rsp) - 1 - help_prefix_len;
+			if (rlen > room) rlen = room;
+			memcpy(&rsp[1 + help_prefix_len], help, rlen);
+			writeFrame(rsp, 1 + help_prefix_len + rlen);
 			return true;
 		}
 
@@ -1953,36 +1950,6 @@ bool CompanionMesh::handleCmdRunCliCommand(const uint8_t *data, size_t len)
 		writeFrame(rsp, rlen + 1);
 	} else {
 		writeErrFrame(ERR_ILLEGAL_ARG);
-	}
-	return true;
-}
-
-bool CompanionMesh::drainCLIReplyStream()
-{
-	static const size_t CHUNK_MAX = 150;
-	while (_cli_reply_stream != nullptr) {
-		const char *p = _cli_reply_stream + _cli_reply_stream_offset;
-		size_t remaining = strlen(p);
-		if (remaining == 0) {
-			_cli_reply_stream = nullptr;
-			_cli_reply_stream_offset = 0;
-			_cli_reply_stream_prefix_len = 0;
-			return true;
-		}
-
-		size_t take = remaining > CHUNK_MAX ? CHUNK_MAX : remaining;
-		if (take < remaining) {
-			for (size_t i = take; i > CHUNK_MAX / 2; i--) {
-				if (p[i - 1] == '\n') { take = i; break; }
-			}
-		}
-
-		uint8_t rsp[1 + sizeof(_cli_reply_stream_prefix) + CHUNK_MAX];
-		rsp[0] = PACKET_CLI_REPLY;
-		memcpy(&rsp[1], _cli_reply_stream_prefix, _cli_reply_stream_prefix_len);
-		memcpy(&rsp[1 + _cli_reply_stream_prefix_len], p, take);
-		if (!writeFrame(rsp, 1 + _cli_reply_stream_prefix_len + take)) return false;
-		_cli_reply_stream_offset += take;
 	}
 	return true;
 }
