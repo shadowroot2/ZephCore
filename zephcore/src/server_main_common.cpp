@@ -49,6 +49,7 @@ extern "C" void bt_ctlr_assert_handle(char *file, uint32_t line)
 #include "mesh_events.h"
 #include "../adapters/datastore/ZephyrFsFormat.h"
 #include <helpers/LoopWakeStats.h>
+#include <helpers/LocalCLIHelp.h>
 #include <helpers/pm_sleep_guard.h>
 #include <helpers/ui/ui_timezone.h>
 #include <Serial.h>
@@ -325,6 +326,18 @@ static void process_cli_commands(void)
 	while (server_role && k_msgq_get(&cli_cmd_queue, &c, K_NO_WAIT) == 0) {
 		cli_reply_buf[0] = '\0';
 		cli_print("\r\n");
+		const char *help = local_cli_help(
+#if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_ROOM_SERVER)
+			LocalCLIHelpRole::RoomServer,
+#else
+			LocalCLIHelpRole::Repeater,
+#endif
+			c.buf);
+		if (help != nullptr) {
+			cli_print(help);
+			cli_print("\r\n");
+			continue;
+		}
 		server_role->handle_command(c.buf, cli_reply_buf);
 		refresh_ui_radio_state();
 #if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
@@ -843,6 +856,7 @@ int server_main(const ServerRole &role)
 	ui_set_node_name(prefs->node_name);
 	refresh_ui_radio_state();
 	ui_set_battery_provider(get_battery_mv, []() { return zephyr_board.getBattPercent(); });
+	ui_set_power_source_provider([]() { return zephyr_board.isExternalPowered(); });
 	ui_set_battery(zephyr_board.getBattMilliVolts(), zephyr_board.getBattPercent());
 	ui_set_gps_available(gps_is_available());
 

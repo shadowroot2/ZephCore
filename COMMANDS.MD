@@ -1,10 +1,10 @@
 # Команды CLI
 
-Порядок соответствует текущему локальному `help` в исходниках прошивки 1.17.4. Для каждой роли приведён самостоятельный список, включая общие команды.
+Список Companion ниже соответствует локальному USB CLI; BLE CLI показывает команды по категориям. Для каждой роли приведён самостоятельный список, включая общие команды.
 
 `get/set name` означает две команды: `get name` — прочитать, `set name <значение>` — изменить. Символ `|` разделяет варианты; угловые скобки обозначают аргумент и не вводятся. Например: `set fall.sens 3`.
 
-Списки объединяют варианты плат: GPS, буззер, дисплей, Fall, OTA, DFU и uplink доступны только при поддержке оборудования и сборки. Локальный USB/UART и vContact companion используют одинаковый порядок help. Удалённый help репиттера разбит на страницы (`help`, `help 2`, …); доступность команд дополнительно ограничивается правами и транспортом. Секретные ключи и пароли не публикуйте.
+Списки объединяют варианты плат: GPS, буззер, дисплей, Fall, OTA, DFU и uplink доступны только при поддержке оборудования и сборки. В Companion командная строка доступна через USB и BLE; vContact служит только для уведомлений. По USB репиттер выводит полный список команд одной командой `help`; удалённый CLI выводит категории по `help` и их содержимое по `help <group>`. Доступность команд дополнительно ограничивается правами и возможностями сборки. Секретные ключи и пароли не публикуйте.
 
 На XIAO nRF52840 `shutdown y` переводит плату в System OFF и не оставляет пробуждение кнопкой D0; запуск происходит при новом подключении USB VBUS (или аппаратном RESET). Если USB уже подключён, его нужно отключить и подключить снова. Падение и последующий рост напряжения солнечной панели электрически равнозначны переподключению USB.
 
@@ -12,9 +12,100 @@
 
 ## Companion
 
+### BLE CLI: T1000-E
+
+`help` выводит `Groups: id | rf | cad | mesh | gps | extra | ui | power | stat | sys`; команды группы выводятся по `help <group>`:
+
+```text
+help
+├─ id
+│  ├─ get role
+│  ├─ get/set name
+│  ├─ get/set owner.info
+│  ├─ get/set prv.key
+│  └─ get public.key
+├─ rf
+│  ├─ get/set freq
+│  ├─ get/set radio
+│  ├─ get/set tx
+│  ├─ get/set af
+│  ├─ get/set path.hash.mode
+│  ├─ get/set dutycycle
+│  ├─ get/set extra.sf
+│  ├─ get/set int.thresh
+│  ├─ get/set radio.rxgain
+│  └─ get/set radio.fem.rxgain
+├─ cad
+│  ├─ get cad
+│  ├─ set cad.auto
+│  ├─ set cad.offset
+│  ├─ set probe.interval
+│  ├─ set cad.busycap
+│  └─ set cad.reset
+├─ mesh
+│  ├─ advert
+│  ├─ advert.zerohop
+│  ├─ get/set advert.interval
+│  ├─ get/set meshtimesync
+│  ├─ get/set flood.advert.interval
+│  ├─ get/set flood.max
+│  ├─ get/set flood.max.advert
+│  └─ get/set flood.max.unscoped
+├─ gps
+│  ├─ gps on|off|setloc|advert
+│  ├─ get/set gps duty
+│  ├─ get/set lat
+│  └─ get/set lon
+├─ extra
+│  ├─ findme
+│  ├─ sos
+│  ├─ tracking on|off
+│  ├─ get/set tracking.group
+│  ├─ get/set tracking.interval
+│  ├─ fall on|off
+│  ├─ get/set fall.sens (1-5)
+│  ├─ get/set v.contact
+│  └─ offgrid on|off
+├─ ui
+│  ├─ buzz on|off
+│  ├─ leds on|off
+│  ├─ get/set leds.hb
+│  └─ get/set leds.radio
+├─ power
+│  ├─ get/set adc.multiplier
+│  ├─ get/set autoshutdown
+│  ├─ get/set autoshutdown.emergency
+│  └─ get/set v.batteryalert
+├─ stat
+│  ├─ stats-packets
+│  ├─ stats-radio
+│  ├─ stats-core
+│  └─ clear stats
+└─ sys
+   ├─ ver
+   ├─ board
+   ├─ uptime
+   ├─ tz
+   ├─ clock sync
+   ├─ time <epoch>
+   ├─ get dc.restarts
+   ├─ get bootloader.ver
+   ├─ get/set tz.offset
+   ├─ start ota
+   ├─ start dfu
+   ├─ reboot
+   ├─ shutdown y
+   └─ erase
+```
+
+Команды Fall в BLE help показываются только на T1000-E и ThinkNode M3; `display.rotate` и `input.rotate` добавляются в `ui` на сборках с дисплеем.
+
+### Команды и описание
+
 - `ver` — выводит версию прошивки.
 - `board` — выводит модель платы.
 - `uptime` — выводит время работы после загрузки.
+- `tz` — выводит текущий часовой пояс экрана в формате `GMT+5`, `GMT+5:30`, `GMT-3:30` или `GMT+0`; доступна через USB CLI и BLE CLI.
 - `advert` — отправляет объявление узла с распространением по сети.
 - `advert.zerohop` — отправляет объявление только ближайшим узлам, без ретрансляции.
 - `clock sync` — синхронизирует часы по метке времени отправителя команды; перевод назад запрещён. Для локального задания времени используйте time.
@@ -33,7 +124,6 @@
 - `clear stats` — сбрасывает статистику.
 - `get role` — выводит роль устройства.
 - `get public.key` — выводит открытый ключ узла.
-- `get gps diag` — выводит диагностику GPS и результат настройки модуля.
 - `get dc.restarts` — выводит число перезапусков при тайм-ауте RX duty cycle.
 - `get cad` — выводит параметры и статистику определения занятости эфира (CAD).
 - `get bootloader.ver` — выводит версию загрузчика, если поддерживается платой.
@@ -58,14 +148,13 @@
 - `get/set flood.max.unscoped` — читает/задаёт предел переходов для flood-пакетов без региона.
 - `get/set freq` — читает/задаёт частоту LoRa.
 - `get/set gps duty` — читает/задаёт интервал GPS в секундах; 0 — постоянная работа.
-- `get/set input.rotate` — читает/задаёт инверсию направлений джойстика/кнопок навигации.
+- `get/set input.rotate` — читает/задаёт инверсию направлений джойстика/кнопок навигации; только устройства с дисплеем.
 - `get/set int.thresh` — читает/задаёт порог обработки помех; set не поддерживается на companion, хотя присутствует в его help.
 - `get/set lat` — читает/задаёт сохранённую широту в десятичных градусах.
 - `get/set leds.hb` — читает/задаёт режим heartbeat: all|hb|unread|off.
 - `get/set leds.radio` — читает/задаёт режим индикатора радио: tx|rx|all|off.
 - `get/set lon` — читает/задаёт сохранённую долготу в десятичных градусах.
 - `get/set meshtimesync` — читает состояние/включает или выключает синхронизацию времени по mesh.
-- `get/set multi.acks` — читает/задаёт параметр повторных ACK.
 - `get/set name` — читает/задаёт имя узла.
 - `get/set output.power 22|28|default (nominal dBm)` — выбирает номинальную выходную мощность Heltec V4.3: 22 → SX1262 10 dBm, 28 → SX1262 22 dBm. Это не измеренная мощность; default возвращает штатный TX.
 - `get/set owner.info` — читает/задаёт текстовую информацию о владельце.
@@ -84,7 +173,6 @@
 - `start dfu` — переводит устройство в режим обновления загрузчика (DFU); способ подключения зависит от платы.
 - `stop ota` — останавливает OTA, если это поддерживается сборкой.
 - `reboot` — перезагружает устройство.
-- `clkreboot` — устанавливает часы на дату/время сборки прошивки и перезагружает устройство.
 - `shutdown y` — выключает устройство при поддержке платой; y подтверждает действие.
 - `erase` — стирает файловое хранилище и перезагружает устройство. Опасная команда: удаляет сохранённые данные; доступна локально.
 - `help` — выводит список доступных команд; ? — синоним в общем CLI.
@@ -92,6 +180,135 @@
 ## Repeater
 
 `gps on|off|setloc|advert` и `get gps diag` отображаются в help только при наличии включённого GNSS-устройства в конфигурации платы.
+
+### Remote CLI
+
+```text
+help
+├─ id
+│  ├─ get role
+│  ├─ get/set name
+│  ├─ get/set owner.info
+│  ├─ set prv.key
+│  └─ get public.key
+├─ rf
+│  ├─ get freq
+│  ├─ get/set radio
+│  ├─ get/set tx
+│  ├─ get/set af
+│  ├─ get/set path.hash.mode
+│  ├─ get/set dutycycle
+│  └─ get/set int.thresh
+├─ radio
+│  ├─ get/set radio.rxgain
+│  ├─ get/set radio.fem.rxgain
+│  ├─ get/set rxduty
+│  ├─ get/set extra.sf
+│  ├─ get freqerr
+│  └─ tempradio <freq> <bw> <sf> <cr> <minutes>
+├─ cad
+│  ├─ get cad
+│  ├─ get cad.stats
+│  ├─ get cad.auto
+│  ├─ get cad.offset
+│  ├─ get probe.interval
+│  ├─ get cad.busycap
+│  └─ set cad.auto|offset|busycap|reset|probe.interval
+├─ mesh
+│  ├─ advert
+│  ├─ advert.zerohop
+│  ├─ get/set advert.interval
+│  ├─ get/set repeat
+│  ├─ get/set loop.detect
+│  ├─ get/set meshtimesync
+│  └─ get/set multi.acks
+├─ flood
+│  ├─ get/set flood.advert.interval
+│  ├─ get/set flood.max
+│  ├─ get/set flood.max.advert
+│  ├─ get/set flood.max.unscoped
+│  └─ get/set backoff.multiplier
+├─ region
+│  ├─ region
+│  ├─ region get|put|remove|list
+│  ├─ region def|load|save
+│  └─ region allowf|denyf|home|default
+├─ access
+│  ├─ password <value>
+│  ├─ get/set guest.password
+│  ├─ setperm <permissions> <pubkey>
+│  ├─ neighbors
+│  ├─ neighbor.remove <pubkey>
+│  └─ discover.neighbors
+├─ gps
+│  ├─ gps
+│  ├─ gps on|off|sync|setloc|advert
+│  ├─ get gps
+│  ├─ get gps diag
+│  ├─ get/set gps duty
+│  ├─ get/set gps standby
+│  ├─ get/set lat
+│  └─ get/set lon
+├─ ui
+│  ├─ leds on|off
+│  ├─ buzz on|off
+│  ├─ get/set leds
+│  ├─ get/set leds.brightness
+│  ├─ get/set leds.hb
+│  ├─ get/set leds.radio
+│  ├─ get/set display.rotate
+│  ├─ get/set input.rotate
+│  └─ get/set tz.offset
+├─ power
+│  ├─ power
+│  ├─ powersaving on|off
+│  ├─ get pwrmgt.support
+│  ├─ get pwrmgt.source
+│  ├─ get pwrmgt.bootreason
+│  ├─ get pwrmgt.bootmv
+│  └─ shutdown y
+├─ battery
+│  ├─ battery
+│  ├─ get/set adc.multiplier
+│  ├─ get/set battery.alert
+│  ├─ get/set battery.group
+│  ├─ get/set battery.interval
+│  └─ get/set battery.threshold
+├─ sensor
+│  ├─ sensor get <key>
+│  ├─ sensor set <key> <value>
+│  └─ sensor list <start>
+├─ log
+│  ├─ log start
+│  ├─ log stop
+│  └─ log erase
+├─ stat
+│  ├─ stats-packets
+│  ├─ stats-radio
+│  ├─ stats-core
+│  ├─ clear stats
+│  ├─ get pm
+│  ├─ get mem [<n>]
+│  └─ get loop.wakes
+├─ sys
+│  ├─ ver
+│  ├─ board
+│  ├─ uptime
+│  ├─ clock
+│  ├─ clock sync
+│  ├─ time <epoch>
+│  ├─ get dc.restarts
+│  ├─ get bootloader.ver
+│  ├─ start ota
+│  ├─ start dfu
+│  ├─ reboot
+│  └─ clkreboot
+├─ bridge (только repeater-bridge)
+├─ bridge.cfg (только repeater-bridge)
+└─ uplink (только Wi-Fi/MQTT uplink)
+```
+
+`get prv.key`, `set freq`, `get acl`, `log` и `erase` остаются только в полном локальном USB help.
 
 - `ver` — выводит версию прошивки.
 - `board` — выводит модель платы.

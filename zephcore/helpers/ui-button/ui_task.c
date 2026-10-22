@@ -616,6 +616,9 @@ void ui_shutdown(void)
 		ui_led_flash_shutdown();
 	}
 #endif
+	if (ui_request_manual_shutdown()) {
+		return;
+	}
 
 	/* The one power-off path (adapters/board/zephyr_poweroff.c), shared
 	 * with the joystick UI and the CLI. */

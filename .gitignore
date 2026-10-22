@@ -16,12 +16,15 @@ Makefile
 compile_commands.json
 
 # ---- West workspace: projects `west update` fetches beside zephcore/ -----------
+/.ccache/
 /.west/
 /zephyr/
 /modules/
 /tools/
 /doc/
 /bootloader/
+/zephyr-sdk-*
+/firmware
 
 # ---- Local-only working docs --------------------------------------------------
 # devdocs/ holds the restructure plan, LLDs, audit indexes, handovers, trackers.

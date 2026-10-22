@@ -292,6 +292,7 @@ extern "C" void mesh_handle_ui_actions(void)
 		bool gps_en = atomic_get(&pending_gps_enabled) != 0;
 		gps_enable(gps_en);
 		s_mesh->prefs.gps_enabled = gps_en ? 1 : 0;
+		s_mesh->vcontactNotify(gps_en ? "GPS: on" : "GPS: off");
 		LOG_INF("GPS %s (button)", gps_en ? "on" : "off");
 		need_save = true;
 	}
@@ -299,6 +300,10 @@ extern "C" void mesh_handle_ui_actions(void)
 	if (actions & UI_ACTION_BUZZER_TOGGLE) {
 		uint8_t mode = (uint8_t)atomic_get(&pending_buzzer_mode);
 		s_mesh->prefs.buzzer_quiet = zephcore_buzzer_prefs_from_mode(mode);
+		const char *notice = mode == ZEPHCORE_BUZZER_OFF ? "Buzzer: off" :
+			mode == ZEPHCORE_BUZZER_VIBRATE ? "Buzzer: vibrate" :
+			mode == ZEPHCORE_BUZZER_SOUND ? "Buzzer: sound" : "Buzzer: on";
+		s_mesh->vcontactNotify(notice);
 		LOG_INF("buzzer mode=%u (button)", mode);
 		need_save = true;
 	}
@@ -314,6 +319,7 @@ extern "C" void mesh_handle_ui_actions(void)
 	if (actions & UI_ACTION_LEDS_TOGGLE) {
 		bool ld = atomic_get(&pending_leds_disabled) != 0;
 		s_mesh->prefs.leds_disabled = ld ? 1 : 0;
+		s_mesh->vcontactNotify(ld ? "LEDs: off" : "LEDs: on");
 		LOG_INF("leds_disabled=%d (button)", ld);
 		need_save = true;
 	}

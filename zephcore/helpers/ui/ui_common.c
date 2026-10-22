@@ -308,6 +308,9 @@ static bool heartbeat_low_battery(void)
 	static bool low;
 	uint32_t now = k_uptime_get_32();
 
+	if (s_power_source_provider && s_power_source_provider()) {
+		return false;
+	}
 	if (!s_batt_provider) {
 		return false;
 	}
@@ -1060,7 +1063,6 @@ void ui_led_flash_shutdown(void)
  * local display. */
 #define UI_BATT_REFRESH_MS  30000
 
-static uint16_t (*s_batt_provider)(void);
 /* The board's own percentage: its discharge curve, or the fuel gauge. */
 static uint8_t (*s_batt_pct_provider)(void);
 static uint32_t s_batt_last_read_ms;
@@ -1070,6 +1072,11 @@ void ui_set_battery_provider(uint16_t (*mv)(void), uint8_t (*pct)(void))
 {
 	s_batt_provider = mv;
 	s_batt_pct_provider = pct;
+}
+
+void ui_set_power_source_provider(bool (*provider)(void))
+{
+	s_power_source_provider = provider;
 }
 
 void ui_refresh_battery(void)
@@ -1113,6 +1120,7 @@ void ui_before_power_off(void)
 /* ========== Low-battery warning screen ==========
  * The policy itself is app/PowerPolicy.cpp. */
 __attribute__((weak)) bool ui_shutdown_in_progress(void) { return false; }
+__attribute__((weak)) bool ui_request_manual_shutdown(void) { return false; }
 
 #ifdef CONFIG_ZEPHCORE_UI_DISPLAY
 void ui_show_low_battery(bool hold)

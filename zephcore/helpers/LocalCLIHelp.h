@@ -34,7 +34,7 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 
 	static const char companion[] =
 		"CLI companion:\r\n"
-		"ver\r\nboard\r\nuptime\r\nadvert\r\nadvert.zerohop\r\n"
+		"ver\r\nboard\r\nuptime\r\ntz\r\nadvert\r\nadvert.zerohop\r\n"
 		"clock sync\r\ntime <epoch>\r\n"
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
 		"findme\r\n"
@@ -45,15 +45,15 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 #if defined(CONFIG_BOARD_THINKNODE_M3) || defined(CONFIG_BOARD_T1000_E)
 		"fall on|off\r\n"
 #endif
-#if DT_NODE_HAS_PROP(DT_ALIAS(led0), gpios) || DT_NODE_HAS_PROP(DT_ALIAS(led1), gpios)
-		"leds on|off\r\n"
-#endif
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
 		"buzz on|off\r\n"
 #endif
+#if DT_NODE_HAS_PROP(DT_ALIAS(led0), gpios) || DT_NODE_HAS_PROP(DT_ALIAS(led1), gpios)
+		"leds on|off\r\n"
+#endif
 		"offgrid on|off\r\n"
 		"stats-packets\r\nstats-radio\r\nstats-core\r\nclear stats\r\n"
-		"get role\r\nget public.key\r\nget gps diag\r\n"
+		"get role\r\nget public.key\r\n"
 		"get dc.restarts\r\nget cad\r\nget bootloader.ver\r\n"
 		"set cad.auto\r\nset cad.offset\r\nset probe.interval\r\n"
 		"set cad.busycap\r\nset cad.reset\r\n"
@@ -63,16 +63,22 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"get/set autoshutdown\r\nget/set autoshutdown.emergency\r\n"
 #endif
 
-		"get/set display.rotate\r\nget/set dutycycle\r\nget/set extra.sf\r\n"
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
+		"get/set display.rotate\r\n"
+#endif
+		"get/set dutycycle\r\nget/set extra.sf\r\n"
 #if defined(CONFIG_BOARD_THINKNODE_M3) || defined(CONFIG_BOARD_T1000_E)
 		"get/set fall.sens (1-5)\r\n"
 #endif
 		"get/set flood.advert.interval\r\nget/set flood.max\r\n"
 		"get/set flood.max.advert\r\nget/set flood.max.unscoped\r\n"
-		"get/set freq\r\nget/set gps duty\r\nget/set input.rotate\r\n"
+		"get/set freq\r\nget/set gps duty\r\n"
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
+		"get/set input.rotate\r\n"
+#endif
 		"get/set int.thresh\r\nget/set lat\r\nget/set leds.hb\r\n"
 		"get/set leds.radio\r\nget/set lon\r\nget/set meshtimesync\r\n"
-		"get/set multi.acks\r\nget/set name\r\n"
+		"get/set name\r\n"
 #if defined(CONFIG_BOARD_HELTEC_WIFI_LORA32_V43)
 		"get/set output.power 22|28|default (nominal dBm)\r\n"
 #endif
@@ -86,7 +92,7 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 #if !defined(CONFIG_SOC_FAMILY_NORDIC_NRF)
 		"stop ota\r\n"
 #endif
-		"reboot\r\nclkreboot\r\n"
+		"reboot\r\n"
 #if IS_ENABLED(CONFIG_POWEROFF)
 		"shutdown y\r\n"
 #endif
@@ -99,10 +105,12 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 #endif
 		"ver\r\n"
 		"board\r\n"
+		"power\r\n"
 		"battery (mV, %, uptime, alert settings)\r\n"
 		"uptime\r\n"
 		"advert\r\n"
 		"advert.zerohop\r\n"
+		"clock\r\n"
 		"clock sync\r\n"
 		"time <epoch>\r\n"
 #if DT_HAS_COMPAT_STATUS_OKAY(gnss_nmea_generic) || \
@@ -111,7 +119,8 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
     DT_HAS_COMPAT_STATUS_OKAY(quectel_lcx6g) || \
     DT_HAS_COMPAT_STATUS_OKAY(quectel_lc76g) || \
     DT_HAS_COMPAT_STATUS_OKAY(luatos_air530z)
-		"gps on|off|setloc|advert\r\n"
+		"gps\r\n"
+		"gps on|off|sync|setloc|advert\r\n"
 #endif
 #if DT_NODE_HAS_PROP(DT_ALIAS(led0), gpios) || DT_NODE_HAS_PROP(DT_ALIAS(led1), gpios)
 		"leds on|off\r\n"
@@ -129,6 +138,7 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"neighbors\r\n"
 		"neighbor.remove <pubkey>\r\n"
 		"discover.neighbors\r\n"
+		"get acl\r\n"
 		"region def|get|put|remove|list|load|save\r\n"
 		"region allowf|denyf|home|default\r\n"
 		"tempradio <freq> <bw> <sf> <cr> <minutes>\r\n"
@@ -146,10 +156,23 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
     DT_HAS_COMPAT_STATUS_OKAY(quectel_lc76g) || \
     DT_HAS_COMPAT_STATUS_OKAY(luatos_air530z)
 		"get gps diag\r\n"
+		"get gps\r\n"
 #endif
 		"get dc.restarts\r\n"
 		"get cad\r\n"
+		"get cad.stats\r\n"
+		"get cad.auto\r\n"
+		"get cad.offset\r\n"
+		"get cad.busycap\r\n"
+		"get probe.interval\r\n"
 		"get bootloader.ver\r\n"
+		"get loop.wakes\r\n"
+		"get pwrmgt.support\r\n"
+		"get pwrmgt.source\r\n"
+		"get pwrmgt.bootreason\r\n"
+		"get pwrmgt.bootmv\r\n"
+		"get pm\r\n"
+		"get mem [<n>]\r\n"
 #if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
 		"get bridge.delay\r\n"
 		"get bridge.mac\r\n"
@@ -204,6 +227,7 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"get/set flood.max.unscoped\r\n"
 		"get/set freq\r\n"
 		"get/set gps duty\r\n"
+		"get/set gps standby\r\n"
 		"get/set guest.password\r\n"
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_JOYSTICK) || IS_ENABLED(CONFIG_ZEPHCORE_UI_KEYBOARD)
 		"get/set input.rotate\r\n"
@@ -212,6 +236,8 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"get/set lat\r\n"
 		"get/set leds.hb\r\n"
 		"get/set leds.radio\r\n"
+		"get/set leds\r\n"
+		"get/set leds.brightness\r\n"
 		"get/set lon\r\n"
 		"get/set loop.detect\r\n"
 		"get/set meshtimesync\r\n"
@@ -231,6 +257,9 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"get/set repeat\r\n"
 		"get/set rxduty\r\n"
 		"get/set tx\r\n"
+		"powersaving on|off\r\n"
+		"sensor get <key>\r\nsensor set <key> <value>\r\nsensor list <start>\r\n"
+		"log start\r\nlog stop\r\nlog erase\r\nlog\r\n"
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
 		"get/set tz.offset (hours)\r\n"
 #endif
@@ -256,6 +285,10 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"get/set uplink.wifi.ssid\r\n"
 #endif
 		"start dfu\r\n"
+		"start ota\r\n"
+#if IS_ENABLED(CONFIG_ZEPHCORE_WIFI_OTA)
+		"stop ota\r\n"
+#endif
 		"reboot\r\n"
 		"clkreboot\r\n"
 		"shutdown y\r\n"

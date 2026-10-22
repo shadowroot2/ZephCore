@@ -1,6 +1,7 @@
 #include "test.h"
 #include <TxtDataHelpers.h>
 #include <battery_curve.h>
+#include <RepeaterCLIHelp.h>
 #include <mesh/MeshCore.h>
 #include <algorithm>
 #include <cstring>
@@ -40,6 +41,22 @@ TEST(rtc_unique, "UNIT-RTC-001", "Unique timestamps survive repeated and backwar
     CHECK(rtc.getCurrentTimeUnique() == 100); CHECK(rtc.getCurrentTimeUnique() == 101);
     rtc.now = 50; CHECK(rtc.getCurrentTimeUnique() == 102);
     rtc.now = 200; CHECK(rtc.getCurrentTimeUnique() == 200);
+}
+TEST(repeater_remote_help, "UNIT-CLI-001", "Repeater remote help is categorized and packet bounded") {
+    const char *commands[] = {
+        "help", "?", "help id", "help rf", "help radio", "help cad",
+        "help mesh", "help flood", "help region", "help access", "help gps",
+        "help ui", "help power", "help battery", "help sensor", "help log",
+        "help stat", "help sys"
+    };
+    for (const char *command : commands) {
+        const char *reply = repeater_remote_cli_help(command);
+        CHECK(reply != nullptr);
+        CHECK(std::strlen(reply) < 158);
+    }
+    CHECK(repeater_remote_cli_help("help unknown") == nullptr);
+    CHECK(std::strstr(repeater_remote_cli_help("help id"), "get prv.key") == nullptr);
+    CHECK(std::strstr(repeater_remote_cli_help("help rf"), "set freq") == nullptr);
 }
 TEST(battery_curve, "UNIT-BATTERY-001", "Battery endpoints interpolation multicell scaling and monotonicity") {
     CHECK(battery_curve_lookup(&battery_curve_default, 0) == 0);

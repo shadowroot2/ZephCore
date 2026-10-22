@@ -23,6 +23,19 @@ without changing the frequency, so the node repeated everything on your normal m
 
 More in [OFFGRID.md](../docs/OFFGRID.md). Thanks to **N8HOP** for the report.
 
+## Button notices in vContact
+
+When a companion is turned off with its button and an app is connected, vContact
+reports `Powering off: button` before the device enters System OFF. The app has
+eight seconds to fetch the notice. With no app connected, power-off is immediate.
+Button changes to GPS, buzzer mode and LEDs also appear in vContact after the
+companion applies them.
+
+## XIAO nRF52840 charging heartbeat
+
+The repeater keeps the normal single heartbeat pulse while external power is
+connected instead of showing the three-pulse low-battery warning during charge.
+
 ## Buttons
 
 - **Station G2:** the user button now works like on other one-button boards: one press for the next

@@ -622,16 +622,21 @@ Handles the binary BLE protocol with ~50 command opcodes. Key features:
 ### 6.2.1 V-Contact (Loopback Admin Contact)
 
 ZephCore-only feature (no Arduino equivalent). The companion synthesizes a CHAT
-contact named `v<node_name>` that exists only toward the connected BLE/USB app.
-Chatting with it runs the same text CLI as the USB serial sideband; the reply
-comes back as normal chat messages. The firmware also uses it to emit
-unsolicited notices: a one-shot low-battery alert and a restart-reason message
+contact named `v<node_name>` that exists only toward the connected app.
+Incoming messages receive a redirect to the app's Command Line; commands do
+not run in this chat. The firmware uses it to emit unsolicited notices:
+CLI and button state changes (GPS, buzzer mode, LEDs), button-initiated
+power-off, a one-shot low-battery alert and a restart-reason message
 (every cause `zephcore_boot_reset_cause_str()` can label — offline-queue only,
 so routine power-on "noise" costs nothing over the air). Two causes are silent
 when they are the only ones raised: a debugger reset, and a low-power wake
 (button or GPIO wake from System OFF), which would otherwise announce itself
 after every power cycle. A VBUS wake from System OFF on nRF52840 reports `POR`
 and is not silent. All of them still appear in the boot log.
+With an app connected, button-initiated power-off queues `Powering off: button`
+on the mesh thread and leaves eight seconds for the app to fetch it before
+System OFF. Without a connected app, shutdown proceeds immediately; the
+offline queue does not survive System OFF.
 
 **Identity**: seed = `SHA256("zc-vcontact" || self_prv_key || counter)`,
 pubkey = that seed's Ed25519 public point — stable per node, unique per device.
@@ -968,7 +973,7 @@ Two UI frontends share the same plumbing (`helpers/ui/`: display, buzzer, multi-
 - **Button UI** (`helpers/ui-button/`): single-button page cycler — most boards, every role. Renders on the system work queue; changes mesh state only through `ui_mesh_actions` (posted, applied on the main thread).
 - **Joystick UI** (`helpers/ui-joystick/`): 5-way joystick / keypad menu UI, companion only (Wio Tracker L1, Wio L1 1W, GAT562-30S, ThinkNode M9). Keys go through a queue to `JoystickUITask::loop()` **on the main thread**, so its direct `CompanionMesh` calls (through `getMesh()`) are safe. `screens/repeater_admin.cpp` is the remote admin screen.
 
-Battery percentage on both UIs is the board's own (`ZephyrBoard::getBattPercent()`: discharge curve, or the fuel gauge). Low-battery policy is not UI: see `app/PowerPolicy.cpp` (the UI only draws `ui_show_low_battery()`).
+Battery percentage on both UIs is the board's own (`ZephyrBoard::getBattPercent()`: discharge curve, or the fuel gauge). Low-battery policy is not UI: see `app/PowerPolicy.cpp` (the UI only draws `ui_show_low_battery()`). The heartbeat suppresses its three-pulse low-battery warning while the board reports external power; charging nodes keep the normal one-pulse heartbeat. The XIAO nRF52840 charge indicator remains independent on its green LED.
 
 ```
 Hardware buttons → Zephyr input subsystem → Longpress filter → Multi-tap filter

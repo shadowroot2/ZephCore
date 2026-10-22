@@ -806,6 +806,14 @@ config ZEPHCORE_VBAT_MV_MULTIPLIER
 
 	  Formula: mv = (raw * multiplier) / 4096
 
+config ZEPHCORE_AHT_TEMP_OFFSET_MILLIC
+	int "AHT temperature calibration offset (milli-Celsius)"
+	default 0
+	range -20000 20000
+	help
+	  Calibration added to AHT10/AHT20 temperature readings. Boards whose
+	  sensor placement causes a known thermal offset set this in board.conf.
+
 config ZEPHCORE_LED_PWM
 	def_bool $(dt_alias_enabled,heartbeat-pwm-led) || $(dt_alias_enabled,lora-tx-pwm-led)
 	select PWM

@@ -235,6 +235,7 @@ void ui_led_confirm_state(bool enabled);
 void ui_led_flash_shutdown(void);
 
 void ui_shutdown(void);
+bool ui_request_manual_shutdown(void);
 
 /**
  * Set offgrid mode (client repeat) state for display page.
@@ -246,6 +247,11 @@ void ui_set_offgrid_mode(bool enabled);
  * provider() must return millivolts (0 if no battery hardware).
  */
 void ui_set_battery_provider(uint16_t (*mv)(void), uint8_t (*pct)(void));
+
+/**
+ * Register the external-power provider used by charging indicators.
+ */
+void ui_set_power_source_provider(bool (*provider)(void));
 
 /**
  * Lazy battery refresh: re-read the ADC only if cached value is stale.

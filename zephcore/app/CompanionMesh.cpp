@@ -1004,7 +1004,7 @@ static bool isUpstreamCompanionCommand(const char *cmd)
 	static const char *const exact[] = {
 		"get radio", "get freq", "get af", "get dutycycle", "get int.thresh", "get cad",
 		"get radio.rxgain", "get tx", "get rxdelay", "get agc.reset.interval",
-		"get path.hash.mode", "get multi.acks", "get txdelay", "get direct.txdelay",
+		"get path.hash.mode", "get txdelay", "get direct.txdelay",
 		"reboot", "poweroff", "shutdown", "get name", "get wifi.pwd", "set wifi.clear",
 		"get wifi.ssid", "get wifi.enabled", "get wifi.status", "get wifi.ip",
 		"board", "ver", "get tz.offset",
@@ -1012,7 +1012,7 @@ static bool isUpstreamCompanionCommand(const char *cmd)
 	static const char *const prefix[] = {
 		"set radio ", "set af ", "set dutycycle ", "set int.thresh ", "set cad ",
 		"set radio.rxgain ", "get tx ", "set tx ", "set rxdelay ", "set agc.reset.interval ",
-		"set path.hash.mode ", "set multi.acks ", "set txdelay ", "set direct.txdelay ",
+		"set path.hash.mode ", "set txdelay ", "set direct.txdelay ",
 		"set name ", "set pin ", "set wifi.ssid ", "set wifi.pwd ", "set wifi.enabled ",
 		"set tz.offset ",
 	};

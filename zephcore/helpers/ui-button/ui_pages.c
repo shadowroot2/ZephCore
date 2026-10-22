@@ -2065,12 +2065,21 @@ void ui_pages_render_splash(void)
 
 	/* "MeshCore on Zephyr" centered below logo */
 	draw_centered(y, "MeshCore on Zephyr");
-	y += LINE_H * 2;
+	y += LINE_H;
+
+#ifdef FIRMWARE_DISPLAY_VERSION
+	draw_centered(y, FIRMWARE_DISPLAY_VERSION);
+	y += LINE_H;
+#endif
 
 	/* Build date centered below (format: "2026 Feb 15") */
 #ifdef FIRMWARE_BUILD_DATE
 	draw_centered(y, FIRMWARE_BUILD_DATE);
 #endif
+
+	/* ShadoW overlay signature is part of both display UI splash variants. */
+	int signature_y = (int)DISP_H - FONT_H - 2;
+	draw_centered(signature_y < 0 ? 0 : signature_y, "Tuned by ShadoW");
 
 	mc_display_finalize();
 }

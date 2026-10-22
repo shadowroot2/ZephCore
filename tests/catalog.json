@@ -18,6 +18,11 @@
       "source": "tests/unit/helper_tests.cpp"
     },
     {
+      "id": "UNIT-CLI-001",
+      "name": "Repeater remote help is categorized and packet bounded",
+      "source": "tests/unit/helper_tests.cpp"
+    },
+    {
       "id": "UNIT-CAD-001",
       "name": "Level window narrows only where the driver clamp binds",
       "source": "tests/unit/radio_tests.cpp"

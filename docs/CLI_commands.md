@@ -30,6 +30,11 @@ The text CLI of every ZephCore role. Commands are sent over USB serial (CDC-ACM)
 > start of the reply. This is how the phone app correlates replies with requests. It means a command
 > whose third character is a literal `|` cannot be sent as-is.
 
+> **Help transport.** On a repeater, local USB `help`/`?` prints the complete command catalogue directly
+> to the console. Remote admin replies are limited to 161 bytes, or 158 bytes with a request tag, so
+> remote `help` returns category names and `help <group>` returns one bounded category. Local-only
+> commands (`get prv.key`, `set freq`, `get acl`, full `log`, `erase`) are not advertised remotely.
+
 ---
 
 ## System

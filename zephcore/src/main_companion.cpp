@@ -113,6 +113,7 @@ extern "C" void bt_ctlr_assert_handle(char *file, uint32_t line)
 #define MESH_EVENT_FALL_DETECTED BIT(MESH_EVENT_ROLE_BASE + 7)
 #define MESH_EVENT_FALL_PREALERT BIT(MESH_EVENT_ROLE_BASE + 8)
 #define MESH_EVENT_GPS_FIX       BIT(MESH_EVENT_ROLE_BASE + 9)
+#define MESH_EVENT_MANUAL_SHUTDOWN BIT(MESH_EVENT_ROLE_BASE + 10)
 
 #ifdef ZEPHCORE_LORA
 static void save_prefs_to_flash(void);
@@ -130,7 +131,7 @@ static void companion_fall_prealert(void);
 	MESH_EVENT_GPS_ACTION | MESH_EVENT_TX_DRAIN | MESH_EVENT_PREFS_DIRTY | \
 	MESH_EVENT_CONTACT_ITER | MESH_EVENT_LINK | MESH_EVENT_PERSIST | \
 	MESH_EVENT_CUSTOM_TIMER | MESH_EVENT_FALL_DETECTED | \
-	MESH_EVENT_FALL_PREALERT | MESH_EVENT_GPS_FIX)
+	MESH_EVENT_FALL_PREALERT | MESH_EVENT_GPS_FIX | MESH_EVENT_MANUAL_SHUTDOWN)
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_DESIGN_JOYSTICK)
 #define MESH_EVENT_ALL           (MESH_EVENT_BASE | MESH_EVENT_JOYSTICK_LOOP)
 #else
@@ -185,6 +186,25 @@ static CompanionMesh *companion_mesh_ptr;
 /* The thread running mesh_event_loop(), once it is running. */
 static k_tid_t mesh_thread;
 static K_SEM_DEFINE(persist_done, 0, 1);
+static atomic_t manual_shutdown_requested;
+
+static void manual_shutdown_work_fn(struct k_work *work)
+{
+	ARG_UNUSED(work);
+	zephcore_shutdown_reason_save(ZC_SHUTDOWN_USER);
+	zephcore_power_off();
+}
+
+static K_WORK_DELAYABLE_DEFINE(manual_shutdown_work, manual_shutdown_work_fn);
+
+extern "C" bool ui_request_manual_shutdown(void)
+{
+	if (!mesh_thread) return false;
+	if (atomic_set(&manual_shutdown_requested, 1) == 0) {
+		k_event_post(&mesh_events, MESH_EVENT_MANUAL_SHUTDOWN);
+	}
+	return true;
+}
 
 /* Bounds a reboot/power-off requested off the main thread. A full contacts
  * rewrite is a second or two on internal flash; past this the device goes
@@ -428,6 +448,16 @@ static void mesh_event_loop(void)
 		if ((events & MESH_EVENT_PERSIST) && companion_mesh_ptr) {
 			persist_pending_writes();
 			k_sem_give(&persist_done);
+		}
+		if (events & MESH_EVENT_MANUAL_SHUTDOWN) {
+			bool notify = companion_serial.isConnected() &&
+				companion_mesh_ptr->isVContactEnabled();
+			if (notify) {
+				companion_mesh_ptr->vcontactNotify("Powering off: button");
+				k_work_schedule(&manual_shutdown_work, K_MSEC(8000));
+			} else {
+				k_work_schedule(&manual_shutdown_work, K_NO_WAIT);
+			}
 		}
 #endif
 
@@ -1516,7 +1546,11 @@ static PowerPolicy power_policy(zephyr_board, companion_mesh.prefs,
 
 extern "C" bool ui_shutdown_in_progress(void)
 {
+#ifdef ZEPHCORE_LORA
+	return power_policy.isShuttingDown() || atomic_get(&manual_shutdown_requested) != 0;
+#else
 	return power_policy.isShuttingDown();
+#endif
 }
 
 static void power_policy_tick(void)
@@ -1532,17 +1566,23 @@ static const char *companion_cli_help(const char *line)
 static const char *companion_ble_cli_help(const char *line)
 {
 	if (strcmp(line, "help") == 0 || strcmp(line, "?") == 0) {
-		return "Groups: core rf cad mesh flood gps ui sensor power identity\n"
+		return "Groups: id | rf | cad | mesh | gps | extra | ui | power | stat | sys\n"
 		       "Use: help <group>";
 	}
-	if (strcmp(line, "help core") == 0) {
-		return "ver\nboard\nuptime\nclock sync\ntime <epoch>\nstats-packets\n"
-		       "stats-radio\nstats-core\nclear stats\nget role\nget dc.restarts\n"
-		       "get bootloader.ver\nget/set tz.offset";
+	if (strcmp(line, "help id") == 0) {
+		return "get role\nget/set name\nget/set owner.info\nget/set prv.key\nget public.key";
+	}
+	if (strcmp(line, "help stat") == 0) {
+		return "stats-packets\nstats-radio\nstats-core\nclear stats";
+	}
+	if (strcmp(line, "help sys") == 0) {
+		return "ver\nboard\nuptime\ntz\nclock sync\ntime <epoch>\nget dc.restarts\n"
+		       "get bootloader.ver\nget/set tz.offset\nstart ota\nstart dfu\n"
+		       "reboot\nshutdown y\nerase";
 	}
 	if (strcmp(line, "help rf") == 0) {
-		return "get/set radio\nget/set freq\nget/set tx\nget/set af\n"
-		       "get/set dutycycle\nget/set extra.sf\nget/set int.thresh\n"
+		return "get/set freq\nget/set radio\nget/set tx\nget/set af\n"
+		       "get/set path.hash.mode\nget/set dutycycle\nget/set extra.sf\nget/set int.thresh\n"
 		       "get/set radio.rxgain\nget/set radio.fem.rxgain";
 	}
 	if (strcmp(line, "help cad") == 0) {
@@ -1550,34 +1590,32 @@ static const char *companion_ble_cli_help(const char *line)
 		       "set cad.busycap\nset cad.reset";
 	}
 	if (strcmp(line, "help mesh") == 0) {
-		return "advert\nadvert.zerohop\nget/set advert.interval\nget/set multi.acks\n"
-		       "get/set meshtimesync\nget/set path.hash.mode";
-	}
-	if (strcmp(line, "help flood") == 0) {
-		return "get/set flood.advert.interval\nget/set flood.max\n"
+		return "advert\nadvert.zerohop\nget/set advert.interval\n"
+		       "get/set meshtimesync\nget/set flood.advert.interval\nget/set flood.max\n"
 		       "get/set flood.max.advert\nget/set flood.max.unscoped";
 	}
 	if (strcmp(line, "help gps") == 0) {
-		return "gps on|off|setloc|advert\ntracking on|off\nget gps diag\n"
-		       "get/set gps duty\nget/set lat\nget/set lon\nget/set tracking.group\n"
-		       "get/set tracking.interval";
+		return "gps on|off|setloc|advert\nget/set gps duty\nget/set lat\nget/set lon";
+	}
+	if (strcmp(line, "help extra") == 0) {
+		return "findme\nsos\ntracking on|off\nget/set tracking.group\n"
+		       "get/set tracking.interval\n"
+#if defined(ZEPHCORE_FALL_DETECTOR)
+		       "fall on|off\nget/set fall.sens (1-5)\n"
+#endif
+		       "get/set v.contact\noffgrid on|off";
 	}
 	if (strcmp(line, "help ui") == 0) {
-		return "findme\nleds on|off\nbuzz on|off\nget/set display.rotate\n"
-		       "get/set input.rotate\nget/set leds.hb\n"
+		return "buzz on|off\nleds on|off\n"
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
+		       "get/set display.rotate\nget/set input.rotate\n"
+#endif
+		       "get/set leds.hb\n"
 		       "get/set leds.radio";
 	}
-	if (strcmp(line, "help sensor") == 0) {
-		return "fall on|off\nget/set fall.sens (1-5)";
-	}
 	if (strcmp(line, "help power") == 0) {
-		return "sos\noffgrid on|off\nget/set adc.multiplier\nget/set autoshutdown\n"
-		       "get/set autoshutdown.emergency\nget/set v.batteryalert\n"
-		       "get/set v.contact\nreboot\nclkreboot\nshutdown y";
-	}
-	if (strcmp(line, "help identity") == 0) {
-		return "get public.key\nget/set prv.key\nget/set name\nget/set owner.info\n"
-		       "start ota\nstart dfu\nerase";
+		return "get/set adc.multiplier\nget/set autoshutdown\n"
+		       "get/set autoshutdown.emergency\nget/set v.batteryalert";
 	}
 	return nullptr;
 }
@@ -1697,6 +1735,26 @@ static bool handle_uptime_cli(const char *line, char *reply)
 		 (unsigned long long)((seconds / 3600U) % 24U),
 		 (unsigned long long)((seconds / 60U) % 60U),
 		 (unsigned long long)(seconds % 60U));
+	return true;
+}
+
+static bool handle_tz_cli(const char *line, char *reply)
+{
+	if (strcmp(line, "tz") != 0) {
+		return false;
+	}
+
+	int offset = ui_get_timezone_offset_minutes();
+	char sign = offset < 0 ? '-' : '+';
+	int abs_minutes = offset < 0 ? -offset : offset;
+	int hours = abs_minutes / 60;
+	int minutes = abs_minutes % 60;
+
+	if (minutes == 0) {
+		snprintf(reply, CLI_REPLY_SIZE, "tz: GMT%c%d", sign, hours);
+	} else {
+		snprintf(reply, CLI_REPLY_SIZE, "tz: GMT%c%d:%02d", sign, hours, minutes);
+	}
 	return true;
 }
 
@@ -1929,12 +1987,46 @@ static bool handle_findme_cli(const char *line, char *reply)
 static_assert(COMPANION_CLI_REPLY_SIZE == CLI_REPLY_SIZE,
 	      "companion CLI reply buffer must match CommonCLI reply size");
 
+static void companion_cli_notify(const char *line, const char *reply)
+{
+	const char *notice = nullptr;
+	if (strcmp(line, "sos") == 0) {
+		if (strncmp(reply, "ERROR", 5) != 0) notice = "SOS activated";
+	} else if (strcmp(reply, "ok") == 0) {
+		if (strcmp(line, "gps on") == 0) notice = "GPS: on";
+		else if (strcmp(line, "gps off") == 0) notice = "GPS: off";
+	} else if (strcmp(reply, "OK") == 0) {
+		if (strcmp(line, "leds on") == 0) notice = "LEDs: on";
+		else if (strcmp(line, "leds off") == 0) notice = "LEDs: off";
+		else if (strcmp(line, "buzz on") == 0) notice = "Buzzer: on";
+		else if (strcmp(line, "buzz off") == 0) notice = "Buzzer: off";
+	}
+	if (notice != nullptr) companion_mesh.vcontactNotify(notice);
+}
+
 static void companion_cli_exec(const char *line, uint32_t sender_timestamp,
 			       uint8_t reply_hdr_used, char *reply)
 {
+	const char *requested_line = line;
 	reply[0] = '\0';
-	if (strncmp(line, "set leds ", 9) == 0 ||
+	if (strcmp(line, "clkreboot") == 0 ||
+	    strcmp(line, "gps diag") == 0 ||
+	    strcmp(line, "get gps diag") == 0 ||
+	    strcmp(line, "set gps diag") == 0 ||
+	    strncmp(line, "set gps diag ", 13) == 0 ||
+	    strcmp(line, "get multi.acks") == 0 ||
+	    strcmp(line, "set multi.acks") == 0 ||
+	    strncmp(line, "set multi.acks ", 15) == 0 ||
+	    strncmp(line, "set leds ", 9) == 0 ||
 	    strncmp(line, "set buzzer ", 11) == 0) return;
+#if !IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
+	if (strcmp(line, "get display.rotate") == 0 ||
+	    strcmp(line, "set display.rotate") == 0 ||
+	    strncmp(line, "set display.rotate ", 19) == 0 ||
+	    strcmp(line, "get input.rotate") == 0 ||
+	    strcmp(line, "set input.rotate") == 0 ||
+	    strncmp(line, "set input.rotate ", 17) == 0) return;
+#endif
 	if (strcmp(line, "leds on") == 0) line = "set leds on";
 	else if (strcmp(line, "leds off") == 0) line = "set leds off";
 	else if (strcmp(line, "buzz on") == 0) line = "set buzzer on";
@@ -1944,7 +2036,11 @@ static void companion_cli_exec(const char *line, uint32_t sender_timestamp,
 		return;
 	}
 	if (strcmp(line, "shutdown y") == 0) line = "poweroff";
-	if (handle_uptime_cli(line, reply) || handle_sos_cli(line, reply)) return;
+	if (handle_uptime_cli(line, reply) || handle_tz_cli(line, reply)) return;
+	if (handle_sos_cli(line, reply)) {
+		companion_cli_notify(requested_line, reply);
+		return;
+	}
 #if defined(ZEPHCORE_FALL_DETECTOR)
 	if (handle_fall_cli(line, reply)) return;
 #endif
@@ -1964,6 +2060,7 @@ static void companion_cli_exec(const char *line, uint32_t sender_timestamp,
 #endif
 	companion_cli.setReplyHeaderUsed(reply_hdr_used);
 	companion_cli.handleCommand(sender_timestamp, line, reply);
+	companion_cli_notify(requested_line, reply);
 }
 
 #if ZEPHCORE_USB_STACK
@@ -2238,6 +2335,7 @@ int main(void)
 	companion_mesh.setBatteryCallback(get_battery_mv);
 	companion_mesh.setBoard(&zephyr_board);
 	ui_set_battery_provider(get_battery_mv, []() { return zephyr_board.getBattPercent(); });
+	ui_set_power_source_provider([]() { return zephyr_board.isExternalPowered(); });
 	companion_mesh.setRadioReconfigureCallback(radio_reconfigure);
 	companion_mesh.setPinChangeCallback([](uint32_t new_pin) {
 #if IS_ENABLED(CONFIG_BT)

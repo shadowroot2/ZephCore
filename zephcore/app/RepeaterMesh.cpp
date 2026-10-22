@@ -6,6 +6,7 @@
 #include <Serial.h>
 #include <helpers/AdvertDataHelpers.h>
 #include <helpers/TxtDataHelpers.h>
+#include <helpers/RepeaterCLIHelp.h>
 #include <helpers/battery_curve.h>
 #include <helpers/MeshcoreJson.h>
 #include <adapters/radio/LoRaRadio.h>
@@ -1375,6 +1376,16 @@ void RepeaterMesh::handleCommand(uint32_t sender_timestamp, char* command, char*
    * the self-limiting handlers do not write past temp[5 + CLI_REMOTE_REPLY_SIZE].
    * Set unconditionally: a stale value would shrink the next reply. */
   _cli.setReplyHeaderUsed(hdr_used);
+
+  // ZEPHCORE: remote help is one bounded response per category. The complete
+  // catalogue is local-only because it cannot fit in one mesh CLI packet.
+  if (sender_timestamp != 0) {
+    const char* help = repeater_remote_cli_help(command);
+    if (help != nullptr) {
+      snprintf(reply, CLI_REMOTE_REPLY_SIZE - hdr_used, "%s", help);
+      return;
+    }
+  }
 
   if (strcmp(command, "uptime") == 0 || strcmp(command, "get uptime") == 0) {
     char formatted[32];
