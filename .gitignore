@@ -24,7 +24,7 @@ compile_commands.json
 /doc/
 /bootloader/
 /zephyr-sdk-*
-/firmware
+/firmware/
 
 # ---- Local-only working docs --------------------------------------------------
 # devdocs/ holds the restructure plan, LLDs, audit indexes, handovers, trackers.
