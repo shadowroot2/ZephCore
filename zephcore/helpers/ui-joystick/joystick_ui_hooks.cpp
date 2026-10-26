@@ -303,8 +303,16 @@ extern "C" void ui_set_wifi(uint8_t state, const char *ssid, const char *ip, uin
 		s_task->setWifi(state, ssid, ip, port);
 	}
 }
+
+extern "C" void ui_set_wifi_enabled(bool)
+{
+	if (s_task) {
+		s_task->forceRefresh();
+	}
+}
 #else
 extern "C" void ui_set_link_transports(uint8_t) {}
 extern "C" void ui_set_wifi(uint8_t, const char *, const char *, uint16_t) {}
+extern "C" void ui_set_wifi_enabled(bool) {}
 #endif
 extern "C" void ui_set_msg_count(uint16_t count) {}

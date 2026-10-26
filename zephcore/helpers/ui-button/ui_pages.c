@@ -1106,60 +1106,76 @@ static void render_wifi_mono(void)
 {
 	char buf[24];
 
-	if (state.wifi_state == UI_WIFI_OFF) {
+	if (!state.wifi_enabled) {
 		draw_centered(centered_row(0, 2), "WiFi: OFF");
-		draw_centered(centered_row(1, 2), "Set up via CLI");
+		draw_centered(centered_row(1, 2), "Press to enable");
+		return;
+	}
+	if (state.wifi_state == UI_WIFI_OFF) {
+		draw_centered(centered_row(0, 3), "WiFi: ON");
+		draw_centered(centered_row(1, 3), "No network set");
+		draw_centered(centered_row(2, 3), "Press to disable");
 		return;
 	}
 	if (state.wifi_state == UI_WIFI_JOINING) {
-		draw_centered(centered_row(0, 2), "WiFi: Joining");
-		draw_centered(centered_row(1, 2), state.wifi_ssid);
+		draw_centered(centered_row(0, 3), "WiFi: Joining");
+		draw_centered(centered_row(1, 3), state.wifi_ssid);
+		draw_centered(centered_row(2, 3), "Press to disable");
 		return;
 	}
 
 	draw_centered(centered_row(0, 4), state.wifi_ssid);
-	draw_centered(centered_row(1, 4), state.wifi_ip);
-	snprintf(buf, sizeof(buf), "Port %u", state.wifi_port);
-	draw_centered(centered_row(2, 4), buf);
-	draw_centered(centered_row(3, 4),
+	snprintf(buf, sizeof(buf), "%s:%u", state.wifi_ip, state.wifi_port);
+	draw_centered(centered_row(1, 4), buf);
+	draw_centered(centered_row(2, 4),
 		      (state.link_transports & UI_LINK_TCP) ? "App connected"
 							    : "No app");
+	draw_centered(centered_row(3, 4), "Press to disable");
 }
 
 #if MC_DISPLAY_COLOR_PANEL
 static void render_wifi_color(void)
 {
 	int y = CONTENT_Y;
-	char buf[8];
-	uint16_t color = state.wifi_state == UI_WIFI_UP ? UI_COLOR_OK :
+	char buf[24];
+	uint16_t color = !state.wifi_enabled ? UI_COLOR_DISABLED :
+			 state.wifi_state == UI_WIFI_UP ? UI_COLOR_OK :
 			 state.wifi_state == UI_WIFI_JOINING ? UI_COLOR_WARN :
-			 UI_COLOR_DISABLED;
+			 UI_COLOR_LABEL;
 
 	draw_badge(0, y, "WiFi", color);
 	mc_display_color_text(color_text_width("WiFi") + 8, y,
+			      !state.wifi_enabled ? "off" :
 			      state.wifi_state == UI_WIFI_UP ? "connected" :
 			      state.wifi_state == UI_WIFI_JOINING ? "joining" : "off",
 			      color);
 	y += LINE_H + (FONT_H / 4);
 
+	if (!state.wifi_enabled) {
+		draw_centered_color(y, "Press to enable", UI_COLOR_VALUE);
+		return;
+	}
 	if (state.wifi_state == UI_WIFI_OFF) {
-		draw_centered_color(y, "Set up via CLI", UI_COLOR_VALUE);
+		draw_centered_color(y, "No network set", UI_COLOR_LABEL);
+		y += LINE_H;
+		draw_centered_color(y, "Press to disable", UI_COLOR_VALUE);
 		return;
 	}
 	draw_color_segments(y, "SSID ", state.wifi_ssid, UI_COLOR_VALUE);
 	y += LINE_H;
 	if (state.wifi_state == UI_WIFI_JOINING) {
+		draw_centered_color(y, "Press to disable", UI_COLOR_VALUE);
 		return;
 	}
-	draw_color_segments(y, "IP   ", state.wifi_ip, UI_COLOR_VALUE);
-	y += LINE_H;
-	snprintf(buf, sizeof(buf), "%u", state.wifi_port);
-	draw_color_segments(y, "Port ", buf, UI_COLOR_VALUE);
+	snprintf(buf, sizeof(buf), "%s:%u", state.wifi_ip, state.wifi_port);
+	draw_color_segments(y, "IP   ", buf, UI_COLOR_VALUE);
 	y += LINE_H;
 	draw_color_segments(y, "App  ",
 			    (state.link_transports & UI_LINK_TCP) ? "connected" : "none",
 			    (state.link_transports & UI_LINK_TCP) ? UI_COLOR_OK
 								  : UI_COLOR_DISABLED);
+	y += LINE_H;
+	draw_centered_color(y, "Press to disable", UI_COLOR_VALUE);
 }
 #endif /* MC_DISPLAY_COLOR_PANEL */
 

@@ -29,12 +29,36 @@ When a companion is turned off with its button and an app is connected, vContact
 reports `Powering off: button` before the device enters System OFF. The app has
 eight seconds to fetch the notice. With no app connected, power-off is immediate.
 Button changes to GPS, buzzer mode and LEDs also appear in vContact after the
-companion applies them.
+companion applies them. The GPS page now redraws after that applied state, so
+its on/off value no longer remains stale, including on e-paper displays.
 
 ## XIAO nRF52840 charging heartbeat
 
 The repeater keeps the normal single heartbeat pulse while external power is
 connected instead of showing the three-pulse low-battery warning during charge.
+Its independent green LED now receives the battery and VBUS providers before
+the charge work starts, so it can show the same one/two/three-pulse percentage
+bands as M3 and T1000-E.
+
+## Categorized remote command help
+
+Repeater USB `help` now prints the complete local command list. The remote mesh
+console uses `help` for categories and `help <group>` for one packet-sized group,
+matching the categorical command line used by the companion app. Companion
+remote mesh CLI now uses the same packet-sized categories and exposes the
+safe operational ZephCore commands to an authorized contact. Identity and WiFi
+secrets, BLE PIN, RF changes, battery calibration/autoshutdown, power-off,
+OTA/DFU and erase remain local-only. Remote `sos` and `tracking on|off` are
+silent for their whole lifetime, including repeated tracking reports and the
+final SOS transmission.
+
+## ShadoW splash restored
+
+The button-display splash again shows the firmware version and
+`Tuned by ShadoW`. The joystick splash already retained both; the two display
+paths are now documented as a required overlay check for future upstream updates.
+The button UI again renders `Power OFF` before manual shutdown; e-paper keeps
+that final frame after power is removed.
 
 ## Buttons
 
@@ -48,9 +72,14 @@ connected instead of showing the three-pulse low-battery warning during charge.
 
 - **New WiFi page** on WiFi companions with a one-button display (Heltec V3, V4, V4.3, Wireless
   Tracker, T3S3, Station G2 and others), next to the Bluetooth page. It shows whether WiFi is off,
-  joining or connected, and once connected the network, IP address and port to enter in the app,
-  and whether the app is connected over WiFi. On the ThinkNode M9 the same details are under
+  joining or connected, and once connected the network and endpoint in `IPv4:port` form to enter in the app,
+  and whether the app is connected over WiFi. Pressing ENTER turns WiFi on or off, saves the
+  setting and reboots to apply it. On the ThinkNode M9 the same details and toggle are under
   **System > Info > WiFi**.
+- **WiFi CLI group:** WiFi companions expose `help wifi` over both BLE and USB for status,
+  address, credentials and the persisted on/off setting.
+- **Heltec V3 USB CLI works through its CP2102 bridge.** Companion builds now automatically give
+  UART0 to the wired companion/CLI transport instead of leaving the console on the same UART.
 - **The home page names the connection:** "WiFi OK", "USB OK" or "BLE OK" instead of always
   "BLE OK", and "BLE OFF" when Bluetooth is turned off and no app is connected.
 - **The Bluetooth page says "Connected" only for a Bluetooth connection.** An app connected over

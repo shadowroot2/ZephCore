@@ -19,6 +19,8 @@
 #endif
 #include <adapters/gps/ZephyrGPSManager.h>
 #include <helpers/time_sync.h>
+#include <helpers/CompanionCLIHelp.h>
+#include <helpers/CommonCLI.h>
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_DESIGN_BUTTON) || IS_ENABLED(CONFIG_ZEPHCORE_UI_DESIGN_JOYSTICK)
 #include <ui_task.h>
 #define ZEPHCORE_HAS_UI_TASK 1
@@ -84,6 +86,7 @@ CompanionMesh::CompanionMesh(mesh::Radio &radio, mesh::MillisecondClock &ms, mes
 	_send_scope_force_unscoped = false;
 	_cli_exec_cb = nullptr;
 	_cli_help_cb = nullptr;
+	_remote_cli_help_cb = nullptr;
 	memset(_vcontact_pubkey, 0, sizeof(_vcontact_pubkey));
 	_vcontact_lastmod = 0;
 	memset(_vcontact_recent_ts, 0, sizeof(_vcontact_recent_ts));
@@ -986,6 +989,28 @@ void CompanionMesh::onCLICommandRecv(const ContactInfo &contact, mesh::Packet *p
 {
 	markConnectionActive(contact);  // in case this is from a server, and we have a connection
 	if (contact.isRemoteCLIAllowed()) {
+		const char *command = text;
+		char *help_reply = reply;
+		uint8_t prefix_len = 0;
+		char normalized[MAX_TEXT_LEN + 1];
+
+		while (*command == ' ') command++;
+		if (strlen(command) > 4 && command[2] == '|') {
+			memcpy(help_reply, command, 3);
+			help_reply += 3;
+			command += 3;
+			prefix_len = 3;
+		}
+		if (command[0] >= 'A' && command[0] <= 'Z') {
+			snprintf(normalized, sizeof(normalized), "%s", command);
+			normalized[0] = (char)(normalized[0] - 'A' + 'a');
+			command = normalized;
+		}
+		const char *help = _remote_cli_help_cb ? _remote_cli_help_cb(command) : nullptr;
+		if (help != nullptr) {
+			snprintf(help_reply, CLI_REMOTE_REPLY_SIZE - prefix_len, "%s", help);
+			return;
+		}
 		if (!handleCommand(text, sender_timestamp, reply)) {
 			strcat(reply, "Unknown command");  // reply may have cmd prefix from 'text'
 		}
@@ -993,36 +1018,6 @@ void CompanionMesh::onCLICommandRecv(const ContactInfo &contact, mesh::Packet *p
 		queueMessage(contact, TXT_TYPE_CLI_COMMAND, pkt, sender_timestamp, nullptr, 0, text);
 		pushMsgWaiting();
 	}
-}
-
-/* Over the air, a contact with flag 0x10 reaches the commands upstream's
- * companion handles (MyMesh::handleCommand and CommonRadioPrefs) and nothing
- * else: the ZephCore-only commands (start ota/dfu, erase, prv.key, clkreboot,
- * v.contact, autoshutdown, ...) stay local. */
-static bool isUpstreamCompanionCommand(const char *cmd)
-{
-	static const char *const exact[] = {
-		"get radio", "get freq", "get af", "get dutycycle", "get int.thresh", "get cad",
-		"get radio.rxgain", "get tx", "get rxdelay", "get agc.reset.interval",
-		"get path.hash.mode", "get txdelay", "get direct.txdelay",
-		"reboot", "poweroff", "shutdown", "get name", "get wifi.pwd", "set wifi.clear",
-		"get wifi.ssid", "get wifi.enabled", "get wifi.status", "get wifi.ip",
-		"board", "ver", "get tz.offset",
-	};
-	static const char *const prefix[] = {
-		"set radio ", "set af ", "set dutycycle ", "set int.thresh ", "set cad ",
-		"set radio.rxgain ", "get tx ", "set tx ", "set rxdelay ", "set agc.reset.interval ",
-		"set path.hash.mode ", "set txdelay ", "set direct.txdelay ",
-		"set name ", "set pin ", "set wifi.ssid ", "set wifi.pwd ", "set wifi.enabled ",
-		"set tz.offset ",
-	};
-	for (const char *e : exact) {
-		if (strcmp(cmd, e) == 0) return true;
-	}
-	for (const char *p : prefix) {
-		if (strncmp(cmd, p, strlen(p)) == 0) return true;
-	}
-	return false;
 }
 
 bool CompanionMesh::handleCommand(const char *command, uint32_t sender_timestamp, char *reply)
@@ -1038,12 +1033,21 @@ bool CompanionMesh::handleCommand(const char *command, uint32_t sender_timestamp
 	}
 	*reply = 0;
 
-	if (sender_timestamp != 0 && !isUpstreamCompanionCommand(command)) {
+	if (sender_timestamp != 0 && !companion_remote_cli_command_allowed(command)) {
 		return false;
 	}
 	if (_cli_exec_cb == nullptr) {
 		strcpy(reply, "CLI not available");
 		return true;
+	}
+	if (sender_timestamp != 0) {
+		char local_reply[COMPANION_CLI_REPLY_SIZE] = {};
+		_cli_exec_cb(command, sender_timestamp, 0, local_reply);
+		if (local_reply[0] != '\0') {
+			snprintf(reply, CLI_REMOTE_REPLY_SIZE - hdr_used, "%s", local_reply);
+			return true;
+		}
+		return false;
 	}
 	_cli_exec_cb(command, sender_timestamp, hdr_used, reply);
 	return *reply != 0;

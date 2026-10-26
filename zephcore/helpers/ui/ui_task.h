@@ -193,6 +193,9 @@ void ui_set_link_transports(uint8_t mask);
  */
 void ui_set_wifi(uint8_t state, const char *ssid, const char *ip, uint16_t port);
 
+/** Persisted WiFi enable state shown by the WiFi page. */
+void ui_set_wifi_enabled(bool enabled);
+
 /**
  * Set notification mode (for display page).
  */

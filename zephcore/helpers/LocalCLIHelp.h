@@ -1,8 +1,7 @@
 /*
  * SPDX-License-Identifier: MIT
  * Local serial CLI help.  These strings are deliberately emitted only by
- * local UART/USB entry points. Replies travelling through LoRa retain their
- * bounded packet buffers and never expose the command catalogue.
+ * local UART/USB entry points. LoRa replies use their own bounded catalogue.
  */
 #pragma once
 
@@ -10,6 +9,7 @@
 #include <zephyr/devicetree.h>
 #include <zephyr/sys/util.h>
 #include <helpers/BatteryAlertDefaults.h>
+#include <helpers/CompanionCLIHelp.h>
 
 enum class LocalCLIHelpRole {
 	Companion,
@@ -17,7 +17,7 @@ enum class LocalCLIHelpRole {
 	RoomServer,
 };
 
-/* A complete repeater help must fit in the asynchronous serial TX queue. */
+/* Keep the complete local catalogue bounded. */
 static constexpr size_t REPEATER_CLI_TX_BUF_SIZE = 4096;
 
 #define CLI_UI_RADIO_HELP \
@@ -28,6 +28,11 @@ static constexpr size_t REPEATER_CLI_TX_BUF_SIZE = 4096;
 
 static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line)
 {
+#if IS_ENABLED(CONFIG_ZEPHCORE_COMPANION_WIFI)
+	if (role == LocalCLIHelpRole::Companion && strcmp(line, "help wifi") == 0) {
+		return COMPANION_WIFI_HELP;
+	}
+#endif
 	if (strcmp(line, "help") != 0 && strcmp(line, "?") != 0) {
 		return nullptr;
 	}
@@ -42,6 +47,9 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"sos\r\n"
 		"gps on|off|setloc|advert\r\n"
 		"tracking on|off\r\n"
+#if IS_ENABLED(CONFIG_ZEPHCORE_COMPANION_WIFI)
+		"wifi (help wifi)\r\n"
+#endif
 #if defined(CONFIG_BOARD_THINKNODE_M3) || defined(CONFIG_BOARD_T1000_E)
 		"fall on|off\r\n"
 #endif
@@ -122,12 +130,6 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"gps\r\n"
 		"gps on|off|sync|setloc|advert\r\n"
 #endif
-#if DT_NODE_HAS_PROP(DT_ALIAS(led0), gpios) || DT_NODE_HAS_PROP(DT_ALIAS(led1), gpios)
-		"leds on|off\r\n"
-#endif
-#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
-		"buzz on|off\r\n"
-#endif
 		"password <value>\r\n"
 #if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
 		"bridge on|off|ping|logs|keygen (keygen: local)\r\n"
@@ -166,13 +168,24 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"get cad.busycap\r\n"
 		"get probe.interval\r\n"
 		"get bootloader.ver\r\n"
+#if IS_ENABLED(CONFIG_ZEPHCORE_LOOP_WAKE_STATS)
 		"get loop.wakes\r\n"
+#endif
+		"get txdelay\r\n"
+#if IS_ENABLED(CONFIG_ZEPHCORE_RADIO_LR2021)
+		"get freqerr\r\n"
+#endif
 		"get pwrmgt.support\r\n"
 		"get pwrmgt.source\r\n"
 		"get pwrmgt.bootreason\r\n"
 		"get pwrmgt.bootmv\r\n"
 		"get pm\r\n"
+#if IS_ENABLED(CONFIG_ZEPHCORE_MEM_STATS)
 		"get mem [<n>]\r\n"
+#endif
+#if IS_ENABLED(CONFIG_ZEPHCORE_POWER_DIAG)
+		"get pwr [<n>]\r\n"
+#endif
 #if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
 		"get bridge.delay\r\n"
 		"get bridge.mac\r\n"
@@ -195,6 +208,8 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"set uplink.wifi.psk <password>\r\n"
 #endif
 		"get/set adc.multiplier\r\n"
+		"set adc.multiplier target <mV>\r\n"
+		"set adc.multiplier full\r\n"
 		"get/set advert.interval\r\n"
 		"get/set af\r\n"
 		"get/set backoff.multiplier\r\n"

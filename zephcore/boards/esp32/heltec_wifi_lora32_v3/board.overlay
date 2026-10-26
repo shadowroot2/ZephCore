@@ -29,10 +29,9 @@
 		/* Keep console/shell on UART0 for stable host logging on V3 */
 		zephyr,console = &uart0;
 		zephyr,shell-uart = &uart0;
-		/* Plain-UART companion backend (CONFIG_ZEPHCORE_COMPANION_SERIAL):
-		 * the wired companion + text CLI run over uart0 (USB-C via CP2102).
-		 * Inert unless that conf is built; in a serial-companion build the
-		 * conf also moves console/shell off uart0 so the companion owns it. */
+		/* Plain-UART companion backend: the wired companion + text CLI run
+		 * over uart0 (USB-C via CP2102). CMake detects this chosen node and
+		 * adds serial_companion.conf, which removes console/shell ownership. */
 		zephcore,companion-uart = &uart0;
 	};
 
@@ -119,11 +118,6 @@
 		tap-codes = <INPUT_KEY_1 INPUT_KEY_LEFT>;
 		tap-delay-ms = <400>;
 	};
-};
-
-/* Enable native USB serial for console/CLI */
-&usb_serial {
-	status = "okay";
 };
 
 /* Add RX boosted mode and DIO1 pull-down to LoRa radio.

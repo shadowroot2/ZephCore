@@ -1,10 +1,16 @@
 # Команды CLI
 
-Список Companion ниже соответствует локальному USB CLI; BLE CLI показывает команды по категориям. Для каждой роли приведён самостоятельный список, включая общие команды.
+Список Companion ниже соответствует локальному USB CLI; BLE CLI показывает команды по категориям. На WiFi companion USB `help` содержит строку `wifi (help wifi)`, а `help wifi` выводит ту же отдельную группу WiFi, что BLE CLI. Для каждой роли приведён самостоятельный список, включая общие команды.
 
 `get/set name` означает две команды: `get name` — прочитать, `set name <значение>` — изменить. Символ `|` разделяет варианты; угловые скобки обозначают аргумент и не вводятся. Например: `set fall.sens 3`.
 
-Списки объединяют варианты плат: GPS, буззер, дисплей, Fall, OTA, DFU и uplink доступны только при поддержке оборудования и сборки. В Companion командная строка доступна через USB и BLE; vContact служит только для уведомлений. По USB репиттер выводит полный список команд одной командой `help`; удалённый CLI выводит категории по `help` и их содержимое по `help <group>`. Доступность команд дополнительно ограничивается правами и возможностями сборки. Секретные ключи и пароли не публикуйте.
+Списки объединяют варианты плат: GPS, буззер, дисплей, Fall, OTA, DFU и uplink доступны только при поддержке оборудования и сборки. В Companion командная строка доступна через USB и BLE; vContact служит только для уведомлений. Удалённый LoRa CLI компаньена доступен контакту с разрешением remote CLI, поддерживает категории `help` и рабочие команды ZephCore. Секретный ключ, OTA/DFU и erase остаются локальными. По USB репиттер выводит полный список команд одной командой `help`; удалённый CLI репиттера выводит категории по `help` и их содержимое по `help <group>`. Доступность команд дополнительно ограничивается правами и возможностями сборки. Секретные ключи и пароли не публикуйте.
+
+Текст, отправленный в vContact, не выполняется как команда. Устройство отвечает
+`Please use the Command Line in Settings. This chat is for notifications only.`;
+повтор сообщения с тем же timestamp не ставит этот ответ в очередь второй раз.
+`get/set v.contact` управляет наличием контакта уведомлений, а не возвращает в
+него командный обработчик.
 
 На XIAO nRF52840 `shutdown y` переводит плату в System OFF и не оставляет пробуждение кнопкой D0; запуск происходит при новом подключении USB VBUS (или аппаратном RESET). Если USB уже подключён, его нужно отключить и подключить снова. Падение и последующий рост напряжения солнечной панели электрически равнозначны переподключению USB.
 
@@ -12,9 +18,9 @@
 
 ## Companion
 
-### BLE CLI: T1000-E
+### BLE CLI: Companion
 
-`help` выводит `Groups: id | rf | cad | mesh | gps | extra | ui | power | stat | sys`; команды группы выводятся по `help <group>`:
+На сборке без WiFi `help` выводит `Groups: id | rf | cad | mesh | gps | extra | ui | power | stat | sys`. На WiFi companion между `gps` и `extra` добавляется `wifi`; команды группы выводятся по `help <group>`:
 
 ```text
 help
@@ -56,6 +62,16 @@ help
 │  ├─ get/set gps duty
 │  ├─ get/set lat
 │  └─ get/set lon
+├─ wifi                         (только WiFi companion)
+│  ├─ get wifi.status
+│  ├─ get wifi.ip
+│  ├─ get wifi.ssid
+│  ├─ set wifi.ssid <name>
+│  ├─ get wifi.pwd
+│  ├─ set wifi.pwd <password>
+│  ├─ get wifi.enabled
+│  ├─ set wifi.enabled 0|1
+│  └─ set wifi.clear
 ├─ extra
 │  ├─ findme
 │  ├─ sos
@@ -100,20 +116,82 @@ help
 
 Команды Fall в BLE help показываются только на T1000-E и ThinkNode M3; `display.rotate` и `input.rotate` добавляются в `ui` на сборках с дисплеем.
 
+### Remote LoRa CLI: Companion
+
+Ответы `help <group>` помещаются в один remote CLI frame. `sos` и
+`tracking on|off` выполняются без звука: для SOS это относится ко всему сценарию
+до финальной передачи, для Tracking — ко всему сеансу и удалённому выключению.
+Категорийное дерево удалённого CLI:
+
+```text
+help
+├─ id
+│  ├─ get role
+│  ├─ get/set name
+│  ├─ get/set owner.info
+│  └─ get public.key
+├─ rf
+│  ├─ get freq | radio | tx
+│  ├─ get/set af | path.hash.mode | dutycycle
+│  └─ get/set extra.sf | int.thresh | radio.rxgain | radio.fem.rxgain
+├─ cad
+│  ├─ get cad
+│  └─ set cad.auto | cad.offset | probe.interval | cad.busycap | cad.reset
+├─ mesh
+│  ├─ advert | advert.zerohop
+│  ├─ get/set advert.interval | meshtimesync
+│  └─ get/set flood.advert.interval | flood.max | flood.max.advert | flood.max.unscoped
+├─ gps
+│  ├─ gps on|off|setloc|advert
+│  └─ get/set gps duty | lat | lon
+├─ wifi
+│  ├─ get wifi.status | wifi.ip | wifi.enabled
+│  └─ set wifi.enabled 0|1
+├─ extra
+│  ├─ findme | sos | tracking on|off
+│  ├─ get/set tracking.group | tracking.interval
+│  ├─ fall on|off | get/set fall.sens (1-5)
+│  └─ get/set v.contact
+├─ ui
+│  ├─ buzz on|off | leds on|off
+│  ├─ get/set display.rotate | input.rotate
+│  └─ get/set leds.hb | leds.radio
+├─ power
+│  ├─ get adc.multiplier | autoshutdown
+│  └─ get/set autoshutdown.emergency | v.batteryalert
+├─ stat
+│  └─ stats-packets | stats-radio | stats-core
+└─ sys
+   ├─ ver | board | uptime | tz | clock sync | time <epoch>
+   ├─ get dc.restarts | bootloader.ver | get/set tz.offset
+   └─ reboot
+```
+
+`wifi`, Fall и display/input rotation показываются только при наличии соответствующей возможности сборки. Удалённо не выполняются `get/set prv.key`, `get/set wifi.pwd`, `get/set wifi.ssid`, `set wifi.clear`, `set pin`, `set freq`, `set radio`, `set tx`, `set adc.multiplier`, `set autoshutdown`, `offgrid on|off`, `clear stats`, `shutdown`, `poweroff`, OTA/DFU, `erase` и `clkreboot`.
+
 ### Команды и описание
 
 - `ver` — выводит версию прошивки.
 - `board` — выводит модель платы.
 - `uptime` — выводит время работы после загрузки.
-- `tz` — выводит текущий часовой пояс экрана в формате `GMT+5`, `GMT+5:30`, `GMT-3:30` или `GMT+0`; доступна через USB CLI и BLE CLI.
+- `tz` — выводит текущий часовой пояс экрана в формате `GMT+5`, `GMT+5:30`, `GMT-3:30` или `GMT+0`; доступна через USB CLI, BLE/app CLI и удалённый LoRa CLI.
 - `advert` — отправляет объявление узла с распространением по сети.
 - `advert.zerohop` — отправляет объявление только ближайшим узлам, без ретрансляции.
 - `clock sync` — синхронизирует часы по метке времени отправителя команды; перевод назад запрещён. Для локального задания времени используйте time.
 - `time <epoch>` — задаёт время Unix в секундах (UTC); обработчик не разрешает перевод назад.
 - `findme` — запускает звуковой поиск устройства; нужен поддерживаемый буззер.
-- `sos` — запускает SOS; при ожидании GPS отправляет предварительные сообщения, затем основное. При buzzer off SOS беззвучный.
+- `sos` — запускает SOS; при ожидании GPS отправляет предварительные сообщения, затем основное. При buzzer off SOS беззвучный. Запуск через удалённый LoRa CLI всегда беззвучный, включая подтверждение, промежуточные и финальную отправки.
 - `gps on|off|setloc|advert` — включает/выключает GPS; setloc сохраняет текущие координаты; advert none|share|prefs выбирает координаты в объявлении (без координат / текущие / сохранённые).
-- `tracking on|off` — включает/выключает периодическую отправку координат.
+- `get wifi.status` — выводит состояние подключения WiFi: `connected` или `disconnected`.
+- `get wifi.ip` — выводит текущий IPv4-адрес или сообщает, что подключения нет.
+- `get wifi.ssid` — выводит сохранённый SSID.
+- `set wifi.ssid <name>` — сохраняет SSID; применяется после перезагрузки.
+- `get wifi.pwd` — выводит сохранённый пароль WiFi; не публикуйте этот ответ.
+- `set wifi.pwd <password>` — сохраняет пароль WiFi; применяется после перезагрузки.
+- `get wifi.enabled` — выводит сохранённое состояние WiFi: `0` или `1`.
+- `set wifi.enabled 0|1` — сохраняет выключенное/включённое состояние WiFi; применяется после перезагрузки.
+- `set wifi.clear` — удаляет сохранённые SSID и пароль; применяется после перезагрузки.
+- `tracking on|off` — включает/выключает периодическую отправку координат. При включении через удалённый LoRa CLI запуск, остановка и все периодические отправки выполняются без звука.
 - `fall on|off` — включает/выключает детекцию падения и мониторинг акселерометра (M3, T-1000E). Падение звучит даже при buzzer off.
 - `leds on|off` — включает/выключает программную LED-индикацию; зарядная индикация зависит от платы.
 - `buzz on|off` — включает/выключает обычные звуковые уведомления; исключение — тревога падения.
@@ -126,6 +204,8 @@ help
 - `get public.key` — выводит открытый ключ узла.
 - `get dc.restarts` — выводит число перезапусков при тайм-ауте RX duty cycle.
 - `get cad` — выводит параметры и статистику определения занятости эфира (CAD).
+- `get txdelay` — выводит состояние адаптивной задержки передачи и текущую оценку занятости.
+- `get pwr [<n>]` — выводит строку диагностики питания; только сборки с `CONFIG_ZEPHCORE_POWER_DIAG`.
 - `get bootloader.ver` — выводит версию загрузчика, если поддерживается платой.
 - `set cad.auto` — включает/выключает автоматическую настройку CAD: on|off|default.
 - `set cad.offset` — задаёт смещение порога CAD: -8..12 или default.
@@ -133,6 +213,8 @@ help
 - `set cad.busycap` — задаёт порог доли проб с обнаруженным слабым сигналом: 10..90%; 0 отключает этот предел.
 - `set cad.reset` — сбрасывает статистику проб и возвращает смещение CAD к значению по умолчанию.
 - `get/set adc.multiplier` — читает/задаёт коэффициент измерения батареи; 0 выбирает штатную калибровку платы.
+- `set adc.multiplier target <mV>` — калибрует коэффициент по измеренному мультиметром напряжению 3000–4400 мВ.
+- `set adc.multiplier full` — калибрует коэффициент по верхней точке батарейной кривой; применять только при полном заряде.
 - `get/set advert.interval` — читает/задаёт интервал локальных объявлений в минутах (шаг хранения — 2 минуты).
 - `get/set af` — читает/задаёт коэффициент паузы после передачи; связан с dutycycle формулой 100/(af+1).
 - `get/set autoshutdown` — читает/задаёт порог автоматического выключения в мВ; 0 отключает. Только сборки с поддержкой автовыключения.
@@ -168,7 +250,7 @@ help
 - `get/set tx` — читает/задаёт мощность самого радиочипа в dBm, в пределах платы.
 - `get/set tz.offset (hours)` — читает/задаёт часовой пояс экрана: целые часы -12..14; не меняет UTC и сетевые метки.
 - `get/set v.batteryalert` — читает/задаёт порог уведомления о низком заряде в vContact, в мВ; 0 отключает, default возвращает штатный порог.
-- `get/set v.contact` — читает/задаёт доступность виртуального контакта управления.
+- `get/set v.contact` — читает/задаёт доступность виртуального контакта уведомлений; обработчика команд в этом чате нет.
 - `start ota` — запускает поддерживаемый платой режим OTA-обновления.
 - `start dfu` — переводит устройство в режим обновления загрузчика (DFU); способ подключения зависит от платы.
 - `stop ota` — останавливает OTA, если это поддерживается сборкой.
@@ -190,7 +272,9 @@ help
 │  ├─ get/set name
 │  ├─ get/set owner.info
 │  ├─ set prv.key
-│  └─ get public.key
+│  ├─ get public.key
+│  ├─ password <value>
+│  └─ get/set guest.password
 ├─ rf
 │  ├─ get freq
 │  ├─ get/set radio
@@ -198,13 +282,12 @@ help
 │  ├─ get/set af
 │  ├─ get/set path.hash.mode
 │  ├─ get/set dutycycle
-│  └─ get/set int.thresh
-├─ radio
+│  ├─ get/set int.thresh
 │  ├─ get/set radio.rxgain
-│  ├─ get/set radio.fem.rxgain
-│  ├─ get/set rxduty
 │  ├─ get/set extra.sf
 │  ├─ get freqerr
+│  ├─ get/set radio.fem.rxgain
+│  ├─ get/set rxduty
 │  └─ tempradio <freq> <bw> <sf> <cr> <minutes>
 ├─ cad
 │  ├─ get cad
@@ -213,6 +296,7 @@ help
 │  ├─ get cad.offset
 │  ├─ get probe.interval
 │  ├─ get cad.busycap
+│  ├─ get txdelay
 │  └─ set cad.auto|offset|busycap|reset|probe.interval
 ├─ mesh
 │  ├─ advert
@@ -221,25 +305,23 @@ help
 │  ├─ get/set repeat
 │  ├─ get/set loop.detect
 │  ├─ get/set meshtimesync
-│  └─ get/set multi.acks
-├─ flood
+│  ├─ get/set multi.acks
 │  ├─ get/set flood.advert.interval
 │  ├─ get/set flood.max
 │  ├─ get/set flood.max.advert
 │  ├─ get/set flood.max.unscoped
 │  └─ get/set backoff.multiplier
+├─ find
+│  ├─ neighbors
+│  ├─ neighbor.remove <pubkey>
+│  └─ discover.neighbors
 ├─ region
 │  ├─ region
 │  ├─ region get|put|remove|list
 │  ├─ region def|load|save
 │  └─ region allowf|denyf|home|default
 ├─ access
-│  ├─ password <value>
-│  ├─ get/set guest.password
-│  ├─ setperm <permissions> <pubkey>
-│  ├─ neighbors
-│  ├─ neighbor.remove <pubkey>
-│  └─ discover.neighbors
+│  └─ setperm <permissions> <pubkey>
 ├─ gps
 │  ├─ gps
 │  ├─ gps on|off|sync|setloc|advert
@@ -250,8 +332,6 @@ help
 │  ├─ get/set lat
 │  └─ get/set lon
 ├─ ui
-│  ├─ leds on|off
-│  ├─ buzz on|off
 │  ├─ get/set leds
 │  ├─ get/set leds.brightness
 │  ├─ get/set leds.hb
@@ -266,8 +346,6 @@ help
 │  ├─ get pwrmgt.source
 │  ├─ get pwrmgt.bootreason
 │  ├─ get pwrmgt.bootmv
-│  └─ shutdown y
-├─ battery
 │  ├─ battery
 │  ├─ get/set adc.multiplier
 │  ├─ get/set battery.alert
@@ -278,10 +356,6 @@ help
 │  ├─ sensor get <key>
 │  ├─ sensor set <key> <value>
 │  └─ sensor list <start>
-├─ log
-│  ├─ log start
-│  ├─ log stop
-│  └─ log erase
 ├─ stat
 │  ├─ stats-packets
 │  ├─ stats-radio
@@ -289,7 +363,12 @@ help
 │  ├─ clear stats
 │  ├─ get pm
 │  ├─ get mem [<n>]
+│  ├─ get pwr [<n>]
 │  └─ get loop.wakes
+├─ log
+│  ├─ log start
+│  ├─ log stop
+│  └─ log erase
 ├─ sys
 │  ├─ ver
 │  ├─ board
@@ -301,11 +380,30 @@ help
 │  ├─ get bootloader.ver
 │  ├─ start ota
 │  ├─ start dfu
+│  ├─ stop ota
 │  ├─ reboot
-│  └─ clkreboot
+│  ├─ clkreboot
+│  └─ shutdown y
 ├─ bridge (только repeater-bridge)
+│  ├─ bridge
+│  ├─ bridge on|off|ping|logs
+│  ├─ bridge unpair
+│  ├─ bridge bonds
+│  ├─ bridge logs N|clear
+│  ├─ get bridge.delay
+│  └─ get bridge.mac
 ├─ bridge.cfg (только repeater-bridge)
+│  ├─ set bridge.key <32-hex>
+│  ├─ get/set bridge.peer
+│  ├─ get/set bridge.priority
+│  └─ get/set bridge.type
 └─ uplink (только Wi-Fi/MQTT uplink)
+   ├─ get uplink.status
+   ├─ get/set uplink.enable
+   ├─ get/set uplink.mqtt.host|port|tls|user|iata
+   ├─ set uplink.mqtt.password
+   ├─ get/set uplink.wifi.ssid
+   └─ set uplink.wifi.psk
 ```
 
 `get prv.key`, `set freq`, `get acl`, `log` и `erase` остаются только в полном локальном USB help.
@@ -319,8 +417,6 @@ help
 - `clock sync` — синхронизирует часы по метке времени отправителя команды; перевод назад запрещён. Для локального задания времени используйте time.
 - `time <epoch>` — задаёт время Unix в секундах (UTC); обработчик не разрешает перевод назад.
 - `gps on|off|setloc|advert` — включает/выключает GPS; setloc сохраняет текущие координаты; advert none|share|prefs выбирает координаты в объявлении (без координат / текущие / сохранённые).
-- `leds on|off` — включает/выключает программную LED-индикацию; зарядная индикация зависит от платы.
-- `buzz on|off` — включает/выключает обычные звуковые уведомления; исключение — тревога падения.
 - `password <value>` — задаёт пароль административного доступа.
 - `neighbors` — выводит список соседних узлов.
 - `neighbor.remove <pubkey>` — удаляет соседа по открытому ключу.
@@ -393,7 +489,9 @@ help
 - `get/set uplink.mqtt.tls` — читает/включает или выключает TLS для MQTT uplink.
 - `get/set uplink.mqtt.user` — читает/задаёт имя пользователя MQTT uplink.
 - `get/set uplink.wifi.ssid` — читает/задаёт SSID uplink.
+- `start ota` — запускает поддерживаемый платой режим OTA.
 - `start dfu` — переводит устройство в режим обновления загрузчика (DFU); способ подключения зависит от платы.
+- `stop ota` — останавливает Wi-Fi OTA; только сборки с Wi-Fi OTA.
 - `reboot` — перезагружает устройство.
 - `clkreboot` — устанавливает часы на дату/время сборки прошивки и перезагружает устройство.
 - `shutdown y` — выключает устройство при поддержке платой; y подтверждает действие.
@@ -415,8 +513,6 @@ help
 - `clock sync` — синхронизирует часы по метке времени отправителя команды; перевод назад запрещён. Для локального задания времени используйте time.
 - `time <epoch>` — задаёт время Unix в секундах (UTC); обработчик не разрешает перевод назад.
 - `gps on|off|setloc|advert` — включает/выключает GPS; setloc сохраняет текущие координаты; advert none|share|prefs выбирает координаты в объявлении (без координат / текущие / сохранённые).
-- `leds on|off` — включает/выключает программную LED-индикацию; зарядная индикация зависит от платы.
-- `buzz on|off` — включает/выключает обычные звуковые уведомления; исключение — тревога падения.
 - `password <value>` — задаёт пароль административного доступа.
 - `bridge on|off|ping|logs|keygen|unpair (keygen: local)` — bridge без аргументов показывает состояние и диагностику; on/off включает/выключает мост; ping проверяет связь; logs выводит последние события BLE-подключения; keygen создаёт и сохраняет ключ (локально); unpair запрашивает удаление BLE bond партнёра и переподключение. Если ACL ещё открыт, bond удаляется после завершения disconnect; ответ команды подтверждает запрос, а результат виден в `bridge bonds` и `bridge logs`.
 - `bridge bonds` — показывает число сохранённых BLE bond, наличие записи для настроенного peer и адрес первой записи (`type=P` public, `R` random). Не изменяет ключи.

@@ -87,6 +87,7 @@ struct ui_state {
 
 #ifdef CONFIG_ZEPHCORE_COMPANION_WIFI
 	/* WiFi page */
+	bool     wifi_enabled;     /* persisted wifi.enabled preference */
 	uint8_t  wifi_state;       /* enum ui_wifi_state */
 	uint16_t wifi_port;        /* TCP port of the app socket */
 	char     wifi_ssid[33];

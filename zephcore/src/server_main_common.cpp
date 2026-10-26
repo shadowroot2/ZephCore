@@ -724,6 +724,10 @@ int server_main(const ServerRole &role)
 		gps_set_event_callback(gps_event_callback);
 	}
 
+	/* Charge/heartbeat work starts inside ui_init(). */
+	ui_set_battery_provider(get_battery_mv, []() { return zephyr_board.getBattPercent(); });
+	ui_set_power_source_provider([]() { return zephyr_board.isExternalPowered(); });
+
 	/* Initialize UI (display + buttons).  Shows splash screen, then auto-
 	 * transitions to STATUS page.  Display sleeps after auto-off timeout;
 	 * user button is the only wake source for a server. */
@@ -855,8 +859,6 @@ int server_main(const ServerRole &role)
 	/* Feed initial UI state from loaded prefs */
 	ui_set_node_name(prefs->node_name);
 	refresh_ui_radio_state();
-	ui_set_battery_provider(get_battery_mv, []() { return zephyr_board.getBattPercent(); });
-	ui_set_power_source_provider([]() { return zephyr_board.isExternalPowered(); });
 	ui_set_battery(zephyr_board.getBattMilliVolts(), zephyr_board.getBattPercent());
 	ui_set_gps_available(gps_is_available());
 

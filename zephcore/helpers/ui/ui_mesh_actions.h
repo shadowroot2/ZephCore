@@ -61,6 +61,9 @@ void mesh_tracking_toggle(void);
 void mesh_set_bridge_enabled(bool enabled);
 void mesh_gps_set_enabled(bool enable);
 void mesh_ble_set_enabled(bool enable);
+#if defined(CONFIG_ZEPHCORE_COMPANION_WIFI)
+void mesh_wifi_set_enabled_and_restart(bool enable);
+#endif
 void mesh_set_buzzer_mode(uint8_t mode);
 void mesh_set_offgrid_mode(bool enable);
 /* False when the current band has no off-grid frequency (2.4 GHz). */

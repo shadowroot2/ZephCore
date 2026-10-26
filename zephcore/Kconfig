@@ -14,7 +14,7 @@ config ESP32_WIFI_NET_ALLOC_SPIRAM
 # WiFi companion on an ESP32-S3 without PSRAM: the WiFi heap is the system heap,
 # and Espressif's ADD_SIZE reservation (51 KB for WiFi alone) is sized for its
 # default 10 static / 32 dynamic RX and 32 TX buffers. Bound the buffers and size
-# the heap from measurement instead (72 KB, HEAP_MEM_POOL_SIZE in
+# the heap from measurement instead (68 KB, HEAP_MEM_POOL_SIZE in
 # wifi_companion.conf): measured 2026-09-24 on a XIAO ESP32-S3 built without
 # PSRAM, peak 61.6 KB under devdocs/tools/mem_load.py, and heap exhaustion under
 # a ~10k frames/s flood recovers (devdocs/lld/08-connectivity.md §13). Saves

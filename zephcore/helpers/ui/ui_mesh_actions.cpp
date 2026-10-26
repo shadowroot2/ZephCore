@@ -53,6 +53,7 @@ LOG_MODULE_REGISTER(zephcore_ui_actions, CONFIG_ZEPHCORE_UI_ACTIONS_LOG_LEVEL);
 #define UI_ACTION_SOS               BIT(15) /* ZEPHCORE: safety actions */
 #define UI_ACTION_TRACKING_TOGGLE   BIT(16)
 #define UI_ACTION_FALL_ACK          BIT(17)
+#define UI_ACTION_WIFI_RESTART      BIT(18)
 
 extern "C" void companion_sos_request_from_ui(void);
 extern "C" void companion_fall_alarm_acknowledge_from_ui(void);
@@ -79,6 +80,9 @@ static atomic_t pending_buzzer_mode;
 static atomic_t pending_offgrid_enabled;
 static atomic_t pending_leds_disabled;
 static atomic_t pending_ble_disabled;
+#if defined(CONFIG_ZEPHCORE_COMPANION_WIFI)
+static atomic_t pending_wifi_enabled;
+#endif
 static atomic_t pending_brightness;
 static atomic_t pending_wake_on_msg;
 static atomic_t pending_screen_off_secs;
@@ -158,6 +162,15 @@ extern "C" void mesh_ble_set_enabled(bool enable)
 	atomic_or(&pending_ui_actions, UI_ACTION_BLE_TOGGLE);
 	k_event_post(s_mesh_events, s_mesh_event_ui_action);
 }
+
+#if defined(CONFIG_ZEPHCORE_COMPANION_WIFI)
+extern "C" void mesh_wifi_set_enabled_and_restart(bool enable)
+{
+	atomic_set(&pending_wifi_enabled, enable ? 1 : 0);
+	atomic_or(&pending_ui_actions, UI_ACTION_WIFI_RESTART);
+	k_event_post(s_mesh_events, s_mesh_event_ui_action);
+}
+#endif
 
 extern "C" void mesh_save_brightness(uint8_t brightness)
 {
@@ -331,6 +344,16 @@ extern "C" void mesh_handle_ui_actions(void)
 		need_save = true;
 	}
 
+#if defined(CONFIG_ZEPHCORE_COMPANION_WIFI)
+	if (actions & UI_ACTION_WIFI_RESTART) {
+		bool enabled = atomic_get(&pending_wifi_enabled) != 0;
+		s_mesh->prefs.wifi_enabled = enabled ? 1 : 0;
+		ui_set_wifi_enabled(enabled);
+		LOG_INF("wifi_enabled=%d (button, rebooting)", enabled);
+		need_save = true;
+	}
+#endif
+
 	if (actions & UI_ACTION_BRIGHTNESS_SAVE) {
 		uint8_t br = (uint8_t)atomic_get(&pending_brightness);
 		s_mesh->prefs.display_brightness = br;
@@ -382,7 +405,7 @@ extern "C" void mesh_handle_ui_actions(void)
 		LOG_INF("prefs saved (button action)");
 	}
 
-	if (actions & UI_ACTION_SAVE_RESTART) {
+	if (actions & (UI_ACTION_SAVE_RESTART | UI_ACTION_WIFI_RESTART)) {
 		LOG_INF("rebooting (save+restart action)");
 		zephcore_persist_before_off();
 		sys_reboot(SYS_REBOOT_COLD);

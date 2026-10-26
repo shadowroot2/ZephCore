@@ -993,12 +993,22 @@ int WifiScreen::render(JoystickDisplay &display)
 	char line[48];
 	int y = kContentY + 2;
 	uint8_t state = _task->getWifiState();
+	NodePrefs *prefs = _task->getPrefs();
+	bool enabled = prefs && prefs->wifi_enabled != 0;
 
-	if (state == UI_WIFI_OFF) {
+	if (!enabled) {
 		display.setColor(JoystickDisplay::LIGHT);
 		display.drawTextLeftAlign(0, y, "Status: off");
 		y += kMenuLineH;
-		display.drawTextLeftAlign(0, y, "Set up via CLI");
+		display.drawTextLeftAlign(0, y, "ENTER: enable + reboot");
+		return 1000;
+	}
+
+	if (state == UI_WIFI_OFF) {
+		display.setColor(JoystickDisplay::LIGHT);
+		display.drawTextLeftAlign(0, y, "Status: on, no network");
+		y += kMenuLineH;
+		display.drawTextLeftAlign(0, y, "ENTER: disable + reboot");
 		return 1000;
 	}
 
@@ -1011,22 +1021,33 @@ int WifiScreen::render(JoystickDisplay &display)
 	display.drawTextLeftAlign(0, y, line);
 	y += kMenuLineH;
 	if (state != UI_WIFI_UP) {
+		display.drawTextLeftAlign(0, y, "ENTER: disable + reboot");
 		return 1000;
 	}
 
-	snprintf(line, sizeof(line), "IP: %s", _task->getWifiIp());
-	display.drawTextLeftAlign(0, y, line);
-	y += kMenuLineH;
-	snprintf(line, sizeof(line), "Port: %u", (unsigned)_task->getWifiPort());
+	snprintf(line, sizeof(line), "IP: %s:%u", _task->getWifiIp(),
+		 (unsigned)_task->getWifiPort());
 	display.drawTextLeftAlign(0, y, line);
 	y += kMenuLineH;
 	display.drawTextLeftAlign(0, y, (_task->getLinkTransports() & UI_LINK_TCP)
 				       ? "App: connected" : "App: none");
+	y += kMenuLineH;
+	display.drawTextLeftAlign(0, y, "ENTER: disable + reboot");
 	return 1000;
 }
 
 bool WifiScreen::handleInput(char c)
 {
+	if (c == KEY_ENTER) {
+		NodePrefs *prefs = _task->getPrefs();
+
+		if (prefs) {
+			prefs->wifi_enabled = prefs->wifi_enabled ? 0 : 1;
+			mesh_save_and_restart();
+			_task->showAlert("Restarting...", 2000);
+		}
+		return true;
+	}
 	if (c == KEY_CANCEL || c == KEY_HOME) { _task->gotoSystemScreen(); return true; }
 	return false;
 }

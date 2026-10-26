@@ -1,12 +1,12 @@
 # CLI Commands
 
-The text CLI of every ZephCore role. Commands are sent over USB serial (CDC-ACM); repeaters and room servers also take them remotely over the mesh from an admin. Commands sent remotely (non-zero `sender_timestamp`) cannot access USB-only commands.
+The text CLI of every ZephCore role. Commands are sent over USB serial (CDC-ACM); companions, repeaters and room servers also take them remotely over the mesh from an authorized contact or admin. Commands sent remotely (non-zero `sender_timestamp`) cannot access USB-only commands.
 
 | Role | Which commands apply |
 |------|----------------------|
 | **Repeater** | Every section except Room Server, the two Companion sections and Observer |
 | **Room server** | Shares the repeater's CLI — the common commands (radio, region, password, advert, gps, etc.) plus `setperm` / `get acl` — and adds `room.post` |
-| **Companion** | The common commands (`helpers/CommonCLI.cpp`) from USB or the app's CLI, plus Companion WiFi and Companion Extras. The repeater's and room server's own commands (`setperm`, `get acl`, `discover.neighbors`, `uplink.*`, `room.post`) are not there. Over the mesh, a contact with remote CLI permission reaches only the commands upstream's companion has |
+| **Companion** | The common commands (`helpers/CommonCLI.cpp`) from USB or the app's CLI, plus Companion WiFi and Companion Extras. The repeater's and room server's own commands (`setperm`, `get acl`, `discover.neighbors`, `uplink.*`, `room.post`) are not there. Over the mesh, a contact with remote CLI permission gets categorized help and the safe operational subset; secrets, BLE PIN, RF changes, power-off, OTA/DFU and erase stay local |
 | **Observer** | Its own small CLI, USB only — see [Observer](#observer-zephcore-only). No other section applies |
 
 **Sources:**
@@ -18,7 +18,7 @@ The text CLI of every ZephCore role. Commands are sent over USB serial (CDC-ACM)
 - `src/main_companion.cpp`, `app/PowerPolicy.cpp`, `app/CompanionWifi.cpp` — companion-only commands (`v.*`, `autoshutdown`, `help`, `wifi.*`)
 - `app/ObserverMesh.cpp` `handleCLI()`, `app/main_observer.cpp` — the observer's CLI and its `help` banner
 
-> **Commands are case-sensitive**, matching Arduino MeshCore. Nothing is lower-cased before matching.
+> **Commands are case-sensitive**, matching Arduino MeshCore. Remote companion `Help` is normalized to `help`; command names and arguments are not.
 
 > **ZephCore-only commands** are tagged *(ZephCore only)*: Arduino MeshCore has no command of that name
 > (checked against its `dev` branch at `3e3150c8`, 2026-10-04). A section whose heading carries the tag is
@@ -34,6 +34,12 @@ The text CLI of every ZephCore role. Commands are sent over USB serial (CDC-ACM)
 > to the console. Remote admin replies are limited to 161 bytes, or 158 bytes with a request tag, so
 > remote `help` returns category names and `help <group>` returns one bounded category. Local-only
 > commands (`get prv.key`, `set freq`, `get acl`, full `log`, `erase`) are not advertised remotely.
+> Radio tuning and gain commands are all in `help rf`; there is no separate `help radio` group.
+> Flood limits and backoff are at the end of `help mesh`; there is no separate `help flood` group.
+> Neighbour commands are isolated in `help find`.
+> Password settings are in `help id`; `help access` contains only `setperm`.
+> Battery commands are the second page of power (`help power.2`); there is no separate `help battery`.
+> `shutdown y` is the last command in `help sys`, and `log` follows `stat` in the root group list.
 
 ---
 
@@ -143,7 +149,7 @@ Regions control which flood packets the repeater forwards. The region tree is hi
 
 | Command | Description |
 |---------|-------------|
-| `clear stats` | Reset all statistics counters |
+| `clear stats` | Reset all statistics counters. Local-only on companion |
 | `stats-core` | *(USB only)* Display core mesh statistics |
 | `stats-radio` | *(USB only)* Display radio statistics |
 | `stats-packets` | *(USB only)* Display packet statistics |
@@ -268,7 +274,7 @@ All `set uplink.*` changes are saved immediately and only applied after reboot.
 
 ## Companion WiFi (`CONFIG_ZEPHCORE_COMPANION_WIFI`)
 
-Companion builds of boards whose `zephcore.yml` declares `capabilities: wifi: true` (the PSRAM ESP32-S3 boards, plus Heltec V3, Wireless Tracker and the two C6 boards with fewer contacts) join a WiFi network and serve the companion protocol over TCP on port 5000, beside BLE and USB. Upstream's commands and replies; every change applies on the next reboot. Reachable over USB, from the app's CLI and, as upstream, over the air from a contact with remote CLI permission — including `get wifi.pwd`.
+Companion builds of boards whose `zephcore.yml` declares `capabilities: wifi: true` (the PSRAM ESP32-S3 boards, plus Heltec V3, Wireless Tracker and the two C6 boards with fewer contacts) join a WiFi network and serve the companion protocol over TCP on port 5000, beside BLE and USB. Upstream's commands and replies; every change applies on the next reboot. Remote CLI exposes only status, IP and enabled state; SSID and password access stays local.
 
 | Command | Description |
 |---------|-------------|
@@ -284,11 +290,15 @@ Companion builds of boards whose `zephcore.yml` declares `capabilities: wifi: tr
 
 ## Companion Extras (ZephCore only)
 
-Companion builds only. Local only: they run from USB and the app's CLI, and a remote contact gets `Unknown command` even with remote CLI permission. Every `set` here is persisted.
+Companion builds only. They run from USB, the app's CLI and, where listed by categorized `help`, from a contact with remote CLI permission. Every `set` here is persisted. Remote replies are limited to one CLI packet. Identity/WiFi secrets, BLE PIN, RF changes, ADC calibration, autoshutdown changes, power-off, OTA/DFU and erase remain local.
+
+Remote `sos` and `tracking on|off` execute silently. This includes SOS waiting/final
+transmissions and every tracking report. USB, app CLI and UI launches keep their
+normal notification sounds.
 
 | Command | Description |
 |---------|-------------|
-| `help` / `?` | Lists the commands in this section. There is no global help |
+| `help` / `?` | Lists command groups; `help <group>` returns one packet-sized group |
 | `get v.contact` | Whether the virtual contact that delivers device notices to the app is shown: `v.contact: on` or `off` |
 | `set v.contact <on\|off\|1\|0>` | Default **on**. `off` removes the contact from the app and is the only durable way to disable its notices |
 | `get v.batteryalert` | Low-battery alert threshold: `v.batteryalert: <mV> mV`, `default (<mV> mV)` or `off` |
@@ -429,7 +439,7 @@ four radio parameters together, since they are one interop-critical set.
 | Command | Constraints | Description |
 |---------|-------------|-------------|
 | `set name <name>` | No `[ ] \ : , ? *` | Set node name |
-| `set repeat <on\|off>` | | Enable or disable packet forwarding. **Companion:** off-grid mode, the same as the display toggle ([OFFGRID.md](OFFGRID.md)), local only and applied at once. `on` moves the node to the nearest of 433.000 / 869.495 / 918.000 MHz and starts forwarding; `off` returns to the frequency it left. A node already on an off-grid frequency stays there both ways. BW, SF, CR and TX power are not touched; the frequency move resets the learned CAD offset. Replies `OK - repeat is now ON (869.495 MHz)`, or `Error: no off-grid frequency for this band` on a 2.4 GHz preset. `set radio` / `set freq` to any other frequency turns it off |
+| `set repeat <on\|off>` | | Enable or disable packet forwarding. **Companion:** local-only off-grid mode, the same as the display toggle ([OFFGRID.md](OFFGRID.md)), applied at once. `on` moves the node to the nearest of 433.000 / 869.495 / 918.000 MHz and starts forwarding; `off` returns to the frequency it left. A node already on an off-grid frequency stays there both ways. BW, SF, CR and TX power are not touched; the frequency move resets the learned CAD offset. Replies `OK - repeat is now ON (869.495 MHz)`, or `Error: no off-grid frequency for this band` on a 2.4 GHz preset. `set radio` / `set freq` to any other frequency turns it off |
 | `set radio <freq>,<bw>,<sf>,<cr>` | freq 150–2500, bw 7–500 (7–1000 on LR2021), sf 5–12, cr 5–8 | **Comma-separated**, not space-separated — spaces parse as a single argument and the command is rejected. Set radio params *(reboot required)*. If freq, bw or sf actually changed, this also performs a full `set cad.reset` and replies `OK - reboot to apply (CAD reset)` — the learned detPeak offset and its probe statistics belong to the old preset. The radio keeps running the old preset, at its learned offset, until the reboot; CAD adaptation is suspended in the meantime so it cannot re-dirty the reset. A cr-only change resets nothing. |
 | `set freq <mhz>` | 150–2500 *(USB only)* | Set frequency alone *(reboot required)*. Same CAD reset as `set radio` when the frequency actually changes. On LR2021 boards a frequency at or above 1500 MHz also moves the radio to its 2.4 GHz front end — see the note below the table. |
 | `set tx <dbm>` | −9 to board max (default 30) | Set TX power |

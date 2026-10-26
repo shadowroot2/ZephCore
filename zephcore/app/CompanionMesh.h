@@ -119,6 +119,7 @@ public:
 	void setPinChangeCallback(PinChangeCallback cb) { _pin_change_cb = cb; }
 	void setCLICallback(CompanionCLICallback cb) { _cli_exec_cb = cb; }
 	void setCLIHelpCallback(CompanionCLIHelpCallback cb) { _cli_help_cb = cb; }
+	void setRemoteCLIHelpCallback(CompanionCLIHelpCallback cb) { _remote_cli_help_cb = cb; }
 
 	/* The companion CLI (upstream MyMesh::handleCommand). Front-ends: the app's
 	 * CMD_RUN_CLI_COMMAND and USB text console (local, sender_timestamp 0),
@@ -491,6 +492,7 @@ private:
 
 	CompanionCLICallback _cli_exec_cb;
 	CompanionCLIHelpCallback _cli_help_cb;
+	CompanionCLIHelpCallback _remote_cli_help_cb;
 
 	/* ---- V-contact state (app/VContact.cpp) ---- */
 	/* _vcontact_lastmod == 0: not activated yet. The clock was invalid when it

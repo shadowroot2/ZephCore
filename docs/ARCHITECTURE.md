@@ -789,6 +789,21 @@ Companion extras: `get|set autoshutdown`, `get|set v.contact`, `get|set v.batter
 Stats: `stats-core/stats-radio/stats-packets`, `clear stats`
 Time: `clock`, `clock sync`, `time <epoch>`, `set meshtimesync on/off`
 
+Repeater USB `help`/`?` bypasses the bounded command reply buffer and prints the
+complete role catalogue. Remote mesh admin uses categorical help: `help` lists
+groups and `help <group>` returns one group. A tagged remote reply has 158 bytes
+including its terminator; local-only secrets and destructive commands are not
+advertised remotely. Companion remote mesh CLI has the same packet-sized
+categorical `help` model and exposes operational ZephCore settings to contacts
+with remote CLI permission. Identity and WiFi secrets, BLE PIN, RF changes,
+battery calibration, automatic-shutdown changes, power-off, firmware update and
+erase remain local. Command handlers render into the full local scratch buffer before
+the reply is bounded to the remote packet, so local handlers cannot overflow a
+remote reply. A remote `sos` or `tracking on|off` command carries a silent-operation
+flag into the asynchronous state machine: command acknowledgement, repeated waiting
+messages, tracking reports and the final SOS transmission do not play a notification.
+Local USB/app/UI actions retain their normal sound policy.
+
 Full command reference with constraints and remote-admin restrictions: `CLI_commands.md`.
 
 ---
@@ -850,7 +865,7 @@ Loading also range-checks `freq`/`sf`/`bw` and falls back to the compile-time de
   declares; a board with one off state uses it for both
 - GPS time blocks phone time sync for 2 hours after last fix
 - Three files: `ZephyrGPSManager.cpp` (states, fix validation, public API), `gps_power.cpp` (power line / PMU rail / UART sleep commands, UARTE PM), `gps_module_cfg.cpp` (GNSS-API or PMTK/PCAS/UBX configuration, `get gps diag`); `gps_internal.h` carries the feature detection
-- **Main thread only.** The GNSS callbacks (system work queue) only validate and post: a validated fix is snapshotted and handed to the fix callback by `gps_process_event()` on the main thread, so the callback sets the clock and the node position directly. The UI's GPS toggles post an action too.
+- **Main thread only.** The GNSS callbacks (system work queue) only validate and post: a validated fix is snapshotted and handed to the fix callback by `gps_process_event()` on the main thread, so the callback sets the clock and the node position directly. The UI's GPS toggles post an action too; the GPS page redraw is requested only after the main thread applies the state and invokes the enable callback.
 - The SoC light-sleep lock is held only while ACQUIRING (`gps_hold_sleep_lock()`, tracked 1:1), never through standby
 - Boot probe (upstream's GPS detection): the first acquire window since boot must parse a GGA or RMC sentence
   (`zephcore_gnss_rx_count()`) within 10 s, or the module is powered off and `gps_is_available()` is false until the
@@ -956,7 +971,7 @@ frame (a reply to one app also reaches the other).
 - **`adapters/ble/ZephyrBLE.cpp`** (+ `ble_gatt_layout.cpp`, `ble_dfu.cpp`): BLE NUS. Blocks ESP32 light sleep from
   connect until the link is encrypted (pairing does not survive sleep); an encrypted link and advertising do not
   block it.
-- **`adapters/usb/ZephyrCompanionUSB.cpp`**: USB CDC-ACM, or a plain UART (`zephcore,companion-uart` chosen node; the only link on the Bluetooth-less LoRa-E5), with the text CLI
+- **`adapters/usb/ZephyrCompanionUSB.cpp`**: USB CDC-ACM, or a plain UART with a `zephcore,companion-uart` chosen node, with the text CLI. Companion builds automatically select the UART backend when that chosen node exists and no native USB OTG companion is declared. This is the Heltec V3 USB-C/CP2102 path; console and shell are removed from the UART by `serial_companion.conf` so they cannot steal its IRQ callbacks.
 - **`adapters/transport/TcpCompanionTransport.c`**: TCP (port 5000, MeshCore `SerialWifiInterface` framing) on native Linux and on WiFi companions (`app/CompanionWifi.cpp`, `capabilities: wifi: true`)
 - **`adapters/transport/frame_txq.c`**: the TX queue BLE and TCP share (congestion, overflow slot, lossless replies)
 
@@ -973,6 +988,11 @@ Two UI frontends share the same plumbing (`helpers/ui/`: display, buzzer, multi-
 - **Button UI** (`helpers/ui-button/`): single-button page cycler — most boards, every role. Renders on the system work queue; changes mesh state only through `ui_mesh_actions` (posted, applied on the main thread).
 - **Joystick UI** (`helpers/ui-joystick/`): 5-way joystick / keypad menu UI, companion only (Wio Tracker L1, Wio L1 1W, GAT562-30S, ThinkNode M9). Keys go through a queue to `JoystickUITask::loop()` **on the main thread**, so its direct `CompanionMesh` calls (through `getMesh()`) are safe. `screens/repeater_admin.cpp` is the remote admin screen.
 
+Both splash implementations preserve the ShadoW overlay: ZephCore logo,
+`MeshCore on Zephyr`, display version, build date and bottom-anchored
+`Tuned by ShadoW`. The button and joystick paths are separate and must both be
+checked during an upstream rebase.
+
 Battery percentage on both UIs is the board's own (`ZephyrBoard::getBattPercent()`: discharge curve, or the fuel gauge). Low-battery policy is not UI: see `app/PowerPolicy.cpp` (the UI only draws `ui_show_low_battery()`). The heartbeat suppresses its three-pulse low-battery warning while the board reports external power; charging nodes keep the normal one-pulse heartbeat. The XIAO nRF52840 charge indicator remains independent on its green LED.
 
 ```
@@ -985,9 +1005,13 @@ Color TFT panels (T114, T096, Wireless Tracker) are wrapped as 1bpp displays for
 
 ### 8.2 Pages (Button UI)
 
-**Companion** (up to 14 pages): Messages, Recent, Radio, Traffic, Bluetooth, WiFi (WiFi companion builds only), Advert, GPS, Buzzer (if buzzer present), LEDs, Sensors, Offgrid, DFU, Shutdown
+**Companion** (up to 16 pages): Messages, Recent, Radio, Traffic, Bluetooth,
+WiFi (WiFi companion builds only), Advert, GPS, Tracking, SOS, Buzzer (if
+buzzer present), LEDs, Sensors, Offgrid, DFU, Shutdown. Manual shutdown renders
+`Power OFF` before entering the shared power-off path; e-paper retains the final
+frame.
 
-Connection state on these pages: "an app is connected" (`UI_EVENT_APP_CONNECTED` / `_DISCONNECTED`, any transport) gates the buzzer, the message LED flash and the "Connected" line; which transport it is comes from `ui_set_link_transports()` (`UI_LINK_BLE` / `_USB` / `_TCP`, pushed by `process_link_change()` on every link edge). The Messages badge names the transport; the Bluetooth page says "Connected" only for a BLE client. The WiFi page shows the station state, SSID, IPv4 address, TCP port and whether an app is on the socket, pushed every housekeeping tick by `companion_wifi_ui_refresh()` through `ui_set_wifi()` (redraws only on a change, e-paper included). The joystick UI shows the same WiFi details as System > Info > WiFi (`WifiScreen`) on WiFi companion builds (ThinkNode M9); elsewhere its two hooks are no-ops.
+Connection state on these pages: "an app is connected" (`UI_EVENT_APP_CONNECTED` / `_DISCONNECTED`, any transport) gates the buzzer, the message LED flash and the "Connected" line; which transport it is comes from `ui_set_link_transports()` (`UI_LINK_BLE` / `_USB` / `_TCP`, pushed by `process_link_change()` on every link edge). The Messages badge names the transport; the Bluetooth page says "Connected" only for a BLE client. The WiFi page shows the persisted on/off state, station state, SSID, the endpoint as `IPv4:port`, and whether an app is on the socket; there is no separate port row. ENTER toggles `prefs.wifi_enabled`, saves it on the main thread and cold-reboots because the WiFi stack is a boot-time composition. Runtime state is pushed every housekeeping tick by `companion_wifi_ui_refresh()` through `ui_set_wifi()` (redraws only on a change, e-paper included). The joystick UI exposes the same toggle and details under System > Info > WiFi (`WifiScreen`) on WiFi companion builds (ThinkNode M9); elsewhere its hooks are no-ops. WiFi companion builds expose their WiFi settings as a separate `wifi` help group in both BLE and local USB CLI.
 
 **Repeater** (3 pages): Status, Radio, Shutdown
 

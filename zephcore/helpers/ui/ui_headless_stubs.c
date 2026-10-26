@@ -133,6 +133,11 @@ WEAK void ui_set_wifi(uint8_t state, const char *ssid, const char *ip,
 	ARG_UNUSED(state); ARG_UNUSED(ssid); ARG_UNUSED(ip); ARG_UNUSED(port);
 }
 
+WEAK void ui_set_wifi_enabled(bool enabled)
+{
+	ARG_UNUSED(enabled);
+}
+
 WEAK void ui_set_buzzer_mode(uint8_t mode)
 {
 	ARG_UNUSED(mode);

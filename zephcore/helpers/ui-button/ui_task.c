@@ -302,6 +302,9 @@ static void action_bridge_toggle(void);
 static void action_ble_toggle(void);
 static void action_enter_dfu(void);
 #endif
+#ifdef CONFIG_ZEPHCORE_COMPANION_WIFI
+static void action_wifi_toggle(void);
+#endif
 
 static void action_page_enter(void)
 {
@@ -315,6 +318,12 @@ static void action_page_enter(void)
 		/* Toggle BLE on/off */
 		action_ble_toggle();
 		break;
+
+#ifdef CONFIG_ZEPHCORE_COMPANION_WIFI
+	case UI_PAGE_WIFI:
+		action_wifi_toggle();
+		break;
+#endif
 
 	case UI_PAGE_ADVERT:
 		/* Single press: defer 500ms then send zero-hop.
@@ -560,8 +569,17 @@ static void action_gps_toggle(void)
 #if defined(CONFIG_BOARD_T1000_E)
 	ui_led_confirm_state(now_enabled);
 #endif
-	schedule_render();
 }
+
+#ifdef CONFIG_ZEPHCORE_COMPANION_WIFI
+static void action_wifi_toggle(void)
+{
+	bool enabled = !get_state()->wifi_enabled;
+
+	LOG_INF("WiFi toggle -> %s; rebooting", enabled ? "on" : "off");
+	mesh_wifi_set_enabled_and_restart(enabled);
+}
+#endif
 
 #ifdef CONFIG_ZEPHCORE_UI_DISPLAY
 static void action_ble_toggle(void)
@@ -616,6 +634,24 @@ void ui_shutdown(void)
 		ui_led_flash_shutdown();
 	}
 #endif
+
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
+	mc_display_on();
+	mc_display_clear();
+	const char *power_off = "Power OFF";
+	uint8_t fw = mc_display_font_width();
+	uint8_t fh = mc_display_font_height();
+	int x = (fw && mc_display_width())
+		? ((int)mc_display_width() - (int)strlen(power_off) * fw) / 2 : 0;
+	int y = (fh && mc_display_height())
+		? ((int)mc_display_height() - fh) / 2 : 0;
+	mc_display_text(x < 0 ? 0 : x, y < 0 ? 0 : y, power_off, false);
+	mc_display_finalize();
+	if (!mc_display_is_epd()) {
+		k_sleep(K_MSEC(1000));
+	}
+#endif
+
 	if (ui_request_manual_shutdown()) {
 		return;
 	}
@@ -721,7 +757,6 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 #ifdef CONFIG_ZEPHCORE_UI_BUZZER
 			buzzer_play(gps_on ? MELODY_GPS_ON : MELODY_GPS_OFF);
 #endif
-			schedule_render();
 		}
 		return;
 	}
@@ -1246,8 +1281,17 @@ void ui_set_gps_available(bool available)
 void ui_set_gps_enabled(bool enabled)
 {
 	struct ui_state *s = get_state();
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
+	bool changed = s->gps_enabled != enabled;
+#endif
 
 	s->gps_enabled = enabled;
+
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
+	if (ui_initialized && changed && ui_pages_current() == UI_PAGE_GPS) {
+		schedule_render();
+	}
+#endif
 }
 
 void ui_set_gps_state(uint8_t state, uint32_t last_fix_age_s, uint32_t next_search_s)
@@ -1312,6 +1356,25 @@ void ui_set_wifi(uint8_t state, const char *ssid, const char *ip, uint16_t port)
 	ARG_UNUSED(ssid);
 	ARG_UNUSED(ip);
 	ARG_UNUSED(port);
+#endif
+}
+
+void ui_set_wifi_enabled(bool enabled)
+{
+#if IS_ENABLED(CONFIG_ZEPHCORE_COMPANION_WIFI)
+	struct ui_state *s = get_state();
+
+	if (s->wifi_enabled == enabled) {
+		return;
+	}
+	s->wifi_enabled = enabled;
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
+	if (ui_initialized && ui_pages_current() == UI_PAGE_WIFI) {
+		schedule_render();
+	}
+#endif
+#else
+	ARG_UNUSED(enabled);
 #endif
 }
 

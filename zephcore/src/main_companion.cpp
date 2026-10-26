@@ -74,6 +74,7 @@ LOG_MODULE_REGISTER(zephcore_main, CONFIG_ZEPHCORE_MAIN_LOG_LEVEL);
 #ifdef ZEPHCORE_LORA
 #include <app/CompanionMesh.h>
 #include <helpers/CommonCLI.h>
+#include <helpers/CompanionCLIAudio.h>
 #include <helpers/pm_sleep_guard.h>
 #include <helpers/StatsFormatHelper.h>
 #include <app/CompanionCLI.h>
@@ -810,6 +811,7 @@ enum companion_emergency_type {
 struct companion_sos_state {
 	bool pending;
 	bool gps_started_by_sos;
+	bool silent;
 	enum companion_emergency_type type;
 	uint32_t started_ms;
 	uint32_t next_waiting_message_ms;
@@ -820,6 +822,7 @@ static struct companion_sos_state companion_sos;
 static struct {
 	bool pending;
 	bool fall;
+	bool silent;
 	uint32_t after_packets_sent;
 } companion_sos_tone;
 static struct {
@@ -1055,6 +1058,7 @@ static bool companion_send_sos_message(bool allow_coordinates)
 	companion_sos_tone.after_packets_sent = packets_before +
 		(tx_was_active ? 2U : 1U);
 	companion_sos_tone.fall = companion_sos.type == COMPANION_EMERGENCY_FALL;
+	companion_sos_tone.silent = companion_sos.silent;
 	companion_sos_tone.pending = true;
 	return true;
 }
@@ -1081,7 +1085,7 @@ static bool companion_sos_finish(bool fresh_fix)
 }
 
 static bool companion_emergency_request(enum companion_emergency_type type,
-						char *reply, bool play_confirm)
+						char *reply, bool play_confirm, bool silent)
 {
 	/* A deliberate SOS takes over completely from a fall alarm without
 	 * emitting a cancel notice; it is a new emergency, not an acknowledgement. */
@@ -1093,6 +1097,7 @@ static bool companion_emergency_request(enum companion_emergency_type type,
 		/* A new emergency replaces the active one while retaining the original
 		 * GPS state, so only an explicit Fall cancellation restores it. */
 		companion_sos.type = type;
+		companion_sos.silent = silent;
 		companion_sos.started_ms = k_uptime_get_32();
 		companion_sos_ui_waiting();
 		companion_send_sos_waiting_message();
@@ -1128,6 +1133,7 @@ static bool companion_emergency_request(enum companion_emergency_type type,
 
 	/* No GPS hardware: send the final message immediately. */
 	companion_sos.type = type;
+	companion_sos.silent = silent;
 	if (type == COMPANION_EMERGENCY_FALL) {
 		companion_fall_alarm_start();
 	}
@@ -1150,6 +1156,7 @@ static bool companion_emergency_request(enum companion_emergency_type type,
 	 * fresh fix or timeout. */
 	companion_sos.pending = true;
 	companion_sos.type = type;
+	companion_sos.silent = silent;
 	companion_sos.started_ms = k_uptime_get_32();
 	companion_sos.gps_started_by_sos = !gps_was_enabled;
 	companion_sos.saved_gps_duty_sec = gps_get_poll_interval_sec();
@@ -1171,15 +1178,15 @@ static bool companion_emergency_request(enum companion_emergency_type type,
 	return true;
 }
 
-static bool companion_sos_request(char *reply, bool play_confirm = true)
+static bool companion_sos_request(char *reply, bool silent = false)
 {
-	return companion_emergency_request(COMPANION_EMERGENCY_SOS, reply, play_confirm);
+	return companion_emergency_request(COMPANION_EMERGENCY_SOS, reply, !silent, silent);
 }
 
 static void companion_fall_detected(void)
 {
 	char reply[CLI_REPLY_SIZE];
-	if (companion_emergency_request(COMPANION_EMERGENCY_FALL, reply, false)) {
+	if (companion_emergency_request(COMPANION_EMERGENCY_FALL, reply, false, false)) {
 		LOG_WRN("%s", reply);
 	}
 }
@@ -1233,7 +1240,8 @@ static void companion_sos_tx_done(void)
 	uint32_t packets_sent = lora_radio.getPacketsSent();
 	if (companion_sos_tone.pending &&
 	    packets_sent >= companion_sos_tone.after_packets_sent) {
-		bool play = !companion_sos_tone.fall || companion_fall_alarm_state.active;
+		bool play = !companion_sos_tone.silent &&
+			(!companion_sos_tone.fall || companion_fall_alarm_state.active);
 		companion_sos_tone.pending = false;
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
 		if (play) {
@@ -1253,6 +1261,7 @@ static void companion_sos_tx_done(void)
 struct companion_tracking_state {
 	bool enabled;
 	bool gps_started_by_tracking;
+	bool silent_reports;
 	uint32_t saved_gps_duty_sec;
 	uint32_t started_ms;
 	int64_t next_report_ms;
@@ -1338,12 +1347,14 @@ static bool companion_send_tracking_message(const struct gps_position &pos)
 
 	LOG_INF("tracking: queued %s message: %s", group_name, text);
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
-	buzzer_play(MELODY_TRACKING_SENT);
+	if (!companion_tracking.silent_reports) {
+		buzzer_play(MELODY_TRACKING_SENT);
+	}
 #endif
 	return true;
 }
 
-static bool companion_tracking_set_enabled(bool enabled, char *reply)
+static bool companion_tracking_set_enabled(bool enabled, char *reply, bool silent = false)
 {
 	if (enabled == companion_tracking.enabled) {
 		snprintf(reply, CLI_REPLY_SIZE, "tracking: %s (%u min)",
@@ -1359,6 +1370,7 @@ static bool companion_tracking_set_enabled(bool enabled, char *reply)
 		}
 		bool gps_was_enabled = gps_is_enabled();
 		companion_tracking.enabled = true;
+		companion_tracking.silent_reports = silent;
 		companion_tracking.gps_started_by_tracking = !gps_was_enabled;
 		companion_tracking.saved_gps_duty_sec = gps_get_poll_interval_sec();
 		companion_tracking.started_ms = k_uptime_get_32();
@@ -1372,7 +1384,9 @@ static bool companion_tracking_set_enabled(bool enabled, char *reply)
 		}
 		companion_tracking_ui_update();
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
-		buzzer_play(MELODY_TRACKING_ON);
+		if (!silent) {
+			buzzer_play(MELODY_TRACKING_ON);
+		}
 #endif
 		snprintf(reply, CLI_REPLY_SIZE, "OK - tracking on (%u min)",
 			 companion_mesh.prefs.tracking_interval_minutes);
@@ -1390,7 +1404,9 @@ static bool companion_tracking_set_enabled(bool enabled, char *reply)
 	memset(&companion_tracking, 0, sizeof(companion_tracking));
 	companion_tracking_ui_update();
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
-	buzzer_play(MELODY_TRACKING_OFF);
+	if (!silent) {
+		buzzer_play(MELODY_TRACKING_OFF);
+	}
 #endif
 	strcpy(reply, "OK - tracking off");
 	return true;
@@ -1563,63 +1579,6 @@ static const char *companion_cli_help(const char *line)
 	return local_cli_help(LocalCLIHelpRole::Companion, line);
 }
 
-static const char *companion_ble_cli_help(const char *line)
-{
-	if (strcmp(line, "help") == 0 || strcmp(line, "?") == 0) {
-		return "Groups: id | rf | cad | mesh | gps | extra | ui | power | stat | sys\n"
-		       "Use: help <group>";
-	}
-	if (strcmp(line, "help id") == 0) {
-		return "get role\nget/set name\nget/set owner.info\nget/set prv.key\nget public.key";
-	}
-	if (strcmp(line, "help stat") == 0) {
-		return "stats-packets\nstats-radio\nstats-core\nclear stats";
-	}
-	if (strcmp(line, "help sys") == 0) {
-		return "ver\nboard\nuptime\ntz\nclock sync\ntime <epoch>\nget dc.restarts\n"
-		       "get bootloader.ver\nget/set tz.offset\nstart ota\nstart dfu\n"
-		       "reboot\nshutdown y\nerase";
-	}
-	if (strcmp(line, "help rf") == 0) {
-		return "get/set freq\nget/set radio\nget/set tx\nget/set af\n"
-		       "get/set path.hash.mode\nget/set dutycycle\nget/set extra.sf\nget/set int.thresh\n"
-		       "get/set radio.rxgain\nget/set radio.fem.rxgain";
-	}
-	if (strcmp(line, "help cad") == 0) {
-		return "get cad\nset cad.auto\nset cad.offset\nset probe.interval\n"
-		       "set cad.busycap\nset cad.reset";
-	}
-	if (strcmp(line, "help mesh") == 0) {
-		return "advert\nadvert.zerohop\nget/set advert.interval\n"
-		       "get/set meshtimesync\nget/set flood.advert.interval\nget/set flood.max\n"
-		       "get/set flood.max.advert\nget/set flood.max.unscoped";
-	}
-	if (strcmp(line, "help gps") == 0) {
-		return "gps on|off|setloc|advert\nget/set gps duty\nget/set lat\nget/set lon";
-	}
-	if (strcmp(line, "help extra") == 0) {
-		return "findme\nsos\ntracking on|off\nget/set tracking.group\n"
-		       "get/set tracking.interval\n"
-#if defined(ZEPHCORE_FALL_DETECTOR)
-		       "fall on|off\nget/set fall.sens (1-5)\n"
-#endif
-		       "get/set v.contact\noffgrid on|off";
-	}
-	if (strcmp(line, "help ui") == 0) {
-		return "buzz on|off\nleds on|off\n"
-#if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
-		       "get/set display.rotate\nget/set input.rotate\n"
-#endif
-		       "get/set leds.hb\n"
-		       "get/set leds.radio";
-	}
-	if (strcmp(line, "help power") == 0) {
-		return "get/set adc.multiplier\nget/set autoshutdown\n"
-		       "get/set autoshutdown.emergency\nget/set v.batteryalert";
-	}
-	return nullptr;
-}
-
 /* Command-line settings for the notification-only v-contact. */
 static bool handle_vcontact_settings_cli(const char *line, char *reply)
 {
@@ -1758,12 +1717,12 @@ static bool handle_tz_cli(const char *line, char *reply)
 	return true;
 }
 
-static bool handle_sos_cli(const char *line, char *reply)
+static bool handle_sos_cli(const char *line, char *reply, bool silent)
 {
 	if (strcmp(line, "sos") != 0) {
 		return false;
 	}
-	return companion_sos_request(reply);
+	return companion_sos_request(reply, silent);
 }
 
 #if defined(ZEPHCORE_FALL_DETECTOR)
@@ -1827,7 +1786,7 @@ static bool handle_fall_cli(const char *line, char *reply)
 }
 #endif
 
-static bool handle_tracking_cli(const char *line, char *reply)
+static bool handle_tracking_cli(const char *line, char *reply, bool silent)
 {
 	if (companion_tracking.enabled &&
 		(strcmp(line, "gps off") == 0 ||
@@ -1842,11 +1801,11 @@ static bool handle_tracking_cli(const char *line, char *reply)
 		return true;
 	}
 	if (strcmp(line, "tracking on") == 0) {
-		(void)companion_tracking_set_enabled(true, reply);
+		(void)companion_tracking_set_enabled(true, reply, silent);
 		return true;
 	}
 	if (strcmp(line, "tracking off") == 0) {
-		(void)companion_tracking_set_enabled(false, reply);
+		(void)companion_tracking_set_enabled(false, reply, silent);
 		return true;
 	}
 	if (strcmp(line, "get tracking.interval") == 0) {
@@ -1982,8 +1941,8 @@ static bool handle_findme_cli(const char *line, char *reply)
 
 
 
-/* The CompanionMesh::handleCommand callback (main thread). The v.* settings and
- * autoshutdown commands never see a remote sender: handleCommand stops those. */
+/* The CompanionMesh::handleCommand callback runs on the main thread. Remote
+ * output is rendered into a local full-size buffer, then packet-bounded. */
 static_assert(COMPANION_CLI_REPLY_SIZE == CLI_REPLY_SIZE,
 	      "companion CLI reply buffer must match CommonCLI reply size");
 
@@ -2008,6 +1967,7 @@ static void companion_cli_exec(const char *line, uint32_t sender_timestamp,
 			       uint8_t reply_hdr_used, char *reply)
 {
 	const char *requested_line = line;
+	bool silent_notifications = companion_cli_silent_notifications(sender_timestamp);
 	reply[0] = '\0';
 	if (strcmp(line, "clkreboot") == 0 ||
 	    strcmp(line, "gps diag") == 0 ||
@@ -2037,14 +1997,15 @@ static void companion_cli_exec(const char *line, uint32_t sender_timestamp,
 	}
 	if (strcmp(line, "shutdown y") == 0) line = "poweroff";
 	if (handle_uptime_cli(line, reply) || handle_tz_cli(line, reply)) return;
-	if (handle_sos_cli(line, reply)) {
+	if (handle_sos_cli(line, reply, silent_notifications)) {
 		companion_cli_notify(requested_line, reply);
 		return;
 	}
 #if defined(ZEPHCORE_FALL_DETECTOR)
 	if (handle_fall_cli(line, reply)) return;
 #endif
-	if (handle_offgrid_cli(line, reply) || handle_tracking_cli(line, reply) ||
+	if (handle_offgrid_cli(line, reply) ||
+	    handle_tracking_cli(line, reply, silent_notifications) ||
 	    handle_findme_cli(line, reply) ||
 	    handle_autoshutdown_emergency_cli(line, reply)) return;
 	if (handle_vcontact_settings_cli(line, reply)) {
@@ -2249,6 +2210,10 @@ int main(void)
 		}
 	}
 
+	/* Charge/heartbeat work starts inside ui_init(). */
+	ui_set_battery_provider(get_battery_mv, []() { return zephyr_board.getBattPercent(); });
+	ui_set_power_source_provider([]() { return zephyr_board.isExternalPowered(); });
+
 	/* Buttons, buzzer, display; without a display UI, put any OLED to sleep. */
 	ui_init();
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_DESIGN_JOYSTICK)
@@ -2334,8 +2299,6 @@ int main(void)
 
 	companion_mesh.setBatteryCallback(get_battery_mv);
 	companion_mesh.setBoard(&zephyr_board);
-	ui_set_battery_provider(get_battery_mv, []() { return zephyr_board.getBattPercent(); });
-	ui_set_power_source_provider([]() { return zephyr_board.isExternalPowered(); });
 	companion_mesh.setRadioReconfigureCallback(radio_reconfigure);
 	companion_mesh.setPinChangeCallback([](uint32_t new_pin) {
 #if IS_ENABLED(CONFIG_BT)
@@ -2345,7 +2308,8 @@ int main(void)
 #endif
 	});
 	companion_mesh.setCLICallback(companion_cli_exec);
-	companion_mesh.setCLIHelpCallback(companion_ble_cli_help);
+	companion_mesh.setCLIHelpCallback(companion_app_cli_help);
+	companion_mesh.setRemoteCLIHelpCallback(companion_remote_cli_help);
 	companion_mesh_ptr = &companion_mesh;
 
 	lora_radio.setRxCallback(lora_rx_callback, nullptr);
@@ -2374,6 +2338,9 @@ int main(void)
 	ui_set_gps_available(gps_is_available());
 	ui_set_gps_enabled(companion_mesh.prefs.gps_enabled != 0);
 	ui_set_ble_enabled(companion_mesh.prefs.ble_disabled != 1);  /* BLE starts advertising at boot */
+#if IS_ENABLED(CONFIG_ZEPHCORE_COMPANION_WIFI)
+	ui_set_wifi_enabled(companion_mesh.prefs.wifi_enabled != 0);
+#endif
 
 	ui_set_offgrid_mode(companion_mesh.isOffgridActive());
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY) && IS_ENABLED(CONFIG_ZEPHCORE_UI_DESIGN_BUTTON)

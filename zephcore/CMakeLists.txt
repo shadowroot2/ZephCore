@@ -242,6 +242,23 @@ if(ZEPHCORE_PLATFORM STREQUAL "esp32")
         message(STATUS "  WiFi companion: auto-enabled (board declares wifi)")
     endif()
 
+    # Plain-UART companion transport for boards whose USB connector reaches a
+    # USB-UART bridge instead of the SoC USB controller. The chosen node is the
+    # hardware capability; native USB wins when the board declares both.
+    set(_zephcore_auto_companion_serial FALSE)
+    if(ZEPHCORE_BUILD_ROLE STREQUAL "companion" AND NOT ZEPHCORE_BUILD_DEBUG
+       AND NOT "serial_companion" IN_LIST _user_conf_names
+       AND NOT "esp32s3_usb" IN_LIST _user_conf_names
+       AND ZEPHCORE_BOARD_OVERLAY)
+        file(READ "${ZEPHCORE_BOARD_OVERLAY}" _board_overlay_text)
+        if(_board_overlay_text MATCHES "zephcore,companion-uart"
+           AND NOT _board_overlay_text MATCHES "esp32s3_usb_otg\\.dtsi")
+            zephcore_add_conf(${_zc}/serial_companion.conf)
+            set(_zephcore_auto_companion_serial TRUE)
+            message(STATUS "  UART companion: auto-enabled (board declares companion UART)")
+        endif()
+    endif()
+
     # USB CDC-ACM companion transport on S3 boards whose board.overlay includes
     # esp32s3_usb_otg.dtsi (that include declares the cdc_acm_uart node the USB
     # companion call sites are compiled behind — see ZEPHCORE_USB_STACK in
@@ -254,8 +271,11 @@ if(ZEPHCORE_PLATFORM STREQUAL "esp32")
     if(ZEPHCORE_BUILD_ROLE STREQUAL "companion" AND NOT ZEPHCORE_BUILD_DEBUG
        AND NOT "serial_companion" IN_LIST _user_conf_names
        AND NOT "esp32s3_usb" IN_LIST _user_conf_names
+       AND NOT _zephcore_auto_companion_serial
        AND ZEPHCORE_BOARD_OVERLAY)
-        file(READ "${ZEPHCORE_BOARD_OVERLAY}" _board_overlay_text)
+        if(NOT DEFINED _board_overlay_text)
+            file(READ "${ZEPHCORE_BOARD_OVERLAY}" _board_overlay_text)
+        endif()
         if(_board_overlay_text MATCHES "esp32s3_usb_otg\\.dtsi")
             zephcore_add_conf(${_zc}/esp32s3_usb.conf)
             message(STATUS "  USB CDC companion: auto-enabled (board declares USB OTG CDC-ACM)")
