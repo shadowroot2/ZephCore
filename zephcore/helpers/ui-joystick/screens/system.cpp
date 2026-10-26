@@ -89,7 +89,8 @@ int SystemScreen::render(JoystickDisplay &display)
 		uint32_t now = k_uptime_get_32();
 		bool dfu_pending = (_dfu_confirm_time != 0 &&
 							(now - _dfu_confirm_time) <= DFU_CONFIRM_WINDOW_MS);
-		snprintf(dfu_label, sizeof(dfu_label), "%s%s", UI_DFU_ACTION_LABEL, dfu_pending ? "?" : "");
+		snprintf(dfu_label, sizeof(dfu_label), "%s%s", UI_DFU_ACTION_LABEL,
+			 mesh_ble_ota_remaining_s() > 0 ? " (open)" : dfu_pending ? "?" : "");
 #endif
 		const char *items[SYSDEV_COUNT];
 		items[SYSDEV_BUZZER] = buz_label;
@@ -210,7 +211,14 @@ bool SystemScreen::handleInput(char c)
 				uint32_t now = k_uptime_get_32();
 				if (_dfu_confirm_time != 0 &&
 					(now - _dfu_confirm_time) <= DFU_CONFIRM_WINDOW_MS) {
+					_dfu_confirm_time = 0;
+#if IS_ENABLED(CONFIG_ZEPHCORE_BLE_OTA)
+					_task->showAlert(mesh_ble_ota_open() ? "BLE OTA open" : "BLE OTA failed", 2000);
+#elif UI_UPDATE_DFU
 					_task->rebootToDFU();
+#else
+					_task->showAlert("No OTA in this build", 2000);
+#endif
 				} else {
 					_dfu_confirm_time = now;
 					_task->showAlert("Press ENTER to confirm", 2500);

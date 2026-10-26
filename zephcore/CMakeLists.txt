@@ -233,6 +233,17 @@ if(ZEPHCORE_PLATFORM STREQUAL "esp32")
         message(STATUS "  WiFi OTA: auto-enabled (ESP32 repeater)")
     endif()
 
+    # BLE OTA (MCUmgr SMP) for companions on MCUboot images: S3/C-series built
+    # with --sysbuild, as every release is. A plain simple-boot build has no
+    # slot1 and the classic ESP32 has no MCUboot, so both go without; a board
+    # without the DRAM opts out with `ble_ota: false` in its zephcore.yml
+    # (devdocs/lld/08-connectivity.md, ADR 0011).
+    if(ZEPHCORE_BUILD_ROLE STREQUAL "companion" AND SYSBUILD AND NOT BOARD MATCHES "/esp32/"
+       AND NOT ZEPHCORE_BOARD_NO_BLE_OTA)
+        zephcore_add_conf(${_zc}/ble_ota.conf)
+        message(STATUS "  BLE OTA: auto-enabled (companion, MCUboot)")
+    endif()
+
     # WiFi companion (app over TCP beside BLE and USB) on boards whose
     # zephcore.yml declares `capabilities: wifi: true`: the ones with the RAM
     # for WiFi and BLE together. Companion only; the servers' WiFi is the
@@ -872,6 +883,13 @@ if(CONFIG_ZEPHCORE_WIFI_OTA)
   # Register per-service HTTP resource iterable section (required by Zephyr HTTP server).
   # Without this, the linker can't find _http_resource_desc_ota_service_list_start/end.
   zephyr_linker_sources(SECTIONS ${CMAKE_CURRENT_SOURCE_DIR}/adapters/ota/sections-rom.ld)
+endif()
+
+# ========== BLE OTA (MCUmgr SMP, companion prototype) ==========
+if(CONFIG_ZEPHCORE_BLE_OTA)
+  message(STATUS "ZephCore BLE OTA: ENABLED")
+  target_sources(app PRIVATE adapters/ota/ble_ota.c)
+  target_include_directories(app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/adapters/ota)
 endif()
 
 # ========== Post-build: Generate DFU zip for OTA updates (nRF52 only) ==========

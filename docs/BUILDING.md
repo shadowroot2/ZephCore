@@ -48,6 +48,7 @@ west build -b <board> zephcore --pristine -- -DEXTRA_CONF_FILE="boards/common/<f
 | `repeater_uplink.conf` | Repeater WiFi + MQTT uplink | ESP32, with `repeater.conf` |
 | `wifi_ota.conf` | WiFi AP + HTTP firmware update | ESP32 repeaters; needs MCUboot, so `--sysbuild` |
 | `wifi_companion.conf` | App over TCP on your WiFi | Added automatically for boards whose manifest declares `wifi: true` |
+| `ble_ota.conf` | Firmware update over BLE (MCUmgr, nRF Connect Device Manager) | Added automatically to ESP32 S3/C-series companions built with `--sysbuild`, unless the manifest says `ble_ota: false` |
 
 Board strings are in [supported_boards.md](supported_boards.md). Examples:
 
@@ -146,6 +147,8 @@ Set them in a board conf or with `-DCONFIG_...=`. The full list with help texts 
 | `ZEPHCORE_REPEATER_GPS_INTERVAL_SEC` | 172800 | Repeater and room server GPS interval (48 h); 0 = always on |
 | `ZEPHCORE_PACKET_LOGGING` | n | Upstream-format packet log lines (`packet_logging.conf`) |
 | `ZEPHCORE_WIFI_OTA` | n | WiFi AP + HTTP firmware update (ESP32 repeaters) |
+| `ZEPHCORE_BLE_OTA` | n | MCUmgr firmware update over BLE (ESP32 companions, `ble_ota.conf`) |
+| `ZEPHCORE_BLE_OTA_WINDOW_S` | 600 | How long `start ota` keeps the BLE OTA window open |
 | `ZEPHCORE_REPEATER_UPLINK` | n | Repeater WiFi + MQTT uplink (ESP32) |
 | `ZEPHCORE_HOUSEKEEPING_INTERVAL_MS` | 5000 | Companion housekeeping tick |
 

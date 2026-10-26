@@ -88,6 +88,9 @@ LOG_MODULE_REGISTER(zephcore_main, CONFIG_ZEPHCORE_MAIN_LOG_LEVEL);
 #include <helpers/battery_curve.h>
 #include <zephyr_poweroff.h>
 #include <app/PowerPolicy.h>
+#if IS_ENABLED(CONFIG_ZEPHCORE_BLE_OTA)
+#include "ble_ota.h"
+#endif
 #endif
 
 #if IS_ENABLED(CONFIG_ZEPHCORE_PACKET_LOGGING)
@@ -4440,6 +4443,9 @@ int main(void)
 #endif
 #if IS_ENABLED(CONFIG_ZEPHCORE_COMPANION_WIFI) && defined(ZEPHCORE_LORA)
 	companion_wifi_start(companion_mesh.prefs);
+#endif
+#if IS_ENABLED(CONFIG_ZEPHCORE_BLE_OTA)
+	ble_ota_init();  /* before bt_enable(): SMP service out of the boot GATT table */
 #endif
 #if IS_ENABLED(CONFIG_BT)
 	if (bt_enable(bt_ready) != 0) {

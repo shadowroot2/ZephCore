@@ -16,6 +16,10 @@
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
 #include <zephyr/sys/reboot.h>
+#include <errno.h>
+#if IS_ENABLED(CONFIG_ZEPHCORE_BLE_OTA)
+#include "ble_ota.h"
+#endif
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(zephcore_ui_actions, CONFIG_ZEPHCORE_UI_ACTIONS_LOG_LEVEL);
@@ -310,6 +314,26 @@ extern "C" void mesh_reboot_to_ota_dfu(void)
 	if (!s_board->startOTAUpdate(nullptr, reply)) {
 		LOG_WRN("%s", reply);
 	}
+}
+
+extern "C" bool mesh_ble_ota_open(void)
+{
+#if IS_ENABLED(CONFIG_ZEPHCORE_BLE_OTA)
+	int err = ble_ota_start();
+
+	return err == 0 || err == -EALREADY;
+#else
+	return false;
+#endif
+}
+
+extern "C" uint32_t mesh_ble_ota_remaining_s(void)
+{
+#if IS_ENABLED(CONFIG_ZEPHCORE_BLE_OTA)
+	return ble_ota_remaining_s();
+#else
+	return 0;
+#endif
 }
 
 /* ========== Deferred action processing (runs on mesh thread) ========== */

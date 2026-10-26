@@ -46,7 +46,7 @@ flowchart LR
     App["MeshCore phone / desktop app"]
     Admin["Operator<br/>(serial CLI / remote admin)"]
     Broker["MQTT broker<br/>(observer / uplink)"]
-    Flasher["Flasher / updater<br/>(UF2, esptool, WiFi OTA, web flasher)"]
+    Flasher["Flasher / updater<br/>(UF2, esptool, WiFi OTA, BLE OTA, web flasher)"]
     HW["GNSS, sensors, RTC,<br/>display, buttons"]
 
     Mesh <-- "MeshCore wire protocol v1" --> FW
@@ -63,7 +63,7 @@ flowchart LR
 | Phone / desktop app | Companion binary protocol (opcodes, push codes), CayenneLPP telemetry | Upstream is authoritative; ZephCore additions only in unused code space. Telemetry layout as upstream (battery, MCU temperature and GPS on channel 1, one channel per sensor from 2). |
 | Operator | Text CLI | Upstream command names, semantics and reply texts are authoritative; additions documented. |
 | MQTT broker | MeshCore JSON | Matches community ingest. |
-| Flasher | UF2 / MCUboot image / merged `.bin` / WiFi OTA | Per platform ([ADR 0001](adr/0001-esp32-boot-and-flash-layout.md), [0002](adr/0002-esp32s3-native-usb-companion.md)). |
+| Flasher | UF2 / MCUboot image / merged `.bin` / WiFi OTA / MCUmgr over BLE | Per platform ([ADR 0001](adr/0001-esp32-boot-and-flash-layout.md), [0002](adr/0002-esp32s3-native-usb-companion.md), [0011](adr/0011-esp32-companion-ble-ota.md)). |
 
 ---
 
@@ -110,15 +110,16 @@ flowchart LR
 | Radio | SX126x family (default), LR1110, LR2021, SX127x | devicetree / board conf |
 | Role | companion (default), repeater, room server, observer, KISS modem | user `EXTRA_CONF_FILE` |
 | UI | none, button UI, joystick/keypad UI (companion) | board Kconfig select |
-| Features | debug, WiFi companion, WiFi OTA, uplink, packet logging, PM | user confs; some auto-added |
+| Features | debug, WiFi companion, WiFi OTA, BLE OTA, uplink, packet logging, PM | user confs; some auto-added |
 
 The board list is one manifest per board (`zephcore.yml`), read by `build.sh`, the provider catalog and
 `docs/supported_boards.md`.
 
 **Rules**
 - R4.1 A board directory declares hardware only (pins, peripherals, partitions, identity), never role policy.
-- R4.2 CMake auto-includes a conf only where the combination is otherwise broken (repeater → WiFi OTA on
-  S3/C-series; S3 companion → native USB; WiFi-capable companion → WiFi companion).
+- R4.2 CMake auto-includes a conf only where the combination is otherwise broken, or where a feature is the
+  default on every board that can hold it (repeater → WiFi OTA on S3/C-series; S3 companion → native USB;
+  WiFi-capable companion → WiFi companion; sysbuild companion → BLE OTA unless the board says `ble_ota: false`).
 - R4.3 Later layers override earlier ones, for Kconfig and devicetree alike
   ([ADR 0003](adr/0003-devicetree-overlay-precedence.md)).
 - R4.4 Each upstream Zephyr file has exactly one owning patch in `patches/`.
@@ -184,7 +185,7 @@ flowchart TB
 
 | # | Exception | Status |
 |---|---|---|
-| V2 | `helpers/CommonCLI.cpp` includes the GPS manager, `ZephyrBoard`, WiFi OTA and UI headers (it serves `gps sync`, `start dfu`, `start ota`, display and input rotation). Sensors and GPS settings go through upstream's `SensorManager` since 2026-09-25. | Accepted: the remaining includes serve ZephCore-only commands. |
+| V2 | `helpers/CommonCLI.cpp` includes the GPS manager, `ZephyrBoard`, WiFi and BLE OTA and UI headers (it serves `gps sync`, `start dfu`, `start ota`, display and input rotation). Sensors and GPS settings go through upstream's `SensorManager` since 2026-09-25. | Accepted: the remaining includes serve ZephCore-only commands. |
 | V3 | `helpers/boot_prefs.h` includes the GPS manager (applies GPS prefs at boot, as upstream's `applyGpsPrefs()`). | Accepted. |
 | V4 | The joystick UI calls `CompanionMesh` directly. | **Accepted by decision**: it runs on the main thread, so the calls are safe, and upstream's UITask reads `the_mesh` the same way. One access point (`JoystickUITask::getMesh()`). |
 | V5 | The MQTT adapter included `app/observer_creds.h`. | **Resolved 2026-09-26**: the credentials struct lives in `adapters/mqtt/uplink_creds.h`; the roles keep its persistence. |
@@ -201,7 +202,7 @@ flowchart TB
 | RepeaterMesh, RoomServerMesh, ObserverMesh | L4 | forwarding policy, ACL, regions, posts, MQTT |
 | CommonCLI (+ ClientACL, RegionMap, TransportKeyStore) | L2 | the text CLI for every role, in upstream's shape |
 | Companion transports | L3 | BLE, USB/UART, TCP as upstream `BaseSerialInterface`s in one `MultiSerialInterface` (broadcast) |
-| WiFi / MQTT / OTA | L3 | ESP32 networking, uplink, HTTP OTA ([ADR 0009](adr/0009-wifi-companion-boards.md)) |
+| WiFi / MQTT / OTA | L3 | ESP32 networking, uplink, HTTP OTA on repeaters, MCUmgr BLE OTA on companions ([ADR 0009](adr/0009-wifi-companion-boards.md), [0011](adr/0011-esp32-companion-ble-ota.md)) |
 | DataStore (companion, server) | L3 / L4 | identity, `prefs.json` (upstream `ConfigSerializer`), contacts, channels, blobs ([ADR 0008](adr/0008-storage-and-settings-backend.md)) |
 | ZephyrBoard, power-off | L3 | battery (cached), LEDs, reboot, bootloader, `powerOff()`, reset/shutdown reasons, crash record |
 | GPS manager | L3 | main-thread state machine, module power and configuration (three files) |

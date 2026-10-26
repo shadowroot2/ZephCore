@@ -31,6 +31,9 @@ extern "C" void power_diag_line(int n, char *out, size_t cap);  /* TEMPORARY: he
 #if IS_ENABLED(CONFIG_ZEPHCORE_WIFI_OTA)
 #include "wifi_ota.h"
 #endif
+#if IS_ENABLED(CONFIG_ZEPHCORE_BLE_OTA)
+#include "ble_ota.h"
+#endif
 
 /* Radio parameter ranges come from NodePrefs.h so the CLI, the BLE companion
  * protocol and the prefs loader cannot drift apart. */
@@ -365,10 +368,25 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
 		} else {
 			snprintf(reply, CLI_REPLY_SIZE, "Error starting OTA: %d", ota_ret);
 		}
-#else
+#elif IS_ENABLED(CONFIG_ZEPHCORE_BLE_OTA)
+		/* ESP32 companion: open the MCUmgr-over-BLE window (no reboot) */
+		int ota_ret = ble_ota_start();
+		if (ota_ret == 0) {
+			snprintf(reply, CLI_REPLY_SIZE, "BLE OTA open for %u s",
+				 (unsigned)CONFIG_ZEPHCORE_BLE_OTA_WINDOW_S);
+		} else if (ota_ret == -EALREADY) {
+			snprintf(reply, CLI_REPLY_SIZE, "BLE OTA already open (%u s left)",
+				 (unsigned)ble_ota_remaining_s());
+		} else {
+			snprintf(reply, CLI_REPLY_SIZE, "Error starting BLE OTA: %d", ota_ret);
+		}
+#elif defined(CONFIG_SOC_SERIES_NRF52)
 		/* nRF52: Reboot into Adafruit BLE OTA DFU mode */
 		strcpy(reply, "OK - rebooting to BLE OTA DFU");
 		scheduleReboot(REBOOT_OTA);
+#else
+		/* No OTA path in this build: never reboot. */
+		strcpy(reply, "Err: no OTA in this build - flash over USB");
 #endif
 	} else if (memcmp(command, "stop ota", 8) == 0) {
 #if IS_ENABLED(CONFIG_ZEPHCORE_WIFI_OTA)
@@ -378,6 +396,8 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
 		} else {
 			strcpy(reply, "OTA not active");
 		}
+#elif IS_ENABLED(CONFIG_ZEPHCORE_BLE_OTA)
+		strcpy(reply, ble_ota_stop() == 0 ? "BLE OTA closed" : "OTA not active");
 #else
 		strcpy(reply, "Not supported");
 #endif

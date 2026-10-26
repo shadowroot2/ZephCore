@@ -2,6 +2,7 @@
 target: lilygo_tlora_c6/esp32c6/hpcore
 capabilities:
   wifi: true
+  ble_ota: false
 release:
   roles: [companion, repeater]
 catalog:

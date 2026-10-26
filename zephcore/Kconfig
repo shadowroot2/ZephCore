@@ -1253,6 +1253,25 @@ config ZEPHCORE_OTA_AP_IP
 
 endif # ZEPHCORE_WIFI_OTA
 
+config ZEPHCORE_BLE_OTA
+	bool "BLE OTA firmware update (MCUmgr SMP)"
+	depends on ZEPHCORE_ROLE_COMPANION && BT && BOOTLOADER_MCUBOOT
+	depends on MCUMGR_TRANSPORT_BT_DYNAMIC_SVC_REGISTRATION
+	depends on MCUMGR_TRANSPORT_BT_PERM_RW_AUTHEN
+	depends on MCUMGR_GRP_IMG_UPLOAD_CHECK_HOOK && MCUMGR_GRP_OS_RESET_HOOK
+	depends on !ZEPHCORE_WIFI_OTA
+	help
+	  "start ota" registers the MCUmgr SMP GATT service for a time window;
+	  a passkey-bonded client (nRF Connect Device Manager) uploads an image
+	  into MCUboot slot1 and resets. Enabled by boards/common/ble_ota.conf,
+	  which CMakeLists.txt adds to ESP32 S3/C-series companion builds made
+	  with --sysbuild.
+
+config ZEPHCORE_BLE_OTA_WINDOW_S
+	int "BLE OTA window (seconds)"
+	default 600
+	depends on ZEPHCORE_BLE_OTA
+
 endmenu
 
 menu "UI Configuration"

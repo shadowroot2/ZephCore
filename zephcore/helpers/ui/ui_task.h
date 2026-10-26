@@ -19,15 +19,22 @@
 extern "C" {
 #endif
 
+/* Update entry: nRF bootloader DFU, or the ESP32 BLE OTA window. */
 #if defined(CONFIG_ZEPHCORE_ROLE_COMPANION) && defined(CONFIG_ZEPHCORE_UI_DISPLAY) && \
     defined(CONFIG_SOC_FAMILY_NORDIC_NRF) && defined(CONFIG_ZEPHCORE_CLI_DFU)
 #define UI_UPDATE_DFU 1
 #define UI_DFU_ACTION_LABEL "Enter DFU Mode"
+#define UI_UPDATE_AVAILABLE 1
+#elif defined(CONFIG_ZEPHCORE_ROLE_COMPANION) && defined(CONFIG_ZEPHCORE_UI_DISPLAY) && \
+    defined(CONFIG_ZEPHCORE_BLE_OTA)
+#define UI_UPDATE_DFU 0
+#define UI_DFU_ACTION_LABEL "BLE OTA"
+#define UI_UPDATE_AVAILABLE 1
 #else
 #define UI_UPDATE_DFU 0
 #define UI_DFU_ACTION_LABEL ""
+#define UI_UPDATE_AVAILABLE 0
 #endif
-#define UI_UPDATE_AVAILABLE UI_UPDATE_DFU
 
 /* UI notification events (from mesh/BLE layer) */
 enum ui_event {

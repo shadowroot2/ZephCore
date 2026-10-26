@@ -15,6 +15,9 @@ native-Linux preset boards/linux_native/<preset>.conf carries a sibling
                                      # (opt-in with `powersaving on`); needs
                                      # the wake pins and pin holds, and the
                                      # RAM. Independent of light_sleep
+      ble_ota: false                 # opt-out: the companion has no DRAM for
+                                     # BLE OTA (on by default for every
+                                     # companion built with --sysbuild)
     release:                         # absent = not published (bring-up)
       roles: [companion, repeater]   # REQUIRED in release
       variants:                      # extra published builds of this board
@@ -55,7 +58,7 @@ PLATFORM_DIRS = {"nrf52840": "nrf52", "nrf54l": "nrf54l", "esp32": "esp32",
                  "mg24": "mg24", "stm32wl": "stm32wl", "rp2040": "rp2040"}
 ROLES = ("companion", "repeater", "room_server", "observer")
 KEYS = {"target", "capabilities", "release", "catalog", "linux"}
-CAPS = {"light_sleep", "light_sleep_companion", "wifi"}
+CAPS = {"ble_ota", "light_sleep", "light_sleep_companion", "wifi"}
 CATALOG_KEYS = {"device", "maker", "new", "img", "own_img", "subtitle"}
 CAP_LINE = re.compile(r"^  (\w+): (true|false)\s*$", re.M)
 

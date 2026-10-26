@@ -92,7 +92,8 @@ zephcore/
 │   ├── gps/gps_power.cpp, gps_module_cfg.cpp, gps_internal.h  # module power; module configuration + diag
 │   ├── mqtt/ZephyrMQTTPublisher.c/h    # MQTT packet publisher (observer / uplink)
 │   ├── mqtt/uplink_creds.h             # WiFi/MQTT/location credentials struct (persisted by app/observer_creds)
-│   ├── ota/wifi_ota.c/h           # WiFi SoftAP + HTTP firmware upload
+│   ├── ota/wifi_ota.c/h           # WiFi SoftAP + HTTP firmware upload (ESP32 repeaters)
+│   ├── ota/ble_ota.c/h            # MCUmgr SMP over BLE firmware upload (ESP32 companions)
 │   ├── rng/ZephyrRNG.cpp/h        # Hardware CSPRNG with PRNG fallback
 │   ├── sensors/                   # ZephyrSensorManager (upstream SensorManager) over the I2C env sensors + power monitors
 │   ├── transport/                 # TCP companion (native Linux) + serial companion (STM32WL)
@@ -1046,7 +1047,12 @@ driver. Persisted in `prefs.json` as `zc.leds_brightness`; it is not part of the
   session.
   TLS is used without certificate verification, but the chain still has to be parsed: the uplink and observer
   builds carry P-256 and P-384 with SHA-256 and SHA-384 for that.
-- **`adapters/ota/wifi_ota.c`**: WiFi SoftAP + HTTP firmware upload to MCUboot slot1 (ESP32, requires `--sysbuild`)
+- **`adapters/ota/wifi_ota.c`**: WiFi SoftAP + HTTP firmware upload to MCUboot slot1 (ESP32 repeaters, requires `--sysbuild`)
+- **`adapters/ota/ble_ota.c`**: MCUmgr SMP over BLE into MCUboot slot1 (ESP32 companions built with `--sysbuild`, `boards/common/ble_ota.conf`
+  auto-included; a board opts out with `ble_ota: false` in `zephcore.yml`). The SMP service is registered only while an OTA
+  window is open (`start ota` or the UI's DFU entry, 600 s, held open while an upload runs; `stop ota` closes it), so the boot
+  GATT table is unchanged; it needs a passkey-bonded link. Payload: `<board>-update.bin` via nRF Connect Device Manager;
+  MCUboot copies it on the client's reset. 1 KB x 4 SMP buffers, progressive erase. ~7.5 KB DRAM. ([ADR 0011](adr/0011-esp32-companion-ble-ota.md))
 
 Companion transports, as upstream's `companion_radio`: each is a `BaseSerialInterface`
 (`adapters/transport/CompanionInterfaces.h`) registered in one `MultiSerialInterface`, so
@@ -1093,9 +1099,10 @@ Color TFT panels (T114, T096, Wireless Tracker) are wrapped as 1bpp displays for
 
 **Companion** (up to 16 pages): Messages, Recent, Radio, Traffic, Bluetooth,
 WiFi (WiFi companion builds only), Advert, GPS, Tracking, SOS, Buzzer (if
-buzzer present), LEDs, Sensors, Offgrid, DFU, Shutdown. Manual shutdown renders
-`Power OFF` before entering the shared power-off path; e-paper retains the final
-frame.
+buzzer present), LEDs, Sensors, Offgrid, DFU (nRF52: reboot to the BLE DFU
+bootloader; ESP32 BLE OTA builds: open the BLE OTA window; absent elsewhere),
+Shutdown. Manual shutdown renders `Power OFF` before entering the shared
+power-off path; e-paper retains the final frame.
 
 Connection state on these pages: "an app is connected" (`UI_EVENT_APP_CONNECTED` / `_DISCONNECTED`, any transport) gates the buzzer, the message LED flash and the "Connected" line; which transport it is comes from `ui_set_link_transports()` (`UI_LINK_BLE` / `_USB` / `_TCP`, pushed by `process_link_change()` on every link edge). The Messages badge names the transport; the Bluetooth page says "Connected" only for a BLE client. The WiFi page shows the persisted on/off state, station state, SSID, the endpoint as `IPv4:port`, and whether an app is on the socket; there is no separate port row. ENTER toggles `prefs.wifi_enabled`, saves it on the main thread and cold-reboots because the WiFi stack is a boot-time composition. Runtime state is pushed every housekeeping tick by `companion_wifi_ui_refresh()` through `ui_set_wifi()` (redraws only on a change, e-paper included). The joystick UI exposes the same toggle and details under System > Info > WiFi (`WifiScreen`) on WiFi companion builds (ThinkNode M9); elsewhere its hooks are no-ops. WiFi companion builds expose their WiFi settings as a separate `wifi` help group in both BLE and local USB CLI.
 
@@ -1212,7 +1219,7 @@ prj.conf (base: console; production defaults — LOG=n, ASSERT=n)
 - **nRF52840**: Zephyr open-source BLE controller, UF2 bootloader, partial flash erase for BLE coexistence
 - **nRF54L15**: Same BLE controller as nRF52, CMSIS-DAP via SAMD11 bridge, no native USB
 - **nRF54LM20A** (the LR2021 EVK with a XIAO nRF54LM20A, its own board directory): built and flashed like the nRF54L15 (`--no-sysbuild`, CMSIS-DAP); source-only, no published firmware
-- **ESP32-C3/C6/S3**: Espressif proprietary BLE blob, 32KB heap, asserts disabled (blob IRQ false positives); simple-boot by default, MCUboot only with `--sysbuild` (WiFi OTA)
+- **ESP32-C3/C6/S3**: Espressif proprietary BLE blob, 32KB heap, asserts disabled (blob IRQ false positives); simple-boot by default, MCUboot only with `--sysbuild` (releases; WiFi OTA on repeaters, BLE OTA on companions)
 - **ESP32 classic (PICO-D4)**: much smaller DRAM — contact/queue caps shrunk in `board.conf`; console/CLI on `uart0` (no native USB); DIO flash mode required (QIO bootloops)
 - **EFR32MG24**: SiLabs proprietary BLE blob, 32KB heap, SEMAILBOX enabled for hardware TRNG/crypto entropy, ADC disabled (no battery divider), CMSIS-DAP via onboard SAMD11
 - **STM32WL (LoRa-E5)**: no BLE, no USB device — companion protocol and CLI run over USART1; 64KB SRAM caps contacts/queues hard; TRNG entropy; single app partition, flash via SWD

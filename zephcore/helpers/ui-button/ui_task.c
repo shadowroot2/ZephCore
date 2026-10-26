@@ -789,6 +789,14 @@ static void action_enter_dfu(void)
 {
 	LOG_INF("update action: %s", UI_DFU_ACTION_LABEL);
 
+	if (IS_ENABLED(CONFIG_ZEPHCORE_BLE_OTA)) {
+		/* ESP32: open the BLE OTA window; the node keeps running. */
+		LOG_INF("BLE OTA window: %s", mesh_ble_ota_open() ? "open" : "failed");
+		get_state()->dfu_confirm_time = 0;
+		schedule_render();
+		return;
+	}
+
 	play_dfu_enter_melody();
 
 #if UI_UPDATE_DFU
