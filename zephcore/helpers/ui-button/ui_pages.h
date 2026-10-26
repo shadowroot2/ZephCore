@@ -97,6 +97,8 @@ struct ui_state {
 	/* GPS page */
 	bool     gps_available;    /* true = GNSS hardware detected at boot */
 	bool     gps_enabled;      /* GPS hardware on/off */
+	bool     gps_switch_present;
+	bool     gps_switch_on;
 	bool     gps_has_fix;
 	uint8_t  gps_satellites;
 	int32_t  gps_lat_mdeg;    /* latitude in milli-degrees */

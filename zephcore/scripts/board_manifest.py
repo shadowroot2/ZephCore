@@ -201,13 +201,13 @@ DOCS_GROUPS = [("nrf52", "nRF52840"), ("esp32", "ESP32"), ("stm32wl", "STM32WL")
                ("mg24", "MG24"), ("nrf54l", "nRF54L")]
 
 
-SUMMARY_GROUPS = [("nrf52", "nRF52840"), ("esp32", "ESP32 family"), ("nrf54l", "nRF54L"),
-                  ("mg24", "EFR32MG24"), ("stm32wl", "STM32WL"), ("linux", "Native Linux (presets)")]
+SUMMARY_GROUPS = [("nrf52", "nRF52840"), ("esp32", "Семейство ESP32"), ("nrf54l", "nRF54L"),
+                  ("mg24", "EFR32MG24"), ("stm32wl", "STM32WL"), ("linux", "Native Linux (пресеты)")]
 
 
 def summary(boards):
     """The '<!-- boards:summary -->' table: boards per platform, and how many are published."""
-    rows = ["| Platform | Boards | With published firmware |", "|---|---|---|"]
+    rows = ["| Платформа | Платы | С опубликованной прошивкой |", "|---|---:|---:|"]
     for platform, label in SUMMARY_GROUPS:
         group = [b for b in boards if b.platform == platform]
         rows.append("| %s | %d | %d |" % (label, len(group),

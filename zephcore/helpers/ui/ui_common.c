@@ -553,11 +553,10 @@ static void led_off_work_handler(struct k_work *work)
 	ARG_UNUSED(work);
 	/* Yield the pin if radio activity is holding it (shared-pin boards only;
 	 * everywhere else this always reads false). Clearing here would blank the
-	 * LED in the middle of a transmit. Routed through heartbeat_led_write()
-	 * rather than a direct gpio_pin_set_dt(), since s_heartbeat_led doesn't
-	 * even exist on PWM-capable boards (see HAS_HEARTBEAT_LED_PWM above). */
+	 * LED in the middle of a transmit. heartbeat_led_set() also releases the
+	 * separate low-battery LED used for red blink sequences. */
 	if (!zephcore_led_radio_holds_pin()) {
-		heartbeat_led_write(false);
+		heartbeat_led_set(false);
 	}
 
 #if HAS_MSG_LED

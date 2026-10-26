@@ -283,6 +283,9 @@ extern "C" void ui_add_recent(const char *, int16_t, uint32_t) {}
 extern "C" void ui_set_node_name(const char *) {}
 extern "C" void ui_clear_recent(void) {}
 extern "C" void ui_set_gps_available(bool) {}
+extern "C" void ui_set_gps_switch(bool, bool) {}
+extern "C" bool ui_gps_switch_present(void) { return false; }
+extern "C" bool ui_gps_switch_is_on(void) { return false; }
 extern "C" void ui_set_gps_enabled(bool) {}
 extern "C" void ui_set_gps_state(uint8_t, uint32_t, uint32_t) {}
 extern "C" void ui_set_buzzer_mode(uint8_t) {}

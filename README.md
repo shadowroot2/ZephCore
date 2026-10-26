@@ -1,203 +1,261 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="img/kite-network-logo-thick-bright.svg">
-    <img src="img/kite-network-logo-thick-dark.svg" alt="ZephCore logo" width="140">
+    <img src="img/kite-network-logo-thick-dark.svg" alt="Логотип ZephCore" width="140">
   </picture>
 </p>
 
 <h1 align="center">ZephCore</h1>
 
-<p align="center"><b>MeshCore, but it runs on Zephyr.</b></p>
+<p align="center"><b>MeshCore на Zephyr RTOS с доработками ShadoW</b></p>
 
 <p align="center">
-  <a href="https://github.com/liquidraver/ZephCore/actions/workflows/build.yml"><img src="https://github.com/liquidraver/ZephCore/actions/workflows/build.yml/badge.svg" alt="build"></a>
-  <a href="https://github.com/liquidraver/ZephCore/actions/workflows/tests.yml"><img src="https://github.com/liquidraver/ZephCore/actions/workflows/tests.yml/badge.svg" alt="tests"></a>
-  <a href="https://github.com/liquidraver/ZephCore/releases/latest"><img src="https://img.shields.io/github/v/release/liquidraver/ZephCore" alt="latest release"></a>
+  <a href="https://github.com/liquidraver/ZephCore/actions/workflows/build.yml"><img src="https://github.com/liquidraver/ZephCore/actions/workflows/build.yml/badge.svg" alt="сборка"></a>
+  <a href="https://github.com/liquidraver/ZephCore/actions/workflows/tests.yml"><img src="https://github.com/liquidraver/ZephCore/actions/workflows/tests.yml/badge.svg" alt="тесты"></a>
+  <a href="https://github.com/liquidraver/ZephCore/releases/latest"><img src="https://img.shields.io/github/v/release/liquidraver/ZephCore" alt="последний релиз"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT"></a>
 </p>
 
 <p align="center">
-  <a href="https://zephcore.meshcore.dev">Flash it</a> ·
-  <a href="docs/supported_boards.md">Boards</a> ·
-  <a href="docs/CLI_commands.md">CLI</a> ·
-  <a href="docs/DESIGN.md">Design</a> ·
-  <a href="releasenotes/">Release notes</a>
+  <a href="https://zephcore.meshcore.dev">Прошить</a> ·
+  <a href="docs/supported_boards.md">Платы</a> ·
+  <a href="COMMANDS.MD">Команды</a> ·
+  <a href="SHADOW_FEATURES.MD">Доработки ShadoW</a> ·
+  <a href="releasenotes/RELEASE_NOTES_1.18.0-zephcore.md">Изменения 1.18.0</a>
 </p>
 
 ---
 
-ZephCore is firmware for [MeshCore](https://github.com/meshcore-dev/MeshCore/) LoRa mesh nodes. It talks to
-the same mesh, pairs with the same MeshCore apps and answers the same CLI commands as the original firmware.
-What is different is underneath: instead of Arduino, it is built on [Zephyr RTOS](https://zephyrproject.org/).
+ZephCore — прошивка для LoRa mesh-узлов, совместимая с протоколом и приложениями
+[MeshCore](https://github.com/meshcore-dev/MeshCore/). Вместо Arduino она использует
+[Zephyr RTOS](https://zephyrproject.org/), но остаётся совместимой с обычными узлами MeshCore
+по радиоэфиру и companion-протоколу.
 
-If you already run MeshCore, a ZephCore node is just another node on your mesh. Your neighbours will not
-notice, and neither will your phone.
+## Авторство и основа этой ветки
 
-It is a community port, not the official firmware. The protocol and the apps belong to the MeshCore
-project; ZephCore follows them and does not change what goes over the air.
+Автор ZephCore и основной код прошивки — **liquidraver**.
+
+- **Обязательная ссылка на авторскую прошивку:**
+  [github.com/liquidraver/ZephCore](https://github.com/liquidraver/ZephCore)
+- Исходный проект и протокол:
+  [github.com/meshcore-dev/MeshCore](https://github.com/meshcore-dev/MeshCore/)
+- Рабочая ветка ShadoW:
+  [github.com/shadowroot2/ZephCore](https://github.com/shadowroot2/ZephCore)
+- Основа этой ветки: авторская **ZephCore 1.18.0** с сохранёнными и дополненными
+  доработками ShadoW для экранов, CLI, SOS, Fall, Tracking, индикации,
+  питания, GPS, телеметрии и конкретных плат.
+
+Это не официальная прошивка MeshCore и не попытка присвоить авторскую работу.
+Полный список отличий нашей ветки хранится в [SHADOW_FEATURES.MD](SHADOW_FEATURES.MD),
+а порядок переноса изменений на новую авторскую базу — в
+[SHADOW_UPDATE_GUIDE.md](SHADOW_UPDATE_GUIDE.md).
 
 > [!NOTE]
-> About 99% of this code was written by AI. A human decides what gets built and tests it on real radios.
-> More on that [at the bottom](#who-wrote-this).
+> Обычное обновление внутри нашей ветки сохраняет identity, настройки, контакты и BLE-пару.
+> При переходе между stock MeshCore и ZephCore настройки могут потребовать повторной настройки.
 
-## Get it on your device
+## Установка
 
-1. **Web flasher** (easiest): open [zephcore.meshcore.dev](https://zephcore.meshcore.dev) in Chrome or
-   Edge, pick your board and role, plug in, flash.
-2. **Mesh America Device Configurator**: [apps.meshamerica.com](https://apps.meshamerica.com) carries the
-   same builds.
-3. **By hand**: download from [Releases](https://github.com/liquidraver/ZephCore/releases). nRF52 boards
-   take the `.uf2` by drag and drop; ESP32 boards take the `-merged.bin` at offset 0 with esptool.
+1. **Web Flasher:** откройте [zephcore.meshcore.dev](https://zephcore.meshcore.dev) в Chrome или Edge,
+   выберите плату и роль, подключите устройство и прошейте его.
+2. **Mesh America Device Configurator:** [apps.meshamerica.com](https://apps.meshamerica.com).
+3. **Вручную:** загрузите наш образ из
+   [Releases ветки ShadoW](https://github.com/shadowroot2/ZephCore/releases).
+   Для nRF52 используется `.uf2`; для ESP32 — полный `-merged.bin` с offset `0x0`.
 
-> [!WARNING]
-> Coming from stock MeshCore (or going back)? On nRF52 the bootloader stays the same, so there is nothing
-> extra to flash. But settings do not carry over between the two firmwares in either direction: expect to
-> set the node up again.
+Авторские сборки без наших дополнений находятся в
+[Releases liquidraver/ZephCore](https://github.com/liquidraver/ZephCore/releases).
 
-Then pair with the MeshCore app as usual (default BLE PIN `123456`). Not sure your board is covered? Check
-the [supported boards list](docs/supported_boards.md).
+После прошивки подключитесь через приложение MeshCore. Стандартный BLE PIN — `123456`.
+Точный список плат и build-target находится в [docs/supported_boards.md](docs/supported_boards.md).
 
-## What a node can be
+## Роли устройства
 
-| Role | What it does | How you talk to it |
+| Роль | Назначение | Управление |
 |---|---|---|
-| **Companion** | Your personal node: contacts, channels, offline message queue | MeshCore app over BLE or USB (WiFi on some ESP32 boards) |
-| **Repeater** | Relays packets for everyone else | [Text CLI](docs/CLI_commands.md) over USB, or remote admin over the mesh |
-| **Room server** | A shared message board that keeps posts for clients who were away | Same CLI as the repeater; users log in from the app |
-| **Observer** | Listens only and publishes what it hears to MQTT over WiFi (ESP32) | [Its own small CLI](docs/CLI_commands.md#observer-zephcore-only) over USB |
-| **KISS modem** | Raw LoRa packets for a host program (KISS TNC, as upstream's `kiss_modem`) | [KISS protocol](docs/kiss_modem_protocol.md) over USB |
+| **Companion** | Личный узел: контакты, каналы, offline-очередь сообщений | MeshCore по BLE, USB, а на части ESP32 также по WiFi |
+| **Repeater** | Ретрансляция пакетов сети | USB CLI или удалённая CLI по LoRa |
+| **Room server** | Общая доска сообщений с хранением пропущенных публикаций | CLI репитера и вход пользователей из приложения |
+| **Observer** | Только приём эфира и публикация в MQTT через WiFi | Отдельная USB CLI |
+| **KISS modem** | Сырой LoRa-модем для программы на компьютере | KISS-протокол по USB или UART |
+| **Repeater bridge** | Репитер с межчастотным мостом между двумя узлами | USB/LoRa CLI, ESP-NOW или BLE bridge |
 
-One role per firmware image; you choose it when you flash.
+Для одного образа выбирается одна роль.
 
-## What you get on top of stock MeshCore
+## Что даёт авторская ZephCore поверх MeshCore
 
-All of this is local behaviour. Nothing here changes the wire protocol, so mixed meshes work fine.
+- **Zephyr RTOS и событийная архитектура:** основной цикл спит между событиями, драйверы используют
+  подсистемы Zephyr, devicetree и Kconfig.
+- **Самонастройка задержек ретрансляции:** репитер учитывает загрузку соседней сети вместо постоянного
+  `txdelay` ([ADR 0007](docs/adr/0007-adaptive-contention-window.md)).
+- **Адаптивный CAD/LBT:** порог занятости канала подстраивается под локальный шум
+  ([ADAPTIVE_CAD.md](docs/ADAPTIVE_CAD.md)).
+- **RX duty cycle:** поддерживаемые радиочипы снижают потребление между проверками преамбулы.
+- **Mesh Time Sync:** узлы без GPS могут согласовать время; функция выключена по умолчанию
+  ([MESHTIMESYNC.md](docs/MESHTIMESYNC.md)).
+- **Observer и MQTT uplink:** приём LoRa с публикацией в MQTT, а также MQTT-подключение репитера.
+- **Управление LED:** глобальное отключение, режимы TX/RX и heartbeat.
+- **Off-grid:** companion может временно ретранслировать handheld-узлы на отдельной off-grid частоте
+  ([OFFGRID.md](docs/OFFGRID.md)).
+- **LR2021 2.4 ГГц**, Linux Native на Raspberry Pi/Femtofox и KISS modem.
 
-- **Self-tuning retransmit timing.** Repeaters measure how crowded their neighbourhood is and space their
-  retransmits to match, instead of using fixed `txdelay` values. ([ADR 0007](docs/adr/0007-adaptive-contention-window.md))
-- **Adaptive listen-before-talk.** Channel-activity detection calibrates itself to the local noise.
-  ([ADAPTIVE_CAD.md](docs/ADAPTIVE_CAD.md))
-- **Optional RX duty cycle.** The radio chip itself naps between preamble checks to cut receive current,
-  on radios that support it. ([ADR 0006](docs/adr/0006-sx126x-rx-duty-cycle-and-busy-gating.md))
-- **Mesh time sync.** Nodes without GPS can agree on the time. Off by default.
-  ([MESHTIMESYNC.md](docs/MESHTIMESYNC.md))
-- **An observer role.** A listen-only node that publishes everything it hears to MQTT over WiFi (ESP32).
-- **MQTT uplink on a repeater.** An ESP32 repeater can report what it hears to MQTT over WiFi while it
-  keeps repeating.
-- **LEDs you control.** Turn them all off with `set leds off`, or choose what each one shows: blink on
-  transmit, on receive or both, and a heartbeat that can signal unread messages. The receive blink tells
-  you at a glance whether a repeater is hearing anything.
-- **Off-grid mode from the device.** A companion can relay for a group of handhelds out of reach of any
-  repeater. Switch it on from the display or the CLI and the node moves to the off-grid frequency of its
-  band and back by itself. ([OFFGRID.md](docs/OFFGRID.md))
-- **2.4 GHz on LR2021 boards.** Set a 2.4 GHz frequency and the radio switches to its high-band path on
-  its own.
-- **Runs on Linux too.** The same code runs as a normal process on a Raspberry Pi or Femtofox with a real
-  SX1262 attached. ([LINUX_NATIVE.md](docs/LINUX_NATIVE.md))
+## Доработки ShadoW в 1.18.0
 
-## Hardware
+### CLI и vContact
+
+- USB CLI выводит полный список команд. BLE и удалённая LoRa CLI используют категории
+  `id`, `rf`, `cad`, `mesh`, `find`, `gps`, `wifi`, `extra`, `ui`, `power`, `stat`, `log`, `sys`.
+- Ответы удалённого `help <group>` ограничены размером BLE/LoRa frame; секреты, BLE PIN,
+  RF-настройки, erase, OTA/DFU и выключение остаются локальными.
+- Добавлены короткие команды `gps`, `buzz`, `leds`, `tz`, команды Fall, Tracking, SOS,
+  WiFi, питания, индикации и диагностики. Полное дерево: [COMMANDS.MD](COMMANDS.MD).
+- vContact используется только для уведомлений. На входящую команду он отвечает:
+  `Please use the Command Line in Settings. This chat is for notifications only.`
+- В vContact приходят изменения GPS, buzzer, LEDs, BLE, Offgrid, Tracking, Wake on message,
+  поворота экрана/ввода, ручного выключения и причины перезапуска.
+
+### SOS, Fall и Tracking
+
+- SOS ожидает свежий GPS fix, повторяет промежуточное сообщение и завершает отправку с координатами
+  либо по тайм-ауту. Состояние и duty interval GPS после сценария восстанавливаются.
+- На T-1000E и ThinkNode M3 короткое нажатие отменяет ожидающий ручной SOS, включает мелодию
+  отмены и отправляет `❌ SOS Canceled` в `#sos`.
+- Удалённые `sos` и `tracking on|off` полностью беззвучны, включая промежуточные и финальные отправки.
+- Для T-1000E и M3 добавлен Fall detector с настройкой чувствительности, повторной тревогой и
+  физическим подтверждением отмены.
+- Tracking периодически отправляет координаты в выбранную группу; доступны интервал, группа,
+  экранная страница и кнопочный жест.
+
+### Экраны и кнопки
+
+- Восстановлены авторские страницы и наша заставка с версией, датой и подписью
+  `Tuned by ShadoW` для button UI и joystick UI.
+- Добавлены и сохранены страницы Tracking, SOS, WiFi, GPS, Advert, Buzzer, LEDs, Offgrid,
+  DFU и Shutdown с учётом возможностей платы.
+- WiFi companion показывает SSID и адрес одной строкой `IPv4:port`; WiFi можно включить или
+  выключить с экрана, после чего устройство перезагружается.
+- Heltec V3 получает USB companion/CLI через CP2102/UART0 без конфликта с console.
+- На M1/M5 физический переключатель GPS определяет стартовое состояние. При OFF экран показывает
+  `GPS switch: off`, а не ошибочное `GPS: not detected`.
+- При выключении отображается `Power OFF`; E-Ink сохраняет последний кадр.
+
+### GPS, питание и индикация
+
+- GPS принимает только подтверждённый спутниками fix и не переводит часы назад по старым данным
+  после пробуждения.
+- Неустановленный опциональный GPS определяется по отсутствию NMEA и больше не будит устройство
+  на каждом цикле телеметрии.
+- M1/M5/M6 показывают видимые спутники во время поиска; для T-1000E сохраняется настоящая
+  телеметрия освещённости.
+- Исправлены питание, UART и запуск GPS на M1/M5/M6, а также board-specific схемы батареи и зарядки.
+- T1000-E, M3 и XIAO используют процентные зарядные серии. XIAO при зарядке сохраняет один обычный
+  heartbeat pulse вместо трёх low-battery импульсов.
+- На T-Echo low-battery красный LED больше не остаётся включённым после первого импульса.
+- Companion перед автовыключением может отправить сообщение о низком заряде в `#zephcore`;
+  репитер имеет отдельные настраиваемые battery alerts.
+
+### Repeater bridge и сеть
+
+- Repeater bridge связывает две LoRa-сети через ESP-NOW или BLE, фильтрует типы пакетов и защищается
+  от циклов и повторов.
+- Добавлены диагностические страницы, CLI, RSSI, журнал BLE bridge, управление bond и восстановление
+  соединения без блокировки основного LoRa-цикла.
+- Off-grid включается только на выделенной частоте 433.000, 869.495 или 918.000 МГц и возвращает
+  прежнюю частоту после выключения.
+
+Детальное поведение, аппаратные ограничения и статус проверок:
+[SHADOW_FEATURES.MD](SHADOW_FEATURES.MD).
+
+## Изменения основной MeshCore 1.18.0
+
+- ACK на direct-маршрутах ретранслируются после небольшой случайной задержки; при `multi.acks 1`
+  две копии отправляются с разносом 300 мс.
+- Flood-пакеты с transport code `0` считаются unscoped. В нашей ветке к ним дополнительно применяются
+  `flood.max.unscoped` и `region denyf *`.
+- Room server больше не включает repeater через устаревшую команду `set repeat on`.
+
+Полное описание релиза: [RELEASE_NOTES_1.18.0-zephcore.md](releasenotes/RELEASE_NOTES_1.18.0-zephcore.md).
+
+## Поддерживаемые платы
 
 <!-- Generated by `python zephcore/scripts/board_manifest.py docs`; edit the board manifests, not this table. -->
 <!-- boards:summary -->
-| Platform | Boards | With published firmware |
-|---|---|---|
+| Платформа | Платы | С опубликованной прошивкой |
+|---|---:|---:|
 | nRF52840 | 22 | 21 |
-| ESP32 family | 16 | 14 |
+| Семейство ESP32 | 16 | 14 |
 | nRF54L | 4 | 3 |
 | EFR32MG24 | 1 | 1 |
 | STM32WL | 1 | 1 |
-| Native Linux (presets) | 3 | 3 |
+| Native Linux (пресеты) | 3 | 3 |
 <!-- /boards -->
 
-RAK4631, SenseCAP T1000-E, Wio Tracker L1, Heltec T114 and V3/V4, XIAO ESP32-S3, nRF54L15 and MG24, Seeed
-LoRa-E5, Femtofox, Raspberry Pi with a RAK6421 HAT, and more. The full list with exact build strings is in
-[docs/supported_boards.md](docs/supported_boards.md). Want to add one? See the
-[board porting guide](zephcore/boards/example_board/README.md).
+Поддерживаются RAK4631, SenseCAP T1000-E, ThinkNode M1/M3/M5/M6, T-Echo,
+Wio Tracker L1, Heltec T114 и V3/V4, XIAO ESP32-S3/nRF52840/nRF54L15,
+Station G2, MG24, Seeed LoRa-E5, Femtofox, Raspberry Pi с RAK6421 HAT и другие.
 
-## Build it yourself
+Полный список с точными target: [docs/supported_boards.md](docs/supported_boards.md).
+Добавление новой платы: [Board Porting Guide](zephcore/boards/example_board/README.md).
 
-The quickest start is the [dev container](.devcontainer/README.md): open the repo in VS Code and choose
-**Reopen in Container**. Otherwise install the
-[Zephyr SDK and west](https://docs.zephyrproject.org/latest/develop/getting_started/index.html), then:
+## Самостоятельная сборка
+
+Проще всего использовать [dev container](.devcontainer/README.md). При ручной установке нужны
+[Zephyr SDK и west](https://docs.zephyrproject.org/latest/develop/getting_started/index.html):
 
 ```bash
-# once
+# один раз
 west init -l zephcore
 west update
 
-# a companion, then a repeater
+# companion и repeater
 west build -b wio_tracker_l1 zephcore --pristine
-west build -b rak4631 zephcore --pristine -- -DEXTRA_CONF_FILE="boards/common/repeater.conf"
+west build -b rak4631 zephcore --pristine -- \
+  -DEXTRA_CONF_FILE="boards/common/repeater.conf"
 
 west flash
 ```
 
-Roles and extras are config fragments in `zephcore/boards/common/`, added through `EXTRA_CONF_FILE`
-(separate several with `;`):
-
-| Fragment | Gives you |
+| Fragment | Роль/возможность |
 |---|---|
-| *(none)* | Companion |
+| без fragment | Companion |
 | `repeater.conf` | Repeater |
 | `room_server.conf` | Room server |
-| `observer.conf` | Observer (ESP32) |
+| `observer.conf` | Observer для ESP32 |
 | `kiss_modem.conf` | KISS modem |
-| `debug.conf` | Logging and asserts |
-| `packet_logging.conf` | One clean RAW/RX/TX line per packet, nothing else |
+| `debug.conf` | Логи и assertions |
+| `packet_logging.conf` | Отдельные RAW/RX/TX строки пакетов |
 
-Every other variant, flashing per platform (ESP32 blobs and `--sysbuild`, nRF54L, MG24) and the Kconfig
-options are in [docs/BUILDING.md](docs/BUILDING.md).
+ESP32 sysbuild/MCUboot, дополнительные варианты и параметры описаны в
+[docs/BUILDING.md](docs/BUILDING.md).
 
-## For Zephyr people
+## Техническая документация
 
-ZephCore is a plain west workspace application, and it tries to be a well-behaved one:
-
-- **Zephyr is pinned to a `main` commit**, bumped deliberately. ([ADR 0005](docs/adr/0005-zephyr-main-pin.md))
-- **A small patch set** in `zephcore/patches/zephyr` is applied at configure time and fails the build
-  loudly if it stops applying. One patch owns each upstream file. If you maintain one of those files,
-  that directory is the list of things we would love to see fixed upstream.
-- **Radios**: the in-tree SX126x and SX127x drivers, plus out-of-tree LR11xx and LR20xx drivers, behind
-  one adapter.
-- **Boards are devicetree and Kconfig only.** A board directory declares hardware, never role policy;
-  config is layered from `prj.conf` down to `board.conf`.
-- **ESP32**: simple boot for companions, MCUboot with sysbuild where WiFi OTA is involved
-  ([ADR 0001](docs/adr/0001-esp32-boot-and-flash-layout.md)); native USB on S3 companions
-  ([ADR 0002](docs/adr/0002-esp32s3-native-usb-companion.md)).
-- **Tests**: the mesh core builds and runs on the host under ASan and UBSan in CI.
-
-## Documentation
-
-| | |
+| Документ | Содержание |
 |---|---|
-| [DESIGN.md](docs/DESIGN.md) | The system view: roles, layers, rules |
-| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Component reference |
-| [adr/](docs/adr/README.md) | Decisions and why they were made |
-| [BUILDING.md](docs/BUILDING.md) | Every build variant, platform notes, Kconfig options |
-| [CLI_commands.md](docs/CLI_commands.md) | Every CLI command |
-| [OFFGRID.md](docs/OFFGRID.md) | Off-grid mode: a companion that relays, and the frequencies it runs on |
-| [supported_boards.md](docs/supported_boards.md) | Boards and build strings |
-| [LINUX_NATIVE.md](docs/LINUX_NATIVE.md) | Running on a Pi or Femtofox |
-| [releasenotes/](releasenotes/) | What changed in each release |
+| [SHADOW_FEATURES.MD](SHADOW_FEATURES.MD) | Полный список наших доработок и аппаратных проверок |
+| [SHADOW_UPDATE_GUIDE.md](SHADOW_UPDATE_GUIDE.md) | Перенос доработок на новый авторский релиз |
+| [COMMANDS.MD](COMMANDS.MD) | Фактическое дерево USB/BLE/LoRa CLI |
+| [docs/DESIGN.md](docs/DESIGN.md) | Инварианты, слои и правила проекта |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Архитектура компонентов |
+| [docs/CLI_commands.md](docs/CLI_commands.md) | Описание CLI-команд |
+| [docs/BUILDING.md](docs/BUILDING.md) | Все варианты сборки |
+| [docs/OFFGRID.md](docs/OFFGRID.md) | Off-grid режим и частоты |
+| [docs/supported_boards.md](docs/supported_boards.md) | Платы и build-target |
+| [docs/LINUX_NATIVE.md](docs/LINUX_NATIVE.md) | Запуск на Raspberry Pi/Femtofox |
+| [releasenotes/](releasenotes/) | История релизов |
 
-## Who wrote this?
+## Об использовании AI
 
-Mostly robots. Around 99% of the code in this repository was written by AI (Claude and Cursor). One human
-points, argues, says "no, not like that", and flashes the result onto a bench full of real radios to see
-whether it actually works.
-
-The ideas that matter are not ours either: the mesh protocol, the apps and most new features come from the
-[MeshCore project](https://github.com/meshcore-dev/MeshCore/) and the people doing the hard thinking there.
-
-What keeps it honest: changes are tested on real hardware before release (mostly nRF boards on our own
-bench; the ESP32 boards are largely tested by the community, so reports are very welcome), the mesh core
-has host tests in CI, and the decisions are written down in [ADRs](docs/adr/README.md) so the next robot
-does not undo them.
+Большая часть кода авторской ZephCore и этой ветки создавалась с помощью AI. Решения о включении
+изменений принимает человек; критичные функции проверяются host-тестами и, где указано,
+на реальном оборудовании. Успешная сборка не считается аппаратной проверкой.
 
 [![TWONKS: AI Design Logic](img/twonks-ai-design.jpg)](https://www.twonks.co.uk/)
 
-*Comic by [TWONKS](https://www.twonks.co.uk/). Borrowed with love; go read the rest.*
+*Комикс [TWONKS](https://www.twonks.co.uk/).*
 
-## License
+## Лицензия
 
-MIT, same as upstream MeshCore; see [LICENSE](LICENSE), which also lists the vendored pieces (Monocypher,
-Zephyr patches). Logo by [recrof](https://github.com/recrof), [WTFPL](https://en.wikipedia.org/wiki/WTFPL).
+MIT, как у авторской ZephCore и MeshCore. См. [LICENSE](LICENSE), где также перечислены
+встроенные компоненты и их лицензии. Логотип: [recrof](https://github.com/recrof),
+[WTFPL](https://en.wikipedia.org/wiki/WTFPL).

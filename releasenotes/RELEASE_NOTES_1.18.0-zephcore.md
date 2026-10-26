@@ -31,6 +31,9 @@ eight seconds to fetch the notice. With no app connected, power-off is immediate
 Button changes to GPS, buzzer mode and LEDs also appear in vContact after the
 companion applies them. The GPS page now redraws after that applied state, so
 its on/off value no longer remains stale, including on e-paper displays.
+On ThinkNode M1 and M5, the physical GPS switch now controls the startup state;
+with the switch off the page says `GPS switch: off` instead of claiming that
+the receiver was not detected.
 
 ## XIAO nRF52840 charging heartbeat
 
@@ -51,6 +54,14 @@ secrets, BLE PIN, RF changes, battery calibration/autoshutdown, power-off,
 OTA/DFU and erase remain local-only. Remote `sos` and `tracking on|off` are
 silent for their whole lifetime, including repeated tracking reports and the
 final SOS transmission.
+
+On T1000-E and ThinkNode M3, one short press now cancels a manual SOS that is
+waiting for GPS, restores the previous GPS state, plays the Fall-cancellation
+tone and sends `❌ SOS Canceled` to `#sos`. The same press is consumed instead
+of starting an advert.
+
+T-Echo low-battery red indication no longer latches on after its first pulse;
+the shared LED OFF phase now releases the separate low-battery GPIO.
 
 ## ShadoW splash restored
 

@@ -50,6 +50,7 @@
 			buzzer = &buzzer;
 			gps-enable = &gps_enable_pin;
 			gps-reset = &gps_reset_pin;
+			gps-switch = &gps_sw;
 	};
 
 	buttons: buttons {

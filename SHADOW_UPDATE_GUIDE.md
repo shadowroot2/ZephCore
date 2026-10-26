@@ -121,6 +121,10 @@ identity, pairing или настройки пользователя.
 - [ ] Удалённый LoRa CLI `sos` полностью беззвучен: подтверждение, повторные
       waiting-этапы и финальная передача. Флаг remote origin хранится в
       асинхронном SOS state до завершения.
+- [ ] На headless T-1000E/M3 один tap при ожидающем ручном SOS отменяет его,
+      возвращает GPS state, принудительно воспроизводит сигнал отмены Fall,
+      отправляет `❌ SOS Canceled` в `#sos` и не запускает Advert. Fall этим
+      путём не отменяется.
 
 ### Fall — только capability соответствующего акселерометра
 
@@ -274,6 +278,8 @@ identity, pairing или настройки пользователя.
       Shutdown и board-specific pages.
 - [ ] GPS page перерисовывается только после фактического main-thread callback;
       это обязательно для E-Paper.
+- [ ] На платах с DT alias `gps-switch` его положение определяет старт GPS;
+      при OFF страница пишет `GPS switch: off`, а не `GPS: not detected`.
 - [ ] Heltec V3 без GPS не показывает бесполезную GPS page.
 - [ ] Advert не переводит пользователя на соседнюю страницу.
 - [ ] WiFi page позволяет on/off, сохраняет prefs и делает cold reboot.
@@ -288,6 +294,8 @@ identity, pairing или настройки пользователя.
 
 - [ ] Headless T-1000E/M3: один tap открывает 3-секундное SOS window; hold ≥1 с
       запускает SOS, иначе flood advert.
+- [ ] При уже активном ручном SOS тот же один tap отменяет SOS и потребляется до
+      запуска Advert/SOS window.
 - [ ] T-1000E/M3: 2 taps Tracking, 3 buzzer, 4 LEDs, 5 GPS.
 - [ ] Для M3 используется та же карта, что для T-1000E.
 - [ ] Число коротких подтверждений соответствует числу нажатий.

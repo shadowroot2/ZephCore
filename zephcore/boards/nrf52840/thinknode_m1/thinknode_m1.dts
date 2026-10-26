@@ -51,6 +51,7 @@
 		buzzer = &buzzer;
 		gps-enable = &gps_enable_pin;
 		gps-reset = &gps_reset_pin;
+		gps-switch = &gps_sw;
 	};
 
 	/* ---- LEDs (active-high, matches MeshCore LED_STATE_ON=HIGH) ---- */

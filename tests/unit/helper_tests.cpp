@@ -18,6 +18,8 @@
 #define ZEPHCORE_FALL_DETECTOR 1
 #include <CompanionCLIHelp.h>
 #include <CompanionCLIAudio.h>
+#include <CompanionSOSPolicy.h>
+#include <GpsSwitchPolicy.h>
 #include <RepeaterCLIHelp.h>
 #undef CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE
 #undef CONFIG_ZEPHCORE_REPEATER_UPLINK
@@ -147,6 +149,18 @@ TEST(companion_cli_audio, "UNIT-CLI-003", "Remote companion CLI suppresses opera
 	CHECK(!companion_cli_silent_notifications(0));
 	CHECK(companion_cli_silent_notifications(1));
 	CHECK(companion_cli_silent_notifications(0xFFFFFFFFU));
+}
+TEST(companion_sos_cancel, "UNIT-SOS-001", "Only a pending manual SOS is button-cancelable") {
+	CHECK(!companion_sos_button_cancelable(false, false));
+	CHECK(companion_sos_button_cancelable(true, false));
+	CHECK(!companion_sos_button_cancelable(true, true));
+	CHECK(std::strcmp(COMPANION_SOS_CANCELED_TEXT, "❌ SOS Canceled") == 0);
+}
+TEST(gps_switch_policy, "UNIT-UI-001", "A physical GPS switch overrides the saved startup state") {
+	CHECK(gps_switch_effective_enabled(false, false, true));
+	CHECK(!gps_switch_effective_enabled(false, true, false));
+	CHECK(!gps_switch_effective_enabled(true, false, true));
+	CHECK(gps_switch_effective_enabled(true, true, false));
 }
 TEST(battery_curve, "UNIT-BATTERY-001", "Battery endpoints interpolation multicell scaling and monotonicity") {
     CHECK(battery_curve_lookup(&battery_curve_default, 0) == 0);

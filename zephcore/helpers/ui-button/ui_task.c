@@ -73,6 +73,11 @@ extern void ui_led_flash_msg(void);
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(ui_task, CONFIG_ZEPHCORE_BOARD_LOG_LEVEL);
 
+#if DT_NODE_HAS_STATUS(DT_ALIAS(gps_switch), okay)
+static const struct gpio_dt_spec gps_switch = GPIO_DT_SPEC_GET(DT_ALIAS(gps_switch), gpios);
+#define HAS_GPS_SWITCH 1
+#endif
+
 /* Action feedback melodies (b=200, d=16: ~75 ms chirps). The chirp count
  * identifies the action, not the tap count.
  *   advert sent:                 chirp x2
@@ -103,7 +108,7 @@ static bool ui_initialized;
 static bool splash_active;
 #if !IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
 #define HEADLESS_GESTURE_ARM_WINDOW_MS 3000
-#if defined(CONFIG_BOARD_T1000_E) || defined(CONFIG_BOARD_THINKNODE_M3)
+#if IS_ENABLED(CONFIG_ZEPHCORE_HEADLESS_SOS_ADVERT_GESTURE)
 #define ZEPHCORE_HEADLESS_ADVERT_GESTURE 1
 #else
 static uint32_t headless_sos_armed_until;
@@ -144,6 +149,24 @@ static inline struct ui_state *get_state(void)
 	return ui_pages_get_state();
 #else
 	return &local_ui_state;
+#endif
+}
+
+static void gps_switch_read(void)
+{
+#ifdef HAS_GPS_SWITCH
+	int value;
+
+	if (!gpio_is_ready_dt(&gps_switch)) {
+		LOG_ERR("GPS switch GPIO not ready");
+		return;
+	}
+	value = gpio_pin_get_dt(&gps_switch);
+	if (value < 0) {
+		LOG_ERR("GPS switch read failed: %d", value);
+		return;
+	}
+	ui_set_gps_switch(true, value != 0);
 #endif
 }
 
@@ -749,6 +772,7 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 	if (code == INPUT_KEY_G) {
 		bool gps_on = (evt->value != 0);
 		LOG_INF("GPS switch → %s", gps_on ? "on" : "off");
+		ui_set_gps_switch(true, gps_on);
 		if (gps_is_available()) {
 			mesh_gps_set_enabled(gps_on);
 #if defined(CONFIG_BOARD_T1000_E)
@@ -814,6 +838,10 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 	case INPUT_KEY_1: {
 #if !IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
 #if defined(ZEPHCORE_HEADLESS_ADVERT_GESTURE)
+		if (mesh_sos_cancel_if_active()) {
+			headless_single_advert_cancel();
+			break;
+		}
 		uint32_t deadline = k_uptime_get_32() + HEADLESS_GESTURE_ARM_WINDOW_MS;
 		atomic_set(&headless_sos_deadline, deadline ? deadline : 1);
 		k_work_reschedule(&headless_single_advert_work,
@@ -911,6 +939,7 @@ int ui_init(void)
 #ifdef ZEPHCORE_HEADLESS_ADVERT_GESTURE
 	k_work_init_delayable(&headless_single_advert_work, headless_single_advert_handler);
 #endif
+	gps_switch_read();
 
 	/* Initialize buzzer (optional - may not be present) */
 #ifdef CONFIG_ZEPHCORE_UI_BUZZER
@@ -1276,6 +1305,33 @@ void ui_set_gps_available(bool available)
 	struct ui_state *s = get_state();
 
 	s->gps_available = available;
+}
+
+void ui_set_gps_switch(bool present, bool enabled)
+{
+	struct ui_state *s = get_state();
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
+	bool changed = s->gps_switch_present != present || s->gps_switch_on != enabled;
+#endif
+
+	s->gps_switch_present = present;
+	s->gps_switch_on = enabled;
+
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
+	if (ui_initialized && changed && ui_pages_current() == UI_PAGE_GPS) {
+		schedule_render();
+	}
+#endif
+}
+
+bool ui_gps_switch_present(void)
+{
+	return get_state()->gps_switch_present;
+}
+
+bool ui_gps_switch_is_on(void)
+{
+	return get_state()->gps_switch_on;
 }
 
 void ui_set_gps_enabled(bool enabled)

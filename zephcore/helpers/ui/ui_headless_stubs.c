@@ -105,6 +105,14 @@ WEAK void ui_set_gps_available(bool available)
 	ARG_UNUSED(available);
 }
 
+WEAK void ui_set_gps_switch(bool present, bool enabled)
+{
+	ARG_UNUSED(present); ARG_UNUSED(enabled);
+}
+
+WEAK bool ui_gps_switch_present(void) { return false; }
+WEAK bool ui_gps_switch_is_on(void) { return false; }
+
 WEAK void ui_set_gps_enabled(bool enabled)
 {
 	ARG_UNUSED(enabled);

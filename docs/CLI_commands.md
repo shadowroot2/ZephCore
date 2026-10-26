@@ -296,6 +296,12 @@ Remote `sos` and `tracking on|off` execute silently. This includes SOS waiting/f
 transmissions and every tracking report. USB, app CLI and UI launches keep their
 normal notification sounds.
 
+On T1000-E and ThinkNode M3, one short button press while a manual SOS is
+waiting for GPS cancels it, restores the previous GPS enabled/duty state and
+plays the forced Fall-cancellation tone, then sends `❌ SOS Canceled` to
+`#sos`. The press does not also start the normal advert/SOS gesture window.
+Fall acknowledgement is unchanged.
+
 | Command | Description |
 |---------|-------------|
 | `help` / `?` | Lists command groups; `help <group>` returns one packet-sized group |

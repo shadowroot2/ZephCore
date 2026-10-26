@@ -33,6 +33,16 @@
       "source": "tests/unit/helper_tests.cpp"
     },
     {
+      "id": "UNIT-SOS-001",
+      "name": "Only a pending manual SOS is button-cancelable",
+      "source": "tests/unit/helper_tests.cpp"
+    },
+    {
+      "id": "UNIT-UI-001",
+      "name": "A physical GPS switch overrides the saved startup state",
+      "source": "tests/unit/helper_tests.cpp"
+    },
+    {
       "id": "UNIT-CAD-001",
       "name": "Level window narrows only where the driver clamp binds",
       "source": "tests/unit/radio_tests.cpp"

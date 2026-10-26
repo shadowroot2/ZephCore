@@ -1222,6 +1222,13 @@ config ZEPHCORE_UI_MULTI_TAP
 	  based on tap count. Supports 1-4 tap levels via devicetree.
 	  Single-tap has ~400ms latency (waits for window to expire).
 
+config ZEPHCORE_HEADLESS_SOS_ADVERT_GESTURE
+	bool "Enable headless SOS/advert button gesture"
+	depends on ZEPHCORE_UI_BUTTONS && !ZEPHCORE_UI_DISPLAY
+	help
+	  A single tap opens the advert/SOS hold window. While a manual SOS is
+	  waiting for GPS, that single tap cancels it instead.
+
 config ZEPHCORE_UI_BUZZER
 	bool "Enable buzzer"
 	default y if $(dt_nodelabel_enabled,buzzer)

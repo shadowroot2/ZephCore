@@ -1013,6 +1013,12 @@ frame.
 
 Connection state on these pages: "an app is connected" (`UI_EVENT_APP_CONNECTED` / `_DISCONNECTED`, any transport) gates the buzzer, the message LED flash and the "Connected" line; which transport it is comes from `ui_set_link_transports()` (`UI_LINK_BLE` / `_USB` / `_TCP`, pushed by `process_link_change()` on every link edge). The Messages badge names the transport; the Bluetooth page says "Connected" only for a BLE client. The WiFi page shows the persisted on/off state, station state, SSID, the endpoint as `IPv4:port`, and whether an app is on the socket; there is no separate port row. ENTER toggles `prefs.wifi_enabled`, saves it on the main thread and cold-reboots because the WiFi stack is a boot-time composition. Runtime state is pushed every housekeeping tick by `companion_wifi_ui_refresh()` through `ui_set_wifi()` (redraws only on a change, e-paper included). The joystick UI exposes the same toggle and details under System > Info > WiFi (`WifiScreen`) on WiFi companion builds (ThinkNode M9); elsewhere its hooks are no-ops. WiFi companion builds expose their WiFi settings as a separate `wifi` help group in both BLE and local USB CLI.
 
+A board with the `gps-switch` devicetree alias uses that physical switch as
+the authoritative GPS startup state. The GPS page shows `GPS switch: off`
+while it is open instead of misreporting the powered-down receiver as absent.
+The input event updates the page immediately and queues the actual GPS change
+on the main thread.
+
 **Repeater** (3 pages): Status, Radio, Shutdown
 
 ### 8.2.1 Renderer Split (mono / color)
@@ -1054,6 +1060,14 @@ Single button; tap-count → key-code mapping comes from the board's devicetree 
 - 3 taps → Notification mode (sound+vibrate → vibrate → silent → sound → …; boards with no motor fall back to a plain on/off toggle)
 - 4 taps → GPS toggle
 - 5 taps → Flood advert (immediate, no delay)
+
+The headless SOS/advert gesture is a capability selected by
+`CONFIG_ZEPHCORE_HEADLESS_SOS_ADVERT_GESTURE`, currently enabled on T1000-E and
+ThinkNode M3. A single tap normally opens the three-second advert/SOS hold
+window. While a manual SOS is waiting for GPS, it instead queues a main-thread
+cancel, restores the previous GPS state, plays the forced Fall-cancellation tone
+and sends `❌ SOS Canceled` to `#sos`; the tap is consumed and cannot also send
+an advert. Fall acknowledgement remains a separate forced-alarm path.
 
 Boards with a display also map a 1 s hold to `KEY_ENTER` (a `zephyr,input-longpress` filter), which runs the item on
 the page. Offgrid, DFU and Power Off act on a second ENTER inside `CONFIG_ZEPHCORE_UI_CONFIRM_WINDOW_MS`. The default

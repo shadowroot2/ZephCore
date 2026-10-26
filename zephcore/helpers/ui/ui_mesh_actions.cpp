@@ -54,8 +54,11 @@ LOG_MODULE_REGISTER(zephcore_ui_actions, CONFIG_ZEPHCORE_UI_ACTIONS_LOG_LEVEL);
 #define UI_ACTION_TRACKING_TOGGLE   BIT(16)
 #define UI_ACTION_FALL_ACK          BIT(17)
 #define UI_ACTION_WIFI_RESTART      BIT(18)
+#define UI_ACTION_SOS_CANCEL        BIT(19)
 
 extern "C" void companion_sos_request_from_ui(void);
+extern "C" bool companion_sos_cancel_available(void);
+extern "C" void companion_sos_cancel_from_ui(void);
 extern "C" void companion_fall_alarm_acknowledge_from_ui(void);
 extern "C" void companion_tracking_toggle_from_ui(void);
 extern "C" bool companion_tracking_gps_control_allowed(void);
@@ -126,6 +129,16 @@ extern "C" void mesh_send_sos(void)
 	k_event_post(s_mesh_events, s_mesh_event_ui_action);
 }
 
+extern "C" bool mesh_sos_cancel_if_active(void)
+{
+	if (!companion_sos_cancel_available()) {
+		return false;
+	}
+	atomic_or(&pending_ui_actions, UI_ACTION_SOS_CANCEL);
+	k_event_post(s_mesh_events, s_mesh_event_ui_action);
+	return true;
+}
+
 extern "C" void mesh_fall_alarm_acknowledge(void)
 {
 	if (!s_mesh_events) {
@@ -143,7 +156,7 @@ extern "C" void mesh_tracking_toggle(void)
 
 extern "C" void mesh_gps_set_enabled(bool enable)
 {
-	if (!companion_tracking_gps_control_allowed()) {
+	if (!s_mesh_events || !companion_tracking_gps_control_allowed()) {
 		return;
 	}
 	/* Applied on the mesh thread with the prefs write: the GPS state
@@ -290,6 +303,9 @@ extern "C" void mesh_handle_ui_actions(void)
 
 	if (actions & UI_ACTION_SOS) {
 		companion_sos_request_from_ui();
+	}
+	if (actions & UI_ACTION_SOS_CANCEL) {
+		companion_sos_cancel_from_ui();
 	}
 	if (actions & UI_ACTION_FALL_ACK) {
 		companion_fall_alarm_acknowledge_from_ui();

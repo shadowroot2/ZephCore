@@ -159,6 +159,11 @@ void ui_clear_recent(void);
  */
 void ui_set_gps_available(bool available);
 
+/** Physical GPS switch state, when the board exposes gps-switch in DT. */
+void ui_set_gps_switch(bool present, bool enabled);
+bool ui_gps_switch_present(void);
+bool ui_gps_switch_is_on(void);
+
 /**
  * Set GPS enabled state (for display page).
  */

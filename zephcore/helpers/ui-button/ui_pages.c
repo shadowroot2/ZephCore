@@ -1377,7 +1377,10 @@ static void render_gps(void)
 	bool color = mc_display_has_color();
 
 	if (ui_tiny()) {
-		if (!state.gps_available) {
+		if (state.gps_switch_present && !state.gps_switch_on) {
+			draw_centered(centered_row(0, 2), "GPS switch");
+			draw_centered(centered_row(1, 2), "OFF");
+		} else if (!state.gps_available) {
 			draw_centered(centered_row(0, 1), "No GPS");
 		} else if (!state.gps_enabled) {
 			draw_centered(centered_row(0, 1), "GPS off");
@@ -1397,6 +1400,17 @@ static void render_gps(void)
 		} else {
 			draw_centered(centered_row(0, 1), "GPS off");
 		}
+		return;
+	}
+
+	if (state.gps_switch_present && !state.gps_switch_on) {
+		if (color) {
+			draw_badge(0, y, "GPS", UI_COLOR_DISABLED);
+			mc_display_color_text(32, y, "switch off", UI_COLOR_DISABLED);
+		} else {
+			mc_display_text(0, y, "GPS switch: off", false);
+		}
+		draw_centered(y + LINE_H + 8, "Use GPS switch");
 		return;
 	}
 

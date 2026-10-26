@@ -75,6 +75,8 @@ LOG_MODULE_REGISTER(zephcore_main, CONFIG_ZEPHCORE_MAIN_LOG_LEVEL);
 #include <app/CompanionMesh.h>
 #include <helpers/CommonCLI.h>
 #include <helpers/CompanionCLIAudio.h>
+#include <helpers/CompanionSOSPolicy.h>
+#include <helpers/GpsSwitchPolicy.h>
 #include <helpers/pm_sleep_guard.h>
 #include <helpers/StatsFormatHelper.h>
 #include <app/CompanionCLI.h>
@@ -819,6 +821,7 @@ struct companion_sos_state {
 };
 
 static struct companion_sos_state companion_sos;
+static atomic_t companion_manual_sos_pending;
 static struct {
 	bool pending;
 	bool fall;
@@ -902,6 +905,7 @@ static void companion_fall_cancel_pending(void)
 		gps_enable(false);
 	}
 	memset(&companion_sos, 0, sizeof(companion_sos));
+	atomic_set(&companion_manual_sos_pending, 0);
 	companion_sos_ui_clear();
 }
 
@@ -931,6 +935,48 @@ static void companion_send_fall_canceled_message(void)
 		return;
 	}
 	LOG_INF("fall: queued #sos cancel message");
+}
+
+static void companion_send_sos_canceled_message(void)
+{
+	ChannelDetails sos_channel;
+
+	if (!companion_get_public_channel("#sos", sos_channel)) {
+		return;
+	}
+	if (!companion_send_visible_group_message(sos_channel,
+			COMPANION_SOS_CANCELED_TEXT)) {
+		LOG_WRN("SOS: unable to queue cancel message");
+		return;
+	}
+	LOG_INF("SOS: queued #sos cancel message");
+}
+
+extern "C" bool companion_sos_cancel_available(void)
+{
+	return atomic_get(&companion_manual_sos_pending) != 0;
+}
+
+extern "C" void companion_sos_cancel_from_ui(void)
+{
+	if (!companion_sos_button_cancelable(companion_sos.pending,
+			companion_sos.type == COMPANION_EMERGENCY_FALL)) {
+		return;
+	}
+
+	gps_set_poll_interval_sec(companion_sos.saved_gps_duty_sec);
+	if (companion_sos.gps_started_by_sos) {
+		gps_enable(false);
+	}
+	memset(&companion_sos, 0, sizeof(companion_sos));
+	atomic_set(&companion_manual_sos_pending, 0);
+	companion_sos_tone.pending = false;
+	companion_sos_ui_clear();
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
+	buzzer_play_force(MELODY_FALL_CANCELED);
+#endif
+	companion_send_sos_canceled_message();
+	LOG_INF("SOS canceled by button");
 }
 
 extern "C" void companion_fall_alarm_acknowledge_from_ui(void)
@@ -1081,6 +1127,7 @@ static bool companion_sos_finish(bool fresh_fix)
 		gps_enable(false);
 	}
 	memset(&companion_sos, 0, sizeof(companion_sos));
+	atomic_set(&companion_manual_sos_pending, 0);
 	return success;
 }
 
@@ -1098,6 +1145,9 @@ static bool companion_emergency_request(enum companion_emergency_type type,
 		 * GPS state, so only an explicit Fall cancellation restores it. */
 		companion_sos.type = type;
 		companion_sos.silent = silent;
+		atomic_set(&companion_manual_sos_pending,
+			companion_sos_button_cancelable(true,
+				type == COMPANION_EMERGENCY_FALL));
 		companion_sos.started_ms = k_uptime_get_32();
 		companion_sos_ui_waiting();
 		companion_send_sos_waiting_message();
@@ -1157,6 +1207,9 @@ static bool companion_emergency_request(enum companion_emergency_type type,
 	companion_sos.pending = true;
 	companion_sos.type = type;
 	companion_sos.silent = silent;
+	atomic_set(&companion_manual_sos_pending,
+		companion_sos_button_cancelable(true,
+			type == COMPANION_EMERGENCY_FALL));
 	companion_sos.started_ms = k_uptime_get_32();
 	companion_sos.gps_started_by_sos = !gps_was_enabled;
 	companion_sos.saved_gps_duty_sec = gps_get_poll_interval_sec();
@@ -2335,8 +2388,11 @@ int main(void)
 	ui_set_node_name(companion_mesh.prefs.node_name);
 	ui_push_radio_state(lora_radio);
 	ui_set_battery(zephyr_board.getBattMilliVolts(), zephyr_board.getBattPercent());
+	const bool gps_boot_enabled = gps_switch_effective_enabled(ui_gps_switch_present(),
+							 ui_gps_switch_is_on(),
+							 companion_mesh.prefs.gps_enabled != 0);
 	ui_set_gps_available(gps_is_available());
-	ui_set_gps_enabled(companion_mesh.prefs.gps_enabled != 0);
+	ui_set_gps_enabled(gps_boot_enabled);
 	ui_set_ble_enabled(companion_mesh.prefs.ble_disabled != 1);  /* BLE starts advertising at boot */
 #if IS_ENABLED(CONFIG_ZEPHCORE_COMPANION_WIFI)
 	ui_set_wifi_enabled(companion_mesh.prefs.wifi_enabled != 0);
@@ -2375,10 +2431,10 @@ int main(void)
 	if (gps_is_available()) {
 		gps_set_poll_interval_sec(companion_mesh.prefs.gps_interval);
 		gps_set_standby_max_sec(companion_mesh.prefs.gps_standby_max);
-		gps_ensure_power_state(companion_mesh.prefs.gps_enabled);
+		gps_ensure_power_state(gps_boot_enabled);
 
-		if (companion_mesh.prefs.gps_enabled) {
-			LOG_INF("GPS: Restoring enabled state from prefs");
+		if (gps_boot_enabled) {
+			LOG_INF("GPS: Restoring enabled state");
 			gps_enable(true);
 		}
 	}

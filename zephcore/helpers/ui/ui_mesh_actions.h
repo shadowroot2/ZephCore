@@ -56,6 +56,7 @@ void mesh_housekeeping_ui_refresh(void);
 void mesh_send_flood_advert(void);
 void mesh_send_zerohop_advert(void);
 void mesh_send_sos(void); /* ZEPHCORE: safety actions */
+bool mesh_sos_cancel_if_active(void);
 void mesh_fall_alarm_acknowledge(void);
 void mesh_tracking_toggle(void);
 void mesh_set_bridge_enabled(bool enabled);
