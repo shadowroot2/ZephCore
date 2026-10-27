@@ -1255,9 +1255,9 @@ static void render_sos_mono(void)
 	bool recent = state.sos_sent_time > 0 &&
 		(now - state.sos_sent_time) < 2000;
 
-	draw_centered(centered_row(0, 2), "Send SOS");
+	draw_centered(centered_row(0, 2), state.sos_waiting_fix ? "Cancel SOS" : "Send SOS");
 	if (state.sos_waiting_fix) {
-		draw_centered(centered_row(1, 2), "Waiting fix (5m max)");
+		draw_centered(centered_row(1, 2), "Press to Cancel");
 	} else if (recent) {
 		draw_centered(centered_row(1, 2),
 			      state.sos_send_failed ? "SOS failed" : ">>> SOS Sent! <<<");
@@ -1278,7 +1278,7 @@ static void render_sos_color(void)
 	mc_display_color_text(32, y, "Emergency message", UI_COLOR_VALUE);
 	y += LINE_H + 2;
 	if (state.sos_waiting_fix) {
-		draw_centered_color(y, "Waiting fix (5m max)", UI_COLOR_WARN);
+		draw_centered_color(y, "Press to cancel", UI_COLOR_WARN);
 	} else if (recent) {
 		draw_centered_color(y, state.sos_send_failed ? "SOS failed" : "SOS sent",
 				    state.sos_send_failed ? UI_COLOR_ERROR : UI_COLOR_OK);

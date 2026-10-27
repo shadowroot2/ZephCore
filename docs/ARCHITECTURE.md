@@ -1017,7 +1017,9 @@ A board with the `gps-switch` devicetree alias uses that physical switch as
 the authoritative GPS startup state. The GPS page shows `GPS switch: off`
 while it is open instead of misreporting the powered-down receiver as absent.
 The input event updates the page immediately and queues the actual GPS change
-on the main thread.
+on the main thread. Every GPS enable/disable completion pushes both the enabled
+flag and the current `OFF`/`ACQUIRING`/`STANDBY` state, then explicitly requests
+a redraw. This is shared by button, joystick and e-paper display paths.
 
 **Repeater** (3 pages): Status, Radio, Shutdown
 
@@ -1070,7 +1072,10 @@ and sends `❌ SOS Canceled` to `#sos`; the tap is consumed and cannot also send
 an advert. Fall acknowledgement remains a separate forced-alarm path.
 
 Boards with a display also map a 1 s hold to `KEY_ENTER` (a `zephyr,input-longpress` filter), which runs the item on
-the page. Offgrid, DFU and Power Off act on a second ENTER inside `CONFIG_ZEPHCORE_UI_CONFIRM_WINDOW_MS`. The default
+the page. On the SOS page, ENTER starts a manual SOS or cancels one while it is
+waiting for GPS; cancellation uses the same main-thread action, GPS restoration,
+forced cancellation tone and `#sos` message as the headless gesture. Offgrid,
+DFU and Power Off act on a second ENTER inside `CONFIG_ZEPHCORE_UI_CONFIRM_WINDOW_MS`. The default
 of 500 ms is for a direct-tap ENTER; a board whose ENTER is a long press must set 3000 in its `board.conf`, or the
 confirmation can never be given.
 

@@ -19,8 +19,8 @@
 <p align="center">
   <a href="https://zephcore.meshcore.dev">Прошить</a> ·
   <a href="docs/supported_boards.md">Платы</a> ·
-  <a href="COMMANDS.MD">Команды</a> ·
-  <a href="SHADOW_FEATURES.MD">Доработки ShadoW</a> ·
+  <a href="docs/COMMANDS.MD">Команды</a> ·
+  <a href="docs/SHADOW_FEATURES.md">Доработки ShadoW</a> ·
   <a href="releasenotes/RELEASE_NOTES_1.18.0-zephcore.md">Изменения 1.18.0</a>
 </p>
 
@@ -46,7 +46,7 @@ ZephCore — прошивка для LoRa mesh-узлов, совместима�
   питания, GPS, телеметрии и конкретных плат.
 
 Это не официальная прошивка MeshCore и не попытка присвоить авторскую работу.
-Полный список отличий нашей ветки хранится в [SHADOW_FEATURES.MD](SHADOW_FEATURES.MD),
+Полный список отличий нашей ветки хранится в [SHADOW_FEATURES.md](docs/SHADOW_FEATURES.md),
 а порядок переноса изменений на новую авторскую базу — в
 [SHADOW_UPDATE_GUIDE.md](SHADOW_UPDATE_GUIDE.md).
 
@@ -108,7 +108,7 @@ ZephCore — прошивка для LoRa mesh-узлов, совместима�
 - Ответы удалённого `help <group>` ограничены размером BLE/LoRa frame; секреты, BLE PIN,
   RF-настройки, erase, OTA/DFU и выключение остаются локальными.
 - Добавлены короткие команды `gps`, `buzz`, `leds`, `tz`, команды Fall, Tracking, SOS,
-  WiFi, питания, индикации и диагностики. Полное дерево: [COMMANDS.MD](COMMANDS.MD).
+  WiFi, питания, индикации и диагностики. Полное дерево: [COMMANDS.MD](docs/COMMANDS.MD).
 - vContact используется только для уведомлений. На входящую команду он отвечает:
   `Please use the Command Line in Settings. This chat is for notifications only.`
 - В vContact приходят изменения GPS, buzzer, LEDs, BLE, Offgrid, Tracking, Wake on message,
@@ -164,7 +164,7 @@ ZephCore — прошивка для LoRa mesh-узлов, совместима�
   прежнюю частоту после выключения.
 
 Детальное поведение, аппаратные ограничения и статус проверок:
-[SHADOW_FEATURES.MD](SHADOW_FEATURES.MD).
+[SHADOW_FEATURES.md](docs/SHADOW_FEATURES.md).
 
 ## Изменения основной MeshCore 1.18.0
 
@@ -232,9 +232,9 @@ ESP32 sysbuild/MCUboot, дополнительные варианты и пар�
 
 | Документ | Содержание |
 |---|---|
-| [SHADOW_FEATURES.MD](SHADOW_FEATURES.MD) | Полный список наших доработок и аппаратных проверок |
+| [SHADOW_FEATURES.md](docs/SHADOW_FEATURES.md) | Полный список наших доработок и аппаратных проверок |
 | [SHADOW_UPDATE_GUIDE.md](SHADOW_UPDATE_GUIDE.md) | Перенос доработок на новый авторский релиз |
-| [COMMANDS.MD](COMMANDS.MD) | Фактическое дерево USB/BLE/LoRa CLI |
+| [COMMANDS.MD](docs/COMMANDS.MD) | Фактическое дерево USB/BLE/LoRa CLI |
 | [docs/DESIGN.md](docs/DESIGN.md) | Инварианты, слои и правила проекта |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Архитектура компонентов |
 | [docs/CLI_commands.md](docs/CLI_commands.md) | Описание CLI-команд |

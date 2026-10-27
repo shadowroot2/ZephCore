@@ -60,6 +60,14 @@ waiting for GPS, restores the previous GPS state, plays the Fall-cancellation
 tone and sends `❌ SOS Canceled` to `#sos`. The same press is consumed instead
 of starting an advert.
 
+On companions with a display, the SOS page changes to `Press to Cancel` while a
+manual SOS is waiting for GPS. Activating the page again cancels it through the
+same GPS restore, cancellation tone and `#sos` notification path.
+
+GPS pages now redraw immediately after switching GPS off or on. The callback
+pushes the actual acquisition state as well as the enabled flag, fixing stale
+button, joystick and e-paper screens.
+
 T-Echo low-battery red indication no longer latches on after its first pulse;
 the shared LED OFF phase now releases the separate low-battery GPIO.
 

@@ -2119,8 +2119,13 @@ static void companion_cli_dispatch(const char *line)
 /* GPS on/off (persisted by the CMD_SET_CUSTOM_VAR handler) */
 static void gps_enable_callback(bool enabled)
 {
+	struct gps_state_info gsi;
+
 	LOG_INF("GPS %s", enabled ? "enabled" : "disabled");
 	ui_set_gps_enabled(enabled);
+	gps_get_state_info(&gsi);
+	ui_set_gps_state(gsi.state, gsi.last_fix_age_s, gsi.next_search_s);
+	ui_request_render();
 }
 
 /* A GPS state transition for the main thread (from the system work queue). */

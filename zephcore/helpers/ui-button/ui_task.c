@@ -515,6 +515,12 @@ static void action_flood_advert(unsigned int feedback_beeps)
 #ifdef CONFIG_ZEPHCORE_UI_DISPLAY
 static void action_sos(void)
 {
+	if (mesh_sos_cancel_if_active()) {
+		LOG_INF("SOS cancellation requested");
+		schedule_render();
+		return;
+	}
+
 	LOG_INF("SOS requested");
 	mesh_send_sos();
 	schedule_render();

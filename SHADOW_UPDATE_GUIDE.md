@@ -1,14 +1,14 @@
 # Обновление ZephCore с сохранением доработок ShadoW
 
 Порядок переноса текущего форка на новый релиз автора. Обновление не считается
-завершённым, пока пройдены все пункты этого файла, `SHADOW_FEATURES.md` сверён
+завершённым, пока пройдены все пункты этого файла, `docs/SHADOW_FEATURES.md` сверён
 построчно, а результаты записаны в `SHADOW_CONTEXT.md`.
 
 Источники истины:
 
-- `SHADOW_FEATURES.md` — полный перечень нашего текущего поведения;
+- `docs/SHADOW_FEATURES.md` — полный перечень нашего текущего поведения;
 - `SHADOW_CONTEXT.md` — аппаратные проверки, принятые решения и ограничения;
-- `COMMANDS.MD` — фактическое дерево и описание CLI;
+- `docs/COMMANDS.MD` — фактическое дерево и описание CLI;
 - `docs/DESIGN.md`, `docs/ARCHITECTURE.md`, `docs/adr/` — инварианты проекта;
 - `docs/AUTHOR_FIRST_OVERLAY.md` и `author-first-overlay.json` — опыт предыдущего
   author-first переноса.
@@ -125,6 +125,8 @@ identity, pairing или настройки пользователя.
       возвращает GPS state, принудительно воспроизводит сигнал отмены Fall,
       отправляет `❌ SOS Canceled` в `#sos` и не запускает Advert. Fall этим
       путём не отменяется.
+- [ ] На устройствах с экраном ENTER на странице SOS запускает SOS, а во время
+      ожидания GPS отменяет его; экран меняет действие на `Press to Cancel`.
 
 ### Fall — только capability соответствующего акселерометра
 
@@ -215,7 +217,7 @@ identity, pairing или настройки пользователя.
 2. локальный USB CLI;
 3. BLE/app CLI;
 4. remote CLI, если команда безопасна;
-5. `COMMANDS.MD` и `docs/CLI_commands.md`;
+5. `docs/COMMANDS.MD` и `docs/CLI_commands.md`;
 6. host tests;
 7. release notes.
 
@@ -276,8 +278,9 @@ identity, pairing или настройки пользователя.
 - [ ] Не потерять авторские страницы при восстановлении наших.
 - [ ] Companion: Tracking, SOS, GPS, WiFi, Advert, Buzzer, LEDs, Offgrid, DFU,
       Shutdown и board-specific pages.
-- [ ] GPS page перерисовывается только после фактического main-thread callback;
-      это обязательно для E-Paper.
+- [ ] GPS off/on callback передаёт enabled и фактический
+      `OFF`/`ACQUIRING`/`STANDBY`, затем вызывает общий redraw; проверить
+      button, joystick и E-Paper UI.
 - [ ] На платах с DT alias `gps-switch` его положение определяет старт GPS;
       при OFF страница пишет `GPS switch: off`, а не `GPS: not detected`.
 - [ ] Heltec V3 без GPS не показывает бесполезную GPS page.
@@ -353,8 +356,8 @@ identity, pairing или настройки пользователя.
 ## 12. Документация и тесты до сборки
 
 1. Обновить `docs/ARCHITECTURE.md` для поведения/interface/limit.
-2. Обновить `docs/CLI_commands.md` и `COMMANDS.MD` для любой CLI-правки.
-3. Обновить `SHADOW_FEATURES.md`, этот guide и release notes.
+2. Обновить `docs/CLI_commands.md` и `docs/COMMANDS.MD` для любой CLI-правки.
+3. Обновить `docs/SHADOW_FEATURES.md`, этот guide и release notes.
 4. ADR нужен при новом или отменённом архитектурном решении.
 5. Любая логика без hardware получает host test и запись в
    `tests/catalog.json`; pinned значения не подгонять.
@@ -384,6 +387,8 @@ CCACHE_DIR=/private/tmp/zephcore-ccache
 ```
 
 - При смене платы/роли использовать `--pristine`.
+- Все локальные build trees хранить в `builds/`; каждой команде west передавать
+  `-d builds/<board>-<role>`. Build-каталоги в корне не создавать.
 - ESP32-S3/C-series release собирать с `--sysbuild`.
 - Собрать каждую затронутую плату и роль плюс одну незатронутую.
 - Если менялся companion common path, минимальная проверенная матрица:
@@ -415,7 +420,7 @@ CCACHE_DIR=/private/tmp/zephcore-ccache
 - [ ] Обновление поверх предыдущей версии сохраняет identity, prefs, contacts и
       pairing; PIN не сбрасывается.
 - [ ] BLE reconnect Android/iOS, USB CLI, WiFi companion transport.
-- [ ] Полное дерево help совпадает с `COMMANDS.MD`; remote replies не режутся.
+- [ ] Полное дерево help совпадает с `docs/COMMANDS.MD`; remote replies не режутся.
 - [ ] SOS: fresh/stale/no GPS, timeout, repeat, TX-complete melody и remote silent.
 - [ ] Tracking: movement/no movement, GPS restore и remote silent весь сеанс.
 - [ ] Fall: оба датчика, forced alarm, physical cancel и восстановление GPS.
