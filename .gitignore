@@ -32,7 +32,13 @@ compile_commands.json
 /devdocs/
 /westchanges/
 /meshtimesync-sim/
+/SHADOW_CONTEXT.md
 /SHADOW_UPDATE_GUIDE.md
+/docs/CURRENT_STATE.md
+/docs/HARDWARE_STATUS.md
+/docs/archive/
+/docs/AUTHOR_FIRST_OVERLAY.md
+/docs/author-first-overlay.json
 CLAUDE.md
 # Working docs dropped at the root by habit: matched by shape, not one by one
 # (a per-file list once missed one and it went into a commit).

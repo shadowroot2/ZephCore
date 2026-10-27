@@ -46,9 +46,8 @@ ZephCore — прошивка для LoRa mesh-узлов, совместима�
   питания, GPS, телеметрии и конкретных плат.
 
 Это не официальная прошивка MeshCore и не попытка присвоить авторскую работу.
-Полный список отличий нашей ветки хранится в [SHADOW_FEATURES.md](docs/SHADOW_FEATURES.md),
-а порядок переноса изменений на новую авторскую базу — в
-[SHADOW_UPDATE_GUIDE.md](SHADOW_UPDATE_GUIDE.md).
+Полный список отличий нашей ветки хранится в
+[SHADOW_FEATURES.md](docs/SHADOW_FEATURES.md).
 
 > [!NOTE]
 > Обычное обновление внутри нашей ветки сохраняет identity, настройки, контакты и BLE-пару.
@@ -233,8 +232,8 @@ ESP32 sysbuild/MCUboot, дополнительные варианты и пар�
 | Документ | Содержание |
 |---|---|
 | [SHADOW_FEATURES.md](docs/SHADOW_FEATURES.md) | Полный список наших доработок и аппаратных проверок |
-| [SHADOW_UPDATE_GUIDE.md](SHADOW_UPDATE_GUIDE.md) | Перенос доработок на новый авторский релиз |
 | [COMMANDS.MD](docs/COMMANDS.MD) | Фактическое дерево USB/BLE/LoRa CLI |
+| [docs/BUILD_MATRIX.md](docs/BUILD_MATRIX.md) | Проверенные профили и команды сборки |
 | [docs/DESIGN.md](docs/DESIGN.md) | Инварианты, слои и правила проекта |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Архитектура компонентов |
 | [docs/CLI_commands.md](docs/CLI_commands.md) | Описание CLI-команд |

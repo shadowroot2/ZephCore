@@ -1,0 +1,35 @@
+## Observer
+
+- `set wifi.ssid <name>` — задаёт имя сети Wi-Fi.
+- `set wifi.psk <password>` — задаёт пароль Wi-Fi; пустой пароль — открытая сеть.
+- `set mqtt.host <hostname>` — задаёт адрес MQTT-брокера.
+- `set mqtt.port <port>` — задаёт порт MQTT; по умолчанию 8883.
+- `set mqtt.tls 0|1` — выключает/включает TLS; по умолчанию включён.
+- `set mqtt.user <username>` — задаёт пользователя MQTT.
+- `set mqtt.password <pass>` — задаёт пароль MQTT.
+- `set mqtt.iata <code>` — задаёт код местоположения.
+- `set name <name>` — задаёт имя узла.
+- `set lat <-90..90>` — задаёт широту.
+- `set lon <-180..180>` — задаёт долготу; координаты и нестандартное имя позволяют объявлять узел.
+- `set meshtimesync on|off` — включает/выключает коррекцию времени по mesh.
+- `set freq <MHz|Hz>` — задаёт частоту 300–1000 МГц; принимает МГц или Гц.
+- `set sf <7-12>` — задаёт spreading factor.
+- `set bw <idx|kHz>` — задаёт полосу в кГц или индекс: 0=125, 1=250, 2=500, 3=62.5, 4=41.7, 5=31.25.
+- `set cr <5-8>` — задаёт coding rate.
+- `get name` — выводит имя.
+- `get role` — выводит роль observer.
+- `get board` — выводит плату.
+- `get version` — выводит версию и дату сборки.
+- `get public.key` — выводит открытый ключ.
+- `get radio` — выводит параметры LoRa.
+- `get lat / get lon` — выводит координаты; это две отдельные команды.
+- `get wifi.ssid` — выводит SSID.
+- `get wifi.status` — выводит состояние Wi-Fi.
+- `get mqtt.status` — выводит состояние MQTT.
+- `get mqtt.host` — выводит адрес брокера.
+- `get mqtt.port` — выводит порт брокера.
+- `get mqtt.tls` — выводит настройку TLS.
+- `get mqtt.user` — выводит пользователя MQTT.
+- `get mqtt.iata` — выводит код местоположения.
+- `get meshtimesync` — выводит состояние согласования времени.
+- `help` — выводит список доступных команд.
