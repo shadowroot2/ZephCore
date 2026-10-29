@@ -33,13 +33,23 @@ The text CLI of every ZephCore role. Commands are sent over USB serial (CDC-ACM)
 > **Help transport.** On a repeater, local USB `help`/`?` prints the complete command catalogue directly
 > to the console. Remote admin replies are limited to 161 bytes, or 158 bytes with a request tag, so
 > remote `help` returns category names and `help <group>` returns one bounded category. Local-only
-> commands (`get prv.key`, `set freq`, `get acl`, full `log`, `erase`) are not advertised remotely.
+> commands (`get prv.key`, `set freq`, `get acl`, `erase`) are not advertised remotely.
 > Radio tuning and gain commands are all in `help rf`; there is no separate `help radio` group.
 > Flood limits and backoff are at the end of `help mesh`; there is no separate `help flood` group.
 > Neighbour commands are isolated in `help find`.
-> Password settings are in `help id`; `help access` contains only `setperm`.
-> Battery commands are the second page of power (`help power.2`); there is no separate `help battery`.
-> `shutdown y` is the last command in `help sys`, and `log` follows `stat` in the root group list.
+> Password settings and `setperm` are in `help access`, immediately after `id`.
+> Battery commands have their own remote help group (`help batt`); the `battery` command is unchanged.
+> Bridge configuration commands are in `help bridge`; there is no `help bridge.cfg`.
+> With GNSS, `help gps` lists `gps on|off` together and omits `get gps`; the command still works.
+> `help mesh` starts with `advert[.zerohop]` followed by `repeat`; `help find` starts with `discover.neighbors`. `help rf` puts `freqerr` after `freq`, and `help cad` puts `txdelay` and `cad.reset` after `cad.stats`.
+> The `region` group follows `rf`; `help uplink` lists `get/set uplink.enable` before `set uplink.wifi.psk`.
+> `help bridge` lists `bridge [on|off]`; its BLE-only commands are hidden while ESP-NOW is selected.
+> `help log` lists `log start` and `log stop` only when Zephyr logging is enabled. `log erase` is omitted because repeaters have no log file.
+> `stat` and `sys` are the last root groups, with optional `log` between them; `shutdown y` is the last command in `help sys`.
+> Hardware-specific entries follow devicetree capabilities. DFU, powersaving, power-source and boot-voltage entries follow the board adapter's Kconfig capabilities; shutdown requires `CONFIG_POWEROFF`.
+> On SX127x, remote help omits CAD and RX duty-cycle entries because that driver has no implementation for them.
+> Repeaters reject `start ota` and `stop ota` on both USB and remote CLI; room-server and companion commands are unchanged.
+> `clkreboot` is removed from every role; manual clock sets remain forward-only except for a validated GPS fix ([ADR 0010](adr/0010-remove-clkreboot.md)).
 
 ---
 
@@ -55,7 +65,6 @@ The text CLI of every ZephCore role. Commands are sent over USB serial (CDC-ACM)
 | `start dfu` | *(ZephCore only)* nRF52: reboot into the UF2 bootloader for drag-and-drop update. ESP32-S3: reboot into the ROM download mode on USB-Serial-JTAG (`303a:1001`), so ordinary `esptool write-flash` and browser flashers can reach the chip. Every other chip replies with an error and does **not** reboot — ESP32-C3/C6 and classic ESP32 never lose the port to USB OTG so esptool resets them itself, and nRF54L15/MG24/STM32WL have no USB device peripheral and are flashed over SWD |
 | `start ota` | ESP32: start WiFi AP + HTTP OTA server. nRF52: reboot into BLE OTA DFU mode |
 | `stop ota` | *(ZephCore only)* Stop WiFi OTA server (ESP32 only) |
-| `clkreboot` | Set clock to a fixed reference time (15 May 2024 8:50pm UTC) then reboot. On a board with a hardware RTC the reference time is written to the chip too, as upstream, so the reset survives the reboot |
 | `powersaving` / `powersaving on` / `powersaving off` | Upstream's command and replies. On ESP32 light-sleep builds (repeaters of boards with `light_sleep: true`, companions of boards with `light_sleep_companion: true`) it gates light sleep: `off` (persisted) keeps the SoC awake, which also keeps a USB Serial/JTAG console attached; `on` allows sleep again, replying `on - After N s (console window)` while the console window is open, else `on - Immediate effect`. Default **on** on those repeaters, and prefs from firmware that stored the field without acting on it are read as on once. Default **off** on companions: a companion sleeps only after `powersaving on`, and then not while a USB host is attached, the display is on, or a Bluetooth link is not yet encrypted. nRF52/nRF54L: stored, replies `on - Immediate effect` (they always idle in System ON; `off` changes nothing). Other boards: `Board not supported` |
 
 ---
@@ -153,10 +162,10 @@ Regions control which flood packets the repeater forwards. The region tree is hi
 | `stats-core` | *(USB only)* Display core mesh statistics |
 | `stats-radio` | *(USB only)* Display radio statistics |
 | `stats-packets` | *(USB only)* Display packet statistics |
-| `log start` | Enable packet logging to file |
-| `log stop` | Disable packet logging |
-| `log erase` | Erase the log file |
-| `log` | *(USB only)* Dump the full log file to USB serial |
+| `log start` | Enable additional RX/TX lines in Zephyr logging when `CONFIG_LOG=y` |
+| `log stop` | Disable those additional RX/TX lines |
+| `log erase` | Repeater and room-server have no log file; this legacy command has no effect and is omitted from their help |
+| `log` | *(USB only)* Repeater and room-server have no log file; this legacy dump has no effect and is omitted from their help |
 | `erase` | *(USB only)* Factory reset: erase the entire LittleFS volume, the BLE-bond NVS, and external QSPI flash, then reboot |
 
 > **`erase` is a true factory reset.** It flattens `lfs_partition` (identity, prefs, ACL,
@@ -540,4 +549,4 @@ four radio parameters together, since they are one interop-critical set.
 - **USB-only commands** — `get acl`, `get prv.key`, `set freq`, `log` (dump), `stats-packets`, `stats-radio`, `stats-core`, `erase` — are blocked when the command arrives over the mesh (remote admin). These are the only ones gated on `sender_timestamp == 0`; `get public.key` and `set prv.key` are **not** among them.
 - **Adaptive contention window** — `txdelay`, `rxdelay`, and `direct.txdelay` are accepted and stored for Arduino prefs compatibility but have no effect. Use `get txdelay` to inspect the current adaptive state and `set backoff.multiplier` to tune reactive backoff.
 - **Region load mode** — after `region load`, every line received is parsed as a region entry until a blank line is sent. The loaded map is only committed to the live region tree at that point; use `region save` to persist it. Region rows must be indented by at least one space, so an **unindented line that starts with a name character aborts the mode and is executed as a normal command** — the escape hatch if a `region load` is started by accident or a client dies mid-transfer. An abort discards the partial map, leaving the live region tree untouched. The exported wildcard header line `*` stays unindented and is ignored as before, so pasting the output of `region` still loads cleanly.
-- **Reboot delay** — `start dfu`, `start ota` (nRF52 BLE-DFU path only), `reboot`, `poweroff`, `clkreboot` and `erase` defer the reset by **2 seconds** so the reply can be transmitted over LoRa first. On a companion the handler then keeps deferring in 20 ms steps until the BLE/USB transport has drained, up to a further 3 s grace. On ESP32 `start ota` starts a WiFi AP + HTTP server and does **not** reboot.
+- **Reboot delay** — `start dfu`, `start ota` (nRF52 BLE-DFU path only), `reboot`, `poweroff` and `erase` defer the reset by **2 seconds** so the reply can be transmitted over LoRa first. On a companion the handler then keeps deferring in 20 ms steps until the BLE/USB transport has drained, up to a further 3 s grace. On ESP32 `start ota` starts a WiFi AP + HTTP server and does **not** reboot.

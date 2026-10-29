@@ -389,13 +389,6 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
 	} else if (memcmp(command, "reboot", 6) == 0) {
 		strcpy(reply, "OK - rebooting");
 		scheduleReboot(REBOOT_NORMAL);
-	} else if (memcmp(command, "clkreboot", 9) == 0) {
-		getRTCClock()->setCurrentTime(1715770351);  // 15 May 2024, 8:50pm
-		/* Deferred like every other reboot path: called inline this reset the
-		 * board before the reply — and before any delivery-ack — could leave
-		 * the TX queue. */
-		strcpy(reply, "OK - clock reset, rebooting");
-		scheduleReboot(REBOOT_NORMAL);
 	} else if (memcmp(command, "advert.zerohop", 14) == 0) {
 		_callbacks->sendSelfAdvertisement(1500, false);  // 0-hop (direct) advert
 		strcpy(reply, "OK - zerohop advert sent");

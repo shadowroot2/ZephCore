@@ -116,7 +116,7 @@ static uint32_t headless_sos_armed_until;
 #endif
 #ifdef ZEPHCORE_HEADLESS_ADVERT_GESTURE
 static atomic_t headless_sos_deadline;
-static struct k_work_delayable headless_single_advert_work;
+static struct k_work_delayable headless_single_action_work;
 #endif
 
 /* ========== Doom Easter Egg Activation ========== */
@@ -180,13 +180,13 @@ static struct k_work_delayable advert_defer_work;
 static void action_flood_advert(unsigned int feedback_beeps);
 
 #ifdef ZEPHCORE_HEADLESS_ADVERT_GESTURE
-static void headless_single_advert_cancel(void)
+static void headless_single_action_cancel(void)
 {
 	atomic_set(&headless_sos_deadline, 0);
-	k_work_cancel_delayable(&headless_single_advert_work);
+	k_work_cancel_delayable(&headless_single_action_work);
 }
 
-static void headless_single_advert_handler(struct k_work *work)
+static void headless_single_action_handler(struct k_work *work)
 {
 	ARG_UNUSED(work);
 	atomic_val_t deadline = atomic_get(&headless_sos_deadline);
@@ -197,17 +197,23 @@ static void headless_single_advert_handler(struct k_work *work)
 	    ui_shutdown_in_progress()) {
 		return;
 	}
+#if !defined(ZEPHCORE_REPEATER)
+	if (IS_ENABLED(CONFIG_ZEPHCORE_HEADLESS_SINGLE_TAP_TRACKING)) {
+		mesh_tracking_toggle();
+		return;
+	}
+#endif
 	action_flood_advert(1);
 }
 
-static bool headless_single_advert_claim_sos(void)
+static bool headless_single_action_claim_sos(void)
 {
 	atomic_val_t deadline = atomic_get(&headless_sos_deadline);
 	bool armed = deadline != 0 &&
 		(int32_t)((uint32_t)deadline - k_uptime_get_32()) >= 0 &&
 		atomic_cas(&headless_sos_deadline, deadline, 0);
 
-	headless_single_advert_cancel();
+	headless_single_action_cancel();
 	return armed;
 }
 #endif
@@ -845,12 +851,12 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 #if !IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
 #if defined(ZEPHCORE_HEADLESS_ADVERT_GESTURE)
 		if (mesh_sos_cancel_if_active()) {
-			headless_single_advert_cancel();
+			headless_single_action_cancel();
 			break;
 		}
 		uint32_t deadline = k_uptime_get_32() + HEADLESS_GESTURE_ARM_WINDOW_MS;
 		atomic_set(&headless_sos_deadline, deadline ? deadline : 1);
-		k_work_reschedule(&headless_single_advert_work,
+		k_work_reschedule(&headless_single_action_work,
 			K_MSEC(HEADLESS_GESTURE_ARM_WINDOW_MS));
 #else
 		headless_sos_armed_until = k_uptime_get_32() + HEADLESS_GESTURE_ARM_WINDOW_MS;
@@ -882,7 +888,11 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 
 	case INPUT_KEY_H:
 #if !IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY) && !defined(ZEPHCORE_REPEATER)
-		mesh_tracking_toggle();
+		if (IS_ENABLED(CONFIG_ZEPHCORE_HEADLESS_SINGLE_TAP_TRACKING)) {
+			action_flood_advert(2);
+		} else {
+			mesh_tracking_toggle();
+		}
 #endif
 		break;
 
@@ -891,7 +901,7 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 	case INPUT_KEY_F:
 #if !IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
 #if defined(ZEPHCORE_HEADLESS_ADVERT_GESTURE)
-		if (headless_single_advert_claim_sos()) {
+		if (headless_single_action_claim_sos()) {
 			mesh_send_sos();
 			break;
 		}
@@ -943,7 +953,7 @@ int ui_init(void)
 	k_work_init_delayable(&splash_work, splash_work_handler);
 	k_work_init_delayable(&advert_defer_work, advert_defer_handler);
 #ifdef ZEPHCORE_HEADLESS_ADVERT_GESTURE
-	k_work_init_delayable(&headless_single_advert_work, headless_single_advert_handler);
+	k_work_init_delayable(&headless_single_action_work, headless_single_action_handler);
 #endif
 	gps_switch_read();
 

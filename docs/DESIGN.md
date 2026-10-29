@@ -292,7 +292,7 @@ it polls external state. Repeater and room server share one loop (`server_main_c
 
 ### 8.2 Time
 - Two clocks: monotonic milliseconds (all protocol timers) and wall-clock RTC (timestamps only).
-- Invariant: wall-clock set paths are **forward-only**, except the GPS fix and `clkreboot`; a backward step mutes
+- Invariant: wall-clock set paths are **forward-only**, except the GPS fix; a backward step mutes
   a node mesh-wide.
 - Sources: GPS / manual set > mesh consensus (`MeshTimeSync`, opt-in) > hardware RTC. Every set also writes the
   hardware RTC when the board has one.

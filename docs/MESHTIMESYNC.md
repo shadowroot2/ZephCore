@@ -67,21 +67,10 @@ worth watching that dry-run output for a day before (and after) enabling.
 
 ## Recovery recipe
 
-If the clock ever ends up AHEAD of true time (`time` alone will refuse with
-"clock cannot go backwards"):
-
-```
-set meshtimesync off
-clkreboot
-(log back in)
-time <correct epoch>
-set meshtimesync on
-```
-
-Works over remote admin too. The off/on bracket makes it deterministic (no
-bootstrap race), and the manual set arms the 7-day protection anyway. Fresh
-adverts take tens of minutes to accumulate after a reboot, so an operator
-syncing right after login always wins.
+If the clock ends up ahead of true time, `time` refuses to move it backward.
+On a board with GPS, `gps on` and `gps sync` request a fresh fix; a validated
+GPS fix can correct the clock. A board without GPS has no CLI command for a
+backward correction.
 
 For the design details (consensus algorithm, security model, why the limits
 are what they are), see [ARCHITECTURE.md](ARCHITECTURE.md) section 4.9.

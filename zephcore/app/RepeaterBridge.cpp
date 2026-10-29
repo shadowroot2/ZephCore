@@ -266,6 +266,11 @@ bool repeater_bridge_is_enabled(void)
 	return s_enabled;
 }
 
+bool repeater_bridge_is_ble(void)
+{
+	return s_transport == BRIDGE_BLE;
+}
+
 bool repeater_bridge_is_connected(void)
 {
 	if (!s_enabled) return false;

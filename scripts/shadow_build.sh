@@ -25,11 +25,19 @@ platform=nrf
 format=uf2
 chip=""
 sysbuild=false
+base_conf=""
+base_variant=""
 
 case $profile in
 	thinknode_m1|thinknode_m3|thinknode_m6|t1000_e|heltec_t114|rak4631|xiao_nrf52840)
 		target=$profile
 		stem=$profile
+		;;
+	thinknode_m3_mama)
+		target=thinknode_m3
+		stem=thinknode_m3
+		base_conf=boards/nrf52840/thinknode_m3/mama.conf
+		base_variant=mama
 		;;
 	lilygo_techo)
 		target=lilygo_techo
@@ -38,6 +46,14 @@ case $profile in
 	heltec_v3)
 		target=heltec_wifi_lora32_v3/esp32s3/procpu
 		stem=heltec_wifi_lora32_v3-esp32s3-procpu
+		platform=esp32
+		format=esp-sysbuild
+		chip=esp32s3
+		sysbuild=true
+		;;
+	thinknode_m5)
+		target=thinknode_m5/esp32s3/procpu
+		stem=thinknode_m5-esp32s3-procpu
 		platform=esp32
 		format=esp-sysbuild
 		chip=esp32s3
@@ -52,7 +68,8 @@ esac
 confs=""
 case $role in
 	companion)
-		role_tag=companion
+		role_tag="companion${base_variant:+-$base_variant}"
+		confs=$base_conf
 		if [[ -n $variant ]]; then
 			if [[ $profile == lilygo_techo && $variant == 433 ]]; then
 				confs=boards/nrf52840/lilygo_techo/lilygo_techo_433.conf
@@ -65,8 +82,9 @@ case $role in
 		;;
 	repeater)
 		[[ -z $variant ]] || { echo "repeater variant is not defined" >&2; exit 2; }
-		role_tag=repeater
+		role_tag="repeater${base_variant:+-$base_variant}"
 		confs=boards/common/repeater.conf
+		[[ -n $base_conf ]] && confs+=";$base_conf"
 		;;
 	bridge)
 		[[ $profile == thinknode_m6 || $profile == heltec_v3 ]] || {
@@ -86,7 +104,9 @@ case $role in
 	*) usage ;;
 esac
 
-build_dir="builds/${profile}-${role_tag}"
+build_tag=$role
+[[ -n $variant ]] && build_tag+="-$variant"
+build_dir="builds/${profile}-${build_tag}"
 sdk_dir=${ZEPHYR_SDK_INSTALL_DIR:-"$PWD/zephyr-sdk-1.0.1"}
 ccache_dir=${CCACHE_DIR:-"${TMPDIR:-/tmp}/zephcore-ccache"}
 cmd=(./.venv/bin/west build -d "$build_dir" -b "$target" zephcore --pristine)

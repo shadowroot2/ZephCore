@@ -2022,8 +2022,7 @@ static void companion_cli_exec(const char *line, uint32_t sender_timestamp,
 	const char *requested_line = line;
 	bool silent_notifications = companion_cli_silent_notifications(sender_timestamp);
 	reply[0] = '\0';
-	if (strcmp(line, "clkreboot") == 0 ||
-	    strcmp(line, "gps diag") == 0 ||
+	if (strcmp(line, "gps diag") == 0 ||
 	    strcmp(line, "get gps diag") == 0 ||
 	    strcmp(line, "set gps diag") == 0 ||
 	    strncmp(line, "set gps diag ", 13) == 0 ||

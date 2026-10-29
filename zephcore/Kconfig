@@ -483,6 +483,24 @@ config ZEPHCORE_BLE_ADV_SLOW_INTERVAL
 	  Advertising interval in 0.625ms units.
 	  338 = 211.25ms (Apple-compliant, used after 60s fast window).
 
+config ZEPHCORE_CLI_DFU
+	bool
+	default y if SOC_SERIES_NRF52 || SOC_SERIES_ESP32S3
+	help
+	  The board adapter implements a software jump to the DFU bootloader.
+
+config ZEPHCORE_CLI_PWRMGT
+	bool
+	default y if SOC_SERIES_NRF52
+	help
+	  The board adapter implements power-source and boot-voltage queries.
+
+config ZEPHCORE_CLI_POWERSAVING
+	bool
+	default y if SOC_FAMILY_NORDIC_NRF || (PM && SOC_FAMILY_ESPRESSIF_ESP32)
+	help
+	  The server loop implements the runtime powersaving preference.
+
 config ZEPHCORE_BLE_DFU
 	bool "Buttonless BLE DFU (legacy Nordic/Adafruit OTA jump)"
 	depends on SOC_SERIES_NRF52
@@ -1226,8 +1244,16 @@ config ZEPHCORE_HEADLESS_SOS_ADVERT_GESTURE
 	bool "Enable headless SOS/advert button gesture"
 	depends on ZEPHCORE_UI_BUTTONS && !ZEPHCORE_UI_DISPLAY
 	help
-	  A single tap opens the advert/SOS hold window. While a manual SOS is
-	  waiting for GPS, that single tap cancels it instead.
+	  A single tap opens the delayed-action/SOS hold window. By default the
+	  delayed action is Advert. While a manual SOS is waiting for GPS, that
+	  single tap cancels it instead.
+
+config ZEPHCORE_HEADLESS_SINGLE_TAP_TRACKING
+	bool "Use Tracking as the headless single-tap action"
+	depends on ZEPHCORE_HEADLESS_SOS_ADVERT_GESTURE
+	help
+	  Keep the single-tap plus hold SOS gesture, but run Tracking instead of
+	  Advert when its hold window expires. The two-tap action becomes Advert.
 
 config ZEPHCORE_UI_BUZZER
 	bool "Enable buzzer"

@@ -68,14 +68,17 @@ package() {
                 # "flash-update" at 0x10000, WiFi-OTA upload) and is NOT bootable
                 # standalone -- never publish it as a plain .bin (bricked boards when
                 # flashed like classic-ESP32's image, GH #42).
-                local flash_size
+                local flash_size app_offset flash_mode flash_freq
                 flash_size=$(python3 zephcore/scripts/dts_flash_size.py \
                     "${ZEPHYR_DTS:-build/zephcore/zephyr/zephyr.dts}")
+                app_offset=$(sed -n 's/^CONFIG_FLASH_LOAD_OFFSET=//p' build/zephcore/zephyr/.config)
+                flash_mode=$(sed -n 's/^CONFIG_ESPTOOLPY_FLASHMODE="\([^"]*\)"/\1/p' build/mcuboot/zephyr/.config)
+                flash_freq=$(sed -n 's/^CONFIG_ESPTOOLPY_FLASHFREQ="\([^"]*\)"/\1/p' build/mcuboot/zephyr/.config)
                 python -m esptool --chip "$chip" merge-bin \
                     --output "$out-merged.bin" \
-                    --flash-mode dio --flash-freq 40m --flash-size "$flash_size" \
+                    --flash-mode "$flash_mode" --flash-freq "$flash_freq" --flash-size "$flash_size" \
                     0x00000 build/mcuboot/zephyr/zephyr.bin \
-                    0x10000 build/zephcore/zephyr/zephyr.signed.bin
+                    "$app_offset" build/zephcore/zephyr/zephyr.signed.bin
                 cp build/zephcore/zephyr/zephyr.signed.bin "$out-update.bin"
             fi
             ;;

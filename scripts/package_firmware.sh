@@ -28,15 +28,20 @@ case $format in
 		boot="${build_dir}/mcuboot/zephyr/zephyr.bin"
 		app="${build_dir}/zephcore/zephyr/zephyr.signed.bin"
 		dts="${build_dir}/zephcore/zephyr/zephyr.dts"
-		[[ -f $boot && -f $app && -f $dts ]] || {
+		app_config="${build_dir}/zephcore/zephyr/.config"
+		boot_config="${build_dir}/mcuboot/zephyr/.config"
+		[[ -f $boot && -f $app && -f $dts && -f $app_config && -f $boot_config ]] || {
 			echo "incomplete sysbuild output in $build_dir" >&2
 			exit 1
 		}
 		flash_size=$(python3 zephcore/scripts/dts_flash_size.py "$dts")
+		app_offset=$(sed -n 's/^CONFIG_FLASH_LOAD_OFFSET=//p' "$app_config")
+		flash_mode=$(sed -n 's/^CONFIG_ESPTOOLPY_FLASHMODE="\([^"]*\)"/\1/p' "$boot_config")
+		flash_freq=$(sed -n 's/^CONFIG_ESPTOOLPY_FLASHFREQ="\([^"]*\)"/\1/p' "$boot_config")
 		python3 -m esptool --chip "$chip" merge-bin \
 			--output "${out}-merged.bin" \
-			--flash-mode dio --flash-freq 40m --flash-size "$flash_size" \
-			0x00000 "$boot" 0x10000 "$app"
+			--flash-mode "$flash_mode" --flash-freq "$flash_freq" --flash-size "$flash_size" \
+			0x00000 "$boot" "$app_offset" "$app"
 		cp "$app" "${out}-update.bin"
 		echo "${out}-merged.bin"
 		echo "${out}-update.bin"

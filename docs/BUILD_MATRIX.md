@@ -6,10 +6,12 @@
 
 ## Профили
 
-| Профиль | West target | Проверявшиеся роли | Артефакт |
+| Профиль | West target | Роли профиля | Артефакт |
 |---|---|---|---|
 | `thinknode_m1` | `thinknode_m1` | companion | UF2 |
 | `thinknode_m3` | `thinknode_m3` | companion | UF2 |
+| `thinknode_m3_mama` | `thinknode_m3` + `mama.conf` | companion | UF2 |
+| `thinknode_m5` | `thinknode_m5/esp32s3/procpu` | companion | merged/update BIN |
 | `thinknode_m6` | `thinknode_m6` | repeater, bridge | UF2 |
 | `t1000_e` | `t1000_e` | companion | UF2 |
 | `lilygo_techo` | `lilygo_techo` | companion | UF2 |
@@ -31,6 +33,7 @@
 
 ```sh
 scripts/shadow_build.sh thinknode_m1 companion
+scripts/shadow_build.sh thinknode_m3_mama companion
 scripts/shadow_build.sh lilygo_techo companion 433
 scripts/shadow_build.sh thinknode_m6 bridge 868
 scripts/shadow_build.sh heltec_v3 companion

@@ -274,7 +274,9 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"get/set tx\r\n"
 		"powersaving on|off\r\n"
 		"sensor get <key>\r\nsensor set <key> <value>\r\nsensor list <start>\r\n"
-		"log start\r\nlog stop\r\nlog erase\r\nlog\r\n"
+#if IS_ENABLED(CONFIG_LOG)
+		"log start\r\nlog stop\r\n"
+#endif
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
 		"get/set tz.offset (hours)\r\n"
 #endif
@@ -300,12 +302,7 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"get/set uplink.wifi.ssid\r\n"
 #endif
 		"start dfu\r\n"
-		"start ota\r\n"
-#if IS_ENABLED(CONFIG_ZEPHCORE_WIFI_OTA)
-		"stop ota\r\n"
-#endif
 		"reboot\r\n"
-		"clkreboot\r\n"
 		"shutdown y\r\n"
 		"erase\r\n"
 		"help";
@@ -356,7 +353,7 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 #if IS_ENABLED(CONFIG_ZEPHCORE_WIFI_OTA)
 		"start ota\r\nstop ota\r\n"
 #endif
-		"reboot\r\nclkreboot\r\nerase\r\nhelp";
+		"reboot\r\nerase\r\nhelp";
 
 	switch (role) {
 	case LocalCLIHelpRole::Companion: return companion;

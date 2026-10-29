@@ -793,7 +793,16 @@ Repeater USB `help`/`?` bypasses the bounded command reply buffer and prints the
 complete role catalogue. Remote mesh admin uses categorical help: `help` lists
 groups and `help <group>` returns one group. A tagged remote reply has 158 bytes
 including its terminator; local-only secrets and destructive commands are not
-advertised remotely. Companion remote mesh CLI has the same packet-sized
+advertised remotely. Repeater power and battery commands have separate `power`
+and `batt` groups; bridge controls and configuration share `bridge`.
+The `access` group follows `id` and contains both password settings and `setperm`.
+Repeaters reject `start ota` and `stop ota` on USB and remote CLI.
+The shared `clkreboot` command is removed ([ADR 0010](adr/0010-remove-clkreboot.md)).
+The `stat`, `log` and `sys` groups follow all optional groups.
+The `log` group is present only with Zephyr logging; bridge help follows the
+selected BLE or ESP-NOW transport. RF and bridge help use a shared `get/set:` heading with individual setting names. The mesh help uses one setting per line under a shared `get/set:` heading; flood suffixes share one complete line. Remote help omits commands whose hardware
+support is absent or whose repeater callback has no implementation.
+Companion remote mesh CLI has the same packet-sized
 categorical `help` model and exposes operational ZephCore settings to contacts
 with remote CLI permission. Identity and WiFi secrets, BLE PIN, RF changes,
 battery calibration, automatic-shutdown changes, power-off, firmware update and
@@ -1065,11 +1074,14 @@ Single button; tap-count → key-code mapping comes from the board's devicetree 
 
 The headless SOS/advert gesture is a capability selected by
 `CONFIG_ZEPHCORE_HEADLESS_SOS_ADVERT_GESTURE`, currently enabled on T1000-E and
-ThinkNode M3. A single tap normally opens the three-second advert/SOS hold
-window. While a manual SOS is waiting for GPS, it instead queues a main-thread
-cancel, restores the previous GPS state, plays the forced Fall-cancellation tone
-and sends `❌ SOS Canceled` to `#sos`; the tap is consumed and cannot also send
-an advert. Fall acknowledgement remains a separate forced-alarm path.
+ThinkNode M3 profiles. A single tap normally opens the three-second action/SOS
+hold window. On M3-MAMA its expiry toggles Tracking instead of sending Advert,
+while a two-tap gesture sends Advert. Holding after the first short press still
+starts SOS. Feedback remains action-bound. While a manual SOS is waiting for
+GPS, the single-tap gesture instead queues a main-thread cancel, restores the previous
+GPS state, plays the forced Fall-cancellation tone and sends `❌ SOS Canceled`
+to `#sos`; the gesture is consumed and cannot also run its delayed action. Fall
+acknowledgement remains a separate forced-alarm path.
 
 Boards with a display also map a 1 s hold to `KEY_ENTER` (a `zephyr,input-longpress` filter), which runs the item on
 the page. On the SOS page, ENTER starts a manual SOS or cancels one while it is
@@ -1159,6 +1171,10 @@ New drivers in `patches/zephyr-new/` (LR11xx, LR20xx, native-Linux SPI/GPIO, DTS
 
 ### 9.5 Flash Partition Layouts
 
+ESP sysbuild packaging reads the app offset from the resolved application's
+`CONFIG_FLASH_LOAD_OFFSET`, and flash mode/frequency from MCUboot's resolved
+configuration. M5 uses slot0 at `0x20000`; Heltec V3 uses `0x10000`.
+
 **nRF52840 SD v6**: SoftDevice 152KB → App 680KB → NVS 16KB → LFS 128KB → UF2 48KB
 **nRF52840 SD v7**: SoftDevice 156KB → App 676KB → NVS 16KB → LFS 128KB → UF2 48KB
 **ESP32 (4MB)**: Boot + App → LFS 192KB + NVS 16KB
@@ -1183,6 +1199,7 @@ Build strings: `docs/supported_boards.md`. Flash methods: `docs/BUILDING.md`. Ad
 | SenseCAP MeshTracker X1 | nRF52840 | **LR2021** | AG3335M (L1+L5) | - | SPA06 barometer, DRV2605L vibration, YSN8900 RTC, QSPI 8MB, RGB LEDs, buzzer |
 | ThinkNode M1 | nRF52840 | SX1262 | Air530Z | EPD 200x200 (SSD1681) | Buzzer, 2 buttons, QSPI 2MB, RGB LEDs |
 | ThinkNode M3 | nRF52840 | **LR1110** | Yes | - | Buzzer, 2 buttons, RGB LEDs |
+| ThinkNode M3-MAMA | nRF52840 | **LR1110** | Yes | - | M3 profile; 1 tap Tracking, 1 tap + hold SOS, 2 taps Advert |
 | ThinkNode M6 | nRF52840 | SX1262 | L76K | - | QSPI, RGB LEDs |
 | Wio Tracker L1 | nRF52840 | SX1262 | L76K | OLED 128x64 (SH1106) | 5-way joystick UI, buzzer, QSPI 2MB |
 | LilyGo T-Echo | nRF52840 | SX1262 (TCXO 1.8V) | L76K | EPD 1.54" (SSD1681) | BME280, QSPI, touch-button backlight |

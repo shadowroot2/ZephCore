@@ -1377,10 +1377,21 @@ void RepeaterMesh::handleCommand(uint32_t sender_timestamp, char* command, char*
    * Set unconditionally: a stale value would shrink the next reply. */
   _cli.setReplyHeaderUsed(hdr_used);
 
+  if (repeater_cli_ota_command(command)) {
+    strcpy(reply, "Unknown command");
+    return;
+  }
+
   // ZEPHCORE: remote help is one bounded response per category. The complete
   // catalogue is local-only because it cannot fit in one mesh CLI packet.
   if (sender_timestamp != 0) {
-    const char* help = repeater_remote_cli_help(command);
+    const char* help = repeater_remote_cli_help(command,
+#if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+                                               repeater_bridge_is_ble()
+#else
+                                               false
+#endif
+                                               );
     if (help != nullptr) {
       snprintf(reply, CLI_REMOTE_REPLY_SIZE - hdr_used, "%s", help);
       return;

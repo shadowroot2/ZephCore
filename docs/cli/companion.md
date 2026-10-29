@@ -167,7 +167,7 @@ help
    └─ reboot
 ```
 
-`wifi`, Fall и display/input rotation показываются только при наличии соответствующей возможности сборки. Удалённо не выполняются `get/set prv.key`, `get/set wifi.pwd`, `get/set wifi.ssid`, `set wifi.clear`, `set pin`, `set freq`, `set radio`, `set tx`, `set adc.multiplier`, `set autoshutdown`, `offgrid on|off`, `clear stats`, `shutdown`, `poweroff`, OTA/DFU, `erase` и `clkreboot`.
+`wifi`, Fall и display/input rotation показываются только при наличии соответствующей возможности сборки. Удалённо не выполняются `get/set prv.key`, `get/set wifi.pwd`, `get/set wifi.ssid`, `set wifi.clear`, `set pin`, `set freq`, `set radio`, `set tx`, `set adc.multiplier`, `set autoshutdown`, `offgrid on|off`, `clear stats`, `shutdown`, `poweroff`, OTA/DFU и `erase`.
 
 ### Команды и описание
 

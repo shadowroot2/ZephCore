@@ -47,7 +47,22 @@ bands as M3 and T1000-E.
 
 Repeater USB `help` now prints the complete local command list. The remote mesh
 console uses `help` for categories and `help <group>` for one packet-sized group,
-matching the categorical command line used by the companion app. Companion
+matching the categorical command line used by the companion app. Repeater power
+and battery help use separate `help power` and `help batt` groups; the old
+`help power.2` entry is gone. Bridge configuration is now in `help bridge`,
+without a separate `help bridge.cfg`. Remote `help access` follows `id` and
+contains the password settings and `setperm`; `help id` puts key commands last.
+Repeaters no longer accept `start ota` or `stop ota` over USB or mesh.
+`help gps`, `help bridge` and `help log` group related command variants, and
+`help gps` omits the `get gps` entry. `stat`, `log` and `sys` now close the
+root group list. `help mesh` starts with adverts and `repeat`, `help find` with
+`discover.neighbors`; `region` follows `rf`, and `help uplink` puts the WiFi PSK
+after status. `help rf` places `freqerr` after `freq`, and `help cad` places
+`txdelay` and `cad.reset` after `cad.stats`. The `clkreboot` command is removed
+from every role. Repeater help now lists only available GNSS, ADC, FEM and
+power-diagnostic commands, and bridge help follows the selected BLE or ESP-NOW
+transport. Repeater log-file commands are omitted because there is no log file. RF, bridge and mesh help now list settings on separate lines and keeps all flood suffixes on one line within the packet limit.
+Companion
 remote mesh CLI now uses the same packet-sized categories and exposes the
 safe operational ZephCore commands to an authorized contact. Identity and WiFi
 secrets, BLE PIN, RF changes, battery calibration/autoshutdown, power-off,

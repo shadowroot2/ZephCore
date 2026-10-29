@@ -35,6 +35,12 @@ xiao_nrf52840
 
 > **RAK WisMesh Pocket** (WisBlock pocket): use `-b rak4631` — same board string and firmware as **RAK4631**.
 >
+> **ThinkNode M3-MAMA**: use board `thinknode_m3` with
+> `boards/nrf52840/thinknode_m3/mama.conf`. It inherits every M3 hardware fix;
+> one tap toggles Tracking after the hold window, one tap followed by a hold
+> starts SOS, and two taps send Advert. This is a personal local profile,
+> excluded from public releases.
+>
 > **Heltec T114** screenless build: append `boards/nrf52840/heltec_t114/no_display.conf` to `EXTRA_CONF_FILE` for units without the TFT module.
 >
 > **SenseCAP MeshTracker X1** (`meshtracker_x1`): nRF52840 + LR2021, AG3335M dual-band L1+L5 GNSS, SPA06 barometer, DRV2605L vibration, YSN8900 RTC, 8 MB QSPI flash (`/ext`), RGB LED, buzzer. Untested on hardware — first ZephCore board to use a real LR2021. The RTC is treated as an RX8900 second-source; boot-time discovery validates that before trusting it.
@@ -61,6 +67,7 @@ lilygo_t3s3/esp32s3/procpu
 lilygo_tlora_c6/esp32c6/hpcore
 meshnology_w12/esp32s3/procpu
 station_g2/esp32s3/procpu
+thinknode_m5/esp32s3/procpu
 thinknode_m9/esp32s3/procpu                 # source-only, no published firmware
 ttgo_lora32/esp32/procpu                    # source-only, no published firmware
 ttgo_tbeam/esp32/procpu

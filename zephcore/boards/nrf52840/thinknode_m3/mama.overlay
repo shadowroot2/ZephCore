@@ -1,0 +1,6 @@
+/* M3-MAMA keeps the M3 hardware and identifies the release profile. */
+
+/ {
+	model = "M3-MAMA";
+	compatible = "elecrow,thinknode-m3-mama";
+};

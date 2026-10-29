@@ -14,6 +14,7 @@ class Packet;
 /* Platform transport: ESP-NOW on ESP32, encrypted BLE GATT on nRF. */
 bool repeater_bridge_start(RepeaterDataStore *store, mesh::Dispatcher *dispatcher);
 bool repeater_bridge_is_enabled(void);
+bool repeater_bridge_is_ble(void);
 bool repeater_bridge_is_connected(void);
 const char *repeater_bridge_status(void);
 void repeater_bridge_get_addresses(char *local, size_t local_len, char *peer, size_t peer_len);

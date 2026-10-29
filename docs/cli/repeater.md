@@ -1,6 +1,6 @@
 ## Repeater
 
-`gps on|off|setloc|advert` и `get gps diag` отображаются в help только при наличии включённого GNSS-устройства в конфигурации платы.
+Команды работы с приёмником GPS отображаются в help только при наличии GNSS в конфигурации платы. `gps advert` и ручные координаты доступны без GNSS.
 
 ### Remote CLI
 
@@ -10,38 +10,46 @@ help
 │  ├─ get role
 │  ├─ get/set name
 │  ├─ get/set owner.info
-│  ├─ set prv.key
 │  ├─ get public.key
+│  └─ set prv.key
+├─ access
 │  ├─ password <value>
-│  └─ get/set guest.password
+│  ├─ get/set guest.password
+│  └─ setperm <permissions> <pubkey>
 ├─ rf
 │  ├─ get freq
+│  ├─ get freqerr (LR2021)
 │  ├─ get/set radio
 │  ├─ get/set tx
 │  ├─ get/set af
 │  ├─ get/set path.hash.mode
 │  ├─ get/set dutycycle
 │  ├─ get/set int.thresh
-│  ├─ get/set radio.rxgain
-│  ├─ get/set extra.sf
-│  ├─ get freqerr
-│  ├─ get/set radio.fem.rxgain
-│  ├─ get/set rxduty
+│  ├─ get/set radio.rxgain (кроме SX127x)
+│  ├─ get/set extra.sf (LR2021)
+│  ├─ get/set radio.fem.rxgain (при lna-bypass-gpios)
+│  ├─ get/set rxduty (кроме SX127x)
 │  └─ tempradio <freq> <bw> <sf> <cr> <minutes>
-├─ cad
+├─ region
+│  ├─ region
+│  ├─ region get|put|remove|list
+│  ├─ region def|load|save
+│  └─ region allowf|denyf|home|default
+├─ cad (кроме SX127x)
 │  ├─ get cad
 │  ├─ get cad.stats
+│  ├─ get txdelay
+│  ├─ set cad.reset
 │  ├─ get cad.auto
 │  ├─ get cad.offset
 │  ├─ get probe.interval
 │  ├─ get cad.busycap
-│  ├─ get txdelay
-│  └─ set cad.auto|offset|busycap|reset|probe.interval
+│  └─ set cad.auto|offset|busycap|probe.interval
 ├─ mesh
 │  ├─ advert
 │  ├─ advert.zerohop
-│  ├─ get/set advert.interval
 │  ├─ get/set repeat
+│  ├─ get/set advert.interval
 │  ├─ get/set loop.detect
 │  ├─ get/set meshtimesync
 │  ├─ get/set multi.acks
@@ -51,104 +59,98 @@ help
 │  ├─ get/set flood.max.unscoped
 │  └─ get/set backoff.multiplier
 ├─ find
+│  ├─ discover.neighbors
 │  ├─ neighbors
-│  ├─ neighbor.remove <pubkey>
-│  └─ discover.neighbors
-├─ region
-│  ├─ region
-│  ├─ region get|put|remove|list
-│  ├─ region def|load|save
-│  └─ region allowf|denyf|home|default
-├─ access
-│  └─ setperm <permissions> <pubkey>
+│  └─ neighbor.remove <pubkey>
 ├─ gps
-│  ├─ gps
-│  ├─ gps on|off|sync|setloc|advert
-│  ├─ get gps
-│  ├─ get gps diag
-│  ├─ get/set gps duty
-│  ├─ get/set gps standby
+│  ├─ gps (при GNSS)
+│  ├─ gps on|off (при GNSS)
+│  ├─ gps sync|setloc|advert (при GNSS)
+│  ├─ gps advert (без GNSS)
+│  ├─ get gps diag (при GNSS)
+│  ├─ get/set gps duty (при GNSS)
+│  ├─ get/set gps standby (при GNSS)
 │  ├─ get/set lat
 │  └─ get/set lon
-├─ ui
-│  ├─ get/set leds
-│  ├─ get/set leds.brightness
-│  ├─ get/set leds.hb
-│  ├─ get/set leds.radio
-│  ├─ get/set display.rotate
-│  ├─ get/set input.rotate
-│  └─ get/set tz.offset
+├─ ui (при светодиодах или дисплее)
+│  ├─ get/set leds (при светодиодах)
+│  ├─ get/set leds.brightness (при светодиодах)
+│  ├─ get/set leds.hb (при heartbeat LED)
+│  ├─ get/set leds.radio (при radio LED)
+│  ├─ get/set display.rotate (при поддержке поворота панели)
+│  ├─ get/set input.rotate (при дисплее)
+│  └─ get/set tz.offset (при дисплее)
 ├─ power
 │  ├─ power
-│  ├─ powersaving on|off
+│  ├─ powersaving on|off (при поддержке)
 │  ├─ get pwrmgt.support
-│  ├─ get pwrmgt.source
+│  ├─ get pwrmgt.source (при поддержке)
 │  ├─ get pwrmgt.bootreason
-│  ├─ get pwrmgt.bootmv
+│  └─ get pwrmgt.bootmv (при поддержке)
+├─ batt
 │  ├─ battery
-│  ├─ get/set adc.multiplier
+│  ├─ get/set adc.multiplier (при battery ADC)
 │  ├─ get/set battery.alert
 │  ├─ get/set battery.group
 │  ├─ get/set battery.interval
 │  └─ get/set battery.threshold
-├─ sensor
+├─ sensor (при GNSS)
 │  ├─ sensor get <key>
 │  ├─ sensor set <key> <value>
 │  └─ sensor list <start>
+├─ bridge (только repeater-bridge)
+│  ├─ bridge [on|off]
+│  ├─ bridge ping|logs|unpair|bonds
+│  ├─ bridge logs N|clear
+│  ├─ get bridge.delay
+│  ├─ get bridge.mac
+│  ├─ set bridge.key <32-hex>
+│  ├─ get/set bridge.peer
+│  ├─ get/set bridge.priority
+│  └─ get/set bridge.type
+├─ uplink (только Wi-Fi/MQTT uplink)
+│  ├─ get uplink.status
+│  ├─ get/set uplink.enable
+│  ├─ set uplink.wifi.psk
+│  ├─ get/set uplink.mqtt.host|port|tls|user|iata
+│  ├─ set uplink.mqtt.password
+│  └─ get/set uplink.wifi.ssid
 ├─ stat
 │  ├─ stats-packets
 │  ├─ stats-radio
 │  ├─ stats-core
 │  ├─ clear stats
-│  ├─ get pm
+│  ├─ get pm (при ESP32 light sleep)
 │  ├─ get mem [<n>]
 │  ├─ get pwr [<n>]
 │  └─ get loop.wakes
 ├─ log
 │  ├─ log start
-│  ├─ log stop
-│  └─ log erase
-├─ sys
-│  ├─ ver
-│  ├─ board
-│  ├─ uptime
-│  ├─ clock
-│  ├─ clock sync
-│  ├─ time <epoch>
-│  ├─ get dc.restarts
-│  ├─ get bootloader.ver
-│  ├─ start ota
-│  ├─ start dfu
-│  ├─ stop ota
-│  ├─ reboot
-│  ├─ clkreboot
-│  └─ shutdown y
-├─ bridge (только repeater-bridge)
-│  ├─ bridge
-│  ├─ bridge on|off|ping|logs
-│  ├─ bridge unpair
-│  ├─ bridge bonds
-│  ├─ bridge logs N|clear
-│  ├─ get bridge.delay
-│  └─ get bridge.mac
-├─ bridge.cfg (только repeater-bridge)
-│  ├─ set bridge.key <32-hex>
-│  ├─ get/set bridge.peer
-│  ├─ get/set bridge.priority
-│  └─ get/set bridge.type
-└─ uplink (только Wi-Fi/MQTT uplink)
-   ├─ get uplink.status
-   ├─ get/set uplink.enable
-   ├─ get/set uplink.mqtt.host|port|tls|user|iata
-   ├─ set uplink.mqtt.password
-   ├─ get/set uplink.wifi.ssid
-   └─ set uplink.wifi.psk
+│  └─ log stop
+└─ sys
+   ├─ ver
+   ├─ board
+   ├─ uptime
+   ├─ clock
+   ├─ clock sync
+   ├─ time <epoch>
+   ├─ get dc.restarts (кроме SX127x)
+   ├─ get bootloader.ver
+   ├─ start dfu (при поддержке)
+   ├─ reboot
+   └─ shutdown y (при CONFIG_POWEROFF)
 ```
 
-Удалённый ответ разделён по размеру frame: `help power` заканчивается строкой
-`more: help power.2`, а `help power.2` выводит battery-команды второй половины.
+Команды батареи вынесены в отдельную группу `help batt`. При ESP-NOW `help bridge`
+показывает только `bridge [on|off]`, `bridge ping`, чтение и настройку моста;
+`bridge logs`, `bridge bonds` и `bridge unpair` доступны только при BLE.
+Группа `log` показывается только при `CONFIG_LOG`; `log erase` не указан,
+поскольку файл журнала в репиттере не реализован.
+Группа `cad` и настройка `rxduty` скрыты на SX127x, где драйвер не имеет CAD
+и приёмного duty cycle.
+Группа `sensor` скрыта без GNSS: единственная настройка этого интерфейса — `gps`.
 
-`get prv.key`, `set freq`, `get acl`, `log` и `erase` остаются только в полном локальном USB help.
+`get prv.key`, `set freq`, `get acl` и `erase` остаются только в полном локальном USB help.
 
 - `ver` — выводит версию прошивки.
 - `board` — выводит модель платы.
@@ -231,11 +233,79 @@ help
 - `get/set uplink.mqtt.tls` — читает/включает или выключает TLS для MQTT uplink.
 - `get/set uplink.mqtt.user` — читает/задаёт имя пользователя MQTT uplink.
 - `get/set uplink.wifi.ssid` — читает/задаёт SSID uplink.
-- `start ota` — запускает поддерживаемый платой режим OTA.
 - `start dfu` — переводит устройство в режим обновления загрузчика (DFU); способ подключения зависит от платы.
-- `stop ota` — останавливает Wi-Fi OTA; только сборки с Wi-Fi OTA.
 - `reboot` — перезагружает устройство.
-- `clkreboot` — устанавливает часы на дату/время сборки прошивки и перезагружает устройство.
 - `shutdown y` — выключает устройство при поддержке платой; y подтверждает действие.
 - `erase` — стирает файловое хранилище и перезагружает устройство. Опасная команда: удаляет сохранённые данные; доступна локально.
 - `help` — выводит список доступных команд.
+
+### Вид `help mesh` на устройстве
+
+```text
+advert[.zerohop]
+get/set:
+repeat
+advert.interval
+loop.detect
+meshtimesync
+multi.acks
+flood.{advert.interval,max,max.advert,max.unscoped}
+backoff.multiplier
+```
+
+`get/set:` относится ко всем следующим настройкам. Скобки после `flood.`
+перечисляют суффиксы: например, `get flood.max` или `set flood.max 3`.
+Ответ занимает 156 байт с NUL при пределе 158; имена не разрываются между строками.
+
+### help rf — максимальная конфигурация
+
+```text
+get freq
+get freqerr
+get/set:
+radio
+tx
+af
+path.hash.mode
+dutycycle
+int.thresh
+radio.rxgain
+extra.sf
+radio.fem.rxgain
+rxduty
+tempradio f bw sf cr min
+```
+
+Размер с NUL: 149/158 байт.
+
+### help bridge — BLE
+
+```text
+bridge [on|off]
+bridge ping|unpair|bonds
+bridge logs [N|clear]
+get bridge.delay|mac
+set bridge.key <32-hex>
+get/set:
+bridge.peer
+bridge.priority
+bridge.type
+```
+
+Размер с NUL: 157/158 байт.
+
+### help bridge — ESP-NOW
+
+```text
+bridge [on|off]
+bridge ping
+get bridge.delay
+get bridge.mac
+set bridge.key <32-hex>
+get/set:
+bridge.peer
+bridge.priority
+bridge.type
+```
+
+Размер с NUL: 133/158 байт.
