@@ -71,7 +71,8 @@ package() {
                 local flash_size app_offset flash_mode flash_freq
                 flash_size=$(python3 zephcore/scripts/dts_flash_size.py \
                     "${ZEPHYR_DTS:-build/zephcore/zephyr/zephyr.dts}")
-                app_offset=$(sed -n 's/^CONFIG_FLASH_LOAD_OFFSET=//p' build/zephcore/zephyr/.config)
+                app_offset=$(sed -n '/slot0_partition: /,/};/s/^[[:space:]]*reg = <[[:space:]]*\([^[:space:]]*\).*/\1/p' \
+                    "${ZEPHYR_DTS:-build/zephcore/zephyr/zephyr.dts}")
                 flash_mode=$(sed -n 's/^CONFIG_ESPTOOLPY_FLASHMODE="\([^"]*\)"/\1/p' build/mcuboot/zephyr/.config)
                 flash_freq=$(sed -n 's/^CONFIG_ESPTOOLPY_FLASHFREQ="\([^"]*\)"/\1/p' build/mcuboot/zephyr/.config)
                 python -m esptool --chip "$chip" merge-bin \

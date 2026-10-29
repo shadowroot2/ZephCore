@@ -1171,8 +1171,8 @@ New drivers in `patches/zephyr-new/` (LR11xx, LR20xx, native-Linux SPI/GPIO, DTS
 
 ### 9.5 Flash Partition Layouts
 
-ESP sysbuild packaging reads the app offset from the resolved application's
-`CONFIG_FLASH_LOAD_OFFSET`, and flash mode/frequency from MCUboot's resolved
+ESP sysbuild packaging reads the app offset from the resolved devicetree's
+`slot0_partition`, and flash mode/frequency from MCUboot's resolved
 configuration. M5 uses slot0 at `0x20000`; Heltec V3 uses `0x10000`.
 
 **nRF52840 SD v6**: SoftDevice 152KB → App 680KB → NVS 16KB → LFS 128KB → UF2 48KB
