@@ -1496,10 +1496,9 @@ does. That board method renders `DFU Mode` through the shared UI before reset,
 so USB/app CLI entry gets the same final frame. BLE OTA still calls
 `startOTAUpdate()` separately; the UI action no longer enters BLE OTA.
 
-`ZEPHCORE_GPS_SATELLITE_TELEMETRY` restores the ShadoW self-channel luminosity
-field for M1/M5/M6 across roles. The sensor manager reads cached visible
-satellites (GSV), falls back to used satellites (GGA), and caps at 32 without
-waking GPS. GPS must be detected and enabled; both location and environment
-permissions are required. Board-local real luminosity wins; external light
-sensors keep their own channels. The feature is off by default, including
-on T-1000E where luminosity is the photocell reading.
+`ZEPHCORE_GPS_SATELLITE_TELEMETRY` restores the self-channel luminosity field
+only on M6 repeater/repeater-bridge. The value is the cached satellite count
+(GSV, fallback GGA, at most 32). This is a telemetry mapping only: GPS power,
+fix acquisition, duty cycle, settings and callbacks are unchanged. Location
+and environment telemetry permissions still apply. A real board-local light
+sensor takes precedence. Other boards and companion telemetry are unchanged.

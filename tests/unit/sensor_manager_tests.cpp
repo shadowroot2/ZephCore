@@ -5,9 +5,11 @@
 namespace {
 bool available, enabled, local_light, external_light;
 gps_state_info info;
+unsigned gps_control_calls;
 void reset() {
     available = enabled = true;
     local_light = external_light = false;
+    gps_control_calls = 0;
     info = {};
     info.visible_satellites = 17;
     info.satellites = 8;
@@ -21,8 +23,8 @@ std::vector<uint8_t> query(uint8_t permissions = 7) {
 extern "C" int gps_manager_init() { return 0; }
 extern "C" bool gps_is_available() { return available; }
 extern "C" bool gps_is_enabled() { return enabled; }
-extern "C" void gps_enable(bool value) { enabled = value; }
-extern "C" void gps_set_poll_interval_sec(uint32_t) {}
+extern "C" void gps_enable(bool value) { ++gps_control_calls; enabled = value; }
+extern "C" void gps_set_poll_interval_sec(uint32_t) { ++gps_control_calls; }
 extern "C" bool gps_get_last_known_position(gps_position *) { return false; }
 extern "C" void gps_get_state_info(gps_state_info *out) { *out = info; }
 extern "C" int env_sensors_init() { return 0; }
@@ -53,14 +55,17 @@ TEST(sensor_satellites_permissions, "UNIT-SENSOR-002", "Satellite count requires
         else CHECK(data.empty());
     }
 }
-TEST(sensor_satellites_power, "UNIT-SENSOR-003", "Disabled or undetected GPS does not publish satellite luminosity") {
+TEST(sensor_satellites_power, "UNIT-SENSOR-003", "Telemetry reads cached satellite count without changing GPS state") {
     reset();
     enabled = false;
-    CHECK(query().empty());
+    CHECK(query() == std::vector<uint8_t>({1, 101, 0, 17}));
     CHECK(!enabled);
+    CHECK(gps_control_calls == 0);
     enabled = true;
     available = false;
-    CHECK(query().empty());
+    CHECK(query() == std::vector<uint8_t>({1, 101, 0, 17}));
+    CHECK(!available && enabled);
+    CHECK(gps_control_calls == 0);
 }
 TEST(sensor_real_light, "UNIT-SENSOR-004", "Real board-local light takes precedence and external light keeps its own channel") {
     reset();

@@ -629,7 +629,7 @@
     },
     {
       "id": "UNIT-SENSOR-003",
-      "name": "Disabled or undetected GPS does not publish satellite luminosity",
+      "name": "Telemetry reads cached satellite count without changing GPS state",
       "source": "tests/unit/sensor_manager_tests.cpp"
     },
     {

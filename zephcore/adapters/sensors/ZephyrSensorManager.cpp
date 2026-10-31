@@ -71,9 +71,8 @@ bool ZephyrSensorManager::querySensors(uint8_t requester_permissions, CayenneLPP
 			}
 		}
 
-#ifdef CONFIG_ZEPHCORE_GPS_SATELLITE_TELEMETRY
-		if (!local_luminosity && (requester_permissions & TELEM_PERM_LOCATION) &&
-		    gps_is_available() && gps_is_enabled()) {
+#if defined(CONFIG_ZEPHCORE_GPS_SATELLITE_TELEMETRY) && defined(CONFIG_ZEPHCORE_ROLE_REPEATER_BASE)
+		if (!local_luminosity && (requester_permissions & TELEM_PERM_LOCATION)) {
 			struct gps_state_info info;
 			gps_get_state_info(&info);
 			uint16_t count = info.visible_satellites ? info.visible_satellites : info.satellites;
