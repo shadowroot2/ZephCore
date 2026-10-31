@@ -1503,3 +1503,6 @@ no GSV/GGA selection or count limit. GPS power,
 fix acquisition, duty cycle, settings and callbacks are unchanged. Location
 and environment telemetry permissions still apply. A real board-local light
 sensor takes precedence. Other boards and companion telemetry are unchanged.
+
+ESP32 companion uses the update action label `BLE Update`; other platforms use
+`Enter DFU Mode`. This is a label-only distinction; the update command is unchanged.

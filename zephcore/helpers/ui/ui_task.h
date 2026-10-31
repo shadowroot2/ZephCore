@@ -19,6 +19,12 @@
 extern "C" {
 #endif
 
+#if defined(CONFIG_ZEPHCORE_ROLE_COMPANION) && defined(CONFIG_SOC_FAMILY_ESPRESSIF_ESP32)
+#define UI_DFU_ACTION_LABEL "BLE Update"
+#else
+#define UI_DFU_ACTION_LABEL "Enter DFU Mode"
+#endif
+
 /* UI notification events (from mesh/BLE layer) */
 enum ui_event {
 	UI_EVENT_NONE = 0,
