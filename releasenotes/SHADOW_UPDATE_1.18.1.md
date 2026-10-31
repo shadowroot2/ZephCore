@@ -48,3 +48,9 @@
 
 Подпись пункта обновления у ESP32 companion — `BLE Update`; на остальных
 платформах — `Enter DFU Mode`. Это изменение текста, команда запуска не меняется.
+
+ESP32 companion: `BLE Update` вызывает прежний `startOTAUpdate()`,
+без перехода в ROM/download через DFU. `Enter DFU Mode` доступен только
+на nRF companion с экраном и поддержкой DFU; он использует `start dfu`
+и показывает `DFU Mode`. В текущем ESP32 board adapter BLE OTA возвращает
+`not supported`; восстановление прежнего вызова не добавляет реализацию OTA.

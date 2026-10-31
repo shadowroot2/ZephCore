@@ -24,7 +24,11 @@ static const char * const kSysCatLabels[] = { "Device", "Display", "Info", "Powe
 static const int kSysCatCount = 4;
 
 /* Device submenu items */
-enum SysDevItem { SYSDEV_BUZZER=0, SYSDEV_BLUETOOTH, SYSDEV_OFFGRID, SYSDEV_LEDS, SYSDEV_BLE_CODE, SYSDEV_PATHHASH, SYSDEV_DFU, SYSDEV_TELEMETRY, SYSDEV_RENAME, SYSDEV_COUNT };
+enum SysDevItem { SYSDEV_BUZZER=0, SYSDEV_BLUETOOTH, SYSDEV_OFFGRID, SYSDEV_LEDS, SYSDEV_BLE_CODE, SYSDEV_PATHHASH,
+#if UI_UPDATE_AVAILABLE
+	SYSDEV_DFU,
+#endif
+	SYSDEV_TELEMETRY, SYSDEV_RENAME, SYSDEV_COUNT };
 
 #define DFU_CONFIRM_WINDOW_MS 3000
 /* Display submenu items */
@@ -74,16 +78,19 @@ int SystemScreen::render(JoystickDisplay &display)
 		return 500;
 	}
 	if (_mode == SYSMODE_DEVICE) {
-		char bt_label[24], buz_label[24], og_label[24], led_label[24], dfu_label[24], ph_label[24];
+		char bt_label[24], buz_label[24], og_label[24], led_label[24], ph_label[24];
 		snprintf(buz_label, sizeof(buz_label), "Buzzer: %s", _task->isBuzzerQuiet() ? "OFF" : "ON");
 		snprintf(bt_label, sizeof(bt_label), "Bluetooth: %s", _task->isSerialEnabled() ? "ON" : "OFF");
 		snprintf(og_label, sizeof(og_label), "Offgrid: %s", _task->isOffgridEnabled() ? "ON" : "OFF");
 		snprintf(led_label, sizeof(led_label), "LEDs: %s", _task->isLedsDisabled() ? "OFF" : "ON");
 		snprintf(ph_label, sizeof(ph_label), "Path hash: %db", (int)_task->getPathHashBytes());
+#if UI_UPDATE_AVAILABLE
+		char dfu_label[24];
 		uint32_t now = k_uptime_get_32();
 		bool dfu_pending = (_dfu_confirm_time != 0 &&
 							(now - _dfu_confirm_time) <= DFU_CONFIRM_WINDOW_MS);
 		snprintf(dfu_label, sizeof(dfu_label), "%s%s", UI_DFU_ACTION_LABEL, dfu_pending ? "?" : "");
+#endif
 		const char *items[SYSDEV_COUNT];
 		items[SYSDEV_BUZZER] = buz_label;
 		items[SYSDEV_BLUETOOTH] = bt_label;
@@ -93,7 +100,9 @@ int SystemScreen::render(JoystickDisplay &display)
 		items[SYSDEV_RENAME] = "Rename node";
 		items[SYSDEV_OFFGRID] = og_label;
 		items[SYSDEV_LEDS] = led_label;
+#if UI_UPDATE_AVAILABLE
 		items[SYSDEV_DFU] = dfu_label;
+#endif
 		renderSubMenu(display, "Device", _selected, items, SYSDEV_COUNT);
 		return 500;
 	}
@@ -196,6 +205,7 @@ bool SystemScreen::handleInput(char c)
 				_task->showAlert(alert, 1000);
 				return true;
 			}
+#if UI_UPDATE_AVAILABLE
 			case SYSDEV_DFU: {
 				uint32_t now = k_uptime_get_32();
 				if (_dfu_confirm_time != 0 &&
@@ -207,6 +217,7 @@ bool SystemScreen::handleInput(char c)
 				}
 				return true;
 			}
+#endif
 			default: return false;
 			}
 		}

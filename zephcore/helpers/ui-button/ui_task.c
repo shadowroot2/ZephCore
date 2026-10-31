@@ -630,7 +630,7 @@ static void action_ble_toggle(void)
 
 static void action_enter_dfu(void)
 {
-	LOG_INF("entering DFU bootloader");
+	LOG_INF("update action: %s", UI_DFU_ACTION_LABEL);
 
 #ifdef CONFIG_ZEPHCORE_UI_BUZZER
 	buzzer_play(MELODY_SHUTDOWN);
@@ -640,8 +640,11 @@ static void action_enter_dfu(void)
 	buzzer_stop();
 #endif
 
+#if UI_UPDATE_BLE
+	mesh_reboot_to_ota_dfu();
+#elif UI_UPDATE_DFU
 	mesh_reboot_to_dfu();
-	CODE_UNREACHABLE;
+#endif
 }
 #endif /* CONFIG_ZEPHCORE_UI_DISPLAY */
 

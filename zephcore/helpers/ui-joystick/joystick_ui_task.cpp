@@ -1082,8 +1082,12 @@ void JoystickUITask::toggleLeds()
 
 void JoystickUITask::rebootToDFU()
 {
-	LOG_INF("joystick UI: entering DFU bootloader");
+	LOG_INF("joystick update action: %s", UI_DFU_ACTION_LABEL);
+#if UI_UPDATE_BLE
+	mesh_reboot_to_ota_dfu();
+#elif UI_UPDATE_DFU
 	mesh_reboot_to_dfu();
+#endif
 }
 
 /* ===== Display brightness ===== */

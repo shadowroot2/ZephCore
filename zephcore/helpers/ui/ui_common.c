@@ -32,7 +32,7 @@ LOG_MODULE_REGISTER(ui_led, CONFIG_ZEPHCORE_BOARD_LOG_LEVEL);
 
 void ui_show_dfu_mode(void)
 {
-#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
+#if defined(CONFIG_ZEPHCORE_UI_DISPLAY) && defined(CONFIG_SOC_FAMILY_NORDIC_NRF)
 	mc_display_on();
 	mc_display_clear();
 	const char *text = "DFU Mode";

@@ -194,7 +194,9 @@ static const enum ui_page active_pages[] = {
 	UI_PAGE_LEDS,
 	UI_PAGE_SENSORS,
 	UI_PAGE_OFFGRID,
+#if UI_UPDATE_AVAILABLE
 	UI_PAGE_DFU,
+#endif
 	UI_PAGE_SHUTDOWN,
 };
 #endif

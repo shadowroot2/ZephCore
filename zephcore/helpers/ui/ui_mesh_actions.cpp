@@ -275,14 +275,17 @@ extern "C" void mesh_set_leds_disabled(bool disabled)
 
 extern "C" void mesh_reboot_to_dfu(void)
 {
+#if UI_UPDATE_DFU
 	s_board->rebootToBootloader();
+#endif
 }
 
 extern "C" void mesh_reboot_to_ota_dfu(void)
 {
 	char reply[64];
-	s_board->startOTAUpdate(nullptr, reply);
-	/* Never returns */
+	if (!s_board->startOTAUpdate(nullptr, reply)) {
+		LOG_WRN("%s", reply);
+	}
 }
 
 /* ========== Deferred action processing (runs on mesh thread) ========== */

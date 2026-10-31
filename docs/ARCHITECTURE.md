@@ -1506,3 +1506,9 @@ sensor takes precedence. Other boards and companion telemetry are unchanged.
 
 ESP32 companion uses the update action label `BLE Update`; other platforms use
 `Enter DFU Mode`. This is a label-only distinction; the update command is unchanged.
+
+The ESP32 screen action retains its original `startOTAUpdate()` route,
+not `rebootToBootloader()`. Native `Enter DFU Mode` is offered only on
+screen-equipped nRF companions with DFU capability. The current ESP32 board
+adapter reports BLE OTA as unsupported; the UI preserves that existing
+handler and logs its failure rather than entering the ROM downloader.
