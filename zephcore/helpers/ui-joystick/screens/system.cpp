@@ -83,7 +83,7 @@ int SystemScreen::render(JoystickDisplay &display)
 		uint32_t now = k_uptime_get_32();
 		bool dfu_pending = (_dfu_confirm_time != 0 &&
 							(now - _dfu_confirm_time) <= DFU_CONFIRM_WINDOW_MS);
-		snprintf(dfu_label, sizeof(dfu_label), "BLE DFU%s", dfu_pending ? " (confirm)" : "");
+		snprintf(dfu_label, sizeof(dfu_label), "START DFU Update%s", dfu_pending ? "?" : "");
 		const char *items[SYSDEV_COUNT];
 		items[SYSDEV_BUZZER] = buz_label;
 		items[SYSDEV_BLUETOOTH] = bt_label;

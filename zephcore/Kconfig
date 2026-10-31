@@ -1040,6 +1040,15 @@ config ZEPHCORE_RTC_AUTODISCOVER
 
 menu "GPS Configuration"
 
+config ZEPHCORE_GPS_SATELLITE_TELEMETRY
+	bool "Report GPS satellite count as self luminosity"
+	default n
+	help
+	  Expose up to 32 visible satellites on the self luminosity channel.
+	  Requires location and environment telemetry permissions; a real
+	  board-local light sensor takes precedence.
+
+
 config ZEPHCORE_GPS_POLL_INTERVAL_SEC
 	int "GPS poll interval in seconds"
 	default 300

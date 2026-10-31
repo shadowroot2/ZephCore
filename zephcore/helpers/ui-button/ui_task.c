@@ -427,7 +427,7 @@ static void action_page_enter(void)
 
 		if (st_dfu->dfu_confirm_time != 0 &&
 			(now_dfu - st_dfu->dfu_confirm_time) <= CONFIG_ZEPHCORE_UI_CONFIRM_WINDOW_MS) {
-			/* Confirmed — reboot into BLE DFU */
+			/* Confirmed — enter the DFU bootloader. */
 			action_enter_dfu();
 		} else {
 			/* First press — enter confirmation state */
@@ -630,7 +630,7 @@ static void action_ble_toggle(void)
 
 static void action_enter_dfu(void)
 {
-	LOG_INF("entering BLE DFU bootloader");
+	LOG_INF("entering DFU bootloader");
 
 #ifdef CONFIG_ZEPHCORE_UI_BUZZER
 	buzzer_play(MELODY_SHUTDOWN);
@@ -640,14 +640,7 @@ static void action_enter_dfu(void)
 	buzzer_stop();
 #endif
 
-	mc_display_clear();
-	mc_display_text(16, 28, "BLE DFU...", false);
-	mc_display_finalize();
-	k_sleep(K_MSEC(500));
-	mc_display_off();
-
-	/* Delegate to board adapter — handles GPREGRET + reset for any platform */
-	mesh_reboot_to_ota_dfu();
+	mesh_reboot_to_dfu();
 	CODE_UNREACHABLE;
 }
 #endif /* CONFIG_ZEPHCORE_UI_DISPLAY */

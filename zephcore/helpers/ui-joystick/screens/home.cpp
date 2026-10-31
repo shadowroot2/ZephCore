@@ -259,7 +259,7 @@ int SplashScreen::render(JoystickDisplay &display)
 	/* Keep the firmware version and build date below the product name. */
 	y += line_h;
 	display.setColor(JoystickDisplay::LIGHT);
-	display.drawTextCentered(cx, y + fh / 2, FIRMWARE_VERSION);
+	display.drawTextCentered(cx, y + fh / 2, FIRMWARE_DISPLAY_VERSION);
 	y += line_h;
 	display.drawTextCentered(cx, y + fh / 2, FIRMWARE_BUILD_DATE);
 	int signature_y = display.height() - fh - 2;

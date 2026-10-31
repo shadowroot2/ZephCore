@@ -1814,7 +1814,7 @@ static void render_offgrid(void)
 
 static void render_dfu_mono(void)
 {
-	draw_centered(centered_row(0, 2), "BLE DFU Update");
+	draw_centered(centered_row(0, 2), "START DFU Update");
 	if (state.dfu_confirm_time != 0) {
 		draw_centered(centered_row(1, 2), "Press to confirm");
 	} else {
@@ -1829,7 +1829,7 @@ static void render_dfu_color(void)
 
 	draw_badge(0, y, "DFU", state.dfu_confirm_time != 0
 					? UI_COLOR_WARN : UI_COLOR_ACTIVE);
-	mc_display_color_text(32, y, "BLE update", UI_COLOR_VALUE);
+	mc_display_color_text(32, y, "START DFU Update", UI_COLOR_VALUE);
 	y += LINE_H + 4;
 	draw_centered_color(y,
 			    state.dfu_confirm_time != 0 ?
@@ -2097,8 +2097,8 @@ void ui_pages_render_splash(void)
 	draw_centered(y, "MeshCore on Zephyr");
 	y += LINE_H;
 
-#ifdef FIRMWARE_VERSION
-	draw_centered(y, FIRMWARE_VERSION);
+#ifdef FIRMWARE_DISPLAY_VERSION
+	draw_centered(y, FIRMWARE_DISPLAY_VERSION);
 	y += LINE_H;
 #endif
 

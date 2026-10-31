@@ -616,6 +616,26 @@
       "id": "UNIT-KISS-005",
       "name": "msUntilNextTx reports each timed state and nothing while idle",
       "source": "tests/unit/kiss_modem_tests.cpp"
+    },
+    {
+      "id": "UNIT-SENSOR-001",
+      "name": "Satellite luminosity uses visible count, GGA fallback and a limit of 32",
+      "source": "tests/unit/sensor_manager_tests.cpp"
+    },
+    {
+      "id": "UNIT-SENSOR-002",
+      "name": "Satellite count requires location and environment permissions",
+      "source": "tests/unit/sensor_manager_tests.cpp"
+    },
+    {
+      "id": "UNIT-SENSOR-003",
+      "name": "Disabled or undetected GPS does not publish satellite luminosity",
+      "source": "tests/unit/sensor_manager_tests.cpp"
+    },
+    {
+      "id": "UNIT-SENSOR-004",
+      "name": "Real board-local light takes precedence and external light keeps its own channel",
+      "source": "tests/unit/sensor_manager_tests.cpp"
     }
   ]
 }

@@ -36,6 +36,7 @@ WEAK void ui_notify(enum ui_event event)
 }
 
 WEAK void ui_request_render(void) { }
+WEAK void ui_show_dfu_mode(void) { }
 WEAK bool ui_shutdown_in_progress(void) { return false; }
 
 WEAK void ui_set_msg_count(uint16_t count)

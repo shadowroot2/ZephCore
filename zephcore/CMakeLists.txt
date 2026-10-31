@@ -371,6 +371,8 @@ add_definitions(-DFIRMWARE_BUILD_EPOCH=${ZEPHCORE_BUILD_EPOCH}u)
 # that line). The per-app `#ifndef FIRMWARE_VERSION` fallbacks only apply to
 # builds that bypass this injection.
 add_definitions(-DFIRMWARE_VERSION="${ZEPHCORE_FIRMWARE_VERSION}")
+string(REGEX REPLACE "-.*$" "" _display_version "${ZEPHCORE_FIRMWARE_VERSION}")
+add_definitions(-DFIRMWARE_DISPLAY_VERSION="v.${_display_version}")
 
 add_subdirectory(lib/monocypher)
 target_link_libraries(app PRIVATE monocypher)

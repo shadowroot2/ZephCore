@@ -273,6 +273,11 @@ extern "C" void mesh_set_leds_disabled(bool disabled)
 	k_event_post(s_mesh_events, s_mesh_event_ui_action);
 }
 
+extern "C" void mesh_reboot_to_dfu(void)
+{
+	s_board->rebootToBootloader();
+}
+
 extern "C" void mesh_reboot_to_ota_dfu(void)
 {
 	char reply[64];

@@ -15,6 +15,7 @@ add_executable(zephcore_unit
   unit/timesync_tests.cpp
   unit/helper_tests.cpp
   unit/timezone_tests.cpp
+  unit/sensor_manager_tests.cpp
   unit/radio_tests.cpp
   unit/lora_timing_tests.cpp
   unit/prefs_codec_tests.cpp
@@ -38,18 +39,21 @@ add_executable(zephcore_unit
   ${PRODUCTION}/adapters/radio/CadController.cpp
   ${PRODUCTION}/helpers/PrefsCodec.cpp
   ${PRODUCTION}/helpers/PrefsJson.cpp
+  ${PRODUCTION}/adapters/sensors/ZephyrSensorManager.cpp
   ${PRODUCTION}/helpers/ConfigSerializer.cpp
   ${PRODUCTION}/helpers/ui/telemetry_text.cpp
   ${PRODUCTION}/app/KissModem.cpp
 )
 target_compile_features(zephcore_unit PRIVATE cxx_std_17)
 target_compile_definitions(zephcore_unit PRIVATE CONFIG_ZEPHCORE_PACKET_LOGGING=0
+  CONFIG_ZEPHCORE_GPS_SATELLITE_TELEMETRY=1
   CONFIG_ZEPHCORE_UI_TIMEZONE_OFFSET_MINUTES=300
   CONFIG_ZEPHCORE_UI_DESIGN_JOYSTICK=1 CONFIG_ZEPHCORE_UI_DESIGN_BUTTON=0)
 target_include_directories(zephcore_unit PRIVATE
   support unit ${PRODUCTION} ${PRODUCTION}/include ${PRODUCTION}/helpers ${PRODUCTION}/helpers/compat
   ${PRODUCTION}/lib/monocypher
   ${PRODUCTION}/adapters/radio
+  ${PRODUCTION}/adapters/gps
   ${PRODUCTION}/patches/zephyr-new/include ${PRODUCTION}/patches/zephyr-new/drivers/lora/lr11xx)
 if(MSVC)
   target_compile_options(zephcore_unit PRIVATE /W4)

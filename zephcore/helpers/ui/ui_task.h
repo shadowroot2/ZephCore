@@ -76,6 +76,7 @@ void ui_led_heartbeat_init(void);
 void ui_notify(enum ui_event event);
 
 void ui_request_render(void); /* ZEPHCORE: explicit event-driven repaint */
+void ui_show_dfu_mode(void);
 
 /**
  * Update the message count shown on the messages page.

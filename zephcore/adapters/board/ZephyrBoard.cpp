@@ -7,6 +7,7 @@
 #include "battery_curve.h"
 #include "boot_info.h"
 #include "led_gate.h"
+#include <helpers/ui/ui_task.h>
 #include <NodePrefs.h>   /* LEDS_RADIO_* mode values */
 #include <zephyr/kernel.h>
 #include <zephyr/sys/reboot.h>
@@ -504,6 +505,7 @@ void ZephyrBoard::powerOff()
 
 void ZephyrBoard::rebootToBootloader()
 {
+	ui_show_dfu_mode();
 	zephcore_persist_before_off();
 #ifdef NRF52_GPREGRET
 	/* Write magic value to GPREGRET0 - enter UF2 bootloader mode.

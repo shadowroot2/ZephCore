@@ -30,6 +30,19 @@
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(ui_led, CONFIG_ZEPHCORE_BOARD_LOG_LEVEL);
 
+void ui_show_dfu_mode(void)
+{
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
+	mc_display_on();
+	mc_display_clear();
+	const char *text = "DFU Mode";
+	int x = ((int)mc_display_width() - (int)strlen(text) * mc_display_font_width()) / 2;
+	int y = ((int)mc_display_height() - mc_display_font_height()) / 2;
+	mc_display_text(x < 0 ? 0 : x, y < 0 ? 0 : y, text, false);
+	mc_display_finalize();
+#endif
+}
+
 /* ========== Input axis flip ==========
  * Shared by both UI variants. Written from the mesh/CLI thread, read from the
  * input callback; a plain bool is enough. */

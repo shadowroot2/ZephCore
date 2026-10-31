@@ -3,7 +3,7 @@
 ### Companion
 
 - Обе заставки — button UI и joystick UI — обязаны показывать логотип ZephCore,
-  `MeshCore on Zephyr`, версию из `FIRMWARE_VERSION` отдельной строкой
+  `MeshCore on Zephyr`, версию `v.<major>.<minor>.<patch>` из `FIRMWARE_DISPLAY_VERSION` отдельной строкой
   перед датой `FIRMWARE_BUILD_DATE` и
   нижнюю подпись `Tuned by ShadoW`. После обновления автора проверяются оба
   файла: `helpers/ui-button/ui_pages.c` и
@@ -103,3 +103,8 @@
 - Fall принудительно звучит при выключенном буззере; SOS и обычные UI-звуки соблюдают mute.
 - Подтверждение `Fall canceled...` сопровождается отдельным сигналом.
 - Авторские режимы `buzzer off|on|vibrate|sound` сохранены, наши исключения Fall/SOS наложены поверх них.
+
+- Страница обновления называется `START DFU Update`; подтверждение запускает
+  загрузчик как команда `start dfu`. Общий board path показывает `DFU Mode`
+  перед reset и не гасит этот последний кадр. BLE OTA остаётся отдельным
+  механизмом. Строка версии на заставке не содержит суффикса `-zephcore`.

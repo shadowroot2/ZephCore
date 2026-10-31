@@ -32,6 +32,7 @@ bool ZephyrSensorManager::querySensors(uint8_t requester_permissions, CayenneLPP
 
 	if (requester_permissions & TELEM_PERM_ENVIRONMENT) {
 		uint8_t next_available_channel = TELEM_CHANNEL_SELF + 1;
+		bool local_luminosity = false;
 
 		for (int i = 0; i < env_sensor_count(); i++) {
 			struct env_sensor_reading r;
@@ -42,6 +43,7 @@ bool ZephyrSensorManager::querySensors(uint8_t requester_permissions, CayenneLPP
 				continue;  /* the channel stays taken: numbering stays stable */
 			}
 			if (r.fields & ENV_F_LUMINOSITY) {
+				local_luminosity |= board_local;
 				float lum = r.luminosity < 0.0f ? 0.0f : r.luminosity;
 
 				telemetry.addLuminosity(ch, (uint32_t)(lum > 65535.0f ? 65535.0f : lum));
@@ -68,6 +70,18 @@ bool ZephyrSensorManager::querySensors(uint8_t requester_permissions, CayenneLPP
 				telemetry.addPower(ch, r.power_w);
 			}
 		}
+
+#ifdef CONFIG_ZEPHCORE_GPS_SATELLITE_TELEMETRY
+		if (!local_luminosity && (requester_permissions & TELEM_PERM_LOCATION) &&
+		    gps_is_available() && gps_is_enabled()) {
+			struct gps_state_info info;
+			gps_get_state_info(&info);
+			uint16_t count = info.visible_satellites ? info.visible_satellites : info.satellites;
+			telemetry.addLuminosity(TELEM_CHANNEL_SELF, count > 32 ? 32 : count);
+		}
+#else
+		(void)local_luminosity;
+#endif
 	}
 	return true;
 }
