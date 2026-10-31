@@ -15,7 +15,7 @@
   Формат v1.18.1 проверен в пяти pristine companion builds с экранами:
   M1, M5, Heltec V3, T114, T-ECHO 433.
   Полная протокольная версия `1.18.1-zephcore` сохраняется.
-- `START DFU Update` запускает загрузчик как `start dfu`; экран и CLI
+- `Enter DFU Mode` запускает загрузчик как `start dfu`; экран и CLI
   показывают `DFU Mode` перед reset. BLE OTA остаётся отдельным режимом.
 - У M6 repeater/repeater-bridge восстановлено поле «Освещение» телеметрии
   с числом спутников. Изменено только заполнение поля; управление GPS

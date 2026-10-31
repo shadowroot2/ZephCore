@@ -1814,7 +1814,7 @@ static void render_offgrid(void)
 
 static void render_dfu_mono(void)
 {
-	draw_centered(centered_row(0, 2), "START DFU Update");
+	draw_centered(centered_row(0, 2), "Enter DFU Mode");
 	if (state.dfu_confirm_time != 0) {
 		draw_centered(centered_row(1, 2), "Press to confirm");
 	} else {
@@ -1829,7 +1829,7 @@ static void render_dfu_color(void)
 
 	draw_badge(0, y, "DFU", state.dfu_confirm_time != 0
 					? UI_COLOR_WARN : UI_COLOR_ACTIVE);
-	mc_display_color_text(32, y, "START DFU Update", UI_COLOR_VALUE);
+	mc_display_color_text(32, y, "Enter DFU Mode", UI_COLOR_VALUE);
 	y += LINE_H + 4;
 	draw_centered_color(y,
 			    state.dfu_confirm_time != 0 ?

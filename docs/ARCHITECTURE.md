@@ -1491,7 +1491,7 @@ server screens receive the same minute offset. RTC and packet epochs stay UTC.
 
 ### DFU screen and satellite luminosity
 
-The `START DFU Update` UI action calls `rebootToBootloader()`, as `start dfu`
+The `Enter DFU Mode` UI action calls `rebootToBootloader()`, as `start dfu`
 does. That board method renders `DFU Mode` through the shared UI before reset,
 so USB/app CLI entry gets the same final frame. BLE OTA still calls
 `startOTAUpdate()` separately; the UI action no longer enters BLE OTA.
