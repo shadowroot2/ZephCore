@@ -21,7 +21,7 @@
   <a href="docs/supported_boards.md">Платы</a> ·
   <a href="docs/COMMANDS.MD">Команды</a> ·
   <a href="docs/SHADOW_FEATURES.md">Доработки ShadoW</a> ·
-  <a href="releasenotes/RELEASE_NOTES_1.18.0-zephcore.md">Изменения 1.18.0</a>
+  <a href="releasenotes/RELEASE_NOTES_1.18.1-zephcore.md">Изменения 1.18.1</a>
 </p>
 
 ---
@@ -41,7 +41,7 @@ ZephCore — прошивка для LoRa mesh-узлов, совместима�
   [github.com/meshcore-dev/MeshCore](https://github.com/meshcore-dev/MeshCore/)
 - Рабочая ветка ShadoW:
   [github.com/shadowroot2/ZephCore](https://github.com/shadowroot2/ZephCore)
-- Основа этой ветки: авторская **ZephCore 1.18.0** с сохранёнными и дополненными
+- Основа этой ветки: авторская **ZephCore 1.18.1** с сохранёнными и дополненными
   доработками ShadoW для экранов, CLI, SOS, Fall, Tracking, индикации,
   питания, GPS, телеметрии и конкретных плат.
 
@@ -98,7 +98,7 @@ ZephCore — прошивка для LoRa mesh-узлов, совместима�
   ([OFFGRID.md](docs/OFFGRID.md)).
 - **LR2021 2.4 ГГц**, Linux Native на Raspberry Pi/Femtofox и KISS modem.
 
-## Доработки ShadoW в 1.18.0
+## Доработки ShadoW
 
 ### CLI и vContact
 
@@ -261,3 +261,6 @@ ESP32 sysbuild/MCUboot, дополнительные варианты и пар�
 MIT, как у авторской ZephCore и MeshCore. См. [LICENSE](LICENSE), где также перечислены
 встроенные компоненты и их лицензии. Логотип: [recrof](https://github.com/recrof),
 [WTFPL](https://en.wikipedia.org/wiki/WTFPL).
+
+Обновление авторской базы до 1.18.1 и результаты проверок:
+[SHADOW_UPDATE_1.18.1.md](releasenotes/SHADOW_UPDATE_1.18.1.md).
