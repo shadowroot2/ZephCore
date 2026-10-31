@@ -2299,9 +2299,8 @@ int main(void)
 	initNodePrefs(&companion_mesh.prefs);
 	companion_mesh.prefs.gps_interval = CONFIG_ZEPHCORE_GPS_POLL_INTERVAL_SEC; /* 0 = always on */
 
-	if (!data_store.loadPrefs(companion_mesh.prefs)) {
-		companion_mesh.prefs.tz_offset = companion_mesh.prefs.ui_timezone_offset_minutes / 60.0f;
-	}
+	companion_mesh.prefs.tz_offset = companion_mesh.prefs.ui_timezone_offset_minutes / 60.0f;
+	data_store.loadPrefs(companion_mesh.prefs);
 	ui_set_timezone_offset_minutes(tz_offset_minutes(companion_mesh.prefs.tz_offset));
 	/* A repeat flag stored on a non-off-grid frequency is dropped. */
 	if (mesh::offgridNormalize(companion_mesh.prefs)) {
