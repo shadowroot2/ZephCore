@@ -1547,6 +1547,9 @@ void JoystickUITask::shutdown(bool restart)
 		sys_reboot(SYS_REBOOT_COLD);
 	} else {
 #ifdef CONFIG_POWEROFF
+		if (ui_request_manual_shutdown()) {
+			return;
+		}
 		/* The one power-off path (adapters/board/zephyr_poweroff.c):
 		 * display, GPS, regulators, LoRa reset, the button SENSE so the
 		 * user can wake the device. Same as the button UI's deep sleep. */

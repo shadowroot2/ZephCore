@@ -44,12 +44,14 @@
 		lora0 = &lora;
 		led0 = &led_red;
 		led1 = &led_blue;
+		ble-status-led = &led_blue;
 		lora-tx-led = &led_blue;
 		sw0 = &user_button;
 		watchdog0 = &wdt0;
 		buzzer = &buzzer;
 		gps-enable = &gps_enable_pin;
 		gps-reset = &gps_reset_pin;
+		gps-switch = &gps_sw;
 	};
 
 	/* ---- LEDs (active-high, matches MeshCore LED_STATE_ON=HIGH) ---- */
@@ -94,7 +96,7 @@
 		compatible = "zephcore,input-multi-tap";
 		input-codes = <INPUT_KEY_0>;
 		tap-codes = <INPUT_KEY_1 INPUT_KEY_LEFT>;
-		tap-delay-ms = <400>;
+		tap-delay-ms = <500>;
 	};
 
 	/* ---- Power control ---- */

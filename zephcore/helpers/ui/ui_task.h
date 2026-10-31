@@ -75,6 +75,8 @@ void ui_led_heartbeat_init(void);
  */
 void ui_notify(enum ui_event event);
 
+void ui_request_render(void); /* ZEPHCORE: explicit event-driven repaint */
+
 /**
  * Update the message count shown on the messages page.
  *
@@ -158,6 +160,11 @@ void ui_clear_recent(void);
  */
 void ui_set_gps_available(bool available);
 
+/** Physical GPS switch state, when the board exposes gps-switch in DT. */
+void ui_set_gps_switch(bool present, bool enabled);
+bool ui_gps_switch_present(void);
+bool ui_gps_switch_is_on(void);
+
 /**
  * Set GPS enabled state (for display page).
  */
@@ -192,6 +199,9 @@ void ui_set_link_transports(uint8_t mask);
  */
 void ui_set_wifi(uint8_t state, const char *ssid, const char *ip, uint16_t port);
 
+/** Persisted WiFi enable state shown by the WiFi page. */
+void ui_set_wifi_enabled(bool enabled);
+
 /**
  * Set notification mode (for display page).
  */
@@ -202,10 +212,21 @@ void ui_set_buzzer_mode(uint8_t mode);
  */
 void ui_set_leds_disabled(bool disabled);
 
+void ui_set_bridge_enabled(bool enabled);
+void ui_set_bridge_connected(bool connected);
+void ui_set_bridge_status(const char *status);
+void ui_set_bridge_addresses(const char *local, const char *peer);
+void ui_set_bridge_metrics(uint8_t priority, uint32_t forwarded, uint32_t skipped);
+
+bool ui_leds_disabled(void);
+
 /**
  * Enable or disable the heartbeat LED.
  */
 void ui_set_heartbeat_led(bool enabled);
+
+void ui_led_set_ble_connected(bool connected);
+void ui_led_set_ble_enabled(bool enabled);
 
 /**
  * Flash the heartbeat LED immediately on message receipt.
@@ -213,11 +234,17 @@ void ui_set_heartbeat_led(bool enabled);
  */
 void ui_led_flash_msg(void);
 
+void ui_led_force_tx(void);
+void ui_led_confirm_state(bool enabled);
+
 /**
  * Flash the heartbeat LED 3 times as a visual shutdown indicator.
  * Used when the buzzer is muted — gives visual feedback on power-off.
  */
 void ui_led_flash_shutdown(void);
+
+void ui_shutdown(void);
+bool ui_request_manual_shutdown(void);
 
 /**
  * Set offgrid mode (client repeat) state for display page.
@@ -229,6 +256,11 @@ void ui_set_offgrid_mode(bool enabled);
  * provider() must return millivolts (0 if no battery hardware).
  */
 void ui_set_battery_provider(uint16_t (*mv)(void), uint8_t (*pct)(void));
+
+/**
+ * Register the external-power provider used by charging indicators.
+ */
+void ui_set_power_source_provider(bool (*provider)(void));
 
 /**
  * Lazy battery refresh: re-read the ADC only if cached value is stale.
@@ -244,6 +276,8 @@ void ui_refresh_battery(void);
  * main loop still has a notice to deliver. Nothing without a display.
  */
 void ui_show_low_battery(bool hold);
+
+bool ui_shutdown_in_progress(void);
 
 /**
  * Drop the battery-refresh freshness timestamp. The next

@@ -286,6 +286,8 @@ public:
   uint32_t futureMillis(int millis_from_now) const;
 
   bool tryParsePacket(Packet* pkt, const uint8_t* raw, int len);
+  // ZEPHCORE: bridge RX is already framed; process it like radio RX.
+  bool injectRaw(const uint8_t* raw, int len);
 
 private:
   // ZEPHCORE: percentage budget and checkSend() helpers (duty-cycle gate, LBT

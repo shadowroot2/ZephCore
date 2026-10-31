@@ -19,6 +19,8 @@
 #endif
 #include <adapters/gps/ZephyrGPSManager.h>
 #include <helpers/time_sync.h>
+#include <helpers/CompanionCLIHelp.h>
+#include <helpers/CommonCLI.h>
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_DESIGN_BUTTON) || IS_ENABLED(CONFIG_ZEPHCORE_UI_DESIGN_JOYSTICK)
 #include <ui_task.h>
 #define ZEPHCORE_HAS_UI_TASK 1
@@ -83,6 +85,8 @@ CompanionMesh::CompanionMesh(mesh::Radio &radio, mesh::MillisecondClock &ms, mes
 	memset(_send_scope.key, 0, sizeof(_send_scope.key));
 	_send_scope_force_unscoped = false;
 	_cli_exec_cb = nullptr;
+	_cli_help_cb = nullptr;
+	_remote_cli_help_cb = nullptr;
 	memset(_vcontact_pubkey, 0, sizeof(_vcontact_pubkey));
 	_vcontact_lastmod = 0;
 	memset(_vcontact_recent_ts, 0, sizeof(_vcontact_recent_ts));
@@ -910,8 +914,27 @@ void CompanionMesh::queueLocalSentContactMessage(const ContactInfo &contact,
 void CompanionMesh::queueLocalSentChannelMessage(uint8_t channel_idx,
 	uint32_t timestamp, const char *text, bool heard_repeat)
 {
+	queueLocalChannelMessage(channel_idx, timestamp, text,
+		heard_repeat ? "(>>\xe2\x9c\x93) " : "(>>\xe2\x9c\x97) ");
+}
+
+void CompanionMesh::queueLocalAutomatedChannelMessage(
+	const mesh::GroupChannel &channel, uint32_t timestamp, const char *text)
+{
+	int channel_idx = findChannelIdx(channel);
+	if (channel_idx < 0 || channel_idx >= MAX_GROUP_CHANNELS) {
+		LOG_WRN("local channel mirror: destination not found");
+		return;
+	}
+	queueLocalChannelMessage((uint8_t)channel_idx, timestamp, text, "(>>) ");
+}
+
+void CompanionMesh::queueLocalChannelMessage(uint8_t channel_idx,
+	uint32_t timestamp, const char *text, const char *marker)
+{
 	if (!text) return;
 	uint8_t frame[MAX_FRAME_SIZE];
+	const size_t frame_limit = sizeof(_offline_queue[0].buf);
 	int i = 0;
 
 	if (_app_target_ver >= 3) {
@@ -930,25 +953,18 @@ void CompanionMesh::queueLocalSentChannelMessage(uint8_t channel_idx,
 	put_le32(&frame[i], timestamp);
 	i += 4;
 
-	/* Channel wire-text is "<sender_name>: <body>" — the same prefix
-	 * BaseChatMesh::sendGroupMessage applied over LoRa.  Prepend a
-	 * heard/unheard marker so the phone app can distinguish whether the
-	 * mesh propagated our flood. */
-	const char *marker = heard_repeat ? "(>>\xe2\x9c\x93) "    /* (>>✓) UTF-8 */
-									  : "(>>\xe2\x9c\x97) ";   /* (>>✗) UTF-8 */
-	int n = snprintf((char *)&frame[i], sizeof(frame) - i, "%s%s: ", marker, prefs.node_name);
+	int n = snprintf((char *)&frame[i], frame_limit - i, "%s%s: ", marker, prefs.node_name);
 	if (n < 0) n = 0;
-	if ((size_t)n > sizeof(frame) - i) n = sizeof(frame) - i;
+	if ((size_t)n >= frame_limit - i) n = frame_limit - i - 1;
 	i += n;
 	size_t text_len = strlen(text);
-	if (i + text_len > sizeof(frame)) {
-		text_len = sizeof(frame) - i;
+	if (i + text_len > frame_limit) {
+		text_len = frame_limit - i;
 	}
 	memcpy(&frame[i], text, text_len);
 	i += text_len;
 
-	LOG_DBG("queueLocalSentChannelMessage: frame_len=%d channel_idx=%d heard=%d",
-		i, channel_idx, (int)heard_repeat);
+	LOG_DBG("queueLocalChannelMessage: frame_len=%d channel_idx=%d", i, channel_idx);
 	addToOfflineQueue(frame, i);
 	pushMsgWaiting();
 }
@@ -973,6 +989,28 @@ void CompanionMesh::onCLICommandRecv(const ContactInfo &contact, mesh::Packet *p
 {
 	markConnectionActive(contact);  // in case this is from a server, and we have a connection
 	if (contact.isRemoteCLIAllowed()) {
+		const char *command = text;
+		char *help_reply = reply;
+		uint8_t prefix_len = 0;
+		char normalized[MAX_TEXT_LEN + 1];
+
+		while (*command == ' ') command++;
+		if (strlen(command) > 4 && command[2] == '|') {
+			memcpy(help_reply, command, 3);
+			help_reply += 3;
+			command += 3;
+			prefix_len = 3;
+		}
+		if (command[0] >= 'A' && command[0] <= 'Z') {
+			snprintf(normalized, sizeof(normalized), "%s", command);
+			normalized[0] = (char)(normalized[0] - 'A' + 'a');
+			command = normalized;
+		}
+		const char *help = _remote_cli_help_cb ? _remote_cli_help_cb(command) : nullptr;
+		if (help != nullptr) {
+			snprintf(help_reply, CLI_REMOTE_REPLY_SIZE - prefix_len, "%s", help);
+			return;
+		}
 		if (!handleCommand(text, sender_timestamp, reply)) {
 			strcat(reply, "Unknown command");  // reply may have cmd prefix from 'text'
 		}
@@ -980,36 +1018,6 @@ void CompanionMesh::onCLICommandRecv(const ContactInfo &contact, mesh::Packet *p
 		queueMessage(contact, TXT_TYPE_CLI_COMMAND, pkt, sender_timestamp, nullptr, 0, text);
 		pushMsgWaiting();
 	}
-}
-
-/* Over the air, a contact with flag 0x10 reaches the commands upstream's
- * companion handles (MyMesh::handleCommand and CommonRadioPrefs) and nothing
- * else: the ZephCore-only commands (start ota/dfu, erase, prv.key, clkreboot,
- * v.contact, autoshutdown, ...) stay local. */
-static bool isUpstreamCompanionCommand(const char *cmd)
-{
-	static const char *const exact[] = {
-		"get radio", "get freq", "get af", "get dutycycle", "get int.thresh", "get cad",
-		"get radio.rxgain", "get tx", "get rxdelay", "get agc.reset.interval",
-		"get path.hash.mode", "get multi.acks", "get txdelay", "get direct.txdelay",
-		"reboot", "poweroff", "shutdown", "get name", "get wifi.pwd", "set wifi.clear",
-		"get wifi.ssid", "get wifi.enabled", "get wifi.status", "get wifi.ip",
-		"board", "ver", "get tz.offset",
-	};
-	static const char *const prefix[] = {
-		"set radio ", "set af ", "set dutycycle ", "set int.thresh ", "set cad ",
-		"set radio.rxgain ", "get tx ", "set tx ", "set rxdelay ", "set agc.reset.interval ",
-		"set path.hash.mode ", "set multi.acks ", "set txdelay ", "set direct.txdelay ",
-		"set name ", "set pin ", "set wifi.ssid ", "set wifi.pwd ", "set wifi.enabled ",
-		"set tz.offset ",
-	};
-	for (const char *e : exact) {
-		if (strcmp(cmd, e) == 0) return true;
-	}
-	for (const char *p : prefix) {
-		if (strncmp(cmd, p, strlen(p)) == 0) return true;
-	}
-	return false;
 }
 
 bool CompanionMesh::handleCommand(const char *command, uint32_t sender_timestamp, char *reply)
@@ -1025,12 +1033,21 @@ bool CompanionMesh::handleCommand(const char *command, uint32_t sender_timestamp
 	}
 	*reply = 0;
 
-	if (sender_timestamp != 0 && !isUpstreamCompanionCommand(command)) {
+	if (sender_timestamp != 0 && !companion_remote_cli_command_allowed(command)) {
 		return false;
 	}
 	if (_cli_exec_cb == nullptr) {
 		strcpy(reply, "CLI not available");
 		return true;
+	}
+	if (sender_timestamp != 0) {
+		char local_reply[COMPANION_CLI_REPLY_SIZE] = {};
+		_cli_exec_cb(command, sender_timestamp, 0, local_reply);
+		if (local_reply[0] != '\0') {
+			snprintf(reply, CLI_REMOTE_REPLY_SIZE - hdr_used, "%s", local_reply);
+			return true;
+		}
+		return false;
 	}
 	_cli_exec_cb(command, sender_timestamp, hdr_used, reply);
 	return *reply != 0;
@@ -1249,6 +1266,15 @@ void CompanionMesh::logTx(mesh::Packet *pkt, int)
 {
 	packet_log_tx(getLogDateTime(), pkt);
 #if ZEPHCORE_HAS_UI_TASK
+#if defined(CONFIG_BOARD_T1000_E)
+	if (pkt != nullptr) {
+		uint8_t type = pkt->getPayloadType();
+		if (type == PAYLOAD_TYPE_TXT_MSG || type == PAYLOAD_TYPE_GRP_TXT ||
+		    type == PAYLOAD_TYPE_ADVERT) {
+			ui_led_force_tx();
+		}
+	}
+#endif
 	ui_notify_packet_sent();
 #endif
 }
@@ -1865,7 +1891,7 @@ bool CompanionMesh::handleCmdAppStart(const uint8_t *data, size_t len)
 bool CompanionMesh::handleCmdRunCliCommand(const uint8_t *data, size_t len)
 {
 	/* Runs a CLI line on behalf of the connected app.  This is the same
-	 * local CLI the USB text sideband and the v-contact chat already reach,
+	 * local CLI the USB text sideband reaches,
 	 * over the same already-paired transport, so it adds no reach that an
 	 * app connected to this node did not already have — it is executed with
 	 * sender_timestamp 0 (local) for exactly that reason. */
@@ -1881,14 +1907,43 @@ bool CompanionMesh::handleCmdRunCliCommand(const uint8_t *data, size_t len)
 		size_t cmd_len = len - 1;
 		if (cmd_len > sizeof(line) - 1) cmd_len = sizeof(line) - 1;
 		memcpy(line, &data[1], cmd_len);
+		size_t begin = 0;
+		while (begin < cmd_len && (uint8_t)line[begin] <= 0x20) begin++;
+		size_t end = cmd_len;
+		while (end > begin && (uint8_t)line[end - 1] <= 0x20) end--;
+		cmd_len = end - begin;
+		if (begin != 0 && cmd_len != 0) memmove(line, &line[begin], cmd_len);
 		line[cmd_len] = '\0';
+		char *command = line;
+
+		char *help_command = command;
+		uint8_t help_prefix_len = 0;
+		if (strlen(command) >= 4 && command[2] == '|') {
+			help_command += 3;
+			help_prefix_len = 3;
+		}
+		if (help_command[0] >= 'A' && help_command[0] <= 'Z') {
+			help_command[0] = (char)(help_command[0] - 'A' + 'a');
+		}
+		const char *help = _cli_help_cb ? _cli_help_cb(help_command) : nullptr;
+		if (help != nullptr) {
+			uint8_t rsp[MAX_FRAME_SIZE];
+			rsp[0] = PACKET_CLI_REPLY;
+			memcpy(&rsp[1], command, help_prefix_len);
+			size_t rlen = strlen(help);
+			size_t room = sizeof(rsp) - 1 - help_prefix_len;
+			if (rlen > room) rlen = room;
+			memcpy(&rsp[1 + help_prefix_len], help, rlen);
+			writeFrame(rsp, 1 + help_prefix_len + rlen);
+			return true;
+		}
 
 		/* Reply is built in place behind the frame type byte. */
 		uint8_t rsp[1 + COMPANION_CLI_PREFIX_ROOM + COMPANION_CLI_REPLY_SIZE];
 		char *reply = (char *)&rsp[1];
 		rsp[0] = PACKET_CLI_REPLY;
-		if (!handleCommand(line, 0, reply)) {
-			strcat(reply, "Unknown command");  // reply may have cmd prefix from 'line'
+		if (!handleCommand(command, 0, reply)) {
+			strcat(reply, "Unknown command");  // reply may have cmd prefix from 'command'
 		}
 
 		/* A CommonCLI reply can be longer than one companion frame and the

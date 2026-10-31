@@ -141,10 +141,22 @@ extern "C" void ui_notify(enum ui_event event)
 	}
 }
 
+extern "C" void ui_request_render(void)
+{
+	if (s_task) {
+		s_task->notify();
+	}
+}
+
 extern "C" void ui_notify_contact_msg(uint8_t path_len, const char *from_name,
 	const char *text, uint16_t msg_count)
 {
 	if (s_task) {
+	#if defined(CONFIG_BOARD_T1000_E)
+		if (!s_task->isBLEConnected()) {
+		ui_led_flash_msg();
+		}
+	#endif
 		s_task->newMsg(path_len, from_name, text, (int)msg_count);
 	}
 }
@@ -154,6 +166,11 @@ extern "C" void ui_notify_channel_msg(const char *channel_name, const char *text
 {
 	(void)msg_count;
 	if (s_task) {
+	#if defined(CONFIG_BOARD_T1000_E)
+		if (!s_task->isBLEConnected()) {
+		ui_led_flash_msg();
+		}
+	#endif
 		s_task->newChannelMsg(channel_name, text, ts, path_len);
 	}
 }
@@ -249,6 +266,7 @@ extern "C" void ui_set_battery(uint16_t mv, uint8_t pct)
 
 extern "C" void ui_set_ble_enabled(bool enabled)
 {
+	ui_led_set_ble_enabled(enabled);
 	if (s_task) {
 		s_task->setBLEEnabled(enabled);
 	}
@@ -265,6 +283,9 @@ extern "C" void ui_add_recent(const char *, int16_t, uint32_t) {}
 extern "C" void ui_set_node_name(const char *) {}
 extern "C" void ui_clear_recent(void) {}
 extern "C" void ui_set_gps_available(bool) {}
+extern "C" void ui_set_gps_switch(bool, bool) {}
+extern "C" bool ui_gps_switch_present(void) { return false; }
+extern "C" bool ui_gps_switch_is_on(void) { return false; }
 extern "C" void ui_set_gps_enabled(bool) {}
 extern "C" void ui_set_gps_state(uint8_t, uint32_t, uint32_t) {}
 extern "C" void ui_set_buzzer_mode(uint8_t) {}
@@ -285,8 +306,16 @@ extern "C" void ui_set_wifi(uint8_t state, const char *ssid, const char *ip, uin
 		s_task->setWifi(state, ssid, ip, port);
 	}
 }
+
+extern "C" void ui_set_wifi_enabled(bool)
+{
+	if (s_task) {
+		s_task->forceRefresh();
+	}
+}
 #else
 extern "C" void ui_set_link_transports(uint8_t) {}
 extern "C" void ui_set_wifi(uint8_t, const char *, const char *, uint16_t) {}
+extern "C" void ui_set_wifi_enabled(bool) {}
 #endif
 extern "C" void ui_set_msg_count(uint16_t count) {}

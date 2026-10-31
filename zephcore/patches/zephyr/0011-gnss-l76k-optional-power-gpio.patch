@@ -1,0 +1,28 @@
+diff --git a/drivers/gnss/gnss_luatos_air530z.c b/drivers/gnss/gnss_luatos_air530z.c
+--- a/drivers/gnss/gnss_luatos_air530z.c
++++ b/drivers/gnss/gnss_luatos_air530z.c
+@@ -333,13 +333,18 @@ static int gnss_luatos_air530z_init(const struct device *dev)
+ 		return ret;
+ 	}
+ 
+-	/* setup on-off gpio for power management */
+-	if (!gpio_is_ready_dt(&config->on_off_gpio)) {
+-		LOG_ERR("on-off GPIO device not ready");
+-		return -ENODEV;
++	/* Some L76K add-on boards have no separate power switch. */
++	if (config->on_off_gpio.port != NULL) {
++		if (!gpio_is_ready_dt(&config->on_off_gpio)) {
++			LOG_ERR("on-off GPIO device not ready");
++			return -ENODEV;
++		}
++
++		ret = gpio_pin_configure_dt(&config->on_off_gpio, GPIO_OUTPUT_HIGH);
++		if (ret < 0) {
++			return ret;
++		}
+ 	}
+ 
+-	gpio_pin_configure_dt(&config->on_off_gpio, GPIO_OUTPUT_HIGH);
+-
+ 	return 0;
+ }

@@ -55,8 +55,16 @@ void mesh_housekeeping_ui_refresh(void);
  */
 void mesh_send_flood_advert(void);
 void mesh_send_zerohop_advert(void);
+void mesh_send_sos(void); /* ZEPHCORE: safety actions */
+bool mesh_sos_cancel_if_active(void);
+void mesh_fall_alarm_acknowledge(void);
+void mesh_tracking_toggle(void);
+void mesh_set_bridge_enabled(bool enabled);
 void mesh_gps_set_enabled(bool enable);
 void mesh_ble_set_enabled(bool enable);
+#if defined(CONFIG_ZEPHCORE_COMPANION_WIFI)
+void mesh_wifi_set_enabled_and_restart(bool enable);
+#endif
 void mesh_set_buzzer_mode(uint8_t mode);
 void mesh_set_offgrid_mode(bool enable);
 /* False when the current band has no off-grid frequency (2.4 GHz). */

@@ -87,6 +87,11 @@ class RepeaterMesh : public mesh::Mesh, public CommonCLICallbacks {
   RepeaterDataStore* _store;
   uint32_t last_millis;
   uint64_t uptime_millis;
+  uint64_t battery_check_at = 0;
+  int64_t battery_last_alert_at = 0;
+  bool battery_alert_sent = false;
+  RepeaterBatteryPrefs battery_prefs;
+  uint8_t battery_low_samples = 0;
   unsigned long next_local_advert, next_flood_advert;
   bool _logging;
   NodePrefs _prefs;
@@ -150,6 +155,8 @@ class RepeaterMesh : public mesh::Mesh, public CommonCLICallbacks {
   bool isLooped(const mesh::Packet* packet, const uint8_t max_counters[]);
 
   void timeSyncTick();  // ZEPHCORE
+  void batteryAlertTick();
+  bool handleBatteryCommand(const char* command, char* reply);
   void handleRegionLoadLine(uint32_t sender_timestamp, char* command, char* reply);  // ZEPHCORE
 
 protected:

@@ -23,6 +23,7 @@
 #include <zephyr/dt-bindings/adc/nrf-saadc.h>
 #include <zephyr/dt-bindings/input/input-event-codes.h>
 #include <zephyr/dt-bindings/lora/sx126x.h>
+#include <zephyr/dt-bindings/pwm/pwm.h>
 
 / {
 	model = "ProMicro SX1262";
@@ -40,6 +41,7 @@
 	aliases {
 		lora0 = &lora;
 		led0 = &led0;
+		buzzer = &buzzer;
 		sw0 = &user_button;
 		watchdog0 = &wdt0;
 		gps-enable = &gps_enable_pin;
@@ -48,8 +50,17 @@
 	leds {
 		compatible = "gpio-leds";
 		led0: led_0 {
-			gpios = <&gpio0 15 GPIO_ACTIVE_HIGH>;
+			gpios = <&gpio0 6 GPIO_ACTIVE_HIGH>;
 			label = "LED";
+		};
+	};
+
+	pwmbuzzer {
+		compatible = "pwm-leds";
+		buzzer: buzzer {
+			/* Meshtastic's Easy E22 target drives this passive piezo from
+			 * nRF PWM2 through the T1 low-side MOSFET. */
+			pwms = <&pwm2 0 PWM_MSEC(20) PWM_POLARITY_NORMAL>;
 		};
 	};
 
@@ -57,9 +68,28 @@
 		compatible = "gpio-keys";
 		user_button: button_0 {
 			gpios = <&gpio1 0 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
-			zephyr,code = <INPUT_KEY_ENTER>;
+			zephyr,code = <INPUT_KEY_0>;
 			label = "User Button";
 		};
+	};
+
+	/* Same one-button interaction as Heltec V3:
+	 * short tap = page next, double tap = page previous, long press = enter. */
+	user_btn_longpress {
+		compatible = "zephyr,input-longpress";
+		input = <&buttons>;
+		input-codes = <INPUT_KEY_0>;
+		short-codes = <INPUT_KEY_A>;
+		long-codes = <INPUT_KEY_ENTER>;
+		long-delay-ms = <1000>;
+	};
+
+	page_btn_multitap {
+		compatible = "zephcore,input-multi-tap";
+		/* KEY_A is emitted by the longpress pseudo-device. */
+		input-codes = <INPUT_KEY_A>;
+		tap-codes = <INPUT_KEY_1 INPUT_KEY_LEFT>;
+		tap-delay-ms = <500>;
 	};
 
 	/* 3V3 enable — must be HIGH to power E22-900M30S module */
@@ -87,10 +117,10 @@
 		};
 	};
 
-	/* Battery ADC: P0.31 (AIN7), 2:1 voltage devider, 3.6V ref */
+	/* Battery ADC: P0.31 (AIN7), calibrated against Meshtastic. */
 	zephyr,user {
 		io-channels = <&adc 7>;
-		vbat-mv-multiplier = <7236>;  /* 2:1 divider, 3.6V ref; +0.5% for nRF SAADC gain error */
+		vbat-mv-multiplier = <7485>;
 	};
 };
 
@@ -134,6 +164,13 @@
 	};
 };
 
+&pwm2 {
+	status = "okay";
+	pinctrl-0 = <&pwm2_default>;
+	pinctrl-1 = <&pwm2_sleep>;
+	pinctrl-names = "default", "sleep";
+};
+
 /* ---- SPI2 for SX1262 (Ebyte E22-900M30S) ---- */
 &spi2 {
 	compatible = "nordic,nrf-spim";
@@ -165,7 +202,7 @@
 	};
 };
 
-/* ---- I2C0 for optional sensors ---- */
+/* ---- I2C0: Faketec SH1106 OLED and optional sensors ---- */
 &i2c0 {
 	compatible = "nordic,nrf-twim";
 	status = "okay";
@@ -173,6 +210,23 @@
 	pinctrl-0 = <&i2c0_default>;
 	pinctrl-1 = <&i2c0_sleep>;
 	pinctrl-names = "default", "sleep";
+	/* SH1106 page writes are 129 bytes; TWIM needs a larger concat buffer. */
+	zephyr,concat-buf-size = <256>;
+	zephyr,flash-buf-max-size = <256>;
+
+	sh1106: sh1106@3c {
+		compatible = "sinowealth,sh1106";
+		reg = <0x3c>;
+		width = <128>;
+		height = <64>;
+		segment-offset = <2>;
+		page-offset = <0>;
+		display-offset = <0>;
+		multiplex-ratio = <63>;
+		segment-remap;
+		com-invdir;
+		prechargep = <0x22>;
+	};
 
 	/*
 	 * Required by the SSD1306 below, not an optimisation.
@@ -221,7 +275,10 @@
 	#include "../../common/sensors-i2c.dtsi"
 };
 
-/* ---- GPS on UART0 (9600 baud) ---- */
+/* ---- ATGM336H GPS on UART0 (9600 baud) ----
+ * The ATGM336H streams standard NMEA-0183 and is not Air530Z/CASIC hardware.
+ * Use Zephyr's passive NMEA parser; deferred init lets ZephyrGPSManager raise
+ * GPS_EN before the UART backend starts receiving NMEA sentences. */
 &uart0 {
 	compatible = "nordic,nrf-uarte";
 	status = "okay";
@@ -231,8 +288,8 @@
 	pinctrl-names = "default", "sleep";
 
 	gnss: gnss {
-		compatible = "luatos,air530z";
-		on-off-gpios = <&gpio0 24 GPIO_ACTIVE_HIGH>;
+		compatible = "gnss-nmea-generic";
+		zephyr,deferred-init;
 	};
 };
 

@@ -62,7 +62,7 @@ void ZephyrRTCClock::seedCurrentTime(uint32_t time)
 	uint32_t uptime_sec = (uint32_t)(k_uptime_get() / 1000);
 	epoch_offset = time - uptime_sec;
 	/* As upstream's setCurrentTime(): unconditional, so a set below
-	 * RTC_TIME_MIN (clkreboot) replaces the backup and is not restored. */
+	 * RTC_TIME_MIN replaces the backup and is not restored. */
 	_rtc_backup_time = time;
 	_rtc_backup_magic = RTC_BACKUP_MAGIC;
 }

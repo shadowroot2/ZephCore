@@ -1,0 +1,56 @@
+/*
+ * Seeed L76K GNSS for XIAO + Wio-SX1262.
+ * UART D6/D7 replaces the base board's I2C on the same physical pins.
+ *
+ * Connect GNSS by 3V3/GND and TX/RX only, or isolate GNSS RESET/D10
+ * before stacking: Wio-SX1262 drives D10 as SPI MOSI. GNSS WAKEUP/D0
+ * also shares the user button; leave it pulled up, never drive D0 high.
+ * With no separate GPS power switch the receiver remains powered while
+ * XIAO is on (~41 mA), including when GPS polling is disabled.
+ */
+
+&i2c0 {
+	status = "disabled";
+};
+
+/* Disabled parent buses do not implicitly disable Zephyr driver instances. */
+&shtc3 { status = "disabled"; };
+&aht20 { status = "disabled"; };
+&sht4x { status = "disabled"; };
+&bme280 { status = "disabled"; };
+&lps22hb { status = "disabled"; };
+&bmp388 { status = "disabled"; };
+&ina219 { status = "disabled"; };
+
+&pinctrl {
+	uart0_gps_default: uart0_gps_default {
+		group1 {
+			psels = <NRF_PSEL(UART_TX, 1, 11)>;
+		};
+		group2 {
+			psels = <NRF_PSEL(UART_RX, 1, 12)>;
+			bias-pull-up;
+		};
+	};
+
+	uart0_gps_sleep: uart0_gps_sleep {
+		group1 {
+			psels = <NRF_PSEL(UART_TX, 1, 11)>,
+				<NRF_PSEL(UART_RX, 1, 12)>;
+			low-power-enable;
+		};
+	};
+};
+
+&uart0 {
+	compatible = "nordic,nrf-uarte";
+	status = "okay";
+	current-speed = <9600>;
+	pinctrl-0 = <&uart0_gps_default>;
+	pinctrl-1 = <&uart0_gps_sleep>;
+	pinctrl-names = "default", "sleep";
+
+	gnss: gnss {
+		compatible = "luatos,air530z";
+	};
+};

@@ -12,9 +12,18 @@ cmake_minimum_required(VERSION 3.20.0)
 # Implemented in cmake/zephyr_patches.cmake and cmake/zephyr_new_files.cmake,
 # included below and from sysbuild/CMakeLists.txt.
 
-# Resolve target directories before find_package(Zephyr)
-get_filename_component(ZEPHYR_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../zephyr ABSOLUTE)
-get_filename_component(MODULES_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../modules ABSOLUTE)
+# Resolve target directories before find_package(Zephyr). Environment overrides
+# keep managed worktrees usable with the parent west workspace.
+if(DEFINED ENV{ZEPHYR_BASE} AND EXISTS "$ENV{ZEPHYR_BASE}/CMakeLists.txt")
+    get_filename_component(ZEPHYR_DIR "$ENV{ZEPHYR_BASE}" ABSOLUTE)
+else()
+    get_filename_component(ZEPHYR_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../zephyr ABSOLUTE)
+endif()
+if(DEFINED ENV{ZEPHCORE_MODULES_DIR})
+    get_filename_component(MODULES_DIR "$ENV{ZEPHCORE_MODULES_DIR}" ABSOLUTE)
+else()
+    get_filename_component(MODULES_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../modules ABSOLUTE)
+endif()
 
 # Apply patches, then copy new files into the Zephyr tree.
 # Both are shared with sysbuild/CMakeLists.txt, which must do the same before
@@ -78,10 +87,10 @@ set(ZEPHCORE_USER_CONFS "${ZEPHCORE_USER_EXTRA_CONF_FILE}")
 
 # Under sysbuild the user's EXTRA_CONF_FILE goes to sysbuild, not the app, and
 # BOARD is not set yet: recover both from the sysbuild cache.
-if(NOT BOARD AND DEFINED SYSBUILD_CACHE AND EXISTS "${SYSBUILD_CACHE}")
+if(DEFINED SYSBUILD_CACHE AND EXISTS "${SYSBUILD_CACHE}")
     file(STRINGS "${SYSBUILD_CACHE}" _sysbuild_strings ENCODING UTF-8)
     foreach(_str ${_sysbuild_strings})
-        if(_str MATCHES "^BOARD:STRING=(.+)")
+		if(NOT BOARD AND _str MATCHES "^BOARD:STRING=(.+)")
             set(BOARD "${CMAKE_MATCH_1}")
         endif()
         if(_str MATCHES "^EXTRA_CONF_FILE:UNINITIALIZED=(.+)")
@@ -109,7 +118,10 @@ elseif("kiss_modem" IN_LIST _user_conf_names OR CONFIG_ZEPHCORE_ROLE_KISS_MODEM)
     set(ZEPHCORE_BUILD_ROLE kiss_modem)
 elseif("room_server" IN_LIST _user_conf_names OR CONFIG_ZEPHCORE_ROLE_ROOM_SERVER)
     set(ZEPHCORE_BUILD_ROLE room_server)
-elseif("repeater" IN_LIST _user_conf_names OR CONFIG_ZEPHCORE_ROLE_REPEATER)
+elseif("repeater" IN_LIST _user_conf_names OR
+       "repeater_ble_bridge" IN_LIST _user_conf_names OR
+       "repeater_espnow_bridge" IN_LIST _user_conf_names OR
+       CONFIG_ZEPHCORE_ROLE_REPEATER OR CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
     set(ZEPHCORE_BUILD_ROLE repeater)
 else()
     set(ZEPHCORE_BUILD_ROLE companion)
@@ -122,6 +134,9 @@ foreach(_n debug debug_esp32 hangdebug gps_debug)
         set(ZEPHCORE_BUILD_DEBUG TRUE)
     endif()
 endforeach()
+if(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+    set(_kconfig_role repeater)
+endif()
 
 # ========== Config chain ==========
 # Kconfig and devicetree share one precedence order, later wins:
@@ -227,6 +242,23 @@ if(ZEPHCORE_PLATFORM STREQUAL "esp32")
         message(STATUS "  WiFi companion: auto-enabled (board declares wifi)")
     endif()
 
+    # Plain-UART companion transport for boards whose USB connector reaches a
+    # USB-UART bridge instead of the SoC USB controller. The chosen node is the
+    # hardware capability; native USB wins when the board declares both.
+    set(_zephcore_auto_companion_serial FALSE)
+    if(ZEPHCORE_BUILD_ROLE STREQUAL "companion" AND NOT ZEPHCORE_BUILD_DEBUG
+       AND NOT "serial_companion" IN_LIST _user_conf_names
+       AND NOT "esp32s3_usb" IN_LIST _user_conf_names
+       AND ZEPHCORE_BOARD_OVERLAY)
+        file(READ "${ZEPHCORE_BOARD_OVERLAY}" _board_overlay_text)
+        if(_board_overlay_text MATCHES "zephcore,companion-uart"
+           AND NOT _board_overlay_text MATCHES "esp32s3_usb_otg\\.dtsi")
+            zephcore_add_conf(${_zc}/serial_companion.conf)
+            set(_zephcore_auto_companion_serial TRUE)
+            message(STATUS "  UART companion: auto-enabled (board declares companion UART)")
+        endif()
+    endif()
+
     # USB CDC-ACM companion transport on S3 boards whose board.overlay includes
     # esp32s3_usb_otg.dtsi (that include declares the cdc_acm_uart node the USB
     # companion call sites are compiled behind — see ZEPHCORE_USB_STACK in
@@ -239,8 +271,11 @@ if(ZEPHCORE_PLATFORM STREQUAL "esp32")
     if(ZEPHCORE_BUILD_ROLE STREQUAL "companion" AND NOT ZEPHCORE_BUILD_DEBUG
        AND NOT "serial_companion" IN_LIST _user_conf_names
        AND NOT "esp32s3_usb" IN_LIST _user_conf_names
+       AND NOT _zephcore_auto_companion_serial
        AND ZEPHCORE_BOARD_OVERLAY)
-        file(READ "${ZEPHCORE_BOARD_OVERLAY}" _board_overlay_text)
+        if(NOT DEFINED _board_overlay_text)
+            file(READ "${ZEPHCORE_BOARD_OVERLAY}" _board_overlay_text)
+        endif()
         if(_board_overlay_text MATCHES "esp32s3_usb_otg\\.dtsi")
             zephcore_add_conf(${_zc}/esp32s3_usb.conf)
             message(STATUS "  USB CDC companion: auto-enabled (board declares USB OTG CDC-ACM)")
@@ -310,6 +345,9 @@ foreach(_r repeater room_server observer kiss_modem)
         set(_kconfig_role ${_r})
     endif()
 endforeach()
+if(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+	set(_kconfig_role repeater)
+endif()
 if(NOT _kconfig_role STREQUAL ZEPHCORE_BUILD_ROLE)
     message(FATAL_ERROR
         "ZephCore: Kconfig resolved role '${_kconfig_role}' but the build was "
@@ -522,8 +560,8 @@ endif()
 
 # ========== Role-Specific Sources ==========
 # Source order is link order and so affects the image; keep it stable.
-if(CONFIG_ZEPHCORE_ROLE_REPEATER OR CONFIG_ZEPHCORE_ROLE_ROOM_SERVER)
-  if(CONFIG_ZEPHCORE_ROLE_REPEATER)
+if(CONFIG_ZEPHCORE_ROLE_REPEATER_BASE OR CONFIG_ZEPHCORE_ROLE_ROOM_SERVER)
+  if(CONFIG_ZEPHCORE_ROLE_REPEATER_BASE)
     message(STATUS "ZephCore Role: REPEATER")
     target_sources(app PRIVATE
       src/main_repeater.cpp
@@ -569,7 +607,7 @@ if(CONFIG_ZEPHCORE_ROLE_REPEATER OR CONFIG_ZEPHCORE_ROLE_ROOM_SERVER)
   target_include_directories(app PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/adapters/usb
   )
-  if(CONFIG_ZEPHCORE_ROLE_REPEATER)
+  if(CONFIG_ZEPHCORE_ROLE_REPEATER_BASE)
     if(CONFIG_ZEPHCORE_REPEATER_UPLINK AND CONFIG_MQTT_LIB)
       target_sources(app PRIVATE
         app/RepeaterUplink.cpp
@@ -588,6 +626,26 @@ if(CONFIG_ZEPHCORE_ROLE_REPEATER OR CONFIG_ZEPHCORE_ROLE_ROOM_SERVER)
     target_compile_definitions(app PRIVATE ZEPHCORE_REPEATER=1)
   else()
     target_compile_definitions(app PRIVATE ZEPHCORE_ROOM_SERVER=1)
+  endif()
+  if(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+    target_sources(app PRIVATE app/RepeaterBridge.cpp app/BLERepeaterBridge.cpp)
+    if(CONFIG_SOC_FAMILY_ESPRESSIF_ESP32)
+      target_sources(app PRIVATE app/ESPNowBridge.cpp)
+      if(CONFIG_ZEPHCORE_ESPNOW_BRIDGE AND NOT CONFIG_BUILD_ONLY_NO_BLOBS)
+        find_file(ZEPHCORE_ESPNOW_LIBRARY
+          NAMES libespnow.a
+          PATHS
+            ${ZEPHYR_HAL_ESPRESSIF_MODULE_DIR}/zephyr/blobs/lib/${CONFIG_SOC_SERIES}
+            $ENV{IDF_PATH}/components/esp_wifi/lib/${CONFIG_SOC_SERIES}
+          NO_DEFAULT_PATH
+        )
+        if(NOT EXISTS "${ZEPHCORE_ESPNOW_LIBRARY}")
+          message(FATAL_ERROR "ESP-NOW bridge needs libespnow.a for ${CONFIG_SOC_SERIES}")
+        endif()
+        zephyr_link_libraries(${ZEPHCORE_ESPNOW_LIBRARY})
+      endif()
+    endif()
+    target_include_directories(app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/app)
   endif()
 elseif(CONFIG_ZEPHCORE_ROLE_OBSERVER)
   message(STATUS "ZephCore Role: OBSERVER")
@@ -640,6 +698,9 @@ else()
     # COMPANION_SERIAL (e.g. plain ESP32/S3 companions) failed to link otherwise.
     helpers/CommonCLI.cpp
   )
+  if(BOARD MATCHES "^(thinknode_m3|t1000_e)(/|$)")
+    target_sources(app PRIVATE adapters/sensors/FallDetector.cpp)
+  endif()
   # Companion transports: main_companion.cpp registers every one the build
   # has in upstream's MultiSerialInterface — BLE NUS when there is a
   # controller, TCP (native Linux, WiFi companion), and the wired link below.
@@ -733,6 +794,7 @@ endif()
 if(CONFIG_ZEPHCORE_UI_BUTTONS OR CONFIG_ZEPHCORE_UI_BUZZER OR CONFIG_ZEPHCORE_UI_DISPLAY)
   target_sources(app PRIVATE
     helpers/ui/ui_common.c
+    helpers/ui/ui_timezone.c
   )
   target_include_directories(app PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/helpers/ui

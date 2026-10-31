@@ -62,7 +62,8 @@ struct buzzer_ctx {
 	uint16_t bpm;             /* Beats per minute */
 	uint32_t whole_note_ms;   /* Duration of a whole note in ms */
 
-	bool quiet;
+	bool quiet;              /* User preference */
+	bool low_battery_quiet;  /* Temporary automatic power-saving override */
 	bool playing;
 	bool initialized;
 };
@@ -368,21 +369,13 @@ int buzzer_init(void)
 {
 	haptic_init();
 
-	/* Check for buzzer alias in devicetree */
-	const struct device *pwm_dev = DEVICE_DT_GET_OR_NULL(DT_NODELABEL(pwm0));
-
-	if (!pwm_dev || !device_is_ready(pwm_dev)) {
-		LOG_INF("no PWM device found - buzzer disabled");
-		return -ENODEV;
-	}
-
-	/* Get PWM spec from the buzzer node via alias */
 	if (!DT_HAS_ALIAS(buzzer)) {
 		LOG_INF("no buzzer alias in DT - buzzer disabled");
 		return -ENODEV;
 	}
 
-	/* PWM spec from the pwm-leds buzzer node */
+	/* PWM spec from the pwm-leds buzzer node. Do not assume the PWM
+	 * controller is named pwm0; ESP32 LEDC boards expose it as ledc0. */
 	ctx.pwm = (struct pwm_dt_spec)PWM_DT_SPEC_GET(DT_ALIAS(buzzer));
 
 	if (!pwm_is_ready_dt(&ctx.pwm)) {
@@ -422,7 +415,7 @@ int buzzer_init(void)
 	return 0;
 }
 
-void buzzer_play(const char *rtttl)
+static void buzzer_play_internal(const char *rtttl, bool force)
 {
 	if (rtttl && *rtttl) {
 		haptic_pulse();
@@ -437,7 +430,7 @@ void buzzer_play(const char *rtttl)
 		buzzer_stop();
 	}
 
-	if (ctx.quiet) {
+	if (!force && buzzer_is_quiet()) {
 		return;
 	}
 
@@ -458,6 +451,16 @@ void buzzer_play(const char *rtttl)
 
 	/* Start playing first note immediately on dedicated wq */
 	k_work_reschedule_for_queue(&buzzer_wq, &ctx.note_work, K_NO_WAIT);
+}
+
+void buzzer_play(const char *rtttl)
+{
+	buzzer_play_internal(rtttl, false);
+}
+
+void buzzer_play_force(const char *rtttl)
+{
+	buzzer_play_internal(rtttl, true);
 }
 
 void buzzer_stop(void)
@@ -523,7 +526,27 @@ bool zephcore_buzzer_has_vibrate(void)
 
 bool buzzer_is_quiet(void)
 {
+	return ctx.quiet || ctx.low_battery_quiet;
+}
+
+bool buzzer_is_user_quiet(void)
+{
 	return ctx.quiet;
+}
+
+void buzzer_set_low_battery_quiet(bool quiet)
+{
+	if (ctx.low_battery_quiet == quiet) {
+		return;
+	}
+
+	ctx.low_battery_quiet = quiet;
+	if (quiet && ctx.initialized) {
+		/* Stop a current alert immediately: at a critically low charge it is
+		 * more useful to preserve the remaining runtime than finish a melody. */
+		buzzer_stop();
+	}
+	LOG_INF("buzzer low-battery override %s", quiet ? "enabled" : "cleared");
 }
 
 bool buzzer_is_playing(void)

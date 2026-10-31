@@ -18,9 +18,27 @@
 #include <cstdint>
 #include <stddef.h>
 #include <mesh/Identity.h>
+#include <helpers/BatteryAlertDefaults.h>
 #include <helpers/NodePrefs.h>
 #include <helpers/ClientACL.h>
 #include <helpers/RegionMap.h>
+
+struct RepeaterBatteryPrefs {
+	bool enabled = true;
+	uint16_t interval_hours = 12;
+	char group_name[32] = "#zephcore";
+	uint16_t threshold_mv = ZEPHCORE_BATTERY_ALERT_DEFAULT_MV;
+};
+
+struct RepeaterBridgePrefs {
+	uint8_t peer_mac[6];
+	uint8_t lmk[16];
+	uint8_t key_is_custom;
+	uint8_t transport;
+	uint8_t enabled;
+	uint8_t peer_addr_type;
+	uint8_t forward_priority;
+};
 
 class RepeaterDataStore {
 public:
@@ -36,6 +54,12 @@ public:
 	/* Prefs management */
 	bool loadPrefs(NodePrefs& prefs);
 	bool savePrefs(const NodePrefs& prefs);
+	bool loadBatteryPrefs(RepeaterBatteryPrefs& prefs);
+	bool saveBatteryPrefs(const RepeaterBatteryPrefs& prefs);
+	bool loadBatteryAlertTime(uint32_t& epoch);
+	bool saveBatteryAlertTime(uint32_t epoch);
+	bool loadBridgePrefs(RepeaterBridgePrefs& prefs);
+	bool saveBridgePrefs(const RepeaterBridgePrefs& prefs);
 
 	/* The /lfs/repeater directory as a FILESYSTEM, for the storage code ported
 	 * from upstream (ClientACL, RegionMap), which names files from its root. */

@@ -32,6 +32,7 @@ LOG_MODULE_REGISTER(zephcore_ui_actions, CONFIG_ZEPHCORE_UI_ACTIONS_LOG_LEVEL);
 #include <joystick_ui_hooks.h>
 #include "ui_mesh_actions.h"
 #include "ui_radio_state.h"
+#include "ui_timezone.h"
 
 /* UI action bit flags — set from input thread, consumed by mesh event loop */
 #define UI_ACTION_FLOOD_ADVERT      BIT(0)
@@ -49,6 +50,18 @@ LOG_MODULE_REGISTER(zephcore_ui_actions, CONFIG_ZEPHCORE_UI_ACTIONS_LOG_LEVEL);
 #define UI_ACTION_GPS_DUTY_SAVE     BIT(12)
 #define UI_ACTION_DISPLAY_ROTATE_SAVE BIT(13)
 #define UI_ACTION_INPUT_ROTATE_SAVE BIT(14)
+#define UI_ACTION_SOS               BIT(15) /* ZEPHCORE: safety actions */
+#define UI_ACTION_TRACKING_TOGGLE   BIT(16)
+#define UI_ACTION_FALL_ACK          BIT(17)
+#define UI_ACTION_WIFI_RESTART      BIT(18)
+#define UI_ACTION_SOS_CANCEL        BIT(19)
+
+extern "C" void companion_sos_request_from_ui(void);
+extern "C" bool companion_sos_cancel_available(void);
+extern "C" void companion_sos_cancel_from_ui(void);
+extern "C" void companion_fall_alarm_acknowledge_from_ui(void);
+extern "C" void companion_tracking_toggle_from_ui(void);
+extern "C" bool companion_tracking_gps_control_allowed(void);
 
 /* Module-local pointers, set by init */
 static CompanionMesh *s_mesh;
@@ -70,6 +83,9 @@ static atomic_t pending_buzzer_mode;
 static atomic_t pending_offgrid_enabled;
 static atomic_t pending_leds_disabled;
 static atomic_t pending_ble_disabled;
+#if defined(CONFIG_ZEPHCORE_COMPANION_WIFI)
+static atomic_t pending_wifi_enabled;
+#endif
 static atomic_t pending_brightness;
 static atomic_t pending_wake_on_msg;
 static atomic_t pending_screen_off_secs;
@@ -107,8 +123,42 @@ extern "C" void mesh_send_zerohop_advert(void)
 	k_event_post(s_mesh_events, s_mesh_event_ui_action);
 }
 
+extern "C" void mesh_send_sos(void)
+{
+	atomic_or(&pending_ui_actions, UI_ACTION_SOS);
+	k_event_post(s_mesh_events, s_mesh_event_ui_action);
+}
+
+extern "C" bool mesh_sos_cancel_if_active(void)
+{
+	if (!companion_sos_cancel_available()) {
+		return false;
+	}
+	atomic_or(&pending_ui_actions, UI_ACTION_SOS_CANCEL);
+	k_event_post(s_mesh_events, s_mesh_event_ui_action);
+	return true;
+}
+
+extern "C" void mesh_fall_alarm_acknowledge(void)
+{
+	if (!s_mesh_events) {
+		return;
+	}
+	atomic_or(&pending_ui_actions, UI_ACTION_FALL_ACK);
+	k_event_post(s_mesh_events, s_mesh_event_ui_action);
+}
+
+extern "C" void mesh_tracking_toggle(void)
+{
+	atomic_or(&pending_ui_actions, UI_ACTION_TRACKING_TOGGLE);
+	k_event_post(s_mesh_events, s_mesh_event_ui_action);
+}
+
 extern "C" void mesh_gps_set_enabled(bool enable)
 {
+	if (!s_mesh_events || !companion_tracking_gps_control_allowed()) {
+		return;
+	}
 	/* Applied on the mesh thread with the prefs write: the GPS state
 	 * machine runs on the main thread only (ZephyrGPSManager.h). */
 	atomic_set(&pending_gps_enabled, enable ? 1 : 0);
@@ -125,6 +175,15 @@ extern "C" void mesh_ble_set_enabled(bool enable)
 	atomic_or(&pending_ui_actions, UI_ACTION_BLE_TOGGLE);
 	k_event_post(s_mesh_events, s_mesh_event_ui_action);
 }
+
+#if defined(CONFIG_ZEPHCORE_COMPANION_WIFI)
+extern "C" void mesh_wifi_set_enabled_and_restart(bool enable)
+{
+	atomic_set(&pending_wifi_enabled, enable ? 1 : 0);
+	atomic_or(&pending_ui_actions, UI_ACTION_WIFI_RESTART);
+	k_event_post(s_mesh_events, s_mesh_event_ui_action);
+}
+#endif
 
 extern "C" void mesh_save_brightness(uint8_t brightness)
 {
@@ -176,6 +235,9 @@ extern "C" void mesh_save_path_hash_mode(uint8_t mode)
 
 extern "C" void mesh_save_gps_duty_sec(uint32_t sec)
 {
+	if (!companion_tracking_gps_control_allowed()) {
+		return;
+	}
 	/* Applied on the mesh thread, as mesh_gps_set_enabled. */
 	atomic_set(&pending_gps_duty_sec, (atomic_val_t)sec);
 	atomic_or(&pending_ui_actions, UI_ACTION_GPS_DUTY_SAVE);
@@ -239,6 +301,19 @@ extern "C" void mesh_handle_ui_actions(void)
 		}
 	}
 
+	if (actions & UI_ACTION_SOS) {
+		companion_sos_request_from_ui();
+	}
+	if (actions & UI_ACTION_SOS_CANCEL) {
+		companion_sos_cancel_from_ui();
+	}
+	if (actions & UI_ACTION_FALL_ACK) {
+		companion_fall_alarm_acknowledge_from_ui();
+	}
+	if (actions & UI_ACTION_TRACKING_TOGGLE) {
+		companion_tracking_toggle_from_ui();
+	}
+
 	/* Save prefs if any toggle action changed them */
 	bool need_save = false;
 
@@ -246,6 +321,7 @@ extern "C" void mesh_handle_ui_actions(void)
 		bool gps_en = atomic_get(&pending_gps_enabled) != 0;
 		gps_enable(gps_en);
 		s_mesh->prefs.gps_enabled = gps_en ? 1 : 0;
+		s_mesh->vcontactNotify(gps_en ? "GPS: on" : "GPS: off");
 		LOG_INF("GPS %s (button)", gps_en ? "on" : "off");
 		need_save = true;
 	}
@@ -253,6 +329,10 @@ extern "C" void mesh_handle_ui_actions(void)
 	if (actions & UI_ACTION_BUZZER_TOGGLE) {
 		uint8_t mode = (uint8_t)atomic_get(&pending_buzzer_mode);
 		s_mesh->prefs.buzzer_quiet = zephcore_buzzer_prefs_from_mode(mode);
+		const char *notice = mode == ZEPHCORE_BUZZER_OFF ? "Buzzer: off" :
+			mode == ZEPHCORE_BUZZER_VIBRATE ? "Buzzer: vibrate" :
+			mode == ZEPHCORE_BUZZER_SOUND ? "Buzzer: sound" : "Buzzer: on";
+		s_mesh->vcontactNotify(notice);
 		LOG_INF("buzzer mode=%u (button)", mode);
 		need_save = true;
 	}
@@ -268,6 +348,7 @@ extern "C" void mesh_handle_ui_actions(void)
 	if (actions & UI_ACTION_LEDS_TOGGLE) {
 		bool ld = atomic_get(&pending_leds_disabled) != 0;
 		s_mesh->prefs.leds_disabled = ld ? 1 : 0;
+		s_mesh->vcontactNotify(ld ? "LEDs: off" : "LEDs: on");
 		LOG_INF("leds_disabled=%d (button)", ld);
 		need_save = true;
 	}
@@ -278,6 +359,16 @@ extern "C" void mesh_handle_ui_actions(void)
 		LOG_INF("ble_disabled=%d (button)", bd);
 		need_save = true;
 	}
+
+#if defined(CONFIG_ZEPHCORE_COMPANION_WIFI)
+	if (actions & UI_ACTION_WIFI_RESTART) {
+		bool enabled = atomic_get(&pending_wifi_enabled) != 0;
+		s_mesh->prefs.wifi_enabled = enabled ? 1 : 0;
+		ui_set_wifi_enabled(enabled);
+		LOG_INF("wifi_enabled=%d (button, rebooting)", enabled);
+		need_save = true;
+	}
+#endif
 
 	if (actions & UI_ACTION_BRIGHTNESS_SAVE) {
 		uint8_t br = (uint8_t)atomic_get(&pending_brightness);
@@ -330,7 +421,7 @@ extern "C" void mesh_handle_ui_actions(void)
 		LOG_INF("prefs saved (button action)");
 	}
 
-	if (actions & UI_ACTION_SAVE_RESTART) {
+	if (actions & (UI_ACTION_SAVE_RESTART | UI_ACTION_WIFI_RESTART)) {
 		LOG_INF("rebooting (save+restart action)");
 		zephcore_persist_before_off();
 		sys_reboot(SYS_REBOOT_COLD);
@@ -352,6 +443,7 @@ extern "C" void mesh_housekeeping_ui_refresh(void)
 	 * display offset is a separate push so nothing downstream is tempted to
 	 * bake a timezone into a timestamp (see NodePrefs::tz_offset). */
 	ui_set_clock(s_rtc_clock->getCurrentTime());
+	ui_set_timezone_offset_minutes(tz_offset_minutes(s_mesh->prefs.tz_offset));
 	ui_set_tz(tz_offset_minutes(s_mesh->prefs.tz_offset));
 
 	ui_push_radio_state(*s_lora_radio);

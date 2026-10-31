@@ -112,6 +112,16 @@ function(zephcore_apply_patches PATCH_DIR TARGET_DIR LABEL)
     foreach(PATCH_FILE ${PATCH_FILES})
         get_filename_component(PATCH_NAME ${PATCH_FILE} NAME)
         set(PATCH_FILE_TO_APPLY "${PATCH_FILE}")
+        execute_process(
+            COMMAND git apply --reverse --check "${PATCH_FILE}"
+            WORKING_DIRECTORY "${TARGET_DIR}"
+            RESULT_VARIABLE PATCH_ALREADY_APPLIED
+            ERROR_QUIET
+        )
+        if(PATCH_ALREADY_APPLIED EQUAL 0)
+            message(STATUS "  [${LABEL}] Already applied: ${PATCH_NAME}")
+            continue()
+        endif()
         # Prepare LF/CRLF patch variants for robust matching across clones.
         file(READ "${PATCH_FILE}" _patch_content)
         string(REPLACE "\r\n" "\n" _patch_lf "${_patch_content}")
@@ -157,52 +167,12 @@ function(zephcore_apply_patches PATCH_DIR TARGET_DIR LABEL)
                 endif()
             endif()
         endif()
-        # Stale patches from previous build: reset affected files, retry
-        if(NOT PATCH_CHECK EQUAL 0)
-            # Extract affected file paths from numstat
-            execute_process(
-                COMMAND git apply --numstat "${PATCH_FILE_TO_APPLY}"
-                WORKING_DIRECTORY "${TARGET_DIR}"
-                OUTPUT_VARIABLE PATCH_NUMSTAT
-                ERROR_QUIET
-            )
-            # numstat format: "adds\tdels\tpath"
-            string(REGEX MATCHALL "[^\t\n]+\t[^\t\n]+\t[^\t\n]+" NUMSTAT_LINES "${PATCH_NUMSTAT}")
-            set(PATCH_PATHS "")
-            foreach(_line ${NUMSTAT_LINES})
-                string(REGEX REPLACE "^[^\t]+\t[^\t]+\t" "" _path "${_line}")
-                list(APPEND PATCH_PATHS "${_path}")
-            endforeach()
-            if(PATCH_PATHS)
-                # This discards any uncommitted edits in these files of the
-                # target tree (e.g. an in-progress driver change not yet
-                # regenerated into the patch) -- say so loudly.
-                message(WARNING "  [${LABEL}] ${PATCH_NAME} does not apply; "
-                    "resetting these files in ${TARGET_DIR} to HEAD, discarding "
-                    "any local edits in them: ${PATCH_PATHS}")
-                execute_process(
-                    COMMAND git checkout -- ${PATCH_PATHS}
-                    WORKING_DIRECTORY "${TARGET_DIR}"
-                    ERROR_QUIET
-                )
-                # Retry dry-run
-                execute_process(
-                    COMMAND git apply --check "${PATCH_FILE_TO_APPLY}"
-                    WORKING_DIRECTORY "${TARGET_DIR}"
-                    RESULT_VARIABLE PATCH_CHECK
-                    ERROR_VARIABLE PATCH_ERR
-                )
-            endif()
-        endif()
         if(NOT PATCH_CHECK EQUAL 0)
             message(FATAL_ERROR
                 "ZephCore patch FAILED to apply: ${PATCH_NAME}\n"
                 "Target tree: ${TARGET_DIR}\n"
                 "Error:\n${PATCH_ERR}\n"
-                "Upstream likely changed — rebase the patch:\n"
-                "  cd ${TARGET_DIR}\n"
-                "  git diff -- <file>   # inspect current upstream\n"
-                "  # Regenerate: git diff -- <file> > ${PATCH_FILE}\n"
+                "The target has changes not matching this patch; preserve them and rebase explicitly.\n"
             )
         endif()
         # Apply

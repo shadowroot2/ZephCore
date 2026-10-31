@@ -47,7 +47,7 @@ enum SysInfoItem { SYSINFO_TIME=0, SYSINFO_STATS, SYSINFO_RADIO,
 #endif
 				 SYSINFO_COUNT };
 /* Power submenu items */
-enum SysPwrItem  { SYSPWR_REBOOT=0, SYSPWR_SHUTDOWN, SYSPWR_COUNT };
+enum SysPwrItem  { SYSPWR_REBOOT=0, SYSPWR_SOS, SYSPWR_SHUTDOWN, SYSPWR_COUNT };
 
 static void renderSubMenu(JoystickDisplay &display, const char *title,
 		int selected, const char * const *items, int count)
@@ -126,7 +126,7 @@ int SystemScreen::render(JoystickDisplay &display)
 		return 500;
 	}
 	if (_mode == SYSMODE_POWER) {
-		static const char * const kItems[SYSPWR_COUNT] = { "Reboot", "Shutdown" };
+		static const char * const kItems[SYSPWR_COUNT] = { "Reboot", "SOS", "Shutdown" };
 		renderSubMenu(display, "Power", _selected, kItems, SYSPWR_COUNT);
 		return 500;
 	}
@@ -282,6 +282,14 @@ bool SystemScreen::handleInput(char c)
 		if (c == KEY_ENTER) {
 			switch (_selected) {
 			case SYSPWR_REBOOT:   _task->showAlert("Rebooting...", 1500);  _task->shutdown(true);  return true;
+			case SYSPWR_SOS: {
+				/* SOS always requests a fresh fix now, even if a cached
+				 * position exists. The main loop plays the CLI acknowledgement. */
+				bool waiting = gps_is_available();
+				mesh_send_sos();
+				_task->showAlert(waiting ? "Waiting fix (5m max)" : "SOS sent", 2000);
+				return true;
+			}
 			case SYSPWR_SHUTDOWN: _task->showAlert("Shutting down...", 1500); _task->shutdown(false); return true;
 			default: return false;
 			}
@@ -346,24 +354,16 @@ int SystemTimeScreen::render(JoystickDisplay &display)
 	display.setTextSize(1);
 	display.setColor(JoystickDisplay::GREEN);
 
-	/* The RTC is UTC; the offset is applied here, at format time only.  It
-	 * must never reach the clock itself -- see NodePrefs::tz_offset. */
-	NodePrefs *prefs = _task->getPrefs();
-	int16_t tz_min = prefs ? tz_offset_minutes(prefs->tz_offset) : 0;
 	uint32_t epoch = _rtc->getCurrentTime();
-
-	/* Before a sync getCurrentTime() returns bare uptime, and a negative
-	 * offset would underflow it into a garbage far-future date.  Same
-	 * "time is set" threshold (2025-01-01) the other UI uses. */
-	if (epoch > 1735689600) {
-		epoch += (int32_t)tz_min * 60;
+	char timeText[16], dateText[16], tzText[12];
+	if (epoch > 1735689600U) {
+		epoch = ui_local_epoch(epoch);
+		ui_timezone_format_label(tzText, sizeof(tzText));
 	} else {
-		tz_min = 0;
+		strcpy(tzText, "UTC");
 	}
-
-	char timeText[16], dateText[16], tzText[TZ_OFFSET_TEXT_LEN];
 	formatUnixDateTime(epoch, timeText, sizeof(timeText), dateText, sizeof(dateText));
-	tz_offset_format_label(tz_min, tzText, sizeof(tzText));
+
 
 	const char *labels[4] = { "Time:", "Date:", "TZ:", "Source:" };
 	const char *values[4] = { timeText, dateText, tzText,
@@ -993,12 +993,22 @@ int WifiScreen::render(JoystickDisplay &display)
 	char line[48];
 	int y = kContentY + 2;
 	uint8_t state = _task->getWifiState();
+	NodePrefs *prefs = _task->getPrefs();
+	bool enabled = prefs && prefs->wifi_enabled != 0;
 
-	if (state == UI_WIFI_OFF) {
+	if (!enabled) {
 		display.setColor(JoystickDisplay::LIGHT);
 		display.drawTextLeftAlign(0, y, "Status: off");
 		y += kMenuLineH;
-		display.drawTextLeftAlign(0, y, "Set up via CLI");
+		display.drawTextLeftAlign(0, y, "ENTER: enable + reboot");
+		return 1000;
+	}
+
+	if (state == UI_WIFI_OFF) {
+		display.setColor(JoystickDisplay::LIGHT);
+		display.drawTextLeftAlign(0, y, "Status: on, no network");
+		y += kMenuLineH;
+		display.drawTextLeftAlign(0, y, "ENTER: disable + reboot");
 		return 1000;
 	}
 
@@ -1011,22 +1021,33 @@ int WifiScreen::render(JoystickDisplay &display)
 	display.drawTextLeftAlign(0, y, line);
 	y += kMenuLineH;
 	if (state != UI_WIFI_UP) {
+		display.drawTextLeftAlign(0, y, "ENTER: disable + reboot");
 		return 1000;
 	}
 
-	snprintf(line, sizeof(line), "IP: %s", _task->getWifiIp());
-	display.drawTextLeftAlign(0, y, line);
-	y += kMenuLineH;
-	snprintf(line, sizeof(line), "Port: %u", (unsigned)_task->getWifiPort());
+	snprintf(line, sizeof(line), "IP: %s:%u", _task->getWifiIp(),
+		 (unsigned)_task->getWifiPort());
 	display.drawTextLeftAlign(0, y, line);
 	y += kMenuLineH;
 	display.drawTextLeftAlign(0, y, (_task->getLinkTransports() & UI_LINK_TCP)
 				       ? "App: connected" : "App: none");
+	y += kMenuLineH;
+	display.drawTextLeftAlign(0, y, "ENTER: disable + reboot");
 	return 1000;
 }
 
 bool WifiScreen::handleInput(char c)
 {
+	if (c == KEY_ENTER) {
+		NodePrefs *prefs = _task->getPrefs();
+
+		if (prefs) {
+			prefs->wifi_enabled = prefs->wifi_enabled ? 0 : 1;
+			mesh_save_and_restart();
+			_task->showAlert("Restarting...", 2000);
+		}
+		return true;
+	}
 	if (c == KEY_CANCEL || c == KEY_HOME) { _task->gotoSystemScreen(); return true; }
 	return false;
 }

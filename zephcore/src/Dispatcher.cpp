@@ -258,6 +258,23 @@ bool Dispatcher::tryParsePacket(Packet* pkt, const uint8_t* raw, int len) {
   return true;  // success
 }
 
+// ZEPHCORE: inject a bridge frame through the normal receive path.
+bool Dispatcher::injectRaw(const uint8_t* raw, int len) {
+  if (raw == nullptr || len < 2 || len > MAX_TRANS_UNIT) return false;
+  Packet* pkt = _mgr->allocNew();
+  if (pkt == nullptr) return false;
+  if (!tryParsePacket(pkt, raw, len)) {
+    _mgr->free(pkt);
+    return false;
+  }
+  pkt->_snr = 0;
+  logRx(pkt, pkt->getRawLength(), 0.0f);
+  if (pkt->isRouteFlood()) n_recv_flood++;
+  else n_recv_direct++;
+  processRecvPacket(pkt);
+  return true;
+}
+
 void Dispatcher::checkRecv() {
   // ZEPHCORE: drain the whole RX ring per call. The mesh thread wakes on a
   // k_event bit, and several arrivals coalesce into one wake.

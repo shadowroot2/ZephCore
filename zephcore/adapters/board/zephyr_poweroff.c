@@ -148,7 +148,8 @@ void zephcore_power_off(void)
 	 * user to release any held button (otherwise DETECT is already asserted
 	 * when we enter System OFF and the chip never sleeps cleanly).
 	 * nRF only — other platforms rely on the DT wakeup-source property. */
-#if defined(CONFIG_SOC_FAMILY_NORDIC_NRF) && DT_NODE_EXISTS(DT_ALIAS(sw0))
+#if defined(CONFIG_SOC_FAMILY_NORDIC_NRF) && DT_NODE_EXISTS(DT_ALIAS(sw0)) && \
+	!defined(CONFIG_BOARD_XIAO_NRF52840)
 	{
 #define _SW0_NODE  DT_ALIAS(sw0)
 #define _SW0_PORT  DT_PROP(DT_GPIO_CTLR(_SW0_NODE, gpios), port)
@@ -176,7 +177,7 @@ void zephcore_power_off(void)
 #undef _SW0_PIN
 #undef _SW0_FLAGS
 	}
-#endif /* CONFIG_SOC_FAMILY_NORDIC_NRF && sw0 */
+#endif /* nRF sw0 wake; XIAO uses USB/RESET only */
 
 	/* 5. Release the board power latch, dead last: loads are already off and
 	 * step 4 has seen the button released (it is also the power-on input). On

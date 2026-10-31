@@ -9,7 +9,8 @@ companion builds of boards whose `zephcore.yml` declares `capabilities: wifi: tr
 boards the WiFi heap, network buffers and the `CompanionMesh` object go to PSRAM. Four no-PSRAM boards also
 declare it (Heltec V3 and Wireless Tracker at 140/130 contacts, 120/110 since 2026-10-09 when their companions gained light sleep, both C6 boards at 280; the offline queue stays
 256): each sets `ZEPHCORE_MAX_CONTACTS` in `board.conf` to the largest count that links, and an S3 without PSRAM
-also gets bounded WiFi buffers and a measured 72 KB heap (Kconfig, `HEAP_MEM_POOL_IGNORE_MIN`). Tracker V2, C3
+also gets bounded WiFi buffers and a measured 68 KB heap (61.6 KB measured peak; Kconfig,
+`HEAP_MEM_POOL_IGNORE_MIN`). Tracker V2, C3
 and the classic ESP32 boards do not fit WiFi + BLE (DRAM). Upstream's
 `set/get wifi.ssid|pwd|enabled`, `set wifi.clear`, `get wifi.status|ip`; applied on reboot; TCP port
 `CONFIG_ZEPHCORE_TCP_PORT` (5000, as upstream). The Zephyr ESP32 WiFi stack needed patches `0017`/`0018` and

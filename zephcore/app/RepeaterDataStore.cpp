@@ -75,6 +75,83 @@ bool RepeaterDataStore::saveIdentity(const mesh::LocalIdentity& id) {
 	return zephcore_identity_save(path, id);
 }
 
+bool RepeaterDataStore::loadBatteryPrefs(RepeaterBatteryPrefs& prefs) {
+	prefs = RepeaterBatteryPrefs{};
+	struct fs_file_t file;
+	fs_file_t_init(&file);
+	if (fs_open(&file, "/lfs/repeater/battery_prefs", FS_O_READ) < 0) return false;
+	struct {
+		uint32_t magic, enabled, hours;
+		char group[32];
+		uint32_t threshold_mv;
+	} record = {};
+	ssize_t n = fs_read(&file, &record, sizeof(record));
+	fs_close(&file);
+	const bool legacy = n == 12 && record.magic == 0x42504631;
+	const bool version2 = n == 44 && record.magic == 0x42504632;
+	if (!legacy && !version2 && (n != sizeof(record) || record.magic != 0x42504633)) return false;
+	if (record.enabled > 1 || record.hours < 1 || record.hours > 168 || record.threshold_mv > 5000) return false;
+	if (!legacy) {
+		if (!memchr(record.group, 0, sizeof(record.group)) || record.group[0] != '#' ||
+		    strchr(record.group, '\r') || strchr(record.group, '\n')) return false;
+		memcpy(prefs.group_name, record.group, sizeof(prefs.group_name));
+	}
+	prefs.enabled = record.enabled != 0;
+	prefs.interval_hours = record.hours;
+	if (!legacy && !version2) prefs.threshold_mv = record.threshold_mv;
+	return true;
+}
+
+bool RepeaterDataStore::saveBatteryPrefs(const RepeaterBatteryPrefs& prefs) {
+	if (prefs.interval_hours < 1 || prefs.interval_hours > 168 || prefs.threshold_mv > 5000) return false;
+	if (!memchr(prefs.group_name, 0, sizeof(prefs.group_name)) || prefs.group_name[0] != '#' ||
+	    strchr(prefs.group_name, '\r') || strchr(prefs.group_name, '\n')) return false;
+	if (!_initialized && !begin()) return false;
+	static const char path[] = "/lfs/repeater/battery_prefs";
+	static const char tmp[] = "/lfs/repeater/battery_prefs.tmp";
+	struct fs_file_t file;
+	fs_file_t_init(&file);
+	if (fs_open(&file, tmp, FS_O_CREATE | FS_O_WRITE | FS_O_TRUNC) < 0) return false;
+	struct {
+		uint32_t magic, enabled, hours;
+		char group[32];
+		uint32_t threshold_mv;
+	} record = {0x42504633, prefs.enabled ? 1U : 0U, prefs.interval_hours, {}, prefs.threshold_mv};
+	memcpy(record.group, prefs.group_name, sizeof(record.group));
+	ssize_t n = fs_write(&file, &record, sizeof(record));
+	int synced = fs_sync(&file);
+	int closed = fs_close(&file);
+	if (n != sizeof(record) || synced < 0 || closed < 0) return false;
+	return fs_rename(tmp, path) == 0;
+}
+
+bool RepeaterDataStore::loadBatteryAlertTime(uint32_t& epoch) {
+	struct fs_file_t file;
+	fs_file_t_init(&file);
+	if (fs_open(&file, "/lfs/repeater/battery_alert", FS_O_READ) < 0) return false;
+	uint32_t record[2] = {};
+	ssize_t n = fs_read(&file, record, sizeof(record));
+	fs_close(&file);
+	if (n != sizeof(record) || record[0] != 0x42415431) return false;
+	epoch = record[1];
+	return true;
+}
+
+bool RepeaterDataStore::saveBatteryAlertTime(uint32_t epoch) {
+	if (!_initialized && !begin()) return false;
+	static const char path[] = "/lfs/repeater/battery_alert";
+	static const char tmp[] = "/lfs/repeater/battery_alert.tmp";
+	struct fs_file_t file;
+	fs_file_t_init(&file);
+	if (fs_open(&file, tmp, FS_O_CREATE | FS_O_WRITE | FS_O_TRUNC) < 0) return false;
+	const uint32_t record[] = {0x42415431, epoch};
+	ssize_t n = fs_write(&file, record, sizeof(record));
+	int synced = fs_sync(&file);
+	int closed = fs_close(&file);
+	if (n != sizeof(record) || synced < 0 || closed < 0) return false;
+	return fs_rename(tmp, path) == 0;
+}
+
 bool RepeaterDataStore::loadPrefs(NodePrefs& prefs) {
 	char path[48];
 	snprintf(path, sizeof(path), "%s/prefs.json", BASE_PATH);
@@ -165,6 +242,49 @@ bool RepeaterDataStore::savePrefs(const NodePrefs& prefs) {
 		return false;
 	}
 	LOG_INF("Saved prefs to %s", path);
+	return true;
+}
+
+bool RepeaterDataStore::loadBridgePrefs(RepeaterBridgePrefs& prefs) {
+	char path[48];
+	snprintf(path, sizeof(path), "%s/espnow_bridge", BASE_PATH);
+	struct fs_file_t file;
+	fs_file_t_init(&file);
+	if (fs_open(&file, path, FS_O_READ) < 0) return false;
+	memset(&prefs, 0, sizeof(prefs));
+	ssize_t n = fs_read(&file, &prefs, sizeof(prefs));
+	fs_close(&file);
+	constexpr size_t pre_address_type_size = offsetof(RepeaterBridgePrefs, peer_addr_type);
+	constexpr size_t pre_priority_size = offsetof(RepeaterBridgePrefs, forward_priority);
+	if (n == (ssize_t)pre_address_type_size || n == (ssize_t)pre_priority_size) {
+		prefs.forward_priority = 7;
+		LOG_INF("Migrated bridge prefs");
+		return true;
+	}
+	if (n != (ssize_t)sizeof(prefs)) {
+		LOG_WRN("Bridge prefs are corrupt");
+		return false;
+	}
+	return true;
+}
+
+bool RepeaterDataStore::saveBridgePrefs(const RepeaterBridgePrefs& prefs) {
+	if (!_initialized && !begin()) return false;
+	char path[48];
+	char tmp_path[56];
+	snprintf(path, sizeof(path), "%s/espnow_bridge", BASE_PATH);
+	if (snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path) >= (int)sizeof(tmp_path)) return false;
+	fs_unlink(tmp_path);
+	struct fs_file_t file;
+	fs_file_t_init(&file);
+	if (fs_open(&file, tmp_path, FS_O_CREATE | FS_O_WRITE) < 0) return false;
+	ssize_t n = fs_write(&file, &prefs, sizeof(prefs));
+	int ret = fs_sync(&file);
+	fs_close(&file);
+	if (n != (ssize_t)sizeof(prefs) || ret < 0 || fs_rename(tmp_path, path) < 0) {
+		fs_unlink(tmp_path);
+		return false;
+	}
 	return true;
 }
 

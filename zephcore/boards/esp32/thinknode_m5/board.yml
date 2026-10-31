@@ -1,0 +1,6 @@
+board:
+  name: thinknode_m5
+  full_name: Elecrow ThinkNode M5
+  vendor: elecrow
+  socs:
+    - name: esp32s3

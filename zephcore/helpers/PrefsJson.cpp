@@ -142,6 +142,15 @@ protected:
 		def("vc_en", _p->v_contact_enabled);
 		def("vc_flags", _p->v_contact_flags);
 		def("vbat_mv", _p->v_battery_alert_mv);
+		if (_context->op() == READ) {
+			def("tz_min", _p->ui_timezone_offset_minutes);
+		}
+		def("aoff_em", _p->auto_shutdown_emergency);
+		def("track_int", _p->tracking_interval_minutes);
+		def("track_group", _p->tracking_group_name,
+		    sizeof(_p->tracking_group_name));
+		def("fall_sens", _p->fall_sensitivity);
+		def("fall_en", _p->fall_enabled);
 		def("adc_mult", _p->adc_multiplier);
 		def("pwr_sav_en", _p->powersaving_enabled);
 		def("og_home", _p->offgrid_home_freq);
@@ -320,6 +329,7 @@ bool serverPrefsToJson(const NodePrefs &p, Stream &out)
 bool companionPrefsFromJson(NodePrefs &p, Stream &in)
 {
 	NodePrefs t = p;
+	t.ui_timezone_offset_minutes = INT16_MAX;
 	CompanionJson j(&t);
 
 	/* Absent keys keep the caller's value: clear the marker first, so a file
@@ -329,10 +339,16 @@ bool companionPrefsFromJson(NodePrefs &p, Stream &in)
 	if (!j.load(in)) {
 		return false;
 	}
+	/* ShadoW 1.18.0 stored the display zone separately, in minutes. */
+	if (t.ui_timezone_offset_minutes != INT16_MAX &&
+	    t.ui_timezone_offset_minutes >= -720 && t.ui_timezone_offset_minutes <= 840) {
+		t.tz_offset = t.ui_timezone_offset_minutes / 60.0f;
+	}
 	auto_shutdown_upgrade(&t);
 	powersaving_upgrade(&t);
 	saneRadio(t);
 	sanitizeNodePrefs(&t);
+	t.ui_timezone_offset_minutes = tz_offset_minutes(t.tz_offset);
 	p = t;
 	return true;
 }

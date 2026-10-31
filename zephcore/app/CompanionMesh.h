@@ -89,6 +89,7 @@ typedef void (*PinChangeCallback)(uint32_t new_pin);
 #define COMPANION_CLI_PREFIX_ROOM 3
 typedef void (*CompanionCLICallback)(const char *command, uint32_t sender_timestamp,
 	uint8_t reply_hdr_used, char *reply);
+typedef const char *(*CompanionCLIHelpCallback)(const char *command);
 
 class CompanionMesh : public BaseChatMesh, public DataStoreHost {
 public:
@@ -117,10 +118,12 @@ public:
 	void setRadioReconfigureCallback(RadioReconfigureCallback cb) { _radio_reconfig_cb = cb; }
 	void setPinChangeCallback(PinChangeCallback cb) { _pin_change_cb = cb; }
 	void setCLICallback(CompanionCLICallback cb) { _cli_exec_cb = cb; }
+	void setCLIHelpCallback(CompanionCLIHelpCallback cb) { _cli_help_cb = cb; }
+	void setRemoteCLIHelpCallback(CompanionCLIHelpCallback cb) { _remote_cli_help_cb = cb; }
 
 	/* The companion CLI (upstream MyMesh::handleCommand). Front-ends: the app's
-	 * CMD_RUN_CLI_COMMAND, the USB text console and the v-contact chat (all
-	 * local, sender_timestamp 0), and TXT_TYPE_CLI_COMMAND from a contact with
+	 * CMD_RUN_CLI_COMMAND and USB text console (local, sender_timestamp 0),
+	 * and TXT_TYPE_CLI_COMMAND from a contact with
 	 * flag 0x10. False for an unknown command. */
 	bool handleCommand(const char *command, uint32_t sender_timestamp, char *reply);
 
@@ -184,6 +187,8 @@ public:
 	 * "<marker> <node_name>: <text>"; the marker says whether a repeat was heard. */
 	void queueLocalSentChannelMessage(uint8_t channel_idx, uint32_t timestamp,
 			const char *text, bool heard_repeat);
+	void queueLocalAutomatedChannelMessage(const mesh::GroupChannel &channel,
+			uint32_t timestamp, const char *text);
 
 	/* DataStoreHost interface */
 	bool onContactLoaded(const ContactInfo &c) override;
@@ -482,8 +487,12 @@ private:
 
 	void queueMessage(const ContactInfo &contact, uint8_t txt_type, mesh::Packet *pkt,
 		 uint32_t sender_timestamp, const uint8_t *extra, int extra_len, const char *text);
+	void queueLocalChannelMessage(uint8_t channel_idx, uint32_t timestamp,
+		 const char *text, const char *marker);
 
 	CompanionCLICallback _cli_exec_cb;
+	CompanionCLIHelpCallback _cli_help_cb;
+	CompanionCLIHelpCallback _remote_cli_help_cb;
 
 	/* ---- V-contact state (app/VContact.cpp) ---- */
 	/* _vcontact_lastmod == 0: not activated yet. The clock was invalid when it

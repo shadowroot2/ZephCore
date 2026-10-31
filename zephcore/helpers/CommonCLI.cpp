@@ -9,6 +9,7 @@
 #include "buzzer_gate.h"
 #include "pm_sleep_guard.h"
 #include <helpers/ui/ui_task.h>
+#include <helpers/ui/ui_timezone.h>
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
 #include <helpers/ui/display.h>
 #endif
@@ -387,13 +388,6 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
 		scheduleReboot(REBOOT_POWEROFF);
 	} else if (memcmp(command, "reboot", 6) == 0) {
 		strcpy(reply, "OK - rebooting");
-		scheduleReboot(REBOOT_NORMAL);
-	} else if (memcmp(command, "clkreboot", 9) == 0) {
-		getRTCClock()->setCurrentTime(1715770351);  // 15 May 2024, 8:50pm
-		/* Deferred like every other reboot path: called inline this reset the
-		 * board before the reply — and before any delivery-ack — could leave
-		 * the TX queue. */
-		strcpy(reply, "OK - clock reset, rebooting");
 		scheduleReboot(REBOOT_NORMAL);
 	} else if (memcmp(command, "advert.zerohop", 14) == 0) {
 		_callbacks->sendSelfAdvertisement(1500, false);  // 0-hop (direct) advert
@@ -1730,6 +1724,9 @@ void CommonCLI::handleSetCmd(uint32_t sender_timestamp, const char* command, cha
 		} else {
 			char hours[TZ_OFFSET_TEXT_LEN];
 			_prefs->tz_offset = tz_offset_sanitize(val);
+			_prefs->ui_timezone_offset_minutes = tz_offset_minutes(_prefs->tz_offset);
+			ui_set_timezone_offset_minutes(_prefs->ui_timezone_offset_minutes);
+			ui_set_tz(_prefs->ui_timezone_offset_minutes);
 			savePrefs();
 			tz_offset_format_hours(tz_offset_minutes(_prefs->tz_offset), hours, sizeof(hours));
 			snprintf(reply, CLI_REPLY_SIZE, "OK - tz.offset=%s", hours);

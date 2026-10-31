@@ -29,7 +29,7 @@ LOG_MODULE_REGISTER(zephcore_power_policy, CONFIG_ZEPHCORE_MAIN_LOG_LEVEL);
 
 /* With an app connected, the power-off waits this long so the notice's
  * notify -> fetch -> send round-trip can finish. */
-#define SHUTDOWN_GRACE_MS  1000
+#define SHUTDOWN_GRACE_MS  8000
 
 #if HAS_AUTO_SHUTDOWN
 static void shutdown_work_fn(struct k_work *work)
@@ -127,7 +127,7 @@ void PowerPolicy::checkShutdown(uint16_t mv, bool on_battery)
 
 	LOG_WRN("auto-shutdown: confirmed, powering off");
 	_shutting_down = true;
-	bool grace = _hooks.notify_shutdown && _hooks.notify_shutdown();
+	bool grace = _hooks.notify_shutdown && _hooks.notify_shutdown(mv);
 
 	if (!grace) {
 		/* Nobody heard it live: the next boot reports it. */

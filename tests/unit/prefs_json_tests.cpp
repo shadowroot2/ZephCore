@@ -216,3 +216,38 @@ TEST(pjson_tz_fraction, "UNIT-PJSON-009", "A quarter-hour timezone survives pref
     CHECK(companionPrefsFromJson(q, u));
     CHECK(q.tz_offset == 5.5f);
 }
+
+TEST(pjson_shadow_tz_migration, "UNIT-PJSON-010", "ShadoW minute timezones migrate once to float hours without losing custom prefs") {
+    struct Legacy { const char *text; float hours; int minutes; };
+    const Legacy files[] = {
+        {"{comp:{tz_offset:0},zc:{tz_min:300,track_int:17,track_group:\"#walk\",fall_sens:4}}", 5.0f, 300},
+        {"{comp:{tz_offset:5},zc:{tz_min:345}}", 5.75f, 345},
+        {"{comp:{tz_offset:-3},zc:{tz_min:-210}}", -3.5f, -210},
+        {"{comp:{tz_offset:5},zc:{tz_min:0}}", 0.0f, 0},
+        {"{comp:{tz_offset:0}}", 0.0f, 0},
+        {"{comp:{tz_offset:-9.5},zc:{tz_min:32767}}", -9.5f, -570},
+    };
+    for (const auto &file : files) {
+        NodePrefs p = defaults();
+        MemStream old(file.text);
+        CHECK(companionPrefsFromJson(p, old));
+        CHECK(p.tz_offset == file.hours);
+        CHECK(p.ui_timezone_offset_minutes == file.minutes);
+        MemStream saved;
+        CHECK(companionPrefsToJson(p, saved));
+        CHECK(saved.data.find("tz_min") == std::string::npos);
+        NodePrefs q = defaults();
+        CHECK(companionPrefsFromJson(q, saved));
+        CHECK(q.tz_offset == file.hours);
+        CHECK(q.ui_timezone_offset_minutes == file.minutes);
+        CHECK(q.tracking_interval_minutes == p.tracking_interval_minutes);
+        CHECK(std::strcmp(q.tracking_group_name, p.tracking_group_name) == 0);
+        CHECK(q.fall_sensitivity == p.fall_sensitivity);
+    }
+    NodePrefs p = defaults();
+    MemStream custom(files[0].text);
+    CHECK(companionPrefsFromJson(p, custom));
+    CHECK(p.tracking_interval_minutes == 17);
+    CHECK(std::strcmp(p.tracking_group_name, "#walk") == 0);
+    CHECK(p.fall_sensitivity == 4);
+}

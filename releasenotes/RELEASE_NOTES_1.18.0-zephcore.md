@@ -23,6 +23,77 @@ without changing the frequency, so the node repeated everything on your normal m
 
 More in [OFFGRID.md](../docs/OFFGRID.md). Thanks to **N8HOP** for the report.
 
+## Button notices in vContact
+
+When a companion is turned off with its button and an app is connected, vContact
+reports `Powering off: button` before the device enters System OFF. The app has
+eight seconds to fetch the notice. With no app connected, power-off is immediate.
+Button changes to GPS, buzzer mode and LEDs also appear in vContact after the
+companion applies them. The GPS page now redraws after that applied state, so
+its on/off value no longer remains stale, including on e-paper displays.
+On ThinkNode M1 and M5, the physical GPS switch now controls the startup state;
+with the switch off the page says `GPS switch: off` instead of claiming that
+the receiver was not detected.
+
+## XIAO nRF52840 charging heartbeat
+
+The repeater keeps the normal single heartbeat pulse while external power is
+connected instead of showing the three-pulse low-battery warning during charge.
+Its independent green LED now receives the battery and VBUS providers before
+the charge work starts, so it can show the same one/two/three-pulse percentage
+bands as M3 and T1000-E.
+
+## Categorized remote command help
+
+Repeater USB `help` now prints the complete local command list. The remote mesh
+console uses `help` for categories and `help <group>` for one packet-sized group,
+matching the categorical command line used by the companion app. Repeater power
+and battery help use separate `help power` and `help batt` groups; the old
+`help power.2` entry is gone. Bridge configuration is now in `help bridge`,
+without a separate `help bridge.cfg`. Remote `help access` follows `id` and
+contains the password settings and `setperm`; `help id` puts key commands last.
+Repeaters no longer accept `start ota` or `stop ota` over USB or mesh.
+`help gps`, `help bridge` and `help log` group related command variants, and
+`help gps` omits the `get gps` entry. `stat`, `log` and `sys` now close the
+root group list. `help mesh` starts with adverts and `repeat`, `help find` with
+`discover.neighbors`; `region` follows `rf`, and `help uplink` puts the WiFi PSK
+after status. `help rf` places `freqerr` after `freq`, and `help cad` places
+`txdelay` and `cad.reset` after `cad.stats`. The `clkreboot` command is removed
+from every role. Repeater help now lists only available GNSS, ADC, FEM and
+power-diagnostic commands, and bridge help follows the selected BLE or ESP-NOW
+transport. Repeater log-file commands are omitted because there is no log file. RF, bridge and mesh help now list settings on separate lines and keeps all flood suffixes on one line within the packet limit.
+Companion
+remote mesh CLI now uses the same packet-sized categories and exposes the
+safe operational ZephCore commands to an authorized contact. Identity and WiFi
+secrets, BLE PIN, RF changes, battery calibration/autoshutdown, power-off,
+OTA/DFU and erase remain local-only. Remote `sos` and `tracking on|off` are
+silent for their whole lifetime, including repeated tracking reports and the
+final SOS transmission.
+
+On T1000-E and ThinkNode M3, one short press now cancels a manual SOS that is
+waiting for GPS, restores the previous GPS state, plays the Fall-cancellation
+tone and sends `❌ SOS Canceled` to `#sos`. The same press is consumed instead
+of starting an advert.
+
+On companions with a display, the SOS page changes to `Press to Cancel` while a
+manual SOS is waiting for GPS. Activating the page again cancels it through the
+same GPS restore, cancellation tone and `#sos` notification path.
+
+GPS pages now redraw immediately after switching GPS off or on. The callback
+pushes the actual acquisition state as well as the enabled flag, fixing stale
+button, joystick and e-paper screens.
+
+T-Echo low-battery red indication no longer latches on after its first pulse;
+the shared LED OFF phase now releases the separate low-battery GPIO.
+
+## ShadoW splash restored
+
+The button-display splash again shows the firmware version and
+`Tuned by ShadoW`. The joystick splash already retained both; the two display
+paths are now documented as a required overlay check for future upstream updates.
+The button UI again renders `Power OFF` before manual shutdown; e-paper keeps
+that final frame after power is removed.
+
 ## Buttons
 
 - **Station G2:** the user button now works like on other one-button boards: one press for the next
@@ -35,9 +106,14 @@ More in [OFFGRID.md](../docs/OFFGRID.md). Thanks to **N8HOP** for the report.
 
 - **New WiFi page** on WiFi companions with a one-button display (Heltec V3, V4, V4.3, Wireless
   Tracker, T3S3, Station G2 and others), next to the Bluetooth page. It shows whether WiFi is off,
-  joining or connected, and once connected the network, IP address and port to enter in the app,
-  and whether the app is connected over WiFi. On the ThinkNode M9 the same details are under
+  joining or connected, and once connected the network and endpoint in `IPv4:port` form to enter in the app,
+  and whether the app is connected over WiFi. Pressing ENTER turns WiFi on or off, saves the
+  setting and reboots to apply it. On the ThinkNode M9 the same details and toggle are under
   **System > Info > WiFi**.
+- **WiFi CLI group:** WiFi companions expose `help wifi` over both BLE and USB for status,
+  address, credentials and the persisted on/off setting.
+- **Heltec V3 USB CLI works through its CP2102 bridge.** Companion builds now automatically give
+  UART0 to the wired companion/CLI transport instead of leaving the console on the same UART.
 - **The home page names the connection:** "WiFi OK", "USB OK" or "BLE OK" instead of always
   "BLE OK", and "BLE OFF" when Bluetooth is turned off and no app is connected.
 - **The Bluetooth page says "Connected" only for a Bluetooth connection.** An app connected over

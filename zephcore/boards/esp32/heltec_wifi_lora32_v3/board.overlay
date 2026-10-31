@@ -29,10 +29,9 @@
 		/* Keep console/shell on UART0 for stable host logging on V3 */
 		zephyr,console = &uart0;
 		zephyr,shell-uart = &uart0;
-		/* Plain-UART companion backend (CONFIG_ZEPHCORE_COMPANION_SERIAL):
-		 * the wired companion + text CLI run over uart0 (USB-C via CP2102).
-		 * Inert unless that conf is built; in a serial-companion build the
-		 * conf also moves console/shell off uart0 so the companion owns it. */
+		/* Plain-UART companion backend: the wired companion + text CLI run
+		 * over uart0 (USB-C via CP2102). CMake detects this chosen node and
+		 * adds serial_companion.conf, which removes console/shell ownership. */
 		zephcore,companion-uart = &uart0;
 	};
 
@@ -50,12 +49,12 @@
 	 * So GPIO1 lives on &adc0. The previous &adc1 (unit 2) channel 0 mapped to
 	 * ADC2_CH0 = GPIO11 = the SX1262 MISO — wrong peripheral, always read 0.
 	 *
-	 * Multiplier: Vref_internal(1100) * divider_ratio(5.2) = 5720, matching the
-	 * Heltec Wireless Tracker on the same 100K/390K divider (was 17886, which
-	 * assumed a 3300mV full-scale that ADC_REF_INTERNAL does not provide). */
+	 * The 5.420 multiplier is calibrated against the official MeshCore Heltec V3
+	 * firmware; the theoretical 5.720 value over-reports a full 1S cell on the
+	 * board's actual divider. */
 	zephyr,user {
 		io-channels = <&adc0 0>;
-		vbat-mv-multiplier = <5720>;
+		vbat-mv-multiplier = <5420>;
 	};
 
 	/* Battery ADC enable — GPIO37 (gpio1 pin 5) must be driven to read.
@@ -119,11 +118,6 @@
 		tap-codes = <INPUT_KEY_1 INPUT_KEY_LEFT>;
 		tap-delay-ms = <400>;
 	};
-};
-
-/* Enable native USB serial for console/CLI */
-&usb_serial {
-	status = "okay";
 };
 
 /* Add RX boosted mode and DIO1 pull-down to LoRa radio.
@@ -229,4 +223,11 @@
  * can claim GPIO11 (SX1262 MISO) as an ADC pad. */
 &adc1 {
 	status = "disabled";
+};
+
+/* The ESP32-S3 die-temperature sensor is used as the local temperature
+ * source for telemetry and the low-battery emergency notice. It is disabled
+ * in the upstream SoC DTS by default, so enable it explicitly for V3. */
+&coretemp {
+	status = "okay";
 };

@@ -82,6 +82,12 @@ static bool gps_time_synced = false;     /* True after GPS syncs RTC. Starts fal
 static int64_t last_fix_uptime_ms = 0;  /* k_uptime when last validated fix was acquired */
 static int64_t standby_start_ms = 0;    /* k_uptime when standby started (for next-wake calc) */
 static uint64_t standby_interval_ms = 0; /* How long standby lasts (for next-wake calc) */
+static uint16_t last_gnss_satellites;
+static uint16_t last_gnss_visible_satellites;
+#if IS_ENABLED(CONFIG_GNSS_SATELLITES)
+#define GNSS_VISIBLE_SYSTEM_COUNT 14
+static uint16_t gnss_visible_by_system[GNSS_VISIBLE_SYSTEM_COUNT];
+#endif
 
 /* A validated fix is GPS_GOOD_FIX_COUNT consecutive good fixes. A good fix is
  * a satellite solution (see gps_fix_is_real()) with GPS_MIN_SATELLITES. Why:
@@ -273,6 +279,7 @@ static void gnss_data_cb(const struct device *dev, const struct gnss_data *data)
 		data->info.fix_status, data->info.satellites_cnt, gps_current_state);
 
 	k_mutex_lock(&gps_mutex, K_FOREVER);
+	last_gnss_satellites = data->info.satellites_cnt;
 
 	if (gps_fix_is_real(data->info.fix_status)) {
 		/* Reject (0,0): the parser can publish a valid fix status with lat/lon not
@@ -402,7 +409,7 @@ static void gnss_data_cb(const struct device *dev, const struct gnss_data *data)
 /* Register GNSS callback for all GNSS devices */
 GNSS_DATA_CALLBACK_DEFINE(NULL, gnss_data_cb);
 
-#ifdef CONFIG_ZEPHCORE_GPS_SAT_DIAG
+#if IS_ENABLED(CONFIG_GNSS_SATELLITES)
 /* ========== Per-constellation satellite tally (diagnostic) ==========
  * Tracked satellites per constellation, from the GSV talker ID: shows which
  * constellations the module was actually configured for. */
@@ -421,6 +428,12 @@ static void gnss_satellites_cb(const struct device *dev,
 	ARG_UNUSED(dev);
 	uint8_t tally[5] = { 0 };
 	bool seen[5] = { false };
+	uint16_t callback_counts[GNSS_VISIBLE_SYSTEM_COUNT] = { 0 };
+	uint32_t updated_systems = 0;
+
+	if (!gps_enabled || gps_current_state == GPS_STATE_STANDBY) {
+		return;
+	}
 
 	for (uint16_t i = 0; i < size; i++) {
 		int idx;
@@ -439,6 +452,15 @@ static void gnss_satellites_cb(const struct device *dev,
 		if (satellites[i].is_tracked) {
 			tally[idx]++;
 		}
+
+		uint32_t system = (uint32_t)satellites[i].system;
+		if (system != 0U && (system & (system - 1U)) == 0U) {
+			uint32_t index = (uint32_t)__builtin_ctz(system);
+			if (index < GNSS_VISIBLE_SYSTEM_COUNT) {
+				callback_counts[index]++;
+				updated_systems |= BIT(index);
+			}
+		}
 	}
 
 	/* One GSV burst carries ONE constellation: the parser publishes each
@@ -452,6 +474,15 @@ static void gnss_satellites_cb(const struct device *dev,
 			sat_count[i] = tally[i];
 			sat_seen_ms[i] = k_uptime_get();
 		}
+	}
+	for (uint32_t i = 0; i < GNSS_VISIBLE_SYSTEM_COUNT; i++) {
+		if ((updated_systems & BIT(i)) != 0U) {
+			gnss_visible_by_system[i] = callback_counts[i];
+		}
+	}
+	last_gnss_visible_satellites = 0;
+	for (uint32_t i = 0; i < GNSS_VISIBLE_SYSTEM_COUNT; i++) {
+		last_gnss_visible_satellites += gnss_visible_by_system[i];
 	}
 	k_mutex_unlock(&gps_mutex);
 }
@@ -469,7 +500,7 @@ void gps_sat_tally(uint8_t out[5])
 	}
 	k_mutex_unlock(&gps_mutex);
 }
-#endif /* CONFIG_ZEPHCORE_GPS_SAT_DIAG */
+#endif /* CONFIG_GNSS_SATELLITES */
 
 /* Find and initialize GNSS device */
 const struct device *gnss_dev = NULL;
@@ -854,6 +885,15 @@ void gps_ensure_power_state(bool should_be_enabled)
 	if (!should_be_enabled) {
 		LOG_INF("GPS: Powering off at boot (disabled in prefs)");
 		gps_module_power(false, false);
+
+		k_mutex_lock(&gps_mutex, K_FOREVER);
+		current_pos.satellites = 0;
+		last_gnss_satellites = 0;
+		last_gnss_visible_satellites = 0;
+#if IS_ENABLED(CONFIG_GNSS_SATELLITES)
+		memset(gnss_visible_by_system, 0, sizeof(gnss_visible_by_system));
+#endif
+		k_mutex_unlock(&gps_mutex);
 		/* GPS stays off — release the UART too. Without this, the RX
 		 * armed at driver init would hold HFCLK for the entire uptime
 		 * of every GPS-disabled node. */
@@ -943,6 +983,11 @@ void gps_enable(bool enable)
 		 * toggle; only the live fix-quality indicator resets. */
 		k_mutex_lock(&gps_mutex, K_FOREVER);
 		current_pos.satellites = 0;
+		last_gnss_satellites = 0;
+		last_gnss_visible_satellites = 0;
+#if IS_ENABLED(CONFIG_GNSS_SATELLITES)
+		memset(gnss_visible_by_system, 0, sizeof(gnss_visible_by_system));
+#endif
 		k_mutex_unlock(&gps_mutex);
 
 		/* Clear first-fix flags so the next enable gets a fresh long
@@ -1114,7 +1159,8 @@ void gps_get_state_info(struct gps_state_info *info)
 	memset(info, 0, sizeof(*info));
 #if HAS_GNSS
 	info->state = (uint8_t)gps_current_state;
-	info->satellites = current_pos.satellites;
+	info->satellites = last_gnss_satellites;
+	info->visible_satellites = last_gnss_visible_satellites;
 
 	if (last_fix_uptime_ms > 0) {
 		/* Seconds since last validated fix */

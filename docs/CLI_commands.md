@@ -1,12 +1,12 @@
 # CLI Commands
 
-The text CLI of every ZephCore role. Commands are sent over USB serial (CDC-ACM); repeaters and room servers also take them remotely over the mesh from an admin. Commands sent remotely (non-zero `sender_timestamp`) cannot access USB-only commands.
+The text CLI of every ZephCore role. Commands are sent over USB serial (CDC-ACM); companions, repeaters and room servers also take them remotely over the mesh from an authorized contact or admin. Commands sent remotely (non-zero `sender_timestamp`) cannot access USB-only commands.
 
 | Role | Which commands apply |
 |------|----------------------|
 | **Repeater** | Every section except Room Server, the two Companion sections and Observer |
 | **Room server** | Shares the repeater's CLI — the common commands (radio, region, password, advert, gps, etc.) plus `setperm` / `get acl` — and adds `room.post` |
-| **Companion** | The common commands (`helpers/CommonCLI.cpp`) from USB or the app's CLI, plus Companion WiFi and Companion Extras. The repeater's and room server's own commands (`setperm`, `get acl`, `discover.neighbors`, `uplink.*`, `room.post`) are not there. Over the mesh, a contact with remote CLI permission reaches only the commands upstream's companion has |
+| **Companion** | The common commands (`helpers/CommonCLI.cpp`) from USB or the app's CLI, plus Companion WiFi and Companion Extras. The repeater's and room server's own commands (`setperm`, `get acl`, `discover.neighbors`, `uplink.*`, `room.post`) are not there. Over the mesh, a contact with remote CLI permission gets categorized help and the safe operational subset; secrets, BLE PIN, RF changes, power-off, OTA/DFU and erase stay local |
 | **Observer** | Its own small CLI, USB only — see [Observer](#observer-zephcore-only). No other section applies |
 
 **Sources:**
@@ -18,7 +18,7 @@ The text CLI of every ZephCore role. Commands are sent over USB serial (CDC-ACM)
 - `src/main_companion.cpp`, `app/PowerPolicy.cpp`, `app/CompanionWifi.cpp` — companion-only commands (`v.*`, `autoshutdown`, `help`, `wifi.*`)
 - `app/ObserverMesh.cpp` `handleCLI()`, `app/main_observer.cpp` — the observer's CLI and its `help` banner
 
-> **Commands are case-sensitive**, matching Arduino MeshCore. Nothing is lower-cased before matching.
+> **Commands are case-sensitive**, matching Arduino MeshCore. Remote companion `Help` is normalized to `help`; command names and arguments are not.
 
 > **ZephCore-only commands** are tagged *(ZephCore only)*: Arduino MeshCore has no command of that name
 > (checked against its `dev` branch at `3e3150c8`, 2026-10-04). A section whose heading carries the tag is
@@ -29,6 +29,27 @@ The text CLI of every ZephCore role. Commands are sent over USB serial (CDC-ACM)
 > (e.g. `a7|reboot`), the first three characters are stripped before dispatch and echoed back at the
 > start of the reply. This is how the phone app correlates replies with requests. It means a command
 > whose third character is a literal `|` cannot be sent as-is.
+
+> **Help transport.** On a repeater, local USB `help`/`?` prints the complete command catalogue directly
+> to the console. Remote admin replies are limited to 161 bytes, or 158 bytes with a request tag, so
+> remote `help` returns category names and `help <group>` returns one bounded category. Local-only
+> commands (`get prv.key`, `set freq`, `get acl`, `erase`) are not advertised remotely.
+> Radio tuning and gain commands are all in `help rf`; there is no separate `help radio` group.
+> Flood limits and backoff are at the end of `help mesh`; there is no separate `help flood` group.
+> Neighbour commands are isolated in `help find`.
+> Password settings and `setperm` are in `help access`, immediately after `id`.
+> Battery commands have their own remote help group (`help batt`); the `battery` command is unchanged.
+> Bridge configuration commands are in `help bridge`; there is no `help bridge.cfg`.
+> With GNSS, `help gps` lists `gps on|off` together and omits `get gps`; the command still works.
+> `help mesh` starts with `advert[.zerohop]` followed by `repeat`; `help find` starts with `discover.neighbors`. `help rf` puts `freqerr` after `freq`, and `help cad` puts `txdelay` and `cad.reset` after `cad.stats`.
+> The `region` group follows `rf`; `help uplink` lists `get/set uplink.enable` before `set uplink.wifi.psk`.
+> `help bridge` lists `bridge [on|off]`; its BLE-only commands are hidden while ESP-NOW is selected.
+> `help log` lists `log start` and `log stop` only when Zephyr logging is enabled. `log erase` is omitted because repeaters have no log file.
+> `stat` and `sys` are the last root groups, with optional `log` between them; `shutdown y` is the last command in `help sys`.
+> Hardware-specific entries follow devicetree capabilities. DFU, powersaving, power-source and boot-voltage entries follow the board adapter's Kconfig capabilities; shutdown requires `CONFIG_POWEROFF`.
+> On SX127x, remote help omits CAD and RX duty-cycle entries because that driver has no implementation for them.
+> Repeaters reject `start ota` and `stop ota` on both USB and remote CLI; room-server and companion commands are unchanged.
+> `clkreboot` is removed from every role; manual clock sets remain forward-only except for a validated GPS fix ([ADR 0010](adr/0010-remove-clkreboot.md)).
 
 ---
 
@@ -44,7 +65,6 @@ The text CLI of every ZephCore role. Commands are sent over USB serial (CDC-ACM)
 | `start dfu` | *(ZephCore only)* nRF52: reboot into the UF2 bootloader for drag-and-drop update. ESP32-S3: reboot into the ROM download mode on USB-Serial-JTAG (`303a:1001`), so ordinary `esptool write-flash` and browser flashers can reach the chip. Every other chip replies with an error and does **not** reboot — ESP32-C3/C6 and classic ESP32 never lose the port to USB OTG so esptool resets them itself, and nRF54L15/MG24/STM32WL have no USB device peripheral and are flashed over SWD |
 | `start ota` | ESP32: start WiFi AP + HTTP OTA server. nRF52: reboot into BLE OTA DFU mode |
 | `stop ota` | *(ZephCore only)* Stop WiFi OTA server (ESP32 only) |
-| `clkreboot` | Set clock to a fixed reference time (15 May 2024 8:50pm UTC) then reboot. On a board with a hardware RTC the reference time is written to the chip too, as upstream, so the reset survives the reboot |
 | `powersaving` / `powersaving on` / `powersaving off` | Upstream's command and replies. On ESP32 light-sleep builds (repeaters of boards with `light_sleep: true`, companions of boards with `light_sleep_companion: true`) it gates light sleep: `off` (persisted) keeps the SoC awake, which also keeps a USB Serial/JTAG console attached; `on` allows sleep again, replying `on - After N s (console window)` while the console window is open, else `on - Immediate effect`. Default **on** on those repeaters, and prefs from firmware that stored the field without acting on it are read as on once. Default **off** on companions: a companion sleeps only after `powersaving on`, and then not while a USB host is attached, the display is on, or a Bluetooth link is not yet encrypted. nRF52/nRF54L: stored, replies `on - Immediate effect` (they always idle in System ON; `off` changes nothing). Other boards: `Board not supported` |
 
 ---
@@ -138,14 +158,14 @@ Regions control which flood packets the repeater forwards. The region tree is hi
 
 | Command | Description |
 |---------|-------------|
-| `clear stats` | Reset all statistics counters |
+| `clear stats` | Reset all statistics counters. Local-only on companion |
 | `stats-core` | *(USB only)* Display core mesh statistics |
 | `stats-radio` | *(USB only)* Display radio statistics |
 | `stats-packets` | *(USB only)* Display packet statistics |
-| `log start` | Enable packet logging to file |
-| `log stop` | Disable packet logging |
-| `log erase` | Erase the log file |
-| `log` | *(USB only)* Dump the full log file to USB serial |
+| `log start` | Enable additional RX/TX lines in Zephyr logging when `CONFIG_LOG=y` |
+| `log stop` | Disable those additional RX/TX lines |
+| `log erase` | Repeater and room-server have no log file; this legacy command has no effect and is omitted from their help |
+| `log` | *(USB only)* Repeater and room-server have no log file; this legacy dump has no effect and is omitted from their help |
 | `erase` | *(USB only)* Factory reset: erase the entire LittleFS volume, the BLE-bond NVS, and external QSPI flash, then reboot |
 
 > **`erase` is a true factory reset.** It flattens `lfs_partition` (identity, prefs, ACL,
@@ -263,7 +283,7 @@ All `set uplink.*` changes are saved immediately and only applied after reboot.
 
 ## Companion WiFi (`CONFIG_ZEPHCORE_COMPANION_WIFI`)
 
-Companion builds of boards whose `zephcore.yml` declares `capabilities: wifi: true` (the PSRAM ESP32-S3 boards, plus Heltec V3, Wireless Tracker and the two C6 boards with fewer contacts) join a WiFi network and serve the companion protocol over TCP on port 5000, beside BLE and USB. Upstream's commands and replies; every change applies on the next reboot. Reachable over USB, from the app's CLI and, as upstream, over the air from a contact with remote CLI permission — including `get wifi.pwd`.
+Companion builds of boards whose `zephcore.yml` declares `capabilities: wifi: true` (the PSRAM ESP32-S3 boards, plus Heltec V3, Wireless Tracker and the two C6 boards with fewer contacts) join a WiFi network and serve the companion protocol over TCP on port 5000, beside BLE and USB. Upstream's commands and replies; every change applies on the next reboot. Remote CLI exposes only status, IP and enabled state; SSID and password access stays local.
 
 | Command | Description |
 |---------|-------------|
@@ -279,11 +299,21 @@ Companion builds of boards whose `zephcore.yml` declares `capabilities: wifi: tr
 
 ## Companion Extras (ZephCore only)
 
-Companion builds only. Local only: they run from USB and the app's CLI, and a remote contact gets `Unknown command` even with remote CLI permission. Every `set` here is persisted.
+Companion builds only. They run from USB, the app's CLI and, where listed by categorized `help`, from a contact with remote CLI permission. Every `set` here is persisted. Remote replies are limited to one CLI packet. Identity/WiFi secrets, BLE PIN, RF changes, ADC calibration, autoshutdown changes, power-off, OTA/DFU and erase remain local.
+
+Remote `sos` and `tracking on|off` execute silently. This includes SOS waiting/final
+transmissions and every tracking report. USB, app CLI and UI launches keep their
+normal notification sounds.
+
+On T1000-E and ThinkNode M3, one short button press while a manual SOS is
+waiting for GPS cancels it, restores the previous GPS enabled/duty state and
+plays the forced Fall-cancellation tone, then sends `❌ SOS Canceled` to
+`#sos`. The press does not also start the normal advert/SOS gesture window.
+Fall acknowledgement is unchanged.
 
 | Command | Description |
 |---------|-------------|
-| `help` / `?` | Lists the commands in this section. There is no global help |
+| `help` / `?` | Lists command groups; `help <group>` returns one packet-sized group |
 | `get v.contact` | Whether the virtual contact that delivers device notices to the app is shown: `v.contact: on` or `off` |
 | `set v.contact <on\|off\|1\|0>` | Default **on**. `off` removes the contact from the app and is the only durable way to disable its notices |
 | `get v.batteryalert` | Low-battery alert threshold: `v.batteryalert: <mV> mV`, `default (<mV> mV)` or `off` |
@@ -424,7 +454,7 @@ four radio parameters together, since they are one interop-critical set.
 | Command | Constraints | Description |
 |---------|-------------|-------------|
 | `set name <name>` | No `[ ] \ : , ? *` | Set node name |
-| `set repeat <on\|off>` | | Enable or disable packet forwarding. **Companion:** off-grid mode, the same as the display toggle ([OFFGRID.md](OFFGRID.md)), local only and applied at once. `on` moves the node to the nearest of 433.000 / 869.495 / 918.000 MHz and starts forwarding; `off` returns to the frequency it left. A node already on an off-grid frequency stays there both ways. BW, SF, CR and TX power are not touched; the frequency move resets the learned CAD offset. Replies `OK - repeat is now ON (869.495 MHz)`, or `Error: no off-grid frequency for this band` on a 2.4 GHz preset. `set radio` / `set freq` to any other frequency turns it off |
+| `set repeat <on\|off>` | | Enable or disable packet forwarding. **Companion:** local-only off-grid mode, the same as the display toggle ([OFFGRID.md](OFFGRID.md)), applied at once. `on` moves the node to the nearest of 433.000 / 869.495 / 918.000 MHz and starts forwarding; `off` returns to the frequency it left. A node already on an off-grid frequency stays there both ways. BW, SF, CR and TX power are not touched; the frequency move resets the learned CAD offset. Replies `OK - repeat is now ON (869.495 MHz)`, or `Error: no off-grid frequency for this band` on a 2.4 GHz preset. `set radio` / `set freq` to any other frequency turns it off |
 | `set radio <freq>,<bw>,<sf>,<cr>` | freq 150–2500, bw 7–500 (7–1000 on LR2021), sf 5–12, cr 5–8 | **Comma-separated**, not space-separated — spaces parse as a single argument and the command is rejected. Set radio params *(reboot required)*. If freq, bw or sf actually changed, this also performs a full `set cad.reset` and replies `OK - reboot to apply (CAD reset)` — the learned detPeak offset and its probe statistics belong to the old preset. The radio keeps running the old preset, at its learned offset, until the reboot; CAD adaptation is suspended in the meantime so it cannot re-dirty the reset. A cr-only change resets nothing. |
 | `set freq <mhz>` | 150–2500 *(USB only)* | Set frequency alone *(reboot required)*. Same CAD reset as `set radio` when the frequency actually changes. On LR2021 boards a frequency at or above 1500 MHz also moves the radio to its 2.4 GHz front end — see the note below the table. |
 | `set tx <dbm>` | −9 to board max (default 30) | Set TX power |
@@ -459,7 +489,7 @@ four radio parameters together, since they are one interop-critical set.
 | `set rxduty <0\|1\|on\|off>` | | *(ZephCore only)* RX duty cycle mode *(reboot required)*. Window timing auto-sized per SF/BW/preamble from the SX126x datasheet constraints (boot log line `rxduty:` shows the result). Zero-loss guarantee assumes senders on preamble-32 firmware (current MeshCore at SF≤8); legacy preamble-16 senders are only caught ~50% worst-phase — keep off until the local mesh has converted. Presets with 16-symbol preambles (SF≥9) fall back to continuous RX automatically. |
 | `set display.rotate <0\|1\|on\|off>` | default **0** | *(ZephCore only)* Rotate the display 180 degrees, for cases and upgrade kits that mount the screen upside down (e.g. the Meshnology N37E for the Wio Tracker L1). Applied live — the driver flips the panel's `SEGMENT_MAP` and `COM_OUTPUT_SCAN`, two bytes on the wire, and the next frame comes out rotated with no redraw and no per-frame cost. **Only full-height SSD1306 and SH1106 panels support this** (`rak4631`, `gat562_30s`, `heltec_wifi_lora32_v4`/`v43`/`v4_r8`, `lilygo_t3s3`, `station_g2`, `wio_tracker_l1`); every other panel replies `Error: this panel cannot rotate` and the pref is **not** saved, so a stored value can never disagree with what the screen shows. `lilygo_timpulse_plus` is excluded despite being an SSD1306: its 64x32 glass is windowed into a 128x64 controller at `page-offset 4`, and the COM-scan reversal flips the controller's whole range, which would move the image off the bonded region. E-paper (SSD16xx) is excluded on purpose: its driver accepts a 180-degree orientation but implements it by flipping the RAM entry mode only, which reverses byte order without reversing bit order inside each byte — it would report success and render wrong. |
 | `set input.rotate <0\|1\|on\|off>` | default **0** | *(ZephCore only)* Swap the joystick/D-pad axes — up/down and left/right — to match an upside-down mount. Applied live. Deliberately **separate** from `display.rotate`: a case can flip the screen without moving the stick, and boards whose panel cannot rotate can still need the axis swap. Works on every board with directional input, in both the joystick UI and the button UI (where it swaps page-prev/page-next). Non-directional keys, tap codes and long-press gestures are unaffected. |
-| `set tz.offset <-12..14>` | default **0** (UTC) | Offset from UTC in hours, applied when formatting the **on-device clock display** — the top bar, the status page (companion and server roles) and the joystick System -> Time screen, which show e.g. `UTC+2`, `UTC-3:30` or `UTC+5:45` instead of `UTC` (`UTC+1245` for the two-digit-hour zones +10:30 and +12:45/+13:45, to fit 8 characters). Decimal hours in quarter-hour steps, as upstream MeshCore 1.18+ (`5.5` = +5:30, `5.75` = +5:45, `-9.5` = -9:30); any other fraction is refused (`Error: offset must be whole quarter hours`), where upstream stores it as given. The reply and `get tz.offset` print the stored value exactly (`OK - tz.offset=5.75`; upstream prints one decimal, so `5.8`). Accepts `default`. **Display only, by design.** The RTC itself, `clock`, `clock sync` and `time <epoch>` all stay UTC: they round-trip with each other, apps parse them, and an offset that reached the clock would read as a jump to every timestamp consumer on the node (advert timestamps, the ACL's monotonic `sender_timestamp` gate, MeshTimeSync) — a backward clock silently mutes a node on the mesh. Accepted on headless nodes, where it is simply inert. |
+| `set tz.offset <-12..14>` | default **0** (UTC) | Offset from UTC in hours, applied when formatting the **on-device clock display** — the top bar, the status page (companion and server roles) and the joystick System -> Time screen, which show e.g. `GMT+2`, `GMT-3:30` or `GMT+5:45` instead of `UTC` (`GMT+1245` for the two-digit-hour zones +10:30 and +12:45/+13:45, to fit 8 characters). Decimal hours in quarter-hour steps, as upstream MeshCore 1.18+ (`5.5` = +5:30, `5.75` = +5:45, `-9.5` = -9:30); any other fraction is refused (`Error: offset must be whole quarter hours`), where upstream stores it as given. The reply and `get tz.offset` print the stored value exactly (`OK - tz.offset=5.75`; upstream prints one decimal, so `5.8`). Accepts `default`. **Display only, by design.** The RTC itself, `clock`, `clock sync` and `time <epoch>` all stay UTC: they round-trip with each other, apps parse them, and an offset that reached the clock would read as a jump to every timestamp consumer on the node (advert timestamps, the ACL's monotonic `sender_timestamp` gate, MeshTimeSync) — a backward clock silently mutes a node on the mesh. Accepted on headless nodes, where it is simply inert. |
 | `set adc.multiplier <mult>` | `0` (use board default) or 100–30000 | Battery voltage ADC calibration multiplier, set directly. Rejects non-numeric input, NaN/inf and negatives. |
 | `set adc.multiplier target <mv>` | 3000–4400 mV | *(ZephCore only)* Calibrate against a voltage you measured with a multimeter: rescales the current multiplier so the ADC reads `<mv>`. Replies with the old and new multiplier plus the before/after reading. `Error: no ADC reading on this board` if the board has no battery ADC. |
 | `set adc.multiplier full` | board must be fully charged | *(ZephCore only)* Same calibration, but against the board's battery-curve 100% point instead of a hand-measured value. Only meaningful on a full charge. |
@@ -521,4 +551,4 @@ four radio parameters together, since they are one interop-critical set.
 - **USB-only commands** — `get acl`, `get prv.key`, `set freq`, `log` (dump), `stats-packets`, `stats-radio`, `stats-core`, `erase` — are blocked when the command arrives over the mesh (remote admin). These are the only ones gated on `sender_timestamp == 0`; `get public.key` and `set prv.key` are **not** among them.
 - **Adaptive contention window** — `txdelay`, `rxdelay`, and `direct.txdelay` are accepted and stored for Arduino prefs compatibility but have no effect. Use `get txdelay` to inspect the current adaptive state and `set backoff.multiplier` to tune reactive backoff.
 - **Region load mode** — after `region load`, every line received is parsed as a region entry until a blank line is sent. The loaded map is only committed to the live region tree at that point; use `region save` to persist it. Region rows must be indented by at least one space, so an **unindented line that starts with a name character aborts the mode and is executed as a normal command** — the escape hatch if a `region load` is started by accident or a client dies mid-transfer. An abort discards the partial map, leaving the live region tree untouched. The exported wildcard header line `*` stays unindented and is ignored as before, so pasting the output of `region` still loads cleanly.
-- **Reboot delay** — `start dfu`, `start ota` (nRF52 BLE-DFU path only), `reboot`, `poweroff`, `clkreboot` and `erase` defer the reset by **2 seconds** so the reply can be transmitted over LoRa first. On a companion the handler then keeps deferring in 20 ms steps until the BLE/USB transport has drained, up to a further 3 s grace. On ESP32 `start ota` starts a WiFi AP + HTTP server and does **not** reboot.
+- **Reboot delay** — `start dfu`, `start ota` (nRF52 BLE-DFU path only), `reboot`, `poweroff` and `erase` defer the reset by **2 seconds** so the reply can be transmitted over LoRa first. On a companion the handler then keeps deferring in 20 ms steps until the BLE/USB transport has drained, up to a further 3 s grace. On ESP32 `start ota` starts a WiFi AP + HTTP server and does **not** reboot.
