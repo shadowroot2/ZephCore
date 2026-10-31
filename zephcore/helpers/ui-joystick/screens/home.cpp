@@ -207,10 +207,6 @@ bool HomeScreen::handleInput(char c)
 #define FIRMWARE_VERSION "ZephCore"
 #endif
 
-#ifndef FIRMWARE_DISPLAY_VERSION
-#define FIRMWARE_DISPLAY_VERSION FIRMWARE_VERSION
-#endif
-
 #ifndef FIRMWARE_BUILD_DATE
 #define FIRMWARE_BUILD_DATE ""
 #endif
@@ -263,7 +259,7 @@ int SplashScreen::render(JoystickDisplay &display)
 	/* Keep the firmware version and build date below the product name. */
 	y += line_h;
 	display.setColor(JoystickDisplay::LIGHT);
-	display.drawTextCentered(cx, y + fh / 2, FIRMWARE_DISPLAY_VERSION);
+	display.drawTextCentered(cx, y + fh / 2, FIRMWARE_VERSION);
 	y += line_h;
 	display.drawTextCentered(cx, y + fh / 2, FIRMWARE_BUILD_DATE);
 	int signature_y = display.height() - fh - 2;

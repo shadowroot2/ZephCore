@@ -2097,8 +2097,8 @@ void ui_pages_render_splash(void)
 	draw_centered(y, "MeshCore on Zephyr");
 	y += LINE_H;
 
-#ifdef FIRMWARE_DISPLAY_VERSION
-	draw_centered(y, FIRMWARE_DISPLAY_VERSION);
+#ifdef FIRMWARE_VERSION
+	draw_centered(y, FIRMWARE_VERSION);
 	y += LINE_H;
 #endif
 
