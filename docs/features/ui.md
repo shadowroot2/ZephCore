@@ -3,7 +3,7 @@
 ### Companion
 
 - Обе заставки — button UI и joystick UI — обязаны показывать логотип ZephCore,
-  `MeshCore on Zephyr`, версию `v.<major>.<minor>.<patch>` из `FIRMWARE_DISPLAY_VERSION` отдельной строкой
+  `MeshCore on Zephyr`, версию `v<major>.<minor>.<patch>` из `FIRMWARE_DISPLAY_VERSION` отдельной строкой
   перед датой `FIRMWARE_BUILD_DATE` и
   нижнюю подпись `Tuned by ShadoW`. После обновления автора проверяются оба
   файла: `helpers/ui-button/ui_pages.c` и

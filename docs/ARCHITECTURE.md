@@ -999,7 +999,7 @@ Two UI frontends share the same plumbing (`helpers/ui/`: display, buzzer, multi-
 - **Joystick UI** (`helpers/ui-joystick/`): 5-way joystick / keypad menu UI, companion only (Wio Tracker L1, Wio L1 1W, GAT562-30S, ThinkNode M9). Keys go through a queue to `JoystickUITask::loop()` **on the main thread**, so its direct `CompanionMesh` calls (through `getMesh()`) are safe. `screens/repeater_admin.cpp` is the remote admin screen.
 
 Both splash implementations preserve the ShadoW overlay: ZephCore logo,
-`MeshCore on Zephyr`, `FIRMWARE_DISPLAY_VERSION` (`v.<major>.<minor>.<patch>`) on its own line immediately before
+`MeshCore on Zephyr`, `FIRMWARE_DISPLAY_VERSION` (`v<major>.<minor>.<patch>`) on its own line immediately before
 the build date, and bottom-anchored
 `Tuned by ShadoW`. The button and joystick paths are separate and must both be
 checked during an upstream rebase.
