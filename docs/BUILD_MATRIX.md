@@ -14,11 +14,17 @@
 | `thinknode_m5` | `thinknode_m5/esp32s3/procpu` | companion | merged/update BIN |
 | `thinknode_m6` | `thinknode_m6` | repeater, bridge | UF2 |
 | `t1000_e` | `t1000_e` | companion | UF2 |
-| `lilygo_techo` | `lilygo_techo` | companion | UF2 |
+| `lilygo_techo` | `lilygo_techo` | companion 433 | UF2 |
 | `heltec_t114` | `heltec_t114` | companion | UF2 |
 | `rak4631` | `rak4631` | repeater | UF2 |
 | `xiao_nrf52840` | `xiao_nrf52840` | repeater | UF2 |
 | `heltec_v3` | `heltec_wifi_lora32_v3/esp32s3/procpu` | companion, repeater, bridge | merged/update BIN |
+
+## Постоянный состав
+
+При обновлении авторской базы и сборке общего набора ShadoW обязательно
+включать **T-ECHO 433 companion** (`lilygo_techo companion 433`).
+Это постоянное требование пользователя от 2026-10-31.
 
 ## Варианты
 
