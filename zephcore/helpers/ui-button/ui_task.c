@@ -640,9 +640,7 @@ static void action_enter_dfu(void)
 	buzzer_stop();
 #endif
 
-#if UI_UPDATE_BLE
-	mesh_reboot_to_ota_dfu();
-#elif UI_UPDATE_DFU
+#if UI_UPDATE_DFU
 	mesh_reboot_to_dfu();
 #endif
 }

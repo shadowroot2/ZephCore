@@ -72,6 +72,7 @@ void mc_display_on(void);
  * Turn display off (blanking).
  */
 void mc_display_off(void);
+void mc_display_backlight_off(void);
 
 /**
  * @return true if the display is currently on

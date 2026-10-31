@@ -636,6 +636,11 @@
       "id": "UNIT-SENSOR-004",
       "name": "Real board-local light takes precedence and external light keeps its own channel",
       "source": "tests/unit/sensor_manager_tests.cpp"
+    },
+    {
+      "id": "UNIT-SENSOR-005",
+      "name": "Solar charge telemetry reports nominal 6W while charging and 0W otherwise",
+      "source": "tests/unit/sensor_manager_tests.cpp"
     }
   ]
 }

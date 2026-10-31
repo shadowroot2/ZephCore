@@ -6,10 +6,12 @@ namespace {
 bool available, enabled, local_light, external_light;
 gps_state_info info;
 unsigned gps_control_calls;
+bool solar_supported, solar_charging;
 void reset() {
     available = enabled = true;
     local_light = external_light = false;
     gps_control_calls = 0;
+    solar_supported = solar_charging = false;
     info = {};
     info.visible_satellites = 17;
     info.satellites = 8;
@@ -28,6 +30,10 @@ extern "C" void gps_set_poll_interval_sec(uint32_t) { ++gps_control_calls; }
 extern "C" bool gps_get_last_known_position(gps_position *) { return false; }
 extern "C" void gps_get_state_info(gps_state_info *out) { *out = info; }
 extern "C" int env_sensors_init() { return 0; }
+extern "C" bool env_charge_power_read(float *power_w) {
+    *power_w = solar_charging ? 6.0f : 0.0f;
+    return solar_supported;
+}
 extern "C" int env_sensor_count() { return local_light || external_light ? 1 : 0; }
 extern "C" bool env_sensor_is_board_local(int) { return local_light; }
 extern "C" int env_sensor_read(int, env_sensor_reading *out) {
@@ -74,4 +80,15 @@ TEST(sensor_real_light, "UNIT-SENSOR-004", "Real board-local light takes precede
     local_light = false;
     external_light = true;
     CHECK(query() == std::vector<uint8_t>({2, 101, 2, 0, 1, 101, 0, 8}));
+}
+
+TEST(sensor_solar_power, "UNIT-SENSOR-005", "Solar charge telemetry reports nominal 6W while charging and 0W otherwise") {
+    reset();
+    CHECK(query(4).empty());
+    solar_supported = solar_charging = true;
+    CHECK(query(4) == std::vector<uint8_t>({1, 128, 0, 6}));
+    solar_charging = false;
+    CHECK(query(4) == std::vector<uint8_t>({1, 128, 0, 0}));
+    CHECK(query(0).empty());
+    CHECK(gps_control_calls == 0);
 }

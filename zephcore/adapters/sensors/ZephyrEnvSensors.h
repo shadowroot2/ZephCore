@@ -25,6 +25,9 @@ extern "C" {
 /* Probe every declared sensor (call once at boot). */
 int env_sensors_init(void);
 
+/* Nominal panel power while charging, not a measured power reading. */
+bool env_charge_power_read(float *power_w);
+
 /* ========== Per-device ========== */
 
 /* Fields present in a reading */

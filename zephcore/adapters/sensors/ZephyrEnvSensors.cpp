@@ -10,11 +10,40 @@
 
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
+#include <zephyr/devicetree.h>
+#include <zephyr/drivers/gpio.h>
 #include <zephyr/logging/log.h>
 #include <math.h>
 #include <string.h>
 
 LOG_MODULE_REGISTER(zephcore_sensors, CONFIG_ZEPHCORE_SENSORS_LOG_LEVEL);
+
+#if DT_NODE_HAS_PROP(DT_PATH(zephyr_user), charge_power_mw) && \
+    DT_NODE_HAS_PROP(DT_ALIAS(charge_detect), gpios)
+#define HAS_CHARGE_POWER 1
+static const struct gpio_dt_spec charge_detect = GPIO_DT_SPEC_GET(DT_ALIAS(charge_detect), gpios);
+static bool charge_detect_ready;
+#else
+#define HAS_CHARGE_POWER 0
+#endif
+
+bool env_charge_power_read(float *power_w)
+{
+#if HAS_CHARGE_POWER
+	if (!charge_detect_ready) {
+		return false;
+	}
+	int active = gpio_pin_get_dt(&charge_detect);
+	if (active < 0) {
+		return false;
+	}
+	*power_w = active ? DT_PROP(DT_PATH(zephyr_user), charge_power_mw) / 1000.0f : 0.0f;
+	return true;
+#else
+	(void)power_w;
+	return false;
+#endif
+}
 
 /* ========== Sensor Support ========== */
 #if IS_ENABLED(CONFIG_SENSOR)
@@ -225,6 +254,10 @@ static int m3_aht10_read(struct env_data *data)
 
 int env_sensors_init(void)
 {
+#if HAS_CHARGE_POWER
+	charge_detect_ready = gpio_is_ready_dt(&charge_detect) &&
+		gpio_pin_configure_dt(&charge_detect, GPIO_INPUT) == 0;
+#endif
 #if HAS_ENV_SENSORS
 	/* Probe order is channel order: temperature/humidity parts, the Bosch
 	 * combos, barometers, board-local analog, power monitors. */

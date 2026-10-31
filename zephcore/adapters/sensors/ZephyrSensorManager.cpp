@@ -31,6 +31,10 @@ bool ZephyrSensorManager::querySensors(uint8_t requester_permissions, CayenneLPP
 	}
 
 	if (requester_permissions & TELEM_PERM_ENVIRONMENT) {
+		float charge_power;
+		if (env_charge_power_read(&charge_power)) {
+			telemetry.addPower(TELEM_CHANNEL_SELF, charge_power);
+		}
 		uint8_t next_available_channel = TELEM_CHANNEL_SELF + 1;
 		bool local_luminosity = false;
 

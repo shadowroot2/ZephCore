@@ -40,6 +40,7 @@ void ui_show_dfu_mode(void)
 	int y = ((int)mc_display_height() - mc_display_font_height()) / 2;
 	mc_display_text(x < 0 ? 0 : x, y < 0 ? 0 : y, text, false);
 	mc_display_finalize();
+	mc_display_backlight_off();
 #endif
 }
 

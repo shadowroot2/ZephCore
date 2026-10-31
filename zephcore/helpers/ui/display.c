@@ -629,6 +629,13 @@ void mc_display_on(void)
 	mc_display_reset_auto_off();
 }
 
+void mc_display_backlight_off(void)
+{
+	if (disp_initialized) {
+		backlight_set(false);
+	}
+}
+
 void mc_display_off(void)
 {
 	if (!disp_initialized) {

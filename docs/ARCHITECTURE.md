@@ -1491,24 +1491,20 @@ server screens receive the same minute offset. RTC and packet epochs stay UTC.
 
 ### DFU screen and satellite luminosity
 
-The `Enter DFU Mode` UI action calls `rebootToBootloader()`, as `start dfu`
-does. That board method renders `DFU Mode` through the shared UI before reset,
-so USB/app CLI entry gets the same final frame. BLE OTA still calls
-`startOTAUpdate()` separately; the UI action no longer enters BLE OTA.
+The update page is offered only on screen-equipped nRF companions with DFU
+capability (`Enter DFU Mode`). ESP32 companions have no update screen in either
+UI. CLI commands and BLE callbacks are unchanged. The nRF board handoff renders
+`DFU Mode`, finalizes the frame and then disables only the backlight. E-Paper
+keeps its final frame; USB/app CLI entry uses the same handoff.
 
 `ZEPHCORE_GPS_SATELLITE_TELEMETRY` restores the self-channel luminosity field
-only on M6 repeater/repeater-bridge. The value is the existing
-`gps_state_info.satellites` count, passed unchanged. The telemetry path adds
-no GSV/GGA selection or count limit. GPS power,
-fix acquisition, duty cycle, settings and callbacks are unchanged. Location
-and environment telemetry permissions still apply. A real board-local light
-sensor takes precedence. Other boards and companion telemetry are unchanged.
+only on M6 repeater/repeater-bridge. `gps_state_info.satellites` is passed
+unchanged, with no GSV/GGA selection or count limit. GPS power, fix acquisition,
+duty cycle, settings and callbacks are unchanged. Existing telemetry permissions
+still apply; real board-local light takes precedence.
 
-ESP32 companion uses the update action label `BLE Update`; other platforms use
-`Enter DFU Mode`. This is a label-only distinction; the update command is unchanged.
-
-The ESP32 screen action retains its original `startOTAUpdate()` route,
-not `rebootToBootloader()`. Native `Enter DFU Mode` is offered only on
-screen-equipped nRF companions with DFU capability. The current ESP32 board
-adapter reports BLE OTA as unsupported; the UI preserves that existing
-handler and logs its failure rather than entering the ROM downloader.
+M6 nominal solar power is published on the self channel through the environment
+telemetry path: 6 W while the DT charge-detect input is active, 0 W otherwise.
+The source is `charge-power-mw` and the GPIO API applies active-low polarity;
+failed GPIO reads publish no power field. This is panel rating, not measured
+wattage. Boards without both DT properties have no added power field.
