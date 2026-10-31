@@ -23,11 +23,11 @@
 ## Проверки
 
 - Quick: **133 PASS** — 123 native cases и 10 Python harness tests.
-- **15/15 pristine builds PASS**, ESP32-S3 с sysbuild:
+- **16/16 pristine builds PASS**, ESP32-S3 с sysbuild:
   companion M1, M3, M5, T-1000E, Heltec V3, T114, Wio Tracker L1 и
-  MeshTracker X1; repeater M6, RAK4631, XIAO nRF и Heltec V3;
+  MeshTracker X1 и T-ECHO 433; repeater M6, RAK4631, XIAO nRF и Heltec V3;
   M6 bridge 868, Heltec V3 bridge 433; RAK4631 room server.
-- Проверены 11 UF2 и 8 ESP32 BIN: формат, адреса, роль, версия, совпадение
+- Проверены 12 UF2 и 8 ESP32 BIN: формат, адреса, роль, версия, совпадение
   с build output; MCUboot integrity и размещение signed app в merged BIN.
 - Все условные варианты CLI help в лимитах; 48 manifests без ошибок.
 - У Heltec V3 companion DRAM 379784/380672 B (**99,77%**, свободно **888 B**),
