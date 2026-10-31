@@ -1044,7 +1044,7 @@ config ZEPHCORE_GPS_SATELLITE_TELEMETRY
 	bool "Report GPS satellite count as self luminosity"
 	default n
 	help
-	  Expose up to 32 visible satellites on the self luminosity channel.
+	  Expose the existing satellite count on the self luminosity channel.
 	  Requires location and environment telemetry permissions; a real
 	  board-local light sensor takes precedence.
 

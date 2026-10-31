@@ -619,7 +619,7 @@
     },
     {
       "id": "UNIT-SENSOR-001",
-      "name": "Satellite luminosity uses visible count, GGA fallback and a limit of 32",
+      "name": "Existing satellite count is passed to luminosity unchanged",
       "source": "tests/unit/sensor_manager_tests.cpp"
     },
     {

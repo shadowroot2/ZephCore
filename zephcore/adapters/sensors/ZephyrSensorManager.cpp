@@ -75,8 +75,7 @@ bool ZephyrSensorManager::querySensors(uint8_t requester_permissions, CayenneLPP
 		if (!local_luminosity && (requester_permissions & TELEM_PERM_LOCATION)) {
 			struct gps_state_info info;
 			gps_get_state_info(&info);
-			uint16_t count = info.visible_satellites ? info.visible_satellites : info.satellites;
-			telemetry.addLuminosity(TELEM_CHANNEL_SELF, count > 32 ? 32 : count);
+			telemetry.addLuminosity(TELEM_CHANNEL_SELF, info.satellites);
 		}
 #else
 		(void)local_luminosity;
