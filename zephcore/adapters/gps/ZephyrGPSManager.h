@@ -23,6 +23,8 @@ struct gps_position {
 	uint16_t satellites;     /* Number of satellites */
 	bool valid;              /* True if fix is valid */
 	int64_t timestamp_ms;    /* Timestamp when fix was acquired */
+	uint32_t speed_mms;      /* Speed over ground in mm/s (RMC) */
+	uint32_t bearing_mdeg;   /* Course over ground in millidegrees (RMC) */
 };
 
 /* gps_state_info.state */

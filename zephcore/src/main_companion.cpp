@@ -77,6 +77,7 @@ LOG_MODULE_REGISTER(zephcore_main, CONFIG_ZEPHCORE_MAIN_LOG_LEVEL);
 #include <helpers/CompanionCLIAudio.h>
 #include <helpers/CompanionSOSPolicy.h>
 #include <helpers/GpsSwitchPolicy.h>
+#include <helpers/TrackingMessage.h>
 #include <helpers/pm_sleep_guard.h>
 #include <helpers/StatsFormatHelper.h>
 #include <app/CompanionCLI.h>
@@ -123,6 +124,7 @@ static void save_prefs_to_flash(void);
 static void power_policy_tick(void);
 static void companion_sos_process(void);
 static void companion_sos_tx_done(void);
+static void companion_tracking_odometer_fix(void);
 static void companion_tracking_process(void);
 static uint32_t companion_custom_ms_until_next(void);
 static void companion_fall_detected(void);
@@ -486,7 +488,10 @@ static void mesh_event_loop(void)
 			companion_fall_prealert();
 #endif
 		}
-		if (events & MESH_EVENT_GPS_FIX) companion_sos_process();
+		if (events & MESH_EVENT_GPS_FIX) {
+			companion_sos_process();
+			companion_tracking_odometer_fix();
+		}
 		if (events & MESH_EVENT_LORA_TX_DONE) companion_sos_tx_done();
 
 		/* Inbound frames and CLI lines, before loop() drains what they
@@ -712,12 +717,13 @@ static bool companion_get_emergency_channel(ChannelDetails &emergency_channel)
 
 static void format_uptime(uint64_t uptime_ms, char *out, size_t out_len)
 {
-	uint64_t seconds = uptime_ms / 1000U;
-	snprintf(out, out_len, "%llud %02lluh %02llum %02llus",
-		 (unsigned long long)(seconds / 86400U),
-		 (unsigned long long)((seconds / 3600U) % 24U),
-		 (unsigned long long)((seconds / 60U) % 60U),
-		 (unsigned long long)(seconds % 60U));
+	/* Clamped at 99h59m so the shutdown notice always fits the mesh frame. */
+	uint64_t min = (uptime_ms + 30000U) / 60000U;
+
+	if (min > 99U * 60U + 59U) {
+		min = 99U * 60U + 59U;
+	}
+	snprintf(out, out_len, "%uч%02uм", (unsigned)(min / 60U), (unsigned)(min % 60U));
 }
 
 /* Queue the low-battery notice in the #zephcore group. This is
@@ -732,9 +738,9 @@ static bool companion_send_auto_shutdown_emergency(uint16_t battery_mv,
 		return false;
 	}
 
-	char uptime[24];
+	char uptime[10];
 	char text[160];
-	char temperature[16] = "n/a";
+	char temperature[8] = "n/a";
 	char gps[72];
 	bool has_gps = gps_is_available();
 	struct env_data env = {};
@@ -751,7 +757,7 @@ static bool companion_send_auto_shutdown_emergency(uint16_t battery_mv,
 		}
 	}
 	if (has_gps) {
-		strcpy(gps, "GPS: off");
+		strcpy(gps, "🛰️ выключен");
 	}
 	if (has_gps && gps_is_enabled()) {
 		struct gps_state_info gsi;
@@ -761,29 +767,33 @@ static bool companion_send_auto_shutdown_emergency(uint16_t battery_mv,
 		 * back to the GGA count used by the last/current navigation solution. */
 		uint16_t sats_in_view = gsi.visible_satellites ?
 			gsi.visible_satellites : gsi.satellites;
+		/* Display clamp: keeps the notice inside the mesh text frame. */
+		if (sats_in_view > 99) {
+			sats_in_view = 99;
+		}
 		bool has_fix = gps_get_last_known_position(&pos);
 		bool has_coordinates = pos.latitude_ndeg != 0 && pos.longitude_ndeg != 0;
 
 		if (has_fix && has_coordinates) {
 			snprintf(gps, sizeof(gps),
-				 "GPS: fix, sat %u https://maps.google.com/?q=%.5f,%.5f",
+				 "🛰️ (%u) 📍 https://maps.google.com/?q=%.5f,%.5f",
 				 sats_in_view, pos.latitude_ndeg / 1e9,
 				 pos.longitude_ndeg / 1e9);
 		} else if (has_fix) {
-			snprintf(gps, sizeof(gps), "GPS: fix, sat %u", sats_in_view);
+			snprintf(gps, sizeof(gps), "🛰️ (%u)", sats_in_view);
 		} else {
-			snprintf(gps, sizeof(gps), "GPS: no fix, sat %u", sats_in_view);
+			snprintf(gps, sizeof(gps), "🛰️ нет фикса (%u)", sats_in_view);
 		}
 	}
 	format_uptime(uptime_ms, uptime, sizeof(uptime));
 	if (has_gps) {
 		snprintf(text, sizeof(text),
-			 "Shutting down: low %u.%02uV, temp %s, uptime %s; %s",
+			 "Отключение по заряду: 🪫 %u.%02uV 🌡️ %s ⏱️ %s %s",
 			 battery_mv / 1000U, (battery_mv % 1000U) / 10U,
 			 temperature, uptime, gps);
 	} else {
 		snprintf(text, sizeof(text),
-			 "Shutting down: low batt %u.%02uV, temp %s, uptime %s",
+			 "Отключение по заряду: 🪫 %u.%02uV 🌡️ %s ⏱️ %s",
 			 battery_mv / 1000U, (battery_mv % 1000U) / 10U,
 			 temperature, uptime);
 	}
@@ -925,7 +935,7 @@ static bool companion_send_visible_group_message(ChannelDetails &channel,
 static void companion_send_fall_canceled_message(void)
 {
 	ChannelDetails sos_channel;
-	static const char text[] = "Fall canceled...";
+	static const char text[] = "❌ Падение отменено";
 
 	if (!companion_get_public_channel("#sos", sos_channel)) {
 		return;
@@ -1015,7 +1025,7 @@ static bool companion_send_sos_waiting_message(void)
 {
 	ChannelDetails sos_channel;
 	const char *text = companion_sos.type == COMPANION_EMERGENCY_FALL ?
-		"Fall detected! Waiting GPS fix..." : "SOS! Waiting GPS fix...";
+		"🆘 Падение! Ожидание GPS-фикса..." : "🆘 Ожидание GPS-фикса...";
 
 	if (!companion_get_public_channel("#sos", sos_channel)) {
 		return false;
@@ -1043,7 +1053,7 @@ static bool companion_send_sos_message(bool allow_coordinates)
 	struct env_data env = {};
 	bool has_gps = gps_is_available();
 	const char *prefix = companion_sos.type == COMPANION_EMERGENCY_FALL ?
-		"Fall detected! I may need help." : "SOS!";
+		"🆘 Падение! Нужна помощь!" : "🆘";
 
 	if (env_sensors_read(&env) == 0) {
 		if (env.has_temperature) {
@@ -1064,29 +1074,33 @@ static bool companion_send_sos_message(bool allow_coordinates)
 		gps_get_state_info(&gsi);
 		uint16_t sats_in_view = gsi.visible_satellites ?
 			gsi.visible_satellites : gsi.satellites;
+		/* Display clamp: keeps the report inside the mesh text frame. */
+		if (sats_in_view > 99) {
+			sats_in_view = 99;
+		}
 		bool has_fix = gps_get_last_known_position(&pos);
 		bool has_coordinates = pos.latitude_ndeg != 0 && pos.longitude_ndeg != 0;
 
 		if (has_fix && has_coordinates && allow_coordinates) {
 			snprintf(gps, sizeof(gps),
-				 "GPS: fix, sat %u https://maps.google.com/?q=%.5f,%.5f",
+				 "🛰️ (%u) 📍 https://maps.google.com/?q=%.5f,%.5f",
 				 sats_in_view, pos.latitude_ndeg / 1e9,
 				 pos.longitude_ndeg / 1e9);
 		} else if (has_fix && allow_coordinates) {
-			snprintf(gps, sizeof(gps), "GPS: fix, sat %u", sats_in_view);
+			snprintf(gps, sizeof(gps), "🛰️ (%u)", sats_in_view);
 		} else {
-			snprintf(gps, sizeof(gps), "GPS: no fix, sat %u", sats_in_view);
+			snprintf(gps, sizeof(gps), "🛰️ нет фикса (%u)", sats_in_view);
 		}
 	}
 
 	uint16_t battery_mv = get_battery_mv();
 	if (has_gps) {
 		snprintf(text, sizeof(text),
-			 "%s batt %u.%02uV, temp %s; %s", prefix,
+			 "%s 🔋 %u.%02uV 🌡️ %s %s", prefix,
 			 battery_mv / 1000U, (battery_mv % 1000U) / 10U,
 			 temperature, gps);
 	} else {
-		snprintf(text, sizeof(text), "%s batt %u.%02uV, temp %s", prefix,
+		snprintf(text, sizeof(text), "%s 🔋 %u.%02uV 🌡️ %s", prefix,
 			 battery_mv / 1000U, (battery_mv % 1000U) / 10U,
 			 temperature);
 	}
@@ -1324,6 +1338,7 @@ struct companion_tracking_state {
 };
 
 static struct companion_tracking_state companion_tracking;
+static struct tracking_odometer tracking_odo;
 
 static uint32_t companion_custom_ms_until_next(void)
 {
@@ -1391,8 +1406,9 @@ static bool companion_send_tracking_message(const struct gps_position &pos)
 	}
 
 	char text[160];
-	snprintf(text, sizeof(text), "🐾 https://maps.google.com/?q=%.5f,%.5f",
-		 pos.latitude_ndeg / 1e9, pos.longitude_ndeg / 1e9);
+	tracking_format_report(text, sizeof(text),
+			       pos.latitude_ndeg / 1e9, pos.longitude_ndeg / 1e9,
+			       pos.speed_mms, pos.bearing_mdeg);
 	if (!companion_send_visible_group_message(tracks_channel, text)) {
 		LOG_WRN("tracking: unable to queue %s message", group_name);
 		return false;
@@ -1405,6 +1421,41 @@ static bool companion_send_tracking_message(const struct gps_position &pos)
 	}
 #endif
 	return true;
+}
+
+static void companion_tracking_odometer_fix(void)
+{
+	if (!companion_tracking.enabled) {
+		return;
+	}
+	struct gps_position pos;
+
+	if (!gps_get_last_known_position(&pos)) {
+		return;
+	}
+	tracking_odometer_on_fix(&tracking_odo, k_uptime_get(),
+				 pos.latitude_ndeg, pos.longitude_ndeg, pos.speed_mms);
+}
+
+static void companion_send_tracking_summary(void)
+{
+	ChannelDetails tracks_channel;
+	const char *group_name = companion_mesh.prefs.tracking_group_name;
+	if (!companion_get_public_channel(group_name, tracks_channel)) {
+		return;
+	}
+
+	struct gps_position pos;
+	bool has_fix = gps_get_last_known_position(&pos);
+	char text[160];
+	tracking_format_summary(text, sizeof(text), &tracking_odo,
+				has_fix ? pos.latitude_ndeg : 0,
+				has_fix ? pos.longitude_ndeg : 0, has_fix);
+	if (!companion_send_visible_group_message(tracks_channel, text)) {
+		LOG_WRN("tracking: unable to queue %s summary", group_name);
+		return;
+	}
+	LOG_INF("tracking: queued %s summary: %s", group_name, text);
 }
 
 static bool companion_tracking_set_enabled(bool enabled, char *reply, bool silent = false)
@@ -1427,6 +1478,7 @@ static bool companion_tracking_set_enabled(bool enabled, char *reply, bool silen
 		companion_tracking.gps_started_by_tracking = !gps_was_enabled;
 		companion_tracking.saved_gps_duty_sec = gps_get_poll_interval_sec();
 		companion_tracking.started_ms = k_uptime_get_32();
+		tracking_odometer_reset(&tracking_odo, k_uptime_get());
 		companion_tracking.next_report_ms = k_uptime_get() +
 			companion_tracking_interval_ms();
 		gps_set_poll_interval_sec(0);
@@ -1450,6 +1502,8 @@ static bool companion_tracking_set_enabled(bool enabled, char *reply, bool silen
 		strcpy(reply, "ERROR: SOS is waiting for GPS fix");
 		return false;
 	}
+	tracking_odometer_finish(&tracking_odo, k_uptime_get());
+	companion_send_tracking_summary();
 	gps_set_poll_interval_sec(companion_tracking.saved_gps_duty_sec);
 	if (companion_tracking.gps_started_by_tracking) {
 		gps_enable(false);
@@ -2039,10 +2093,8 @@ static void companion_cli_exec(const char *line, uint32_t sender_timestamp,
 	    strcmp(line, "set input.rotate") == 0 ||
 	    strncmp(line, "set input.rotate ", 17) == 0) return;
 #endif
-	if (strcmp(line, "leds on") == 0) line = "set leds on";
-	else if (strcmp(line, "leds off") == 0) line = "set leds off";
-	else if (strcmp(line, "buzz on") == 0) line = "set buzzer on";
-	else if (strcmp(line, "buzz off") == 0) line = "set buzzer off";
+	const char *aliased = companion_cli_alias_command(line);
+	if (aliased != nullptr) line = aliased;
 	if (strcmp(line, "shutdown") == 0) {
 		strcpy(reply, "To confirm use shutdown y");
 		return;

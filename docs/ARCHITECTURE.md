@@ -1081,7 +1081,7 @@ hold window. On M3-MAMA its expiry toggles Tracking instead of sending Advert,
 while a two-tap gesture sends Advert. Holding after the first short press still
 starts SOS. Feedback remains action-bound. While a manual SOS is waiting for
 GPS, the single-tap gesture instead queues a main-thread cancel, restores the previous
-GPS state, plays the forced Fall-cancellation tone and sends `❌ SOS Canceled`
+GPS state, plays the forced Fall-cancellation tone and sends `❌ SOS отменён`
 to `#sos`; the gesture is consumed and cannot also run its delayed action. Fall
 acknowledgement remains a separate forced-alarm path.
 

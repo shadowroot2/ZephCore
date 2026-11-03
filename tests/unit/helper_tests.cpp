@@ -25,6 +25,7 @@
 #include <CompanionCLIAudio.h>
 #include <CompanionSOSPolicy.h>
 #include <GpsSwitchPolicy.h>
+#include <TrackingMessage.h>
 #include <RepeaterCLIHelp.h>
 #undef CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE
 #undef CONFIG_LOG
@@ -203,10 +204,22 @@ TEST(companion_cli_help, "UNIT-CLI-002", "Companion app and remote help are cate
 	const char *remote_allowed[] = {
 		"set wifi.enabled 0", "get freq", "get radio", "get tx",
 		"set af 3", "get adc.multiplier", "get autoshutdown", "reboot",
+		"buzz", "leds", "gps",
 	};
 	for (const char *command : remote_allowed) {
 		CHECK(companion_remote_cli_command_allowed(command));
 	}
+}
+TEST(companion_cli_alias, "UNIT-CLI-004", "Bare buzz and leds aliases report status via get") {
+	CHECK(std::strcmp(companion_cli_alias_command("leds on"), "set leds on") == 0);
+	CHECK(std::strcmp(companion_cli_alias_command("leds off"), "set leds off") == 0);
+	CHECK(std::strcmp(companion_cli_alias_command("leds"), "get leds") == 0);
+	CHECK(std::strcmp(companion_cli_alias_command("buzz on"), "set buzzer on") == 0);
+	CHECK(std::strcmp(companion_cli_alias_command("buzz off"), "set buzzer off") == 0);
+	CHECK(std::strcmp(companion_cli_alias_command("buzz"), "get buzzer") == 0);
+	CHECK(companion_cli_alias_command("leds.hb") == nullptr);
+	CHECK(companion_cli_alias_command("buzzer") == nullptr);
+	CHECK(companion_cli_alias_command("buzz on extra") == nullptr);
 }
 TEST(companion_cli_audio, "UNIT-CLI-003", "Remote companion CLI suppresses operation notifications") {
 	CHECK(!companion_cli_silent_notifications(0));
@@ -217,7 +230,58 @@ TEST(companion_sos_cancel, "UNIT-SOS-001", "Only a pending manual SOS is button-
 	CHECK(!companion_sos_button_cancelable(false, false));
 	CHECK(companion_sos_button_cancelable(true, false));
 	CHECK(!companion_sos_button_cancelable(true, true));
-	CHECK(std::strcmp(COMPANION_SOS_CANCELED_TEXT, "❌ SOS Canceled") == 0);
+	CHECK(std::strcmp(COMPANION_SOS_CANCELED_TEXT, "❌ SOS отменён") == 0);
+}
+TEST(tracking_report_format, "UNIT-TRACK-001", "Tracking report carries speed and course only while moving") {
+	char buf[160];
+	tracking_format_report(buf, sizeof(buf), 55.75580, 37.61730, 3333, 45000);
+	CHECK(std::strcmp(buf, "🏃 12 км/ч ↗️ СВ · https://maps.google.com/?q=55.75580,37.61730") == 0);
+	tracking_format_report(buf, sizeof(buf), 55.75580, 37.61730, 0, 0);
+	CHECK(std::strcmp(buf, "🅿️ https://maps.google.com/?q=55.75580,37.61730") == 0);
+	tracking_format_report(buf, sizeof(buf), 55.75580, 37.61730, 555, 180000);
+	CHECK(std::strcmp(buf, "🅿️ https://maps.google.com/?q=55.75580,37.61730") == 0);
+	CHECK(std::strcmp(tracking_report_arrow(0), "⬆️") == 0);
+	CHECK(std::strcmp(tracking_report_sector(0), "С") == 0);
+	CHECK(std::strcmp(tracking_report_sector(22500), "СВ") == 0);
+	CHECK(std::strcmp(tracking_report_sector(112500), "ЮВ") == 0);
+	CHECK(std::strcmp(tracking_report_sector(202500), "ЮЗ") == 0);
+	CHECK(std::strcmp(tracking_report_sector(359999), "С") == 0);
+	CHECK(std::strcmp(tracking_report_sector(360000), "С") == 0);
+}
+TEST(tracking_odometer_stats, "UNIT-TRACK-002", "Odometer counts moving distance, stops and max speed per session") {
+	struct tracking_odometer o;
+	tracking_odometer_reset(&o, 0);
+	tracking_odometer_on_fix(&o, 60000, 55000000000LL, 37000000000LL, 0);
+	CHECK(o.distance_mm == 0 && o.stopped_ms == 60000 && o.stops == 0);
+	tracking_odometer_on_fix(&o, 120000, 55000900000LL, 37000000000LL, 5000);
+	CHECK(o.moving_ms == 60000 && o.stops == 0);
+	CHECK(o.distance_mm > 95000 && o.distance_mm < 105000);
+	CHECK(o.max_speed_mms == 5000);
+	tracking_odometer_on_fix(&o, 180000, 55000900000LL, 37000000000LL, 0);
+	CHECK(o.stops == 1 && o.stopped_ms == 120000);
+	tracking_odometer_finish(&o, 240000);
+	CHECK(o.stops == 1 && o.stopped_ms == 180000 && o.moving_ms == 60000);
+}
+TEST(tracking_summary_format, "UNIT-TRACK-003", "Session summary fits the mesh frame and pins the format") {
+	struct tracking_odometer o;
+	memset(&o, 0, sizeof(o));
+	char buf[160];
+	tracking_format_summary(buf, sizeof(buf), &o, 55751240000LL, 37618420000LL, true);
+	CHECK(std::strcmp(buf, "🏁 0.0 км · 0ч00м · 🚶 0ч00м\n"
+		"🅿️ 0 мин (0) · ср./макс. 0.0/0 км/ч\n"
+		"📍 https://maps.google.com/?q=55.75124,37.61842") == 0);
+	o.distance_mm = 999900000;
+	o.moving_ms = 45300000;
+	o.stopped_ms = 35700000;
+	o.stops = 99;
+	o.max_speed_mms = 34445;
+	tracking_format_summary(buf, sizeof(buf), &o, -123456780000LL, -89123450000LL, true);
+	CHECK(std::strlen(buf) <= 159);
+	CHECK(std::strstr(buf, "999.9 км") != nullptr);
+	CHECK(std::strstr(buf, "ср./макс.") != nullptr);
+	CHECK(std::strstr(buf, "-123.45678,-89.12345") != nullptr);
+	tracking_format_summary(buf, sizeof(buf), &o, 0, 0, false);
+	CHECK(std::strstr(buf, "maps.google.com") == nullptr);
 }
 TEST(gps_switch_policy, "UNIT-UI-001", "A physical GPS switch overrides the saved startup state") {
 	CHECK(gps_switch_effective_enabled(false, false, true));

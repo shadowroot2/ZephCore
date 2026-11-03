@@ -45,7 +45,7 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"findme\r\n"
 #endif
 		"sos\r\n"
-		"gps on|off|setloc|advert\r\n"
+		"gps [on|off|setloc|advert]\r\n"
 		"tracking on|off\r\n"
 #if IS_ENABLED(CONFIG_ZEPHCORE_COMPANION_WIFI)
 		"wifi (help wifi)\r\n"
@@ -54,10 +54,10 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"fall on|off\r\n"
 #endif
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
-		"buzz on|off\r\n"
+		"buzz [on|off]\r\n"
 #endif
 #if DT_NODE_HAS_PROP(DT_ALIAS(led0), gpios) || DT_NODE_HAS_PROP(DT_ALIAS(led1), gpios)
-		"leds on|off\r\n"
+		"leds [on|off]\r\n"
 #endif
 		"offgrid on|off\r\n"
 		"stats-packets\r\nstats-radio\r\nstats-core\r\nclear stats\r\n"

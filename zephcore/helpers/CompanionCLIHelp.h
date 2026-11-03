@@ -54,7 +54,7 @@ static inline const char *companion_app_cli_help(const char *line)
 		       "get/set flood.max.advert\nget/set flood.max.unscoped";
 	}
 	if (strcmp(line, "help gps") == 0) {
-		return "gps on|off|setloc|advert\nget/set gps duty\nget/set lat\nget/set lon";
+		return "gps [on|off|setloc|advert]\nget/set gps duty\nget/set lat\nget/set lon";
 	}
 #if IS_ENABLED(CONFIG_ZEPHCORE_COMPANION_WIFI)
 	if (strcmp(line, "help wifi") == 0) {
@@ -70,7 +70,7 @@ static inline const char *companion_app_cli_help(const char *line)
 		       "get/set v.contact\noffgrid on|off";
 	}
 	if (strcmp(line, "help ui") == 0) {
-		return "buzz on|off\nleds on|off\n"
+		return "buzz [on|off]\nleds [on|off]\n"
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
 		       "get/set display.rotate\nget/set input.rotate\n"
 #endif
@@ -109,7 +109,7 @@ static inline const char *companion_remote_cli_help(const char *line)
 		       "flood.{advert.interval,max,max.advert,max.unscoped}";
 	}
 	if (strcmp(line, "help gps") == 0) {
-		return "gps on|off|setloc|advert\nget/set gps duty\nget/set lat\nget/set lon";
+		return "gps [on|off|setloc|advert]\nget/set gps duty\nget/set lat\nget/set lon";
 	}
 #if IS_ENABLED(CONFIG_ZEPHCORE_COMPANION_WIFI)
 	if (strcmp(line, "help wifi") == 0) return COMPANION_REMOTE_WIFI_HELP;
@@ -123,7 +123,7 @@ static inline const char *companion_remote_cli_help(const char *line)
 		       "get/set v.contact";
 	}
 	if (strcmp(line, "help ui") == 0) {
-		return "buzz on|off\nleds on|off\n"
+		return "buzz [on|off]\nleds [on|off]\n"
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
 		       "get/set display.rotate\nget/set input.rotate\n"
 #endif
@@ -154,7 +154,8 @@ static inline bool companion_remote_cli_command_allowed(const char *cmd)
 		"get tz.offset", "get role", "get public.key", "uptime", "tz", "clock sync",
 		"advert", "advert.zerohop", "findme", "sos", "tracking on", "tracking off",
 		"fall on", "fall off", "leds on", "leds off", "buzz on", "buzz off",
-		"stats-packets", "stats-radio", "stats-core", "gps on", "gps off",
+		"buzz", "leds",
+		"stats-packets", "stats-radio", "stats-core", "gps", "gps on", "gps off",
 		"gps setloc", "gps advert",
 		"get dc.restarts", "get bootloader.ver", "get owner.info", "get advert.interval",
 		"get meshtimesync", "get flood.advert.interval", "get flood.max",
@@ -185,4 +186,17 @@ static inline bool companion_remote_cli_command_allowed(const char *cmd)
 		if (strncmp(cmd, p, strlen(p)) == 0) return true;
 	}
 	return false;
+}
+
+/* "leds on|off" / "buzz on|off" rewrite to the config family; bare "leds" /
+ * "buzz" report the current value via its get form. */
+static inline const char *companion_cli_alias_command(const char *line)
+{
+	if (strcmp(line, "leds on") == 0) return "set leds on";
+	if (strcmp(line, "leds off") == 0) return "set leds off";
+	if (strcmp(line, "leds") == 0) return "get leds";
+	if (strcmp(line, "buzz on") == 0) return "set buzzer on";
+	if (strcmp(line, "buzz off") == 0) return "set buzzer off";
+	if (strcmp(line, "buzz") == 0) return "get buzzer";
+	return nullptr;
 }

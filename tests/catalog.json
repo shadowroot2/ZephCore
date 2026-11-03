@@ -33,6 +33,11 @@
       "source": "tests/unit/helper_tests.cpp"
     },
     {
+      "id": "UNIT-CLI-004",
+      "name": "Bare buzz and leds aliases report status via get",
+      "source": "tests/unit/helper_tests.cpp"
+    },
+    {
       "id": "UNIT-SOS-001",
       "name": "Only a pending manual SOS is button-cancelable",
       "source": "tests/unit/helper_tests.cpp"
@@ -46,6 +51,21 @@
       "id": "UNIT-UI-002",
       "name": "Display timezone labels fit E-Paper rows and local epochs stay bounded",
       "source": "tests/unit/timezone_tests.cpp"
+    },
+    {
+      "id": "UNIT-TRACK-001",
+      "name": "Tracking report carries speed and course only while moving",
+      "source": "tests/unit/helper_tests.cpp"
+    },
+    {
+      "id": "UNIT-TRACK-002",
+      "name": "Odometer counts moving distance, stops and max speed per session",
+      "source": "tests/unit/helper_tests.cpp"
+    },
+    {
+      "id": "UNIT-TRACK-003",
+      "name": "Session summary fits the mesh frame and pins the format",
+      "source": "tests/unit/helper_tests.cpp"
     },
     {
       "id": "UNIT-CAD-001",
