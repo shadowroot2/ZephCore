@@ -740,20 +740,20 @@ static bool companion_send_auto_shutdown_emergency(uint16_t battery_mv,
 
 	char uptime[10];
 	char text[160];
-	char temperature[8] = "n/a";
+	char temperature[10] = "n/a";
 	char gps[72];
 	bool has_gps = gps_is_available();
 	struct env_data env = {};
 	if (env_sensors_read(&env) == 0) {
 		if (env.has_temperature) {
-				snprintf(temperature, sizeof(temperature), "%.1fC",
+				snprintf(temperature, sizeof(temperature), "%.1f°C",
 					 (double)env.temperature_c);
 		}
 	}
 	if (!env.has_temperature) {
 		float mcu_temp = zephyr_board.getMCUTemperature();
 		if (isfinite(mcu_temp)) {
-				snprintf(temperature, sizeof(temperature), "%.1fC", (double)mcu_temp);
+				snprintf(temperature, sizeof(temperature), "%.1f°C", (double)mcu_temp);
 		}
 	}
 	if (has_gps) {
@@ -776,24 +776,24 @@ static bool companion_send_auto_shutdown_emergency(uint16_t battery_mv,
 
 		if (has_fix && has_coordinates) {
 			snprintf(gps, sizeof(gps),
-				 "🛰️ (%u) 📍 https://maps.google.com/?q=%.5f,%.5f",
+				 "🛰️ %u fix\n📍 https://maps.google.com/?q=%.5f,%.5f",
 				 sats_in_view, pos.latitude_ndeg / 1e9,
 				 pos.longitude_ndeg / 1e9);
 		} else if (has_fix) {
-			snprintf(gps, sizeof(gps), "🛰️ (%u)", sats_in_view);
+			snprintf(gps, sizeof(gps), "🛰️ %u fix", sats_in_view);
 		} else {
-			snprintf(gps, sizeof(gps), "🛰️ нет фикса (%u)", sats_in_view);
+			snprintf(gps, sizeof(gps), "🛰️ %u no fix", sats_in_view);
 		}
 	}
 	format_uptime(uptime_ms, uptime, sizeof(uptime));
 	if (has_gps) {
 		snprintf(text, sizeof(text),
-			 "Отключение по заряду: 🪫 %u.%02uV 🌡️ %s ⏱️ %s %s",
+			 "Отключение!\n🪫 %u.%02uV\n🌡️ %s\n⏱️ %s\n%s",
 			 battery_mv / 1000U, (battery_mv % 1000U) / 10U,
 			 temperature, uptime, gps);
 	} else {
 		snprintf(text, sizeof(text),
-			 "Отключение по заряду: 🪫 %u.%02uV 🌡️ %s ⏱️ %s",
+			 "Отключение!\n🪫 %u.%02uV\n🌡️ %s\n⏱️ %s",
 			 battery_mv / 1000U, (battery_mv % 1000U) / 10U,
 			 temperature, uptime);
 	}
@@ -1025,7 +1025,7 @@ static bool companion_send_sos_waiting_message(void)
 {
 	ChannelDetails sos_channel;
 	const char *text = companion_sos.type == COMPANION_EMERGENCY_FALL ?
-		"🆘 Падение! Ожидание GPS-фикса..." : "🆘 Ожидание GPS-фикса...";
+		"🆘 Падение!\nОжидание GPS-фикса..." : "🆘 SOS!\nОжидание GPS-фикса...";
 
 	if (!companion_get_public_channel("#sos", sos_channel)) {
 		return false;
@@ -1053,18 +1053,18 @@ static bool companion_send_sos_message(bool allow_coordinates)
 	struct env_data env = {};
 	bool has_gps = gps_is_available();
 	const char *prefix = companion_sos.type == COMPANION_EMERGENCY_FALL ?
-		"🆘 Падение! Нужна помощь!" : "🆘";
+		"🆘 Падение!\nНужна помощь!" : "🆘 SOS!";
 
 	if (env_sensors_read(&env) == 0) {
 		if (env.has_temperature) {
-				snprintf(temperature, sizeof(temperature), "%.1fC",
+				snprintf(temperature, sizeof(temperature), "%.1f°C",
 					 (double)env.temperature_c);
 		}
 	}
 	if (!env.has_temperature) {
 		float mcu_temp = zephyr_board.getMCUTemperature();
 		if (isfinite(mcu_temp)) {
-				snprintf(temperature, sizeof(temperature), "%.1fC", (double)mcu_temp);
+				snprintf(temperature, sizeof(temperature), "%.1f°C", (double)mcu_temp);
 		}
 	}
 
@@ -1083,24 +1083,24 @@ static bool companion_send_sos_message(bool allow_coordinates)
 
 		if (has_fix && has_coordinates && allow_coordinates) {
 			snprintf(gps, sizeof(gps),
-				 "🛰️ (%u) 📍 https://maps.google.com/?q=%.5f,%.5f",
+				 "🛰️ %u fix\n📍 https://maps.google.com/?q=%.5f,%.5f",
 				 sats_in_view, pos.latitude_ndeg / 1e9,
 				 pos.longitude_ndeg / 1e9);
 		} else if (has_fix && allow_coordinates) {
-			snprintf(gps, sizeof(gps), "🛰️ (%u)", sats_in_view);
+			snprintf(gps, sizeof(gps), "🛰️ %u fix", sats_in_view);
 		} else {
-			snprintf(gps, sizeof(gps), "🛰️ нет фикса (%u)", sats_in_view);
+			snprintf(gps, sizeof(gps), "🛰️ %u no fix", sats_in_view);
 		}
 	}
 
 	uint16_t battery_mv = get_battery_mv();
 	if (has_gps) {
 		snprintf(text, sizeof(text),
-			 "%s 🔋 %u.%02uV 🌡️ %s %s", prefix,
+			 "%s\n🔋 %u.%02uV\n🌡️ %s\n%s", prefix,
 			 battery_mv / 1000U, (battery_mv % 1000U) / 10U,
 			 temperature, gps);
 	} else {
-		snprintf(text, sizeof(text), "%s 🔋 %u.%02uV 🌡️ %s", prefix,
+		snprintf(text, sizeof(text), "%s\n🔋 %u.%02uV\n🌡️ %s", prefix,
 			 battery_mv / 1000U, (battery_mv % 1000U) / 10U,
 			 temperature);
 	}

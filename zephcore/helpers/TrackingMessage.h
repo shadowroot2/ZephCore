@@ -42,11 +42,11 @@ static inline void tracking_format_report(char *buf, size_t len,
 {
 	unsigned kph = (unsigned)((speed_mms * 36U + 5000U) / 10000U);
 	if (kph <= TRACKING_REPORT_STANDSTILL_KMH) {
-		snprintf(buf, len, "🅿️ https://maps.google.com/?q=%.5f,%.5f",
+		snprintf(buf, len, "🅿️\n📍 https://maps.google.com/?q=%.5f,%.5f",
 			 lat_deg, lon_deg);
 		return;
 	}
-	snprintf(buf, len, "🏃 %u км/ч %s %s · https://maps.google.com/?q=%.5f,%.5f",
+	snprintf(buf, len, "🏃 %u км/ч %s %s\n📍 https://maps.google.com/?q=%.5f,%.5f",
 		 kph, tracking_report_arrow(bearing_mdeg),
 		 tracking_report_sector(bearing_mdeg), lat_deg, lon_deg);
 }
@@ -165,10 +165,10 @@ static inline void tracking_format_summary(char *buf, size_t len,
 	unsigned maxk = (unsigned)((o->max_speed_mms * 36U + 5000U) / 10000U);
 	unsigned stopmin = (unsigned)((o->stopped_ms + 30000U) / 60000U);
 	int n = snprintf(buf, len,
-			 "🏁 %u.%u км · %s · 🚶 %s\n"
-			 "🅿️ %u мин (%u) · ср./макс. %u.%u/%u км/ч",
-			 km10 / 10, km10 % 10, total, moving,
-			 stopmin, o->stops, avg10 / 10, avg10 % 10, maxk);
+			 "🏁 %u.%uкм (%u.%u / %u км/ч)\n⏱️ %s\n🚶 %s\n"
+			 "🅿️ %u мин (%u)",
+			 km10 / 10, km10 % 10, avg10 / 10, avg10 % 10, maxk,
+			 total, moving, stopmin, o->stops);
 
 	if (has_fix && n > 0 && (size_t)n < len) {
 		snprintf(buf + n, len - n, "\n📍 https://maps.google.com/?q=%.5f,%.5f",

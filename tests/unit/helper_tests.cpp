@@ -235,11 +235,11 @@ TEST(companion_sos_cancel, "UNIT-SOS-001", "Only a pending manual SOS is button-
 TEST(tracking_report_format, "UNIT-TRACK-001", "Tracking report carries speed and course only while moving") {
 	char buf[160];
 	tracking_format_report(buf, sizeof(buf), 55.75580, 37.61730, 3333, 45000);
-	CHECK(std::strcmp(buf, "🏃 12 км/ч ↗️ СВ · https://maps.google.com/?q=55.75580,37.61730") == 0);
+	CHECK(std::strcmp(buf, "🏃 12 км/ч ↗️ СВ\n📍 https://maps.google.com/?q=55.75580,37.61730") == 0);
 	tracking_format_report(buf, sizeof(buf), 55.75580, 37.61730, 0, 0);
-	CHECK(std::strcmp(buf, "🅿️ https://maps.google.com/?q=55.75580,37.61730") == 0);
+	CHECK(std::strcmp(buf, "🅿️\n📍 https://maps.google.com/?q=55.75580,37.61730") == 0);
 	tracking_format_report(buf, sizeof(buf), 55.75580, 37.61730, 555, 180000);
-	CHECK(std::strcmp(buf, "🅿️ https://maps.google.com/?q=55.75580,37.61730") == 0);
+	CHECK(std::strcmp(buf, "🅿️\n📍 https://maps.google.com/?q=55.75580,37.61730") == 0);
 	CHECK(std::strcmp(tracking_report_arrow(0), "⬆️") == 0);
 	CHECK(std::strcmp(tracking_report_sector(0), "С") == 0);
 	CHECK(std::strcmp(tracking_report_sector(22500), "СВ") == 0);
@@ -267,8 +267,8 @@ TEST(tracking_summary_format, "UNIT-TRACK-003", "Session summary fits the mesh f
 	memset(&o, 0, sizeof(o));
 	char buf[160];
 	tracking_format_summary(buf, sizeof(buf), &o, 55751240000LL, 37618420000LL, true);
-	CHECK(std::strcmp(buf, "🏁 0.0 км · 0ч00м · 🚶 0ч00м\n"
-		"🅿️ 0 мин (0) · ср./макс. 0.0/0 км/ч\n"
+	CHECK(std::strcmp(buf, "🏁 0.0км (0.0 / 0 км/ч)\n⏱️ 0ч00м\n🚶 0ч00м\n"
+		"🅿️ 0 мин (0)\n"
 		"📍 https://maps.google.com/?q=55.75124,37.61842") == 0);
 	o.distance_mm = 999900000;
 	o.moving_ms = 45300000;
@@ -277,8 +277,8 @@ TEST(tracking_summary_format, "UNIT-TRACK-003", "Session summary fits the mesh f
 	o.max_speed_mms = 34445;
 	tracking_format_summary(buf, sizeof(buf), &o, -123456780000LL, -89123450000LL, true);
 	CHECK(std::strlen(buf) <= 159);
-	CHECK(std::strstr(buf, "999.9 км") != nullptr);
-	CHECK(std::strstr(buf, "ср./макс.") != nullptr);
+	CHECK(std::strstr(buf, "999.9км") != nullptr);
+	CHECK(std::strstr(buf, "км/ч") != nullptr);
 	CHECK(std::strstr(buf, "-123.45678,-89.12345") != nullptr);
 	tracking_format_summary(buf, sizeof(buf), &o, 0, 0, false);
 	CHECK(std::strstr(buf, "maps.google.com") == nullptr);

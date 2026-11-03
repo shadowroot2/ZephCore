@@ -307,7 +307,7 @@ normal notification sounds.
 
 On T1000-E and ThinkNode M3, one short button press while a manual SOS is
 waiting for GPS cancels it, restores the previous GPS enabled/duty state and
-plays the forced Fall-cancellation tone, then sends `❌ SOS Canceled` to
+plays the forced Fall-cancellation tone, then sends `❌ SOS отменён` to
 `#sos`. The press does not also start the normal advert/SOS gesture window.
 Fall acknowledgement is unchanged.
 

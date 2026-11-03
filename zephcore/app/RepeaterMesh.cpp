@@ -1675,10 +1675,31 @@ void RepeaterMesh::batteryAlertTick() {
     uint32_t timestamp = getRTCClock()->getCurrentTimeUnique();
     memcpy(data, &timestamp, sizeof(timestamp));
     char* text = (char*)&data[5];
-    int len = snprintf(text, 161, "%.31s: Repeater battery low: %u%% (%u.%02uV). Please recharge.",
-                       _prefs.node_name, percent, mv / 1000U, (mv % 1000U) / 10U);
+    char temperature[10] = "n/a";
+    float t = _board.getMCUTemperature();
+    if (isfinite(t)) {
+        snprintf(temperature, sizeof(temperature), "%.1f°C", (double)t);
+    }
+    uint64_t up_min = (now + 30000U) / 60000U;
+    if (up_min > 99U * 60U + 59U) {
+        up_min = 99U * 60U + 59U;
+    }
+    char uptime[10];
+    snprintf(uptime, sizeof(uptime), "%uч%02uм", (unsigned)(up_min / 60U), (unsigned)(up_min % 60U));
+    int len = snprintf(text, 161, "%.31s: Низкий заряд!\n🪫 %u%% %u.%02uV\n🌡️ %s\n⏱️ %s",
+                       _prefs.node_name, percent, mv / 1000U, (mv % 1000U) / 10U,
+                       temperature, uptime);
     if (has_location && len > 0 && len < 160) {
-        snprintf(text + len, 161 - len, " https://maps.google.com/?q=%.5f,%.5f", lat, lon);
+        unsigned sats = pos.satellites > 99 ? 99 : pos.satellites;
+        len += snprintf(text + len, 161 - len, "\n🛰️ %u fix", sats);
+        if (len > 0 && len < 160) {
+            snprintf(text + len, 161 - len, "\n📍 https://maps.google.com/?q=%.5f,%.5f", lat, lon);
+        }
+    } else if (gps_is_available() && len > 0 && len < 160) {
+        struct gps_state_info gsi = {};
+        gps_get_state_info(&gsi);
+        unsigned sats = gsi.satellites > 99 ? 99 : gsi.satellites;
+        snprintf(text + len, 161 - len, "\n🛰️ %u no fix", sats);
     }
     mesh::Packet* pkt = createGroupDatagram(PAYLOAD_TYPE_GRP_TXT, channel,
                                            data, 5 + strlen(text));
