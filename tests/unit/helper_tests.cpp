@@ -204,7 +204,7 @@ TEST(companion_cli_help, "UNIT-CLI-002", "Companion app and remote help are cate
 	const char *remote_allowed[] = {
 		"set wifi.enabled 0", "get freq", "get radio", "get tx",
 		"set af 3", "get adc.multiplier", "get autoshutdown", "reboot",
-		"buzz", "leds", "gps",
+		"buzz", "leds", "gps", "tracking",
 	};
 	for (const char *command : remote_allowed) {
 		CHECK(companion_remote_cli_command_allowed(command));

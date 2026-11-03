@@ -46,7 +46,7 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 #endif
 		"sos\r\n"
 		"gps [on|off|setloc|advert]\r\n"
-		"tracking on|off\r\n"
+		"tracking [on|off]\r\n"
 #if IS_ENABLED(CONFIG_ZEPHCORE_COMPANION_WIFI)
 		"wifi (help wifi)\r\n"
 #endif

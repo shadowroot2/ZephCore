@@ -62,7 +62,7 @@ static inline const char *companion_app_cli_help(const char *line)
 	}
 #endif
 	if (strcmp(line, "help extra") == 0) {
-		return "findme\nsos\ntracking on|off\nget/set tracking.group\n"
+		return "findme\nsos\ntracking [on|off]\nget/set tracking.group\n"
 		       "get/set tracking.interval\n"
 #if defined(ZEPHCORE_FALL_DETECTOR)
 		       "fall on|off\nget/set fall.sens (1-5)\n"
@@ -115,7 +115,7 @@ static inline const char *companion_remote_cli_help(const char *line)
 	if (strcmp(line, "help wifi") == 0) return COMPANION_REMOTE_WIFI_HELP;
 #endif
 	if (strcmp(line, "help extra") == 0) {
-		return "findme\nsos\ntracking on|off\nget/set tracking.group\n"
+		return "findme\nsos\ntracking [on|off]\nget/set tracking.group\n"
 		       "get/set tracking.interval\n"
 #if defined(ZEPHCORE_FALL_DETECTOR)
 		       "fall on|off\nget/set fall.sens (1-5)\n"
@@ -152,7 +152,8 @@ static inline bool companion_remote_cli_command_allowed(const char *cmd)
 		"get radio.fem.rxgain", "reboot", "get name",
 		"get wifi.enabled", "get wifi.status", "get wifi.ip", "board", "ver",
 		"get tz.offset", "get role", "get public.key", "uptime", "tz", "clock sync",
-		"advert", "advert.zerohop", "findme", "sos", "tracking on", "tracking off",
+		"advert", "advert.zerohop", "findme", "sos", "tracking", "tracking on",
+		"tracking off",
 		"fall on", "fall off", "leds on", "leds off", "buzz on", "buzz off",
 		"buzz", "leds",
 		"stats-packets", "stats-radio", "stats-core", "gps", "gps on", "gps off",
