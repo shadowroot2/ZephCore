@@ -274,6 +274,12 @@ void ui_set_battery_provider(uint16_t (*mv)(void), uint8_t (*pct)(void));
 void ui_set_power_source_provider(bool (*provider)(void));
 
 /**
+ * True while USB/charger power is present: the charge-usb-detect GPIO when
+ * the board has one, the registered external-power provider otherwise.
+ */
+bool ui_external_power_present(void);
+
+/**
  * Lazy battery refresh: re-read the ADC only if cached value is stale.
  * Called from the page render path so the ADC fires at most once per
  * 30 s and only when the display is actually being drawn.

@@ -503,7 +503,7 @@ void ZephyrBoard::powerOff()
 	zephcore_power_off();
 }
 
-void ZephyrBoard::rebootToBootloader()
+extern "C" void zephcore_reboot_to_bootloader(void)
 {
 	ui_show_dfu_mode();
 	zephcore_persist_before_off();
@@ -553,6 +553,11 @@ void ZephyrBoard::rebootToBootloader()
 	REG_CLR_BIT(RTC_CNTL_USB_CONF_REG, RTC_CNTL_SW_USB_PHY_SEL);
 #endif
 	sys_reboot(SYS_REBOOT_COLD);
+}
+
+void ZephyrBoard::rebootToBootloader()
+{
+	zephcore_reboot_to_bootloader();
 }
 
 bool ZephyrBoard::startOTAUpdate(const char *id, char reply[])

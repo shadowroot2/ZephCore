@@ -616,6 +616,17 @@ static void action_wifi_toggle(void)
 }
 #endif
 
+static void play_dfu_enter_melody(void)
+{
+#ifdef CONFIG_ZEPHCORE_UI_BUZZER
+	buzzer_play(MELODY_DFU_ENTER);
+	while (buzzer_is_playing()) {
+		k_sleep(K_MSEC(50));
+	}
+	buzzer_stop();
+#endif
+}
+
 #ifdef CONFIG_ZEPHCORE_UI_DISPLAY
 static void action_ble_toggle(void)
 {
@@ -632,13 +643,7 @@ static void action_enter_dfu(void)
 {
 	LOG_INF("update action: %s", UI_DFU_ACTION_LABEL);
 
-#ifdef CONFIG_ZEPHCORE_UI_BUZZER
-	buzzer_play(MELODY_SHUTDOWN);
-	while (buzzer_is_playing()) {
-		k_sleep(K_MSEC(50));
-	}
-	buzzer_stop();
-#endif
+	play_dfu_enter_melody();
 
 #if UI_UPDATE_DFU
 	mesh_reboot_to_dfu();
@@ -907,6 +912,13 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 			break;
 		}
 #endif
+#endif
+#if defined(CONFIG_ZEPHCORE_CLI_DFU)
+		if (ui_external_power_present()) {
+			play_dfu_enter_melody();
+			zephcore_reboot_to_bootloader();
+			break;
+		}
 #endif
 		ui_shutdown();
 		break;

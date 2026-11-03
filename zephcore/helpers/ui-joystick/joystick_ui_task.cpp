@@ -1083,6 +1083,13 @@ void JoystickUITask::toggleLeds()
 void JoystickUITask::rebootToDFU()
 {
 	LOG_INF("joystick update action: %s", UI_DFU_ACTION_LABEL);
+#ifdef CONFIG_ZEPHCORE_UI_BUZZER
+	buzzer_play(MELODY_DFU_ENTER);
+	while (buzzer_is_playing()) {
+		k_sleep(K_MSEC(50));
+	}
+	buzzer_stop();
+#endif
 #if UI_UPDATE_DFU
 	mesh_reboot_to_dfu();
 #endif

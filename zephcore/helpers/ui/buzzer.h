@@ -20,28 +20,21 @@ extern "C" {
 
 #define MELODY_STARTUP     "Startup:d=4,o=5,b=160:16c6,16e6,8g6"
 #define MELODY_SHUTDOWN    "Shutdown:d=4,o=5,b=100:8g5,16e5,16c5"
+/* Rising arpeggio: DFU entry must not sound like the falling shutdown. */
+#define MELODY_DFU_ENTER   "dfu:d=4,o=5,b=140:8c5,8e5,8g5"
 #define MELODY_MSG_CONTACT "MsgRcv3:d=4,o=6,b=200:32e,32g,32b,16c7"
 #define MELODY_MSG_CHANNEL "kerplop:d=16,o=6,b=120:32g#,32c#"
 #define MELODY_ACK         "ack:d=32,o=8,b=120:c"
 #define MELODY_BUZZER_ON   "bon:d=16,o=7,b=200:c,p,c,p,c,p,p,8e"
 #define MELODY_BUZZER_OFF  "bof:d=16,o=7,b=200:c,p,c,p,c,p,p,8g5"
-#if defined(CONFIG_BOARD_T1000_E) || defined(CONFIG_BOARD_THINKNODE_M3)
-/* T1000-E/M3 count beeps match their 2/4/5-tap Tracking/LED/GPS gestures. */
+/* Beep counts distinguish the toggle actions on every board: two for
+ * Tracking, four for LEDs, five for GPS — the T1000-E/M3 multi-tap counts. */
 #define MELODY_TRACKING_ON  "ton:d=16,o=7,b=200:c,p,c,p,p,8e"
 #define MELODY_TRACKING_OFF "tof:d=16,o=7,b=200:c,p,c,p,p,8g5"
 #define MELODY_GPS_ON       "gon:d=16,o=7,b=200:c,p,c,p,c,p,c,p,c,p,p,8e"
 #define MELODY_GPS_OFF      "gof:d=16,o=7,b=200:c,p,c,p,c,p,c,p,c,p,p,8g5"
 #define MELODY_LED_ON       "lon:d=16,o=7,b=200:c,p,c,p,c,p,c,p,p,8e"
 #define MELODY_LED_OFF      "lof:d=16,o=7,b=200:c,p,c,p,c,p,c,p,p,8g5"
-#else
-/* Other boards retain their existing action-identifying melodies. */
-#define MELODY_TRACKING_ON  "ton:d=16,o=7,b=200:c,p,c,p,c,p,c,p,c,p,c,p,p,8e"
-#define MELODY_TRACKING_OFF "tof:d=16,o=7,b=200:c,p,c,p,c,p,c,p,c,p,c,p,p,8g5"
-#define MELODY_GPS_ON       "gon:d=16,o=7,b=200:c,p,c,p,c,p,c,p,p,8e"
-#define MELODY_GPS_OFF      "gof:d=16,o=7,b=200:c,p,c,p,c,p,c,p,c,p,p,8g5"
-#define MELODY_LED_ON       "lon:d=16,o=7,b=200:c,p,c,p,8e"
-#define MELODY_LED_OFF      "lof:d=16,o=7,b=200:c,p,c,p,8g5"
-#endif
 /* Short Morse "TR" (- .-.), played after a location is queued. */
 #define MELODY_TRACKING_SENT "TR:d=32,o=6,b=120:" \
 	"16c6.,p,p,p,"                         /* T - */ \
