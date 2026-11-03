@@ -865,7 +865,7 @@ void zephcore_ble_start(const char *name)
 		 * region carved from the old app slot reads as "all sectors closed",
 		 * which nvs_startup() reformats (erase-all) before settings load.
 		 * No app-side seeding needed. */
-		int settings_err = settings_load();
+		[[maybe_unused]] int settings_err = settings_load();
 		BLE_BOOT_DIAG("BLE diag: settings_load err=%d\n", settings_err);
 #if IS_ENABLED(CONFIG_BT_GATT_SERVICE_CHANGED)
 		ble_gatt_layout_check_after_settings_load();

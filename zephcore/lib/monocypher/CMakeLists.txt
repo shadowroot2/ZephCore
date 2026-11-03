@@ -8,9 +8,11 @@
 # Upstream: src/monocypher.{c,h} + src/optional/monocypher-ed25519.{c,h}, copied
 # verbatim with only the "version __git__" placeholder pinned to "4.0.2".
 
-zephyr_library_named(monocypher)
-zephyr_library_sources(
+# Application mode: zephyr_library_named() only warns here (ZEPHYR_LIBS is
+# unused in app mode); zephyr_interface keeps the same compile flags/includes.
+add_library(monocypher STATIC
     monocypher.c
     monocypher-ed25519.c
 )
-zephyr_library_include_directories(.)
+target_include_directories(monocypher PUBLIC .)
+target_link_libraries(monocypher PUBLIC zephyr_interface)

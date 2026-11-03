@@ -1044,7 +1044,10 @@ bool CompanionMesh::handleCommand(const char *command, uint32_t sender_timestamp
 		char local_reply[COMPANION_CLI_REPLY_SIZE] = {};
 		_cli_exec_cb(command, sender_timestamp, 0, local_reply);
 		if (local_reply[0] != '\0') {
-			snprintf(reply, CLI_REMOTE_REPLY_SIZE - hdr_used, "%s", local_reply);
+			size_t cap = CLI_REMOTE_REPLY_SIZE - hdr_used;
+			size_t n = strnlen(local_reply, cap - 1);
+			memcpy(reply, local_reply, n);
+			reply[n] = '\0';
 			return true;
 		}
 		return false;
