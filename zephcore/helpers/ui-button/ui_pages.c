@@ -177,6 +177,14 @@ static const enum ui_page active_pages[] = {
 #else
 static const enum ui_page active_pages[] = {
 	UI_PAGE_MESSAGES,
+	UI_PAGE_TRACKING, /* ZEPHCORE: safety/tracking pages */
+	UI_PAGE_SOS,
+	UI_PAGE_GPS,
+#ifdef CONFIG_ZEPHCORE_UI_BUZZER
+	UI_PAGE_BUZZER,
+#endif
+	UI_PAGE_LEDS,
+	UI_PAGE_ADVERT,
 	UI_PAGE_RECENT,
 	UI_PAGE_RADIO,
 	UI_PAGE_TRAFFIC,
@@ -184,20 +192,11 @@ static const enum ui_page active_pages[] = {
 #ifdef CONFIG_ZEPHCORE_COMPANION_WIFI
 	UI_PAGE_WIFI,
 #endif
-	UI_PAGE_ADVERT,
-	UI_PAGE_GPS,
-	UI_PAGE_TRACKING, /* ZEPHCORE: safety/tracking pages */
-	UI_PAGE_SOS,
-#ifdef CONFIG_ZEPHCORE_UI_BUZZER
-	UI_PAGE_BUZZER,
-#endif
-	UI_PAGE_LEDS,
-	UI_PAGE_SENSORS,
 	UI_PAGE_OFFGRID,
+	UI_PAGE_SHUTDOWN,
 #if UI_UPDATE_AVAILABLE
 	UI_PAGE_DFU,
 #endif
-	UI_PAGE_SHUTDOWN,
 };
 #endif
 
