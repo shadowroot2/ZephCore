@@ -47,6 +47,12 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"sos\r\n"
 		"gps [on|off|setloc|advert]\r\n"
 		"tracking [on|off]\r\n"
+#if DT_HAS_COMPAT_STATUS_OKAY(gnss_nmea_generic) || \
+	DT_HAS_COMPAT_STATUS_OKAY(quectel_lc76g) || \
+	DT_HAS_COMPAT_STATUS_OKAY(luatos_air530z)
+		"nav [on|off]\r\n"
+		"wp [list|n|clear]\r\n"
+#endif
 #if IS_ENABLED(CONFIG_ZEPHCORE_COMPANION_WIFI)
 		"wifi (help wifi)\r\n"
 #endif

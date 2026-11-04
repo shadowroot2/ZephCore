@@ -4,6 +4,11 @@
 #include <string.h>
 #include <zephyr/sys/util.h>
 
+/* The nav/wp group exists only on boards whose DT has a GNSS receiver. */
+#define COMPANION_HAS_GPS (DT_HAS_COMPAT_STATUS_OKAY(gnss_nmea_generic) || \
+	DT_HAS_COMPAT_STATUS_OKAY(quectel_lc76g) || \
+	DT_HAS_COMPAT_STATUS_OKAY(luatos_air530z))
+
 #define COMPANION_WIFI_HELP \
 	"get wifi.status\nget wifi.ip\nget wifi.ssid\nset wifi.ssid <name>\n" \
 	"get wifi.pwd\nset wifi.pwd <password>\nget wifi.enabled\n" \
@@ -22,6 +27,9 @@ static inline const char *companion_app_cli_help(const char *line)
 {
 	if (strcmp(line, "help") == 0 || strcmp(line, "?") == 0) {
 		return "Groups: id | rf | cad | mesh | gps"
+#if COMPANION_HAS_GPS
+		       " | nav"
+#endif
 #if IS_ENABLED(CONFIG_ZEPHCORE_COMPANION_WIFI)
 		       " | wifi"
 #endif
@@ -56,6 +64,11 @@ static inline const char *companion_app_cli_help(const char *line)
 	if (strcmp(line, "help gps") == 0) {
 		return "gps [on|off|setloc|advert]\nget/set gps duty\nget/set lat\nget/set lon";
 	}
+#if COMPANION_HAS_GPS
+	if (strcmp(line, "help nav") == 0) {
+		return "nav [on|off]\nwp [list|n|clear]";
+	}
+#endif
 #if IS_ENABLED(CONFIG_ZEPHCORE_COMPANION_WIFI)
 	if (strcmp(line, "help wifi") == 0) {
 		return COMPANION_WIFI_HELP;
@@ -88,6 +101,9 @@ static inline const char *companion_remote_cli_help(const char *line)
 {
 	if (strcmp(line, "help") == 0 || strcmp(line, "?") == 0) {
 		return "Groups: id | rf | cad | mesh | gps"
+#if COMPANION_HAS_GPS
+		       " | nav"
+#endif
 #if IS_ENABLED(CONFIG_ZEPHCORE_COMPANION_WIFI)
 		       " | wifi"
 #endif
@@ -111,6 +127,11 @@ static inline const char *companion_remote_cli_help(const char *line)
 	if (strcmp(line, "help gps") == 0) {
 		return "gps [on|off|setloc|advert]\nget/set gps duty\nget/set lat\nget/set lon";
 	}
+#if COMPANION_HAS_GPS
+	if (strcmp(line, "help nav") == 0) {
+		return "nav\nwp list";
+	}
+#endif
 #if IS_ENABLED(CONFIG_ZEPHCORE_COMPANION_WIFI)
 	if (strcmp(line, "help wifi") == 0) return COMPANION_REMOTE_WIFI_HELP;
 #endif
@@ -153,7 +174,7 @@ static inline bool companion_remote_cli_command_allowed(const char *cmd)
 		"get wifi.enabled", "get wifi.status", "get wifi.ip", "board", "ver",
 		"get tz.offset", "get role", "get public.key", "uptime", "tz", "clock sync",
 		"advert", "advert.zerohop", "findme", "sos", "tracking", "tracking on",
-		"tracking off",
+		"tracking off", "nav", "wp list",
 		"fall on", "fall off", "leds on", "leds off", "buzz on", "buzz off",
 		"buzz", "leds",
 		"stats-packets", "stats-radio", "stats-core", "gps", "gps on", "gps off",

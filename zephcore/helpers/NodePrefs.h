@@ -9,6 +9,7 @@
 #pragma once
 
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 #include "LoRaConfig.h"
 
@@ -205,6 +206,12 @@ struct NodePrefs {
 	char tracking_group_name[32];
 	uint8_t fall_sensitivity;
 	uint8_t fall_enabled;
+	/* GPS HOME waypoint list: slot 0 is always named GPS HOME and is the
+	 * default selection; names of slots 1..9 are theirs to keep or change. */
+	double home_lat[10];
+	double home_lon[10];
+	uint8_t home_saved[10];
+	char home_name[10][12];
 };
 
 /* Range guards for prefs that came off flash: a blob can be intact and
@@ -296,6 +303,13 @@ static inline void sanitizeNodePrefs(NodePrefs* p) {
 	p->backoff_multiplier = sanePrefFloat(p->backoff_multiplier, 0.0f, 2.0f, 0.2f);
 	p->node_lat = sanePrefFloat(p->node_lat, -90.0, 90.0, 0.0);
 	p->node_lon = sanePrefFloat(p->node_lon, -180.0, 180.0, 0.0);
+	for (int i = 0; i < 10; i++) {
+		p->home_lat[i] = sanePrefFloat(p->home_lat[i], -90.0, 90.0, 0.0);
+		p->home_lon[i] = sanePrefFloat(p->home_lon[i], -180.0, 180.0, 0.0);
+		p->home_saved[i] = p->home_saved[i] ? 1 : 0;
+		p->home_name[i][sizeof(p->home_name[i]) - 1] = '\0';
+	}
+	strcpy(p->home_name[0], "GPS HOME");
 
 	p->cr           = clampPref<uint8_t>(p->cr, 5, 8);
 	p->tx_power_dbm = clampPref<int8_t>(p->tx_power_dbm, -9, 30);
@@ -483,6 +497,13 @@ static inline void initNodePrefs(NodePrefs* prefs) {
 	strcpy(prefs->tracking_group_name, "#tracks");
 	prefs->fall_sensitivity = 3;
 	prefs->fall_enabled = 1;
+	/* Every slot starts at the Abay × Baitursynov intersection, Almaty. */
+	for (int i = 0; i < 10; i++) {
+		prefs->home_lat[i] = 43.241117;
+		prefs->home_lon[i] = 76.927301;
+		prefs->home_saved[i] = 0;
+		strcpy(prefs->home_name[i], (i == 0) ? "GPS HOME" : "FREE");
+	}
 	/* Companion-only default, set here so every caller of initNodePrefs() sees
 	 * it. 0 means disabled and is a legal stored value. */
 #ifdef CONFIG_ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS

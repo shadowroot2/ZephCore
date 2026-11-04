@@ -51,6 +51,46 @@ static inline void tracking_format_report(char *buf, size_t len,
 		 tracking_report_sector(bearing_mdeg), lat_deg, lon_deg);
 }
 
+/* ===== Navigation to a saved point ===== */
+
+static inline double nav_bearing_deg(double lat0, double lon0, double lat1, double lon1)
+{
+	const double deg_to_rad = 0.017453292519943295;
+	double dlon = (lon1 - lon0) * deg_to_rad;
+	double y = sin(dlon) * cos(lat1 * deg_to_rad);
+	double x = cos(lat0 * deg_to_rad) * sin(lat1 * deg_to_rad) -
+		   sin(lat0 * deg_to_rad) * cos(lat1 * deg_to_rad) * cos(dlon);
+	double deg = atan2(y, x) / deg_to_rad;
+
+	if (deg < 0) {
+		deg += 360.0;
+	}
+	return deg;
+}
+
+/* "2.34 km" from 1 km up, whole meters below. */
+static inline void nav_distance_str(char *buf, size_t len, double meters)
+{
+	if (meters >= 1000.0) {
+		unsigned hundredths = (unsigned)(meters * 100.0 + 0.5);
+
+		snprintf(buf, len, "%u.%02u km", hundredths / 100000U,
+			 (hundredths / 1000U) % 100U);
+	} else {
+		snprintf(buf, len, "%u m", (unsigned)(meters + 0.5));
+	}
+}
+
+static inline const char *nav_cardinal_en(double bearing_deg)
+{
+	static const char *const names[8] = {
+		"N", "NE", "E", "SE", "S", "SW", "W", "NW",
+	};
+	unsigned idx = (unsigned)((bearing_deg + 22.5) / 45.0) % 8U;
+
+	return names[idx];
+}
+
 /* ===== Hike odometer: one tracking session, from tracking on to tracking
  * off. Pure logic — the caller feeds validated fixes and closes the session.
  * A fix-to-fix segment counts as moving when the fix reports more than

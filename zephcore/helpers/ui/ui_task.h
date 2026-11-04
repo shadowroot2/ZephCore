@@ -86,6 +86,8 @@ void ui_led_heartbeat_init(void);
 void ui_notify(enum ui_event event);
 
 void ui_request_render(void); /* ZEPHCORE: explicit event-driven repaint */
+void ui_request_render_now(void); /* ZEPHCORE: skip the repaint debounce */
+void ui_home_refresh_set(bool on); /* ZEPHCORE: 5 s repaint while navigating */
 void ui_show_dfu_mode(void);
 
 /**

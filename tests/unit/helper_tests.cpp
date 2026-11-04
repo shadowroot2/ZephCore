@@ -21,6 +21,8 @@
 #define CONFIG_ZEPHCORE_LOOP_WAKE_STATS 1
 #define CONFIG_ZEPHCORE_COMPANION_WIFI 1
 #define ZEPHCORE_FALL_DETECTOR 1
+/* Host stand-in for the DT GNSS capability check used by the nav group. */
+#define DT_HAS_COMPAT_STATUS_OKAY(x) 1
 #include <CompanionCLIHelp.h>
 #include <CompanionCLIAudio.h>
 #include <CompanionSOSPolicy.h>
@@ -170,7 +172,7 @@ TEST(repeater_remote_help, "UNIT-CLI-001", "Repeater remote help is categorized 
 TEST(companion_cli_help, "UNIT-CLI-002", "Companion app and remote help are categorized and frame bounded") {
     const char *app_commands[] = {
         "help", "?", "help id", "help rf", "help cad", "help mesh", "help gps",
-        "help wifi", "help extra", "help ui", "help power", "help stat", "help sys"
+        "help wifi", "help nav", "help extra", "help ui", "help power", "help stat", "help sys"
     };
     for (const char *command : app_commands) {
         const char *reply = companion_app_cli_help(command);
@@ -195,7 +197,7 @@ TEST(companion_cli_help, "UNIT-CLI-002", "Companion app and remote help are cate
 		"get wifi.pwd", "set wifi.pwd secret", "set wifi.ssid network", "set wifi.clear",
 		"set pin 123456", "set freq 869.525", "set radio 869.525,125,9,5",
 		"set tx 22", "set adc.multiplier 1.0", "set autoshutdown 3200",
-		"shutdown", "shutdown y", "poweroff", "offgrid on", "offgrid off",
+		"shutdown", "shutdown y", "poweroff", "offgrid on", "offgrid off", "wp clear", "wp 1", "nav on", "nav off",
 		"get wifi.ssid", "clear stats",
 	};
 	for (const char *command : local_only) {
@@ -204,7 +206,7 @@ TEST(companion_cli_help, "UNIT-CLI-002", "Companion app and remote help are cate
 	const char *remote_allowed[] = {
 		"set wifi.enabled 0", "get freq", "get radio", "get tx",
 		"set af 3", "get adc.multiplier", "get autoshutdown", "reboot",
-		"buzz", "leds", "gps", "tracking",
+		"buzz", "leds", "gps", "tracking", "nav", "wp list",
 	};
 	for (const char *command : remote_allowed) {
 		CHECK(companion_remote_cli_command_allowed(command));
@@ -282,6 +284,23 @@ TEST(tracking_summary_format, "UNIT-TRACK-003", "Session summary fits the mesh f
 	CHECK(std::strstr(buf, "-123.45678,-89.12345") != nullptr);
 	tracking_format_summary(buf, sizeof(buf), &o, 0, 0, false);
 	CHECK(std::strstr(buf, "maps.google.com") == nullptr);
+}
+TEST(nav_format, "UNIT-NAV-001", "Distance, bearing and cardinal labels for navigation") {
+	char buf[24];
+	nav_distance_str(buf, sizeof(buf), 840.4);
+	CHECK(std::strcmp(buf, "840 m") == 0);
+	nav_distance_str(buf, sizeof(buf), 2341.0);
+	CHECK(std::strcmp(buf, "2.34 km") == 0);
+	nav_distance_str(buf, sizeof(buf), 1000.0);
+	CHECK(std::strcmp(buf, "1.00 km") == 0);
+	double north = nav_bearing_deg(43.241117, 76.927301, 43.251117, 76.927301);
+	CHECK(north > 350.0 || north < 10.0);
+	double east = nav_bearing_deg(43.241117, 76.927301, 43.241117, 76.937301);
+	CHECK(east > 80.0 && east < 100.0);
+	CHECK(std::strcmp(nav_cardinal_en(0), "N") == 0);
+	CHECK(std::strcmp(nav_cardinal_en(46), "NE") == 0);
+	CHECK(std::strcmp(nav_cardinal_en(180), "S") == 0);
+	CHECK(std::strcmp(nav_cardinal_en(359), "N") == 0);
 }
 TEST(gps_switch_policy, "UNIT-UI-001", "A physical GPS switch overrides the saved startup state") {
 	CHECK(gps_switch_effective_enabled(false, false, true));

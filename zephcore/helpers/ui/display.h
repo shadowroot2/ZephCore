@@ -56,6 +56,9 @@ uint16_t mc_display_height(void);
  */
 uint8_t mc_display_font_width(void);
 
+/* Switch to the NAV page's larger font for the next draws (and back). */
+void mc_display_font_large(bool on);
+
 /**
  * Get active font height in pixels.
  * Returns 0 if display not initialized.

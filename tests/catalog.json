@@ -68,6 +68,11 @@
       "source": "tests/unit/helper_tests.cpp"
     },
     {
+      "id": "UNIT-NAV-001",
+      "name": "Distance, bearing and cardinal labels for navigation",
+      "source": "tests/unit/helper_tests.cpp"
+    },
+    {
       "id": "UNIT-CAD-001",
       "name": "Level window narrows only where the driver clamp binds",
       "source": "tests/unit/radio_tests.cpp"

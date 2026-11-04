@@ -50,7 +50,7 @@
 - Добавлен экран Buzzer при наличии оборудования и экран LEDs для bridge.
 - Текущий порядок button UI bridge: статус → RADIO → BRIDGE → BRG INFO → BUZZER (если есть) → LEDS → выключение.
 - Обычный repeater не получает страницы и транспорт bridge. Его button UI: статус → RADIO → BUZZER (если есть) → выключение.
-- Порядок страниц companion: MSG → TRACKING → SOS → GPS → BUZZER (если есть) → LEDS → ADVERT → RECENT → RADIO → TRAFFIC → BLE → WiFi (если есть) → OFFGRID → Power off → Enter DFU (если есть). Экран SENSORS (батарея и env-сенсоры) убран из навигации.
+- Порядок страниц companion: MSG → TRACKING → NAV (при GPS) → SOS → GPS → BUZZER (если есть) → LEDS → ADVERT → RECENT → RADIO → TRAFFIC → BLE → WiFi (если есть) → OFFGRID → Power off → Enter DFU (если есть). Экран SENSORS (батарея и env-сенсоры) убран из навигации.
 - Счётчики обновляются при обслуживании состояния UI, не обязательно синхронно с физической пересылкой каждого пакета.
 
 ## 3. Светодиодная индикация

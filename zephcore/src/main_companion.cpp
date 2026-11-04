@@ -125,6 +125,7 @@ static void power_policy_tick(void);
 static void companion_sos_process(void);
 static void companion_sos_tx_done(void);
 static void companion_tracking_odometer_fix(void);
+static void companion_home_save_process(void);
 static void companion_tracking_process(void);
 static uint32_t companion_custom_ms_until_next(void);
 static void companion_fall_detected(void);
@@ -491,6 +492,7 @@ static void mesh_event_loop(void)
 		if (events & MESH_EVENT_GPS_FIX) {
 			companion_sos_process();
 			companion_tracking_odometer_fix();
+			companion_home_save_process();
 		}
 		if (events & MESH_EVENT_LORA_TX_DONE) companion_sos_tx_done();
 
@@ -1528,6 +1530,161 @@ extern "C" void companion_tracking_toggle_from_ui(void)
 	}
 }
 
+/* ===== GPS HOME: save the point and navigate to it ===== */
+#define HOME_FIX_TIMEOUT_MS (5U * 60U * 1000U)
+#define HOME_NAV_REFRESH_MS 5000U
+
+struct companion_home_state {
+	bool save_active;
+	bool nav_active;
+	bool gps_was_enabled;
+	uint32_t saved_duty_sec;
+	int64_t save_started_ms;
+	int selected; /* 0..9; always 0 after boot */
+};
+static struct companion_home_state companion_home;
+static struct k_work_delayable home_saved_clear_work;
+
+static void home_saved_clear_handler(struct k_work *work)
+{
+	ARG_UNUSED(work);
+	ui_pages_set_home_status(HOME_STATUS_IDLE);
+}
+
+static void companion_home_restore_gps(void)
+{
+	gps_set_poll_interval_sec(companion_home.saved_duty_sec);
+	if (!companion_home.gps_was_enabled) {
+		gps_enable(false);
+	}
+}
+
+static void companion_home_start_save(void)
+{
+	if (companion_home.save_active) {
+		return;
+	}
+	companion_home.gps_was_enabled = gps_is_enabled();
+	companion_home.saved_duty_sec = gps_get_poll_interval_sec();
+	companion_home.save_active = true;
+	companion_home.save_started_ms = k_uptime_get();
+	gps_set_poll_interval_sec(0);
+	if (!companion_home.gps_was_enabled) {
+		gps_enable(true);
+	}
+	ui_pages_set_home_status(HOME_STATUS_WAITING);
+}
+
+static void companion_home_save_process(void)
+{
+	if (!companion_home.save_active) {
+		return;
+	}
+	struct gps_position pos = {};
+	bool fresh_fix = gps_get_last_known_position(&pos) &&
+		pos.latitude_ndeg != 0 && pos.longitude_ndeg != 0 &&
+		pos.timestamp_ms > companion_home.save_started_ms &&
+		(k_uptime_get() - pos.timestamp_ms) <= 30000;
+
+	if (fresh_fix) {
+		int i = companion_home.selected;
+		companion_mesh.prefs.home_lat[i] = pos.latitude_ndeg / 1e9;
+		companion_mesh.prefs.home_lon[i] = pos.longitude_ndeg / 1e9;
+		companion_mesh.prefs.home_saved[i] = 1;
+		if (i != 0 && strcmp(companion_mesh.prefs.home_name[i], "FREE") == 0) {
+			strcpy(companion_mesh.prefs.home_name[i], "SAVED");
+		}
+		save_prefs_to_flash();
+		companion_home.save_active = false;
+		companion_home_restore_gps();
+		ui_pages_set_home_status(HOME_STATUS_SAVED);
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
+		buzzer_play(MELODY_HOME_SAVED);
+#endif
+		/* SAVED! stays for five seconds, then the new coordinates. */
+		k_work_reschedule(&home_saved_clear_work, K_MSEC(5000));
+		LOG_INF("home point %d saved: %.6f %.6f", i + 1,
+			companion_mesh.prefs.home_lat[i], companion_mesh.prefs.home_lon[i]);
+		return;
+	}
+	if (k_uptime_get() - companion_home.save_started_ms >= HOME_FIX_TIMEOUT_MS) {
+		companion_home.save_active = false;
+		companion_home_restore_gps();
+		ui_pages_set_home_status(HOME_STATUS_NOFIX);
+		LOG_WRN("home save: no GPS fix in time");
+	}
+}
+
+static void companion_nav_set_enabled(bool enabled, char *reply)
+{
+	if (enabled == companion_home.nav_active) {
+		snprintf(reply, CLI_REPLY_SIZE, "nav: %s", enabled ? "on" : "off");
+		return;
+	}
+	if (enabled) {
+		if (!gps_is_available()) {
+			strcpy(reply, "ERROR: GPS unavailable");
+			return;
+		}
+		companion_home.gps_was_enabled = gps_is_enabled();
+		companion_home.saved_duty_sec = gps_get_poll_interval_sec();
+		companion_home.nav_active = true;
+		gps_set_poll_interval_sec(0);
+		if (!companion_home.gps_was_enabled) {
+			gps_enable(true);
+		}
+		strcpy(reply, "OK - nav on");
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
+		buzzer_play(MELODY_NAV_ON);
+#endif
+	} else if (companion_home.save_active) {
+		strcpy(reply, "ERROR: saving home point");
+		return;
+	} else {
+		companion_home.nav_active = false;
+		companion_home_restore_gps();
+		strcpy(reply, "OK - nav off");
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
+		buzzer_play(MELODY_NAV_OFF);
+#endif
+	}
+	ui_pages_set_nav_active(companion_home.nav_active);
+}
+
+extern "C" void companion_home_save_from_ui(void)
+{
+	companion_home_start_save();
+}
+
+extern "C" void companion_nav_toggle_from_ui(void)
+{
+	char reply[CLI_REPLY_SIZE];
+	companion_nav_set_enabled(!companion_home.nav_active, reply);
+}
+
+extern "C" void companion_wp_cycle_from_ui(void)
+{
+	companion_home.selected = (companion_home.selected + 1) % 10;
+	ui_request_render();
+}
+
+extern "C" bool companion_home_get_point(double *lat, double *lon, bool *saved,
+					const char **name, int *index)
+{
+	int i = companion_home.selected;
+	*lat = companion_mesh.prefs.home_lat[i];
+	*lon = companion_mesh.prefs.home_lon[i];
+	*saved = companion_mesh.prefs.home_saved[i] != 0;
+	*name = companion_mesh.prefs.home_name[i];
+	*index = i;
+	return true;
+}
+
+extern "C" bool companion_nav_active(void)
+{
+	return companion_home.nav_active;
+}
+
 extern "C" bool companion_tracking_gps_control_allowed(void)
 {
 	return !companion_tracking.enabled;
@@ -1899,6 +2056,53 @@ static bool handle_tracking_cli(const char *line, char *reply, bool silent)
 		(strcmp(line, "gps off") == 0 ||
 		 strncmp(line, "set gps duty ", 13) == 0)) {
 		strcpy(reply, "ERROR: tracking is active; use tracking off");
+		return true;
+	}
+	if (strcmp(line, "wp") == 0 || strncmp(line, "wp ", 3) == 0) {
+		if (strcmp(line, "wp clear") == 0) {
+			/* Point 1 (GPS HOME) is never renamed or reset. */
+			for (int i = 1; i < 10; i++) {
+				companion_mesh.prefs.home_lat[i] = 43.241117;
+				companion_mesh.prefs.home_lon[i] = 76.927301;
+				companion_mesh.prefs.home_saved[i] = 0;
+				strcpy(companion_mesh.prefs.home_name[i], "FREE");
+			}
+			save_prefs_to_flash();
+			ui_request_render();
+			strcpy(reply, "OK - wp clear");
+			return true;
+		}
+		if (strcmp(line, "wp") == 0 || strcmp(line, "wp list") == 0) {
+			int n = 0;
+			for (int i = 0; i < 10; i++) {
+				n += snprintf(reply + n, CLI_REPLY_SIZE - n, "%c%d:%s",
+					      i == companion_home.selected ? '*' : ' ',
+					      i + 1, companion_mesh.prefs.home_name[i]);
+				if (n >= CLI_REPLY_SIZE - 1) break;
+			}
+		} else {
+			long v = strtol(line + 3, nullptr, 10);
+			if (v >= 1 && v <= 10) {
+				companion_home.selected = (int)v - 1;
+				ui_request_render();
+				snprintf(reply, CLI_REPLY_SIZE, "OK - wp %ld %s",
+					 v, companion_mesh.prefs.home_name[companion_home.selected]);
+			} else {
+				strcpy(reply, "Error: wp 1..10");
+			}
+		}
+		return true;
+	}
+	if (strcmp(line, "nav") == 0 || strcmp(line, "nav on") == 0 ||
+	    strcmp(line, "nav off") == 0) {
+		if (strcmp(line, "nav on") == 0) {
+			companion_nav_set_enabled(true, reply);
+		} else if (strcmp(line, "nav off") == 0) {
+			companion_nav_set_enabled(false, reply);
+		} else {
+			snprintf(reply, CLI_REPLY_SIZE, "nav: %s",
+				 companion_home.nav_active ? "on" : "off");
+		}
 		return true;
 	}
 	if (strcmp(line, "tracking") == 0) {
@@ -2336,6 +2540,7 @@ int main(void)
 		LOG_INF("GPS available");
 		gps_set_enable_callback(gps_enable_callback);
 		gps_set_fix_callback(gps_fix_callback);
+		k_work_init_delayable(&home_saved_clear_work, home_saved_clear_handler);
 		gps_set_event_callback(gps_event_callback);
 	}
 

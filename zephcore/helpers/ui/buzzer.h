@@ -22,13 +22,20 @@ extern "C" {
 #define MELODY_SHUTDOWN    "Shutdown:d=4,o=5,b=100:8g5,16e5,16c5"
 /* Rising arpeggio: DFU entry must not sound like the falling shutdown. */
 #define MELODY_DFU_ENTER   "dfu:d=4,o=5,b=140:8c5,8e5,8g5"
+/* Tone contour mimicking the word "Navigation": Nav-i-ga-tion.
+ * The tail repeats the buzz/leds-style rising and falling ending. */
+#define MELODY_NAV_ON      "NAVon:d=32,o=6,b=320:16c6,16e6,16g6,16c7,8e7"
+#define MELODY_NAV_OFF     "NAVof:d=32,o=6,b=320:8e7,16c7,16g6,16e6,16c6"
+#define MELODY_HOME_SAVED  "hsav:d=16,o=6,b=200:8c6,8e6,8g6,8c7"
+/* Falling "wrong way" alert. */
+#define MELODY_WRONG       "wrng:d=16,o=6,b=240:8g6,8e6,8c6"
 #define MELODY_MSG_CONTACT "MsgRcv3:d=4,o=6,b=200:32e,32g,32b,16c7"
 #define MELODY_MSG_CHANNEL "kerplop:d=16,o=6,b=120:32g#,32c#"
 #define MELODY_ACK         "ack:d=32,o=8,b=120:c"
 #define MELODY_BUZZER_ON   "bon:d=16,o=7,b=200:c,p,c,p,c,p,p,8e"
 #define MELODY_BUZZER_OFF  "bof:d=16,o=7,b=200:c,p,c,p,c,p,p,8g5"
 /* Beep counts distinguish the toggle actions on every board: two for
- * Tracking, four for LEDs, five for GPS — the T1000-E/M3 multi-tap counts. */
+ * Tracking, three for Navigate, four for LEDs, five for GPS — the T1000-E/M3 multi-tap counts. */
 #define MELODY_TRACKING_ON  "ton:d=16,o=7,b=200:c,p,c,p,p,8e"
 #define MELODY_TRACKING_OFF "tof:d=16,o=7,b=200:c,p,c,p,p,8g5"
 #define MELODY_GPS_ON       "gon:d=16,o=7,b=200:c,p,c,p,c,p,c,p,c,p,p,8e"

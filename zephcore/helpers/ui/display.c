@@ -71,6 +71,8 @@ static uint16_t disp_width;
 static uint16_t disp_height;
 static uint8_t  font_w;
 static uint8_t  font_h;
+static int small_font_idx;
+static int large_font_idx;
 static bool     is_epd;       /* true for e-paper displays */
 
 #if MC_DISPLAY_COLOR_PANEL
@@ -531,9 +533,30 @@ int mc_display_init(void)
 		}
 	}
 
+	/* NAV page font: the next size up from the default one. */
+	int large_idx = -1;
+	{
+		uint8_t large_h = 0;
+
+		for (int i = 0; i < num_fonts; i++) {
+			uint8_t fw = 0, fh = 0;
+
+			cfb_get_font_size(disp_dev, i, &fw, &fh);
+			if (fh > best_h && (large_h == 0 || fh < large_h)) {
+				large_h = fh;
+				large_idx = i;
+			}
+		}
+	}
+	if (large_idx < 0) {
+		large_idx = best_idx;
+	}
+	small_font_idx = best_idx;
+	large_font_idx = large_idx;
 	cfb_framebuffer_set_font(disp_dev, best_idx);
 	cfb_get_font_size(disp_dev, best_idx, &font_w, &font_h);
-	LOG_INF("display: selected font[%d] (%ux%u)", best_idx, font_w, font_h);
+	LOG_INF("display: selected font[%d] (%ux%u), NAV font[%d]",
+		best_idx, font_w, font_h, large_idx);
 
 	/* CFB inversion no longer needed — Zephyr commit 2374ef62f97 fixed
 	 * the MONO10/MONO01 polarity logic in cfb_framebuffer_finalize().
@@ -1081,4 +1104,15 @@ void utf8_to_latin1(char *dst, const char *src, size_t dst_size)
 	if (start > 0) {
 		memmove(dst, dst + start, strlen(dst + start) + 1);
 	}
+}
+
+void mc_display_font_large(bool on)
+{
+	if (!disp_initialized) {
+		return;
+	}
+	int idx = on ? large_font_idx : small_font_idx;
+
+	cfb_framebuffer_set_font(disp_dev, idx);
+	cfb_get_font_size(disp_dev, idx, &font_w, &font_h);
 }

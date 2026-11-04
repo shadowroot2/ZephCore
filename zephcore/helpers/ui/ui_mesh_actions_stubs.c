@@ -19,6 +19,9 @@ __attribute__((weak)) void mesh_send_sos(void) {}
 __attribute__((weak)) bool mesh_sos_cancel_if_active(void) { return false; }
 __attribute__((weak)) void mesh_fall_alarm_acknowledge(void) {}
 __attribute__((weak)) void mesh_tracking_toggle(void) {}
+__attribute__((weak)) void mesh_home_save_request(void) {}
+__attribute__((weak)) void mesh_nav_toggle(void) {}
+__attribute__((weak)) void mesh_wp_cycle(void) {}
 __attribute__((weak)) void mesh_set_bridge_enabled(bool enabled) { ARG_UNUSED(enabled); }
 __attribute__((weak)) void mesh_gps_set_enabled(bool enable) { ARG_UNUSED(enable); }
 __attribute__((weak)) void mesh_ble_set_enabled(bool enable) { ARG_UNUSED(enable); }
