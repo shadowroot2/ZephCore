@@ -586,6 +586,7 @@ static void mesh_event_loop(void)
 
 		companion_sos_process();
 		companion_tracking_process();
+		companion_home_save_process();
 		companion_nav_link_check();
 		uint32_t next_custom = companion_custom_ms_until_next();
 		if (next_custom == UINT32_MAX) {
@@ -1396,6 +1397,9 @@ static uint32_t companion_custom_ms_until_next(void)
 	if (companion_home.nav_active) {
 		include(now + NAV_LINK_CHECK_MS);
 	}
+	if (companion_home.save_active) {
+		include(companion_home.save_started_ms + HOME_FIX_TIMEOUT_MS);
+	}
 	return next;
 }
 
@@ -1719,7 +1723,7 @@ static void companion_nav_set_enabled(bool enabled, char *reply)
 	} else {
 		companion_home.nav_active = false;
 		companion_home_restore_gps();
-		strcpy(reply, "OK - nav off");
+		strcpy(reply, "OK - nav stop");
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
 		buzzer_play(MELODY_NAV_OFF);
 #endif
@@ -1868,7 +1872,7 @@ static void companion_nav_fix_process(void)
 			companion_send_nav_telemetry_message(msg);
 		}
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
-		buzzer_play(MELODY_HOME_SAVED);
+		buzzer_play(MELODY_ARRIVED);
 #endif
 		char reply[CLI_REPLY_SIZE];
 		companion_nav_set_enabled(false, reply);
@@ -2413,11 +2417,11 @@ static bool handle_tracking_cli(const char *line, char *reply, bool silent)
 		}
 		return true;
 	}
-	if (strcmp(line, "nav") == 0 || strcmp(line, "nav on") == 0 ||
-	    strcmp(line, "nav off") == 0) {
-		if (strcmp(line, "nav on") == 0) {
+	if (strcmp(line, "nav") == 0 || strcmp(line, "nav start") == 0 ||
+	    strcmp(line, "nav stop") == 0) {
+		if (strcmp(line, "nav start") == 0) {
 			companion_nav_set_enabled(true, reply);
-		} else if (strcmp(line, "nav off") == 0) {
+		} else if (strcmp(line, "nav stop") == 0) {
 			companion_nav_set_enabled(false, reply);
 		} else if (!companion_home.nav_active) {
 			snprintf(reply, CLI_REPLY_SIZE, "nav: off  %d-%s",

@@ -50,7 +50,7 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 #if DT_HAS_COMPAT_STATUS_OKAY(gnss_nmea_generic) || \
 	DT_HAS_COMPAT_STATUS_OKAY(quectel_lc76g) || \
 	DT_HAS_COMPAT_STATUS_OKAY(luatos_air530z)
-		"nav [on|off]\r\n"
+		"nav [start|stop]\r\n"
 		"wp [list|n|clear]\r\n"
 #endif
 #if IS_ENABLED(CONFIG_ZEPHCORE_COMPANION_WIFI)

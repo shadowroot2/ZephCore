@@ -120,7 +120,7 @@ static inline const char *companion_app_cli_help(const char *line)
 	}
 #if COMPANION_HAS_GPS
 	if (strcmp(line, "help nav") == 0) {
-		return "nav [on|off]\nnav telemetry [on|off]\nwp [list|n|clear]\n"
+		return "nav [start|stop]\nnav telemetry [on|off]\nwp [list|n|clear]\n"
 		       "wp save [n [name]]\nwp name [n] <name>\n"
 		       "get/set nav.interval\nget/set nav.telemetry.interval";
 	}

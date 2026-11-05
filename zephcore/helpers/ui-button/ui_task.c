@@ -178,6 +178,9 @@ static struct k_work_delayable splash_work;
 static struct k_work_delayable advert_defer_work;
 /* ZEPHCORE: GPS HOME press timing and the 5 s navigation repaint. */
 #define HOME_HOLD_MS 1000U
+/* Save confirm window runs from the hold trigger while the finger is still
+ * down, so the double-press window is too tight for hold → release → tap. */
+#define HOME_SAVE_CONFIRM_MS 3000U
 #define HOME_DOUBLE_MS 500U
 #define HOME_NAV_REFRESH_MS 5000U
 /* One action button (ENTER_FROM_HOLD in ui_pages.h): its NAV map is tap =
@@ -213,6 +216,12 @@ static void home_hold_handler(struct k_work *work)
 	 * confirmation; boards with a short ENTER arm the Confirm SAVE step. */
 	struct ui_state *st = get_state();
 
+	/* The first page reuses the threshold as the SOS launch arm: the
+	 * short press after the hold sends (the Confirm SAVE shape). */
+	if (ui_pages_current() == UI_PAGE_MESSAGES) {
+		sos_arm_until = k_uptime_get_32() + SOS_ARM_WINDOW_MS;
+		return;
+	}
 	if (st->nav_active) {
 		return;
 	}
@@ -278,7 +287,7 @@ static void action_home_key_short(void)
 	uint32_t now = k_uptime_get_32();
 
 	if (st->home_save_confirm != 0 &&
-	    (int32_t)(now - st->home_save_confirm) <= CONFIG_ZEPHCORE_UI_CONFIRM_WINDOW_MS) {
+	    (int32_t)(now - st->home_save_confirm) <= HOME_SAVE_CONFIRM_MS) {
 		/* One short press confirms the save started by the hold. */
 		st->home_save_confirm = 0;
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
@@ -937,27 +946,34 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 	if (!evt->value) {
 #ifdef CONFIG_ZEPHCORE_UI_DISPLAY
 		/* ZEPHCORE: GPS HOME measures the press — short toggles
-		 * navigation, a hold of HOME_HOLD_MS arms the save confirm. */
-		if (code == INPUT_KEY_ENTER && ui_pages_current() == UI_PAGE_GPS_HOME &&
-		    home_press_active) {
+		 * navigation, a hold of HOME_HOLD_MS arms the save confirm.
+		 * The first page reuses the measure for the SOS launch: the
+		 * hold arms (home_hold_handler), the short press sends. */
+		if (code == INPUT_KEY_ENTER && home_press_active &&
+		    (ui_pages_current() == UI_PAGE_GPS_HOME ||
+		     ui_pages_current() == UI_PAGE_MESSAGES)) {
 			home_press_active = false;
 			if (!k_work_delayable_is_pending(&home_hold_work)) {
 				/* Hold already fired; the release ends it. */
 				return;
 			}
 			k_work_cancel_delayable(&home_hold_work);
-			action_home_key_short();
+			if (ui_pages_current() == UI_PAGE_MESSAGES) {
+				if ((int32_t)(sos_arm_until - k_uptime_get_32()) > 0) {
+					sos_arm_until = 0;
+					mesh_send_sos();
+				} else if (!mesh_sos_cancel_if_active()) {
+					action_page_enter();
+				}
+			} else {
+				action_home_key_short();
+			}
 		}
 		if (code == INPUT_KEY_ENTER && enter_captured) {
 			enter_captured = false;
 			uint32_t held = k_uptime_get_32() - enter_press_at;
-			if (held >= HOME_HOLD_MS) {
-				if ((int32_t)(sos_arm_until - enter_press_at) > 0) {
-					mesh_send_sos();
-				}
-			} else if (!mesh_sos_cancel_if_active()) {
+			if (held < HOME_HOLD_MS && !mesh_sos_cancel_if_active()) {
 				action_page_enter();
-				sos_arm_until = k_uptime_get_32() + SOS_ARM_WINDOW_MS;
 			}
 		}
 #endif
@@ -1137,15 +1153,19 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 			action_page_enter();
 			break;
 		}
-		/* ZEPHCORE: SOS window on the second button — the press after a
-		 * tap is measured on release instead of acting immediately. */
-		if (companion_sos_cancel_available() ||
-		    (int32_t)(sos_arm_until - k_uptime_get_32()) > 0) {
+		/* ZEPHCORE: the first page measures the action press too — a
+		 * hold of HOME_HOLD_MS arms the SOS launch (home_hold_handler),
+		 * the short press after it sends. */
+		if (ui_pages_current() == UI_PAGE_MESSAGES) {
+			home_press_active = true;
+			k_work_reschedule(&home_hold_work, K_MSEC(HOME_HOLD_DELAY_MS));
+			break;
+		}
+		if (companion_sos_cancel_available()) {
 			enter_press_at = k_uptime_get_32();
 			enter_captured = true;
 			break;
 		}
-		sos_arm_until = k_uptime_get_32() + SOS_ARM_WINDOW_MS;
 #endif
 		action_page_enter();
 		break;
