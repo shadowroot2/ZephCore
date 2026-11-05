@@ -149,6 +149,7 @@ protected:
 		def("track_int", _p->tracking_interval_minutes);
 		def("track_group", _p->tracking_group_name,
 		    sizeof(_p->tracking_group_name));
+		def("nav_int", _p->nav_report_interval_min);
 		def("fall_sens", _p->fall_sensitivity);
 		def("fall_en", _p->fall_enabled);
 #define HOME_POINT_DEFS(n) \

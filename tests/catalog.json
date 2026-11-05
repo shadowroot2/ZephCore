@@ -73,6 +73,21 @@
       "source": "tests/unit/helper_tests.cpp"
     },
     {
+      "id": "UNIT-NAV-002",
+      "name": "Wrong-way ladder steps at 30 m and resets on approach",
+      "source": "tests/unit/helper_tests.cpp"
+    },
+    {
+      "id": "UNIT-NAV-003",
+      "name": "Periodic vContact report carries distance, sector and arrow",
+      "source": "tests/unit/helper_tests.cpp"
+    },
+    {
+      "id": "UNIT-CLI-005",
+      "name": "wp save parses slot and name and pins the 10-char limit",
+      "source": "tests/unit/helper_tests.cpp"
+    },
+    {
       "id": "UNIT-CAD-001",
       "name": "Level window narrows only where the driver clamp binds",
       "source": "tests/unit/radio_tests.cpp"

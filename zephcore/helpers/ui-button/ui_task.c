@@ -180,6 +180,16 @@ static struct k_work_delayable advert_defer_work;
 #define HOME_HOLD_MS 1000U
 #define HOME_DOUBLE_MS 500U
 #define HOME_NAV_REFRESH_MS 5000U
+/* One action button: KEY_ENTER is the zephyr,input-longpress long-code, so a
+ * short ENTER is already a hold and no double press can exist. Its NAV map:
+ * tap = page, 2 taps = waypoint, hold = GO!, hold of HOME_SAVE_HOLD_MS = save. */
+#define HOME_SAVE_HOLD_MS 5000U
+#define ENTER_IS_A_HOLD(node) || (DT_PROP_BY_IDX(node, long_codes, 0) == INPUT_KEY_ENTER)
+#define ENTER_FROM_HOLD (0 DT_FOREACH_STATUS_OKAY(zephyr_input_longpress, ENTER_IS_A_HOLD))
+#define LONGPRESS_DELAY_MS \
+	DT_PROP_OR(DT_COMPAT_GET_ANY_STATUS_OKAY(zephyr_input_longpress), long_delay_ms, 1000U)
+#define HOME_HOLD_DELAY_MS ((ENTER_FROM_HOLD) ? \
+	(HOME_SAVE_HOLD_MS - LONGPRESS_DELAY_MS) : HOME_HOLD_MS)
 /* T1000-E style SOS: tap arms a window, hold in the window starts SOS. */
 #define SOS_ARM_WINDOW_MS 3000U
 static uint32_t sos_arm_until;
@@ -196,14 +206,19 @@ static struct k_work_delayable home_hold_work;
 static void home_hold_handler(struct k_work *work)
 {
 	ARG_UNUSED(work);
-	/* Still holding at the threshold: feedback and arm the save confirm.
-	 * A point being walked to cannot be overwritten. */
+	/* Still holding at the threshold. A point being walked to cannot be
+	 * overwritten. One-button boards save right away — the hold is the
+	 * confirmation; boards with a short ENTER arm the Confirm SAVE step. */
 	struct ui_state *st = get_state();
 
 	if (st->nav_active) {
 		return;
 	}
-	st->home_save_confirm = k_uptime_get_32();
+	if (ENTER_FROM_HOLD) {
+		mesh_home_save_request();
+	} else {
+		st->home_save_confirm = k_uptime_get_32();
+	}
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
 	buzzer_play(MELODY_ACK);
 #endif
@@ -227,9 +242,11 @@ static void nav_refresh_work_handler(struct k_work *work)
 	}
 	/* Repaint only while the NAV page is up — with or without navigation.
 	 * Off-screen the data still refreshes on return. */
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
 	if (ui_pages_current() == UI_PAGE_GPS_HOME) {
 		ui_request_render();
 	}
+#endif
 	k_work_reschedule(&nav_refresh_work, K_MSEC(HOME_NAV_REFRESH_MS));
 }
 
@@ -251,6 +268,12 @@ static void action_home_key_short(void)
 	struct ui_state *st = get_state();
 	uint32_t now = k_uptime_get_32();
 
+	if (ENTER_FROM_HOLD) {
+		/* No double press exists: a short hold toggles navigation. */
+		mesh_nav_toggle();
+		ui_request_render_now();
+		return;
+	}
 	if (st->home_save_confirm != 0 &&
 	    (int32_t)(now - st->home_save_confirm) <= CONFIG_ZEPHCORE_UI_CONFIRM_WINDOW_MS) {
 		/* One short press confirms the save started by the hold. */
@@ -1061,6 +1084,13 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 		break;
 
 	case INPUT_KEY_LEFT:
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
+		/* 2 taps of the one button: cycle the waypoints on the NAV page. */
+		if (ENTER_FROM_HOLD && ui_pages_current() == UI_PAGE_GPS_HOME) {
+			mesh_wp_cycle();
+			break;
+		}
+#endif
 		action_page_prev();
 		break;
 
@@ -1069,7 +1099,7 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 		if (ui_pages_current() == UI_PAGE_GPS_HOME) {
 			/* The hold threshold fires while the key is still down. */
 			home_press_active = true;
-			k_work_reschedule(&home_hold_work, K_MSEC(HOME_HOLD_MS));
+			k_work_reschedule(&home_hold_work, K_MSEC(HOME_HOLD_DELAY_MS));
 			break;
 		}
 		/* ZEPHCORE: SOS window on the second button — the press after a

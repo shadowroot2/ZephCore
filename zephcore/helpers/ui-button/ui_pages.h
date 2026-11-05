@@ -147,7 +147,7 @@ struct ui_state {
 	int home_status;             /* HOME_STATUS_* */
 	uint32_t home_save_confirm;  /* uptime ms when save confirm started (0=idle) */
 	bool nav_active;
-	bool home_wrong_way;         /* distance is growing while navigating */
+	uint32_t home_wrong_way_until; /* "Wrong WAY!" while uptime < this (0=idle) */
 };
 
 /**
@@ -169,6 +169,7 @@ void ui_pages_set_tracking(bool enabled, uint16_t interval_minutes);
 #define HOME_STATUS_NOFIX   3
 void ui_pages_set_home_status(int status);
 void ui_pages_set_nav_active(bool active);
+void ui_pages_set_home_wrong_way(bool active);
 
 /**
  * Get the global UI state for updating from main app.

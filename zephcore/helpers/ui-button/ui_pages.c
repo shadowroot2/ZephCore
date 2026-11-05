@@ -19,7 +19,6 @@
 #include "ui_mesh_actions.h"
 #include "display.h"
 #include <helpers/buzzer_gate.h>
-#include "buzzer.h" /* ZEPHCORE: MELODY_HOME_SAVED on arrival */
 #include <helpers/ui/ui_timezone.h> /* ZEPHCORE: minute-resolution timezone */
 #include <helpers/TrackingMessage.h>
 
@@ -1718,53 +1717,6 @@ static void render_gps_home(void)
 			have_fix = true;
 		}
 	}
-	/* Wrong way: the distance to the point grew by 30 m stepwise since the
-	 * last sample where it shrank — 30, 60, 90 ... away from the current
-	 * position. Any approach resets the ladder, so standing still on GPS
-	 * jitter cannot retrigger. */
-	{
-		static double prev_dist_m = -1.0;
-		static double away_m;
-		static double wrong_mark_m;
-		static int64_t wrong_until_ms;
-
-		if (!state.nav_active) {
-			prev_dist_m = -1.0;
-			away_m = 0.0;
-			wrong_mark_m = 30.0;
-		} else if (have_fix) {
-			if (prev_dist_m < 0.0) {
-				prev_dist_m = dist_m;
-				away_m = 0.0;
-				wrong_mark_m = 30.0;
-			} else {
-				double delta = dist_m - prev_dist_m;
-				prev_dist_m = dist_m;
-				if (delta > 0.0) {
-					away_m += delta;
-					if (away_m >= wrong_mark_m) {
-						wrong_mark_m += 30.0;
-						wrong_until_ms = k_uptime_get() + 3000;
-#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
-						buzzer_play(MELODY_WRONG);
-#endif
-					}
-				} else {
-					away_m = 0.0;
-					wrong_mark_m = 30.0;
-				}
-			}
-		}
-		state.home_wrong_way =
-			state.nav_active && k_uptime_get() < wrong_until_ms;
-	}
-	/* Arrived at the point while navigating: success melody, then STOP. */
-	if (state.nav_active && have_fix && dist_m < 5.0) {
-#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
-		buzzer_play(MELODY_HOME_SAVED);
-#endif
-		mesh_nav_toggle();
-	}
 	/* Fix just appeared: wake the backlight the same way a BLE connect
 	 * does — display.c turns it back off on its auto-off timer. */
 	{
@@ -1806,7 +1758,8 @@ static void render_gps_home(void)
 		/* Keep the backlight alive for the whole SAVED moment. */
 		mc_display_on();
 		draw_centered((int)DISP_H / 2 - LINE_H / 2, "SAVED!");
-	} else if (state.home_wrong_way) {
+	} else if (state.home_wrong_way_until != 0 &&
+		   (int32_t)(k_uptime_get_32() - state.home_wrong_way_until) < 0) {
 		mc_display_on();
 		draw_centered((int)DISP_H / 2 - LINE_H / 2, "Wrong WAY!");
 	} else {
@@ -2373,5 +2326,13 @@ void ui_pages_set_nav_active(bool active)
 {
 	state.nav_active = active;
 	ui_home_refresh_set(active || state.current_page == UI_PAGE_GPS_HOME);
+	ui_request_render();
+}
+
+/* The 3 s "Wrong WAY!" window is display timing; the trigger lives in the
+ * common navigation tick. */
+void ui_pages_set_home_wrong_way(bool active)
+{
+	state.home_wrong_way_until = active ? k_uptime_get_32() + 3000U : 0;
 	ui_request_render();
 }

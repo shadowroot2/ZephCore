@@ -204,6 +204,7 @@ struct NodePrefs {
 	uint8_t auto_shutdown_emergency;
 	uint16_t tracking_interval_minutes;
 	char tracking_group_name[32];
+	uint16_t nav_report_interval_min;  /* ZEPHCORE: NAV vContact report cadence */
 	uint8_t fall_sensitivity;
 	uint8_t fall_enabled;
 	/* GPS HOME waypoint list: slot 0 is always named GPS HOME and is the
@@ -388,6 +389,10 @@ static inline void sanitizeNodePrefs(NodePrefs* p) {
 #endif
 	}
 	if (p->tracking_interval_minutes < 5) p->tracking_interval_minutes = 10;
+	/* 0 = off: no vContact nav notices at all. */
+	if (p->nav_report_interval_min > 1440) {
+		p->nav_report_interval_min = 1;
+	}
 	if (p->fall_sensitivity < 1 || p->fall_sensitivity > 5) p->fall_sensitivity = 3;
 	if (p->tracking_group_name[0] != '#' ||
 	    strchr(p->tracking_group_name, '\r') != nullptr ||
@@ -494,6 +499,7 @@ static inline void initNodePrefs(NodePrefs* prefs) {
 #endif
 	prefs->auto_shutdown_emergency = 1;
 	prefs->tracking_interval_minutes = 10;
+	prefs->nav_report_interval_min = 1;
 	strcpy(prefs->tracking_group_name, "#tracks");
 	prefs->fall_sensitivity = 3;
 	prefs->fall_enabled = 1;

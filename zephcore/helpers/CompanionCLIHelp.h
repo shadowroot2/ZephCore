@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #pragma once
 
+#include <stdlib.h>
 #include <string.h>
 #include <zephyr/sys/util.h>
 
@@ -8,6 +9,58 @@
 #define COMPANION_HAS_GPS (DT_HAS_COMPAT_STATUS_OKAY(gnss_nmea_generic) || \
 	DT_HAS_COMPAT_STATUS_OKAY(quectel_lc76g) || \
 	DT_HAS_COMPAT_STATUS_OKAY(luatos_air530z))
+
+/* ZEPHCORE: arguments of "wp save [n] [name]" — an optional slot 1..10 and an
+ * optional name of at most WP_SAVE_NAME_MAX chars (spaces count; slot 1 is
+ * always GPS HOME). Returns the error reply, or NULL and fills the 0-based
+ * slot and the name ("" keeps the default FREE -> SAVED naming rule). */
+#define WP_SAVE_NAME_MAX 10
+
+static inline const char *companion_wp_save_parse(const char *args, int selected,
+						  int *slot_out, char *name_out,
+						  size_t name_cap)
+{
+	const char *p = args;
+	int slot = selected;
+
+	*name_out = '\0';
+	while (*p == ' ') {
+		p++;
+	}
+	if (*p != '\0') {
+		char *end;
+		long v = strtol(p, &end, 10);
+
+		if (end == p || (*end != '\0' && *end != ' ') || v < 1 || v > 10) {
+			return "Error: wp save 1..10";
+		}
+		slot = (int)v - 1;
+		p = end;
+	}
+	while (*p == ' ') {
+		p++;
+	}
+	if (*p != '\0') {
+		const char *e = p + strlen(p);
+		size_t n;
+
+		while (e > p && (e[-1] == ' ' || e[-1] == '\t' ||
+				 e[-1] == '\r' || e[-1] == '\n')) {
+			e--;
+		}
+		n = (size_t)(e - p);
+		if (slot == 0) {
+			return "Error: point 1 stays GPS HOME";
+		}
+		if (n > WP_SAVE_NAME_MAX || n >= name_cap) {
+			return "Error: name max 10 chars";
+		}
+		memcpy(name_out, p, n);
+		name_out[n] = '\0';
+	}
+	*slot_out = slot;
+	return NULL;
+}
 
 #define COMPANION_WIFI_HELP \
 	"get wifi.status\nget wifi.ip\nget wifi.ssid\nset wifi.ssid <name>\n" \
@@ -66,7 +119,7 @@ static inline const char *companion_app_cli_help(const char *line)
 	}
 #if COMPANION_HAS_GPS
 	if (strcmp(line, "help nav") == 0) {
-		return "nav [on|off]\nwp [list|n|clear]";
+		return "nav [on|off]\nwp [list|n|clear|save [n] [name]]\nget/set nav.interval";
 	}
 #endif
 #if IS_ENABLED(CONFIG_ZEPHCORE_COMPANION_WIFI)

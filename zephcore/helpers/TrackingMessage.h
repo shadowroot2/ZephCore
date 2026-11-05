@@ -91,6 +91,70 @@ static inline const char *nav_cardinal_en(double bearing_deg)
 	return names[idx];
 }
 
+/* "2.34 км" from 1 km up, whole meters below (Russian units). */
+static inline void nav_distance_ru_str(char *buf, size_t len, double meters)
+{
+	if (meters >= 1000.0) {
+		unsigned hundredths = (unsigned)(meters * 100.0 + 0.5);
+
+		snprintf(buf, len, "%u.%02u км", hundredths / 100000U,
+			 (hundredths / 1000U) % 100U);
+	} else {
+		snprintf(buf, len, "%u м", (unsigned)(meters + 0.5));
+	}
+}
+
+/* "2.34 км  СВ  ↗️" — distance, target sector and the travel arrow. */
+static inline void nav_report_str(char *buf, size_t len, double dist_m,
+				  double bearing_deg)
+{
+	char d[16];
+
+	nav_distance_ru_str(d, sizeof(d), dist_m);
+	snprintf(buf, len, "%s  %s  %s", d,
+		 tracking_report_sector((uint32_t)(bearing_deg * 1000.0)),
+		 tracking_report_arrow((uint32_t)(bearing_deg * 1000.0)));
+}
+
+/* Wrong-way ladder: the distance grew by 30 m stepwise since the last sample
+ * where it shrank — 30, 60, 90 ... away from the current position. Any
+ * approach resets the ladder, so standing still on GPS jitter cannot
+ * retrigger. */
+struct nav_wrongway {
+	double prev_dist_m;
+	double away_m;
+	double mark_m;
+};
+
+static inline void nav_wrongway_reset(struct nav_wrongway *w)
+{
+	w->prev_dist_m = -1.0;
+	w->away_m = 0.0;
+	w->mark_m = 30.0;
+}
+
+/* Feed the current distance; returns true at each new 30 m step away. */
+static inline bool nav_wrongway_update(struct nav_wrongway *w, double dist_m)
+{
+	if (w->prev_dist_m < 0.0) {
+		w->prev_dist_m = dist_m;
+		return false;
+	}
+	double delta = dist_m - w->prev_dist_m;
+	w->prev_dist_m = dist_m;
+	if (delta > 0.0) {
+		w->away_m += delta;
+		if (w->away_m >= w->mark_m) {
+			w->mark_m += 30.0;
+			return true;
+		}
+	} else {
+		w->away_m = 0.0;
+		w->mark_m = 30.0;
+	}
+	return false;
+}
+
 /* ===== Hike odometer: one tracking session, from tracking on to tracking
  * off. Pure logic — the caller feeds validated fixes and closes the session.
  * A fix-to-fix segment counts as moving when the fix reports more than

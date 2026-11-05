@@ -126,6 +126,7 @@ static void companion_sos_process(void);
 static void companion_sos_tx_done(void);
 static void companion_tracking_odometer_fix(void);
 static void companion_home_save_process(void);
+static void companion_nav_fix_process(void);
 static void companion_tracking_process(void);
 static uint32_t companion_custom_ms_until_next(void);
 static void companion_fall_detected(void);
@@ -459,7 +460,7 @@ static void mesh_event_loop(void)
 			bool notify = companion_serial.isConnected() &&
 				companion_mesh_ptr->isVContactEnabled();
 			if (notify) {
-				companion_mesh_ptr->vcontactNotify("Powering off: button");
+				companion_mesh_ptr->vcontactNotify("Выключение: кнопка");
 				k_work_schedule(&manual_shutdown_work, K_MSEC(8000));
 			} else {
 				k_work_schedule(&manual_shutdown_work, K_NO_WAIT);
@@ -493,6 +494,7 @@ static void mesh_event_loop(void)
 			companion_sos_process();
 			companion_tracking_odometer_fix();
 			companion_home_save_process();
+			companion_nav_fix_process();
 		}
 		if (events & MESH_EVENT_LORA_TX_DONE) companion_sos_tx_done();
 
@@ -1526,7 +1528,7 @@ extern "C" void companion_tracking_toggle_from_ui(void)
 	char reply[CLI_REPLY_SIZE];
 	if (companion_tracking_set_enabled(!companion_tracking.enabled, reply)) {
 		companion_mesh_ptr->vcontactNotify(companion_tracking.enabled ?
-			"Tracking: on" : "Tracking: off");
+			"Tracking: вкл" : "Tracking: выкл");
 	}
 }
 
@@ -1541,8 +1543,15 @@ struct companion_home_state {
 	uint32_t saved_duty_sec;
 	int64_t save_started_ms;
 	int selected; /* 0..9; always 0 after boot */
+	char save_name[12]; /* name applied when the pending save lands ("" = default) */
+	struct nav_wrongway ww;
+	struct tracking_odometer nav_odo;
+	int64_t ladder_ms;    /* last wrong-way sample (0 = prime on next fix) */
+	int64_t report_ms;    /* next vContact nav report (0 = on next fix) */
+	int64_t nav_started_ms; /* travel time origin for the arrival report */
 };
 static struct companion_home_state companion_home;
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY) && IS_ENABLED(CONFIG_ZEPHCORE_UI_DESIGN_BUTTON)
 static struct k_work_delayable home_saved_clear_work;
 
 static void home_saved_clear_handler(struct k_work *work)
@@ -1550,6 +1559,7 @@ static void home_saved_clear_handler(struct k_work *work)
 	ARG_UNUSED(work);
 	ui_pages_set_home_status(HOME_STATUS_IDLE);
 }
+#endif
 
 static void companion_home_restore_gps(void)
 {
@@ -1559,7 +1569,7 @@ static void companion_home_restore_gps(void)
 	}
 }
 
-static void companion_home_start_save(void)
+static void companion_home_start_save(const char *name)
 {
 	if (companion_home.save_active) {
 		return;
@@ -1568,11 +1578,19 @@ static void companion_home_start_save(void)
 	companion_home.saved_duty_sec = gps_get_poll_interval_sec();
 	companion_home.save_active = true;
 	companion_home.save_started_ms = k_uptime_get();
+	if (name != NULL) {
+		strncpy(companion_home.save_name, name, sizeof(companion_home.save_name) - 1);
+		companion_home.save_name[sizeof(companion_home.save_name) - 1] = '\0';
+	} else {
+		companion_home.save_name[0] = '\0';
+	}
 	gps_set_poll_interval_sec(0);
 	if (!companion_home.gps_was_enabled) {
 		gps_enable(true);
 	}
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY) && IS_ENABLED(CONFIG_ZEPHCORE_UI_DESIGN_BUTTON)
 	ui_pages_set_home_status(HOME_STATUS_WAITING);
+#endif
 }
 
 static void companion_home_save_process(void)
@@ -1591,18 +1609,26 @@ static void companion_home_save_process(void)
 		companion_mesh.prefs.home_lat[i] = pos.latitude_ndeg / 1e9;
 		companion_mesh.prefs.home_lon[i] = pos.longitude_ndeg / 1e9;
 		companion_mesh.prefs.home_saved[i] = 1;
-		if (i != 0 && strcmp(companion_mesh.prefs.home_name[i], "FREE") == 0) {
-			strcpy(companion_mesh.prefs.home_name[i], "SAVED");
+		if (i != 0) {
+			if (companion_home.save_name[0] != '\0') {
+				strcpy(companion_mesh.prefs.home_name[i],
+				       companion_home.save_name);
+			} else if (strcmp(companion_mesh.prefs.home_name[i], "FREE") == 0) {
+				strcpy(companion_mesh.prefs.home_name[i], "SAVED");
+			}
 		}
+		companion_home.save_name[0] = '\0';
 		save_prefs_to_flash();
 		companion_home.save_active = false;
 		companion_home_restore_gps();
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY) && IS_ENABLED(CONFIG_ZEPHCORE_UI_DESIGN_BUTTON)
 		ui_pages_set_home_status(HOME_STATUS_SAVED);
+		/* SAVED! stays for five seconds, then the new coordinates. */
+		k_work_reschedule(&home_saved_clear_work, K_MSEC(5000));
+#endif
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
 		buzzer_play(MELODY_HOME_SAVED);
 #endif
-		/* SAVED! stays for five seconds, then the new coordinates. */
-		k_work_reschedule(&home_saved_clear_work, K_MSEC(5000));
 		LOG_INF("home point %d saved: %.6f %.6f", i + 1,
 			companion_mesh.prefs.home_lat[i], companion_mesh.prefs.home_lon[i]);
 		return;
@@ -1610,7 +1636,9 @@ static void companion_home_save_process(void)
 	if (k_uptime_get() - companion_home.save_started_ms >= HOME_FIX_TIMEOUT_MS) {
 		companion_home.save_active = false;
 		companion_home_restore_gps();
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY) && IS_ENABLED(CONFIG_ZEPHCORE_UI_DESIGN_BUTTON)
 		ui_pages_set_home_status(HOME_STATUS_NOFIX);
+#endif
 		LOG_WRN("home save: no GPS fix in time");
 	}
 }
@@ -1629,11 +1657,18 @@ static void companion_nav_set_enabled(bool enabled, char *reply)
 		companion_home.gps_was_enabled = gps_is_enabled();
 		companion_home.saved_duty_sec = gps_get_poll_interval_sec();
 		companion_home.nav_active = true;
+		nav_wrongway_reset(&companion_home.ww);
+		tracking_odometer_reset(&companion_home.nav_odo, k_uptime_get());
+		companion_home.ladder_ms = 0;
+		companion_home.report_ms = 0;
+		companion_home.nav_started_ms = k_uptime_get();
 		gps_set_poll_interval_sec(0);
 		if (!companion_home.gps_was_enabled) {
 			gps_enable(true);
 		}
-		strcpy(reply, "OK - nav on");
+		snprintf(reply, CLI_REPLY_SIZE, "OK - Navigation to %d-%s",
+			 companion_home.selected + 1,
+			 companion_mesh.prefs.home_name[companion_home.selected]);
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
 		buzzer_play(MELODY_NAV_ON);
 #endif
@@ -1648,12 +1683,14 @@ static void companion_nav_set_enabled(bool enabled, char *reply)
 		buzzer_play(MELODY_NAV_OFF);
 #endif
 	}
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY) && IS_ENABLED(CONFIG_ZEPHCORE_UI_DESIGN_BUTTON)
 	ui_pages_set_nav_active(companion_home.nav_active);
+#endif
 }
 
 extern "C" void companion_home_save_from_ui(void)
 {
-	companion_home_start_save();
+	companion_home_start_save(NULL);
 }
 
 extern "C" void companion_nav_toggle_from_ui(void)
@@ -1683,6 +1720,91 @@ extern "C" bool companion_home_get_point(double *lat, double *lon, bool *saved,
 extern "C" bool companion_nav_active(void)
 {
 	return companion_home.nav_active;
+}
+
+/* ZEPHCORE: navigation feedback per fix — wrong-way ladder, arrival and the
+ * periodic vContact report. Main thread, so headless boards get it too. */
+static void companion_nav_fix_process(void)
+{
+	if (!companion_home.nav_active) {
+		return;
+	}
+	struct gps_position pos = {};
+	if (!gps_is_enabled() || !gps_get_last_known_position(&pos) || !pos.valid ||
+	    (k_uptime_get() - pos.timestamp_ms) > 30000) {
+		return;
+	}
+	double home_lat = 0, home_lon = 0;
+	bool saved = false;
+	const char *home_name = "";
+	int home_index = 0;
+	companion_home_get_point(&home_lat, &home_lon, &saved, &home_name, &home_index);
+	double dist_m = tracking_distance_m(pos.latitude_ndeg, pos.longitude_ndeg,
+		(int64_t)(home_lat * 1e9), (int64_t)(home_lon * 1e9));
+	double bearing_deg = nav_bearing_deg(pos.latitude_ndeg / 1e9,
+		pos.longitude_ndeg / 1e9, home_lat, home_lon);
+	int64_t now = k_uptime_get();
+	/* nav.interval 0 = no vContact nav notices at all; beeps and STOP stay. */
+	bool notify = companion_mesh.prefs.nav_report_interval_min != 0;
+
+	tracking_odometer_on_fix(&companion_home.nav_odo, now,
+		pos.latitude_ndeg, pos.longitude_ndeg, pos.speed_mms);
+
+	/* The ladder samples at the NAV screen cadence: per-fix deltas are GPS
+	 * jitter and would keep resetting it. */
+	if (now - companion_home.ladder_ms >= HOME_NAV_REFRESH_MS) {
+		companion_home.ladder_ms = now;
+		if (nav_wrongway_update(&companion_home.ww, dist_m)) {
+			if (notify) {
+				char dstr[16], msg[96];
+
+				nav_distance_ru_str(dstr, sizeof(dstr), dist_m);
+				snprintf(msg, sizeof(msg),
+					 "Вы движетесь в неверном направлении: %s", dstr);
+				companion_mesh.vcontactNotify(msg);
+			}
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
+			buzzer_play(MELODY_WRONG);
+#endif
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY) && IS_ENABLED(CONFIG_ZEPHCORE_UI_DESIGN_BUTTON)
+			ui_pages_set_home_wrong_way(true);
+#endif
+		}
+	}
+
+	/* Arrived while walking to the point: success melody, then STOP. */
+	if (dist_m < 5.0) {
+		if (notify) {
+			char dur[16], dist[16], msg[192];
+
+			tracking_duration_str(dur, sizeof(dur),
+				(uint32_t)(now - companion_home.nav_started_ms));
+			nav_distance_ru_str(dist, sizeof(dist),
+				companion_home.nav_odo.distance_mm / 1000.0);
+			snprintf(msg, sizeof(msg),
+				 "Вы прибыли в точку назначения!\n📍 %d-%s\n⏱️: %s\n📏 %s\n"
+				 "https://maps.google.com/?q=%.5f,%.5f",
+				 home_index + 1, home_name, dur, dist,
+				 pos.latitude_ndeg / 1e9, pos.longitude_ndeg / 1e9);
+			companion_mesh.vcontactNotify(msg);
+		}
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
+		buzzer_play(MELODY_HOME_SAVED);
+#endif
+		char reply[CLI_REPLY_SIZE];
+		companion_nav_set_enabled(false, reply);
+		return;
+	}
+
+	/* First fix after nav on, then every nav.interval minutes. */
+	if (notify && now >= companion_home.report_ms) {
+		char msg[48];
+
+		companion_home.report_ms = now +
+			(int64_t)companion_mesh.prefs.nav_report_interval_min * 60000;
+		nav_report_str(msg, sizeof(msg), dist_m, bearing_deg);
+		companion_mesh.vcontactNotify(msg);
+	}
 }
 
 extern "C" bool companion_tracking_gps_control_allowed(void)
@@ -1796,7 +1918,7 @@ static bool power_notify_shutdown(uint16_t battery_mv)
 			battery_mv, (uint32_t)k_uptime_get());
 	}
 	if (companion_transport_up() && companion_mesh.isVContactEnabled()) {
-		companion_mesh.vcontactNotify("Powering off: low battery");
+		companion_mesh.vcontactNotify("Выключение: низкий заряд");
 		queued = true;
 	}
 	return queued;
@@ -1806,7 +1928,7 @@ static void power_battery_alert(uint16_t mv, uint16_t threshold_mv)
 {
 	char msg[48];
 
-	snprintf(msg, sizeof(msg), "Battery low: %u mV (alert at %u mV)", mv, threshold_mv);
+	snprintf(msg, sizeof(msg), "Заряд низкий: %u мВ (порог %u мВ)", mv, threshold_mv);
 	companion_mesh.vcontactNotify(msg);
 }
 
@@ -2080,6 +2202,41 @@ static bool handle_tracking_cli(const char *line, char *reply, bool silent)
 					      i + 1, companion_mesh.prefs.home_name[i]);
 				if (n >= CLI_REPLY_SIZE - 1) break;
 			}
+		} else if (strncmp(line, "wp save", 7) == 0 &&
+			   (line[7] == '\0' || line[7] == ' ')) {
+			int slot;
+			char name[12];
+			const char *err;
+
+			if (!gps_is_available()) {
+				strcpy(reply, "ERROR: GPS unavailable");
+				return true;
+			}
+			if (companion_home.nav_active) {
+				strcpy(reply, "ERROR: navigation is on");
+				return true;
+			}
+			if (companion_home.save_active) {
+				strcpy(reply, "ERROR: saving home point");
+				return true;
+			}
+			err = companion_wp_save_parse(line + 7, companion_home.selected,
+						      &slot, name, sizeof(name));
+			if (err != NULL) {
+				strcpy(reply, err);
+				return true;
+			}
+			companion_home.selected = slot;
+			companion_home_start_save(name[0] != '\0' ? name : NULL);
+			if (name[0] != '\0') {
+				snprintf(reply, CLI_REPLY_SIZE,
+					 "OK - wp %d %s: waiting for fix",
+					 slot + 1, name);
+			} else {
+				snprintf(reply, CLI_REPLY_SIZE,
+					 "OK - wp %d: waiting for fix", slot + 1);
+			}
+			return true;
 		} else {
 			long v = strtol(line + 3, nullptr, 10);
 			if (v >= 1 && v <= 10) {
@@ -2099,9 +2256,76 @@ static bool handle_tracking_cli(const char *line, char *reply, bool silent)
 			companion_nav_set_enabled(true, reply);
 		} else if (strcmp(line, "nav off") == 0) {
 			companion_nav_set_enabled(false, reply);
+		} else if (!companion_home.nav_active) {
+			snprintf(reply, CLI_REPLY_SIZE, "nav: off  %d-%s",
+				 companion_home.selected + 1,
+				 companion_mesh.prefs.home_name[companion_home.selected]);
 		} else {
-			snprintf(reply, CLI_REPLY_SIZE, "nav: %s",
-				 companion_home.nav_active ? "on" : "off");
+			struct gps_position pos = {};
+			double home_lat = 0, home_lon = 0;
+			bool saved = false;
+			const char *home_name = "";
+			int home_index = 0;
+
+			companion_home_get_point(&home_lat, &home_lon, &saved,
+						 &home_name, &home_index);
+			if (gps_is_enabled() && gps_get_last_known_position(&pos) &&
+			    pos.valid &&
+			    (k_uptime_get() - pos.timestamp_ms) <= 30000) {
+				char dstr[16];
+				nav_distance_str(dstr, sizeof(dstr),
+					tracking_distance_m(pos.latitude_ndeg,
+						pos.longitude_ndeg,
+						(int64_t)(home_lat * 1e9),
+						(int64_t)(home_lon * 1e9)));
+				snprintf(reply, CLI_REPLY_SIZE, "nav: on  %d-%s  %s  %s",
+					 home_index + 1, home_name, dstr,
+					 nav_cardinal_en(nav_bearing_deg(
+						pos.latitude_ndeg / 1e9,
+						pos.longitude_ndeg / 1e9,
+						home_lat, home_lon)));
+			} else {
+				snprintf(reply, CLI_REPLY_SIZE, "nav: on  %d-%s  ?? km  ?",
+					 home_index + 1, home_name);
+			}
+		}
+		return true;
+	}
+	if (strcmp(line, "get nav.interval") == 0) {
+		if (companion_mesh.prefs.nav_report_interval_min == 0) {
+			strcpy(reply, "nav.interval: off");
+		} else {
+			snprintf(reply, CLI_REPLY_SIZE, "nav.interval: %u min",
+				 companion_mesh.prefs.nav_report_interval_min);
+		}
+		return true;
+	}
+	if (strncmp(line, "set nav.interval ", 17) == 0) {
+		const char *arg = line + 17;
+		while (*arg == ' ') {
+			arg++;
+		}
+		char *end = NULL;
+		unsigned long minutes = strtoul(arg, &end, 10);
+		while (*end == ' ' || *end == '\r' || *end == '\n' || *end == '\t') {
+			end++;
+		}
+		if (arg[0] < '0' || arg[0] > '9' || *end != '\0' ||
+		    minutes > 1440) {
+			strcpy(reply, "ERROR: interval must be 0..1440 minutes");
+			return true;
+		}
+		companion_mesh.prefs.nav_report_interval_min = (uint16_t)minutes;
+		if (companion_home.nav_active) {
+			companion_home.report_ms = k_uptime_get() +
+				(int64_t)minutes * 60000;
+		}
+		k_event_post(&mesh_events, MESH_EVENT_PREFS_DIRTY);
+		if (minutes == 0) {
+			strcpy(reply, "OK - nav.interval off");
+		} else {
+			snprintf(reply, CLI_REPLY_SIZE, "OK - nav.interval %lu min",
+				 minutes);
 		}
 		return true;
 	}
@@ -2261,15 +2485,15 @@ static void companion_cli_notify(const char *line, const char *reply)
 {
 	const char *notice = nullptr;
 	if (strcmp(line, "sos") == 0) {
-		if (strncmp(reply, "ERROR", 5) != 0) notice = "SOS activated";
+		if (strncmp(reply, "ERROR", 5) != 0) notice = "SOS активирован";
 	} else if (strcmp(reply, "ok") == 0) {
-		if (strcmp(line, "gps on") == 0) notice = "GPS: on";
-		else if (strcmp(line, "gps off") == 0) notice = "GPS: off";
+		if (strcmp(line, "gps on") == 0) notice = "GPS: вкл";
+		else if (strcmp(line, "gps off") == 0) notice = "GPS: выкл";
 	} else if (strcmp(reply, "OK") == 0) {
-		if (strcmp(line, "leds on") == 0) notice = "LEDs: on";
-		else if (strcmp(line, "leds off") == 0) notice = "LEDs: off";
-		else if (strcmp(line, "buzz on") == 0) notice = "Buzzer: on";
-		else if (strcmp(line, "buzz off") == 0) notice = "Buzzer: off";
+		if (strcmp(line, "leds on") == 0) notice = "LEDs: вкл";
+		else if (strcmp(line, "leds off") == 0) notice = "LEDs: выкл";
+		else if (strcmp(line, "buzz on") == 0) notice = "Буззер: вкл";
+		else if (strcmp(line, "buzz off") == 0) notice = "Буззер: выкл";
 	}
 	if (notice != nullptr) companion_mesh.vcontactNotify(notice);
 }
@@ -2476,15 +2700,14 @@ int main(void)
 
 	/* Restart-reason notice for the v-contact (cause captured at POST_KERNEL by
 	 * helpers/boot_info.c), queued once the mesh is up. A power-integrity
-	 * breadcrumb; a debugger reset or a button wake is quiet. Size: "Restarted:"
-	 * (10) + every label (238) + shutdown reason (29) + NUL. */
-	char boot_cause_msg[280];
+	 * breadcrumb; a debugger reset or a button wake is quiet. */
+	char boot_cause_msg[512];
 	boot_cause_msg[0] = '\0';
 	{
 		const uint32_t quiet = RESET_LOW_POWER_WAKE | RESET_DEBUG;
 
 		if ((zephcore_boot_reset_cause_labelled() & ~quiet) != 0) {
-			int n = snprintf(boot_cause_msg, sizeof(boot_cause_msg), "Restarted:");
+			int n = snprintf(boot_cause_msg, sizeof(boot_cause_msg), "Перезагрузка:");
 			(void)zephcore_boot_reset_cause_str(boot_cause_msg + n,
 							    sizeof(boot_cause_msg) - n, true);
 		}
@@ -2502,7 +2725,7 @@ int main(void)
 		if (sdr == ZC_SHUTDOWN_LOW_VOLTAGE) {
 			size_t l = strlen(boot_cause_msg);
 			snprintf(boot_cause_msg + l, sizeof(boot_cause_msg) - l,
-				 "%sLast shutdown: low battery",
+				 "%sПрошлое выключение: низкий заряд",
 				 l ? " | " : "");
 		}
 	}
@@ -2540,7 +2763,9 @@ int main(void)
 		LOG_INF("GPS available");
 		gps_set_enable_callback(gps_enable_callback);
 		gps_set_fix_callback(gps_fix_callback);
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY) && IS_ENABLED(CONFIG_ZEPHCORE_UI_DESIGN_BUTTON)
 		k_work_init_delayable(&home_saved_clear_work, home_saved_clear_handler);
+#endif
 		gps_set_event_callback(gps_event_callback);
 	}
 

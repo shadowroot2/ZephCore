@@ -198,6 +198,7 @@ TEST(companion_cli_help, "UNIT-CLI-002", "Companion app and remote help are cate
 		"set pin 123456", "set freq 869.525", "set radio 869.525,125,9,5",
 		"set tx 22", "set adc.multiplier 1.0", "set autoshutdown 3200",
 		"shutdown", "shutdown y", "poweroff", "offgrid on", "offgrid off", "wp clear", "wp 1", "nav on", "nav off",
+		"wp save", "wp save 2", "wp save 2 Base", "get nav.interval", "set nav.interval 2",
 		"get wifi.ssid", "clear stats",
 	};
 	for (const char *command : local_only) {
@@ -301,6 +302,64 @@ TEST(nav_format, "UNIT-NAV-001", "Distance, bearing and cardinal labels for navi
 	CHECK(std::strcmp(nav_cardinal_en(46), "NE") == 0);
 	CHECK(std::strcmp(nav_cardinal_en(180), "S") == 0);
 	CHECK(std::strcmp(nav_cardinal_en(359), "N") == 0);
+}
+TEST(nav_wrongway, "UNIT-NAV-002", "Wrong-way ladder steps at 30 m and resets on approach") {
+	struct nav_wrongway w;
+	nav_wrongway_reset(&w);
+	CHECK(!nav_wrongway_update(&w, 100.0));
+	CHECK(!nav_wrongway_update(&w, 110.0));
+	CHECK(nav_wrongway_update(&w, 145.0));
+	CHECK(!nav_wrongway_update(&w, 150.0));
+	CHECK(nav_wrongway_update(&w, 185.0));
+	CHECK(!nav_wrongway_update(&w, 180.0));
+	CHECK(!nav_wrongway_update(&w, 200.0));
+	CHECK(nav_wrongway_update(&w, 235.0));
+	nav_wrongway_reset(&w);
+	nav_wrongway_update(&w, 100.0);
+	CHECK(!nav_wrongway_update(&w, 102.0));
+	CHECK(!nav_wrongway_update(&w, 101.0));
+	CHECK(!nav_wrongway_update(&w, 103.0));
+	CHECK(!nav_wrongway_update(&w, 102.0));
+}
+TEST(nav_report, "UNIT-NAV-003", "Periodic vContact report carries distance, sector and arrow") {
+	char buf[32];
+	nav_report_str(buf, sizeof(buf), 2341.0, 46.0);
+	CHECK(std::strcmp(buf, "2.34 км  СВ  ↗️") == 0);
+	nav_report_str(buf, sizeof(buf), 840.4, 0.0);
+	CHECK(std::strcmp(buf, "840 м  С  ⬆️") == 0);
+	CHECK(std::strlen(buf) <= 159);
+}
+TEST(companion_wp_save, "UNIT-CLI-005", "wp save parses slot and name and pins the 10-char limit") {
+	int slot;
+	char name[12];
+	CHECK(companion_wp_save_parse("", 4, &slot, name, sizeof(name)) == NULL);
+	CHECK(slot == 4);
+	CHECK(std::strcmp(name, "") == 0);
+	CHECK(companion_wp_save_parse("  ", 4, &slot, name, sizeof(name)) == NULL);
+	CHECK(slot == 4);
+	CHECK(companion_wp_save_parse("3", 4, &slot, name, sizeof(name)) == NULL);
+	CHECK(slot == 2);
+	CHECK(companion_wp_save_parse("3 My House", 4, &slot, name, sizeof(name)) == NULL);
+	CHECK(slot == 2);
+	CHECK(std::strcmp(name, "My House") == 0);
+	CHECK(companion_wp_save_parse(" 2 Base  ", 4, &slot, name, sizeof(name)) == NULL);
+	CHECK(slot == 1);
+	CHECK(std::strcmp(name, "Base") == 0);
+	CHECK(companion_wp_save_parse("10 1234567890", 4, &slot, name, sizeof(name)) == NULL);
+	CHECK(slot == 9);
+	CHECK(std::strcmp(name, "1234567890") == 0);
+	CHECK(std::strcmp(companion_wp_save_parse("0", 4, &slot, name, sizeof(name)),
+			  "Error: wp save 1..10") == 0);
+	CHECK(std::strcmp(companion_wp_save_parse("11", 4, &slot, name, sizeof(name)),
+			  "Error: wp save 1..10") == 0);
+	CHECK(std::strcmp(companion_wp_save_parse("Base", 4, &slot, name, sizeof(name)),
+			  "Error: wp save 1..10") == 0);
+	CHECK(std::strcmp(companion_wp_save_parse("3.5", 4, &slot, name, sizeof(name)),
+			  "Error: wp save 1..10") == 0);
+	CHECK(std::strcmp(companion_wp_save_parse("1 Base", 4, &slot, name, sizeof(name)),
+			  "Error: point 1 stays GPS HOME") == 0);
+	CHECK(std::strcmp(companion_wp_save_parse("3 12345678901", 4, &slot, name, sizeof(name)),
+			  "Error: name max 10 chars") == 0);
 }
 TEST(gps_switch_policy, "UNIT-UI-001", "A physical GPS switch overrides the saved startup state") {
 	CHECK(gps_switch_effective_enabled(false, false, true));
