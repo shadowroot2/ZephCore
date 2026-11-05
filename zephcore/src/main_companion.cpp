@@ -1346,6 +1346,33 @@ struct companion_tracking_state {
 static struct companion_tracking_state companion_tracking;
 static struct tracking_odometer tracking_odo;
 
+/* ===== GPS HOME: save the point and navigate to it ===== */
+#define HOME_FIX_TIMEOUT_MS (5U * 60U * 1000U)
+#define HOME_ARRIVAL_M 15.0
+#define NAV_LINK_CHECK_MS 30000U
+#define HOME_NAV_REFRESH_MS 5000U
+
+struct companion_home_state {
+	bool save_active;
+	bool nav_active;
+	bool gps_was_enabled;
+	bool travel_has_last;
+	bool link_lost_sent;
+	uint8_t selected; /* 0..9; always 0 after boot */
+	uint32_t saved_duty_sec;
+	uint32_t save_started_ms;
+	struct nav_wrongway ww;
+	uint32_t ladder_ms;    /* last wrong-way sample (0 = prime on next fix) */
+	uint32_t report_ms;    /* next vContact nav report (0 = on next fix) */
+	uint32_t telemetry_ms; /* next LoRa nav telemetry (0 = on next fix) */
+	uint32_t nav_started_ms; /* travel time origin for the arrival report */
+	float report_last_dist_m; /* distance at the last LoRa report (<0 = prime) */
+	double travel_m;
+	int64_t travel_last_lat_ndeg;
+	int64_t travel_last_lon_ndeg;
+};
+static struct companion_home_state companion_home;
+
 static uint32_t companion_custom_ms_until_next(void)
 {
 	const uint32_t now = k_uptime_get_32();
@@ -1536,33 +1563,6 @@ extern "C" void companion_tracking_toggle_from_ui(void)
 			"Tracking: вкл" : "Tracking: выкл");
 	}
 }
-
-/* ===== GPS HOME: save the point and navigate to it ===== */
-#define HOME_FIX_TIMEOUT_MS (5U * 60U * 1000U)
-#define HOME_ARRIVAL_M 15.0
-#define NAV_LINK_CHECK_MS 30000U
-#define HOME_NAV_REFRESH_MS 5000U
-
-struct companion_home_state {
-	bool save_active;
-	bool nav_active;
-	bool gps_was_enabled;
-	bool travel_has_last;
-	bool link_lost_sent;
-	uint8_t selected; /* 0..9; always 0 after boot */
-	uint32_t saved_duty_sec;
-	uint32_t save_started_ms;
-	struct nav_wrongway ww;
-	uint32_t ladder_ms;    /* last wrong-way sample (0 = prime on next fix) */
-	uint32_t report_ms;    /* next vContact nav report (0 = on next fix) */
-	uint32_t telemetry_ms; /* next LoRa nav telemetry (0 = on next fix) */
-	uint32_t nav_started_ms; /* travel time origin for the arrival report */
-	float report_last_dist_m; /* distance at the last LoRa report (<0 = prime) */
-	double travel_m;
-	int64_t travel_last_lat_ndeg;
-	int64_t travel_last_lon_ndeg;
-};
-static struct companion_home_state companion_home;
 
 static void companion_home_restore_gps(void)
 {
