@@ -49,6 +49,8 @@ NodePrefs sample() {
     p.auto_shutdown_mv = 3300; p.v_contact_enabled = 0; p.v_battery_alert_mv = 3500;
     p.v_contact_flags = 0x81; p.wifi_enabled = 0; p.offgrid_home_freq = 869.618f;
     strcpy(p.wifi_ssid, "MyNet"); strcpy(p.wifi_pwd, "secret");
+    p.geo_lat_e7 = 475000000; p.geo_lon_e7 = -192500000;
+    p.geo_saved = 1; p.geo_radius_m = 1500;
     return p;
 }
 
@@ -76,6 +78,8 @@ TEST(pjson_companion_roundtrip, "UNIT-PJSON-001", "Companion prefs survive prefs
     // prefs.json only: not in the binary layout.
     CHECK(q.led_brightness == 42);
     CHECK(q.offgrid_home_freq == 869.618f);
+    CHECK(q.geo_lat_e7 == 475000000 && q.geo_lon_e7 == -192500000);
+    CHECK(q.geo_saved == 1 && q.geo_radius_m == 1500);
 }
 
 TEST(pjson_server_roundtrip, "UNIT-PJSON-002", "Server prefs survive prefs.json field for field") {
@@ -250,4 +254,18 @@ TEST(pjson_shadow_tz_migration, "UNIT-PJSON-010", "ShadoW minute timezones migra
     CHECK(p.tracking_interval_minutes == 17);
     CHECK(std::strcmp(p.tracking_group_name, "#walk") == 0);
     CHECK(p.fall_sensitivity == 4);
+}
+
+TEST(pjson_geo_radius_guard, "UNIT-PJSON-011", "geo.radius 0 on flash means unset and out-of-range clamps") {
+    NodePrefs p = defaults();
+    CHECK(p.geo_radius_m == 3000);
+    p.geo_radius_m = 0;
+    sanitizeNodePrefs(&p);
+    CHECK(p.geo_radius_m == 3000);
+    p.geo_radius_m = 10;
+    sanitizeNodePrefs(&p);
+    CHECK(p.geo_radius_m == 50);
+    p.geo_radius_m = 60000;
+    sanitizeNodePrefs(&p);
+    CHECK(p.geo_radius_m == 50000);
 }

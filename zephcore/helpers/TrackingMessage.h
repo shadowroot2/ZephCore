@@ -17,20 +17,43 @@ static inline unsigned tracking_report_sector_index(uint32_t bearing_mdeg)
 	return (bearing_mdeg + 22500U) / 45000U % 8U;
 }
 
+/* Literal-per-case instead of a static pointer table: the table was emitted
+ * per including TU and its pointers kept data relocations. */
 static inline const char *tracking_report_arrow(uint32_t bearing_mdeg)
 {
-	static const char *const arrows[8] = {
-		"⬆️", "↗️", "➡️", "↘️", "⬇️", "↙️", "⬅️", "↖️",
-	};
-	return arrows[tracking_report_sector_index(bearing_mdeg)];
+	switch (tracking_report_sector_index(bearing_mdeg)) {
+	case 0: return "⬆️";
+	case 1: return "↗️";
+	case 2: return "➡️";
+	case 3: return "↘️";
+	case 4: return "⬇️";
+	case 5: return "↙️";
+	case 6: return "⬅️";
+	default: return "↖️";
+	}
 }
 
 static inline const char *tracking_report_sector(uint32_t bearing_mdeg)
 {
-	static const char *const sectors[8] = {
-		"С", "СВ", "В", "ЮВ", "Ю", "ЮЗ", "З", "СЗ",
-	};
-	return sectors[tracking_report_sector_index(bearing_mdeg)];
+	switch (tracking_report_sector_index(bearing_mdeg)) {
+	case 0: return "С";
+	case 1: return "СВ";
+	case 2: return "В";
+	case 3: return "ЮВ";
+	case 4: return "Ю";
+	case 5: return "ЮЗ";
+	case 6: return "З";
+	default: return "СЗ";
+	}
+}
+
+/* "https://maps.google.com/?q=%.5f,%.5f" — one literal for every message
+ * that links to a position. */
+static inline void tracking_maps_url(char *buf, size_t len,
+				     double lat_deg, double lon_deg)
+{
+	snprintf(buf, len, "https://maps.google.com/?q=%.5f,%.5f",
+		 lat_deg, lon_deg);
 }
 
 /* One tracking report: "🏃 12 км/ч ↗️ СВ · <maps link>" while moving,
@@ -40,15 +63,17 @@ static inline void tracking_format_report(char *buf, size_t len,
 					  uint32_t speed_mms,
 					  uint32_t bearing_mdeg)
 {
+	char url[48];
 	unsigned kph = (unsigned)((speed_mms * 36U + 5000U) / 10000U);
+
+	tracking_maps_url(url, sizeof(url), lat_deg, lon_deg);
 	if (kph <= TRACKING_REPORT_STANDSTILL_KMH) {
-		snprintf(buf, len, "🅿️\n📍 https://maps.google.com/?q=%.5f,%.5f",
-			 lat_deg, lon_deg);
+		snprintf(buf, len, "🅿️\n📍 %s", url);
 		return;
 	}
-	snprintf(buf, len, "🏃 %u км/ч %s %s\n📍 https://maps.google.com/?q=%.5f,%.5f",
+	snprintf(buf, len, "🏃 %u км/ч %s %s\n📍 %s",
 		 kph, tracking_report_arrow(bearing_mdeg),
-		 tracking_report_sector(bearing_mdeg), lat_deg, lon_deg);
+		 tracking_report_sector(bearing_mdeg), url);
 }
 
 /* ===== Navigation to a saved point ===== */
@@ -83,12 +108,18 @@ static inline void nav_distance_str(char *buf, size_t len, double meters)
 
 static inline const char *nav_cardinal_en(double bearing_deg)
 {
-	static const char *const names[8] = {
-		"N", "NE", "E", "SE", "S", "SW", "W", "NW",
-	};
 	unsigned idx = (unsigned)((bearing_deg + 22.5) / 45.0) % 8U;
 
-	return names[idx];
+	switch (idx) {
+	case 0: return "N";
+	case 1: return "NE";
+	case 2: return "E";
+	case 3: return "SE";
+	case 4: return "S";
+	case 5: return "SW";
+	case 6: return "W";
+	default: return "NW";
+	}
 }
 
 /* "2.34 км" from 1 km up, whole meters below (Russian units). */
@@ -275,7 +306,10 @@ static inline void tracking_format_summary(char *buf, size_t len,
 			 total, moving, stopmin, o->stops);
 
 	if (has_fix && n > 0 && (size_t)n < len) {
-		snprintf(buf + n, len - n, "\n📍 https://maps.google.com/?q=%.5f,%.5f",
-			 end_lat_ndeg / 1e9, end_lon_ndeg / 1e9);
+		char url[48];
+
+		tracking_maps_url(url, sizeof(url),
+				  end_lat_ndeg / 1e9, end_lon_ndeg / 1e9);
+		snprintf(buf + n, len - n, "\n📍 %s", url);
 	}
 }

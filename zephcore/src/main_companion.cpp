@@ -78,6 +78,7 @@ LOG_MODULE_REGISTER(zephcore_main, CONFIG_ZEPHCORE_MAIN_LOG_LEVEL);
 #include <helpers/CompanionSOSPolicy.h>
 #include <helpers/GpsSwitchPolicy.h>
 #include <helpers/TrackingMessage.h>
+#include <helpers/GeoFence.h>
 #include <helpers/pm_sleep_guard.h>
 #include <helpers/StatsFormatHelper.h>
 #include <app/CompanionCLI.h>
@@ -127,6 +128,7 @@ static void companion_sos_tx_done(void);
 static void companion_tracking_odometer_fix(void);
 static void companion_home_save_process(void);
 static void companion_nav_fix_process(void);
+static void companion_geo_fix_process(void);
 static void companion_nav_link_check(void);
 static void companion_tracking_process(void);
 static uint32_t companion_custom_ms_until_next(void);
@@ -496,6 +498,7 @@ static void mesh_event_loop(void)
 			companion_tracking_odometer_fix();
 			companion_home_save_process();
 			companion_nav_fix_process();
+			companion_geo_fix_process();
 		}
 		if (events & MESH_EVENT_LORA_TX_DONE) companion_sos_tx_done();
 
@@ -782,10 +785,12 @@ static bool companion_send_auto_shutdown_emergency(uint16_t battery_mv,
 		bool has_coordinates = pos.latitude_ndeg != 0 && pos.longitude_ndeg != 0;
 
 		if (has_fix && has_coordinates) {
-			snprintf(gps, sizeof(gps),
-				 "🛰️ %u fix\n📍 https://maps.google.com/?q=%.5f,%.5f",
-				 sats_in_view, pos.latitude_ndeg / 1e9,
-				 pos.longitude_ndeg / 1e9);
+			char url[48];
+
+			tracking_maps_url(url, sizeof(url), pos.latitude_ndeg / 1e9,
+					  pos.longitude_ndeg / 1e9);
+			snprintf(gps, sizeof(gps), "🛰️ %u fix\n📍 %s",
+				 sats_in_view, url);
 		} else if (has_fix) {
 			snprintf(gps, sizeof(gps), "🛰️ %u fix", sats_in_view);
 		} else {
@@ -939,6 +944,16 @@ static bool companion_send_visible_group_message(ChannelDetails &channel,
 	return true;
 }
 
+/* Geofence alerts (ADR 0011): out over LoRa only, never queued into the
+ * local group feed. */
+static bool companion_send_hidden_group_message(ChannelDetails &channel,
+					       const char *text)
+{
+	uint32_t timestamp = rtc_clock.getCurrentTimeUnique();
+	return companion_mesh_ptr->sendGroupMessage(timestamp, channel.channel,
+			companion_mesh_ptr->prefs.node_name, text, (int)strlen(text));
+}
+
 static void companion_send_fall_canceled_message(void)
 {
 	ChannelDetails sos_channel;
@@ -1089,10 +1104,12 @@ static bool companion_send_sos_message(bool allow_coordinates)
 		bool has_coordinates = pos.latitude_ndeg != 0 && pos.longitude_ndeg != 0;
 
 		if (has_fix && has_coordinates && allow_coordinates) {
-			snprintf(gps, sizeof(gps),
-				 "🛰️ %u fix\n📍 https://maps.google.com/?q=%.5f,%.5f",
-				 sats_in_view, pos.latitude_ndeg / 1e9,
-				 pos.longitude_ndeg / 1e9);
+			char url[48];
+
+			tracking_maps_url(url, sizeof(url), pos.latitude_ndeg / 1e9,
+					  pos.longitude_ndeg / 1e9);
+			snprintf(gps, sizeof(gps), "🛰️ %u fix\n📍 %s",
+				 sats_in_view, url);
 		} else if (has_fix && allow_coordinates) {
 			snprintf(gps, sizeof(gps), "🛰️ %u fix", sats_in_view);
 		} else {
@@ -1374,6 +1391,18 @@ struct companion_home_state {
 };
 static struct companion_home_state companion_home;
 
+/* ===== Geofence: own position vs one saved point (ADR 0011) ===== */
+#define GEO_FLAG_ENABLED	BIT(0)
+#define GEO_FLAG_GPS_STARTED	BIT(1) /* we powered the GPS; power it back off */
+#define GEO_FLAG_SAVE_IS_GEO	BIT(2) /* the active home save captures the geo point */
+
+struct companion_geo_state {
+	uint32_t saved_duty_sec;
+	uint8_t flags;
+	struct geofence_state fsm;
+};
+static struct companion_geo_state companion_geo;
+
 static uint32_t companion_custom_ms_until_next(void)
 {
 	const uint32_t now = k_uptime_get_32();
@@ -1512,6 +1541,15 @@ static bool companion_tracking_set_enabled(bool enabled, char *reply, bool silen
 			strcpy(reply, "ERROR: GPS unavailable");
 			return false;
 		}
+		if (companion_geo.flags & GEO_FLAG_ENABLED) {
+			strcpy(reply, "ERROR: geo is on; use geo off");
+			return false;
+		}
+		if (companion_home.save_active &&
+		    (companion_geo.flags & GEO_FLAG_SAVE_IS_GEO)) {
+			strcpy(reply, "ERROR: saving geo point");
+			return false;
+		}
 		bool gps_was_enabled = gps_is_enabled();
 		companion_tracking.enabled = true;
 		companion_tracking.silent_reports = silent;
@@ -1559,6 +1597,64 @@ static bool companion_tracking_set_enabled(bool enabled, char *reply, bool silen
 	return true;
 }
 
+/* Geofence toggle (ADR 0011): on pins the GPS at GEO_DUTY_SEC, off restores
+ * the state it found. Refused where another owner of the GPS duty is active,
+ * so every save/restore pair stays LIFO. */
+static bool companion_geo_set_enabled(bool enabled, char *reply)
+{
+	if (companion_home.save_active) {
+		strcpy(reply, "ERROR: saving point");
+		return false;
+	}
+	if (companion_home.nav_active) {
+		strcpy(reply, "ERROR: navigation is on");
+		return false;
+	}
+	if (companion_sos.pending) {
+		strcpy(reply, "ERROR: SOS is waiting for GPS fix");
+		return false;
+	}
+	bool on = (companion_geo.flags & GEO_FLAG_ENABLED) != 0;
+
+	if (enabled == on) {
+		snprintf(reply, CLI_REPLY_SIZE, "geo: %s (%u m)",
+			 enabled ? "on" : "off",
+			 companion_mesh.prefs.geo_radius_m);
+		return true;
+	}
+	if (enabled) {
+		if (!gps_is_available()) {
+			strcpy(reply, "ERROR: GPS unavailable");
+			return false;
+		}
+		if (companion_tracking.enabled) {
+			strcpy(reply, "ERROR: tracking is active; use tracking off");
+			return false;
+		}
+		companion_geo.saved_duty_sec = gps_get_poll_interval_sec();
+		companion_geo.flags |= GEO_FLAG_ENABLED;
+		if (!gps_is_enabled()) {
+			companion_geo.flags |= GEO_FLAG_GPS_STARTED;
+			gps_enable(true);
+		} else {
+			gps_request_fresh_fix();
+		}
+		geofence_reset(&companion_geo.fsm);
+		gps_set_poll_interval_sec(GEO_DUTY_SEC);
+		snprintf(reply, CLI_REPLY_SIZE, "OK - geo on (radius %u m)",
+			 companion_mesh.prefs.geo_radius_m);
+		return true;
+	}
+	gps_set_poll_interval_sec(companion_geo.saved_duty_sec);
+	if (companion_geo.flags & GEO_FLAG_GPS_STARTED) {
+		gps_enable(false);
+	}
+	companion_geo.flags &= (uint8_t)~(GEO_FLAG_ENABLED | GEO_FLAG_GPS_STARTED);
+	geofence_reset(&companion_geo.fsm);
+	strcpy(reply, "OK - geo off");
+	return true;
+}
+
 extern "C" void companion_tracking_toggle_from_ui(void)
 {
 	char reply[CLI_REPLY_SIZE];
@@ -1576,7 +1672,7 @@ static void companion_home_restore_gps(void)
 	}
 }
 
-static void companion_home_start_save(void)
+static void companion_home_start_save(bool geo_point)
 {
 	if (companion_home.save_active) {
 		return;
@@ -1585,20 +1681,31 @@ static void companion_home_start_save(void)
 	companion_home.saved_duty_sec = gps_get_poll_interval_sec();
 	companion_home.save_active = true;
 	companion_home.save_started_ms = (uint32_t)k_uptime_get();
+	if (geo_point) {
+		companion_geo.flags |= GEO_FLAG_SAVE_IS_GEO;
+	} else {
+		companion_geo.flags &= (uint8_t)~GEO_FLAG_SAVE_IS_GEO;
+	}
 	gps_set_poll_interval_sec(0);
 	if (!companion_home.gps_was_enabled) {
 		gps_enable(true);
 	}
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY) && IS_ENABLED(CONFIG_ZEPHCORE_UI_DESIGN_BUTTON)
-	ui_pages_set_home_status(HOME_STATUS_WAITING);
+	if (!geo_point) {
+		ui_pages_set_home_status(HOME_STATUS_WAITING);
+	}
 #endif
 }
 
+/* One save pipeline for wp save and geo save (ADR 0011): force a fix,
+ * capture it, return the GPS to what it was. GEO_FLAG_SAVE_IS_GEO picks
+ * the target. */
 static void companion_home_save_process(void)
 {
 	if (!companion_home.save_active) {
 		return;
 	}
+	bool geo_point = (companion_geo.flags & GEO_FLAG_SAVE_IS_GEO) != 0;
 	struct gps_position pos = {};
 	bool fresh_fix = gps_get_last_known_position(&pos) &&
 		pos.latitude_ndeg != 0 && pos.longitude_ndeg != 0 &&
@@ -1606,44 +1713,62 @@ static void companion_home_save_process(void)
 		(k_uptime_get() - pos.timestamp_ms) <= 30000;
 
 	if (fresh_fix) {
-		int i = companion_home.selected;
-		companion_mesh.prefs.home_lat[i] = pos.latitude_ndeg / 1e9;
-		companion_mesh.prefs.home_lon[i] = pos.longitude_ndeg / 1e9;
-		companion_mesh.prefs.home_saved[i] = 1;
-		if (i != 0 && strcmp(companion_mesh.prefs.home_name[i], "FREE") == 0) {
-			strcpy(companion_mesh.prefs.home_name[i], "SAVED");
+		char msg[160], url[48];
+
+		if (geo_point) {
+			companion_mesh.prefs.geo_lat_e7 = (int32_t)(pos.latitude_ndeg / 100);
+			companion_mesh.prefs.geo_lon_e7 = (int32_t)(pos.longitude_ndeg / 100);
+			companion_mesh.prefs.geo_saved = 1;
+			tracking_maps_url(url, sizeof(url),
+					  companion_mesh.prefs.geo_lat_e7 / 1e7,
+					  companion_mesh.prefs.geo_lon_e7 / 1e7);
+			snprintf(msg, sizeof(msg), "Геоточка сохранена!\n%s", url);
+		} else {
+			int i = companion_home.selected;
+
+			companion_mesh.prefs.home_lat[i] = pos.latitude_ndeg / 1e9;
+			companion_mesh.prefs.home_lon[i] = pos.longitude_ndeg / 1e9;
+			companion_mesh.prefs.home_saved[i] = 1;
+			if (i != 0 && strcmp(companion_mesh.prefs.home_name[i], "FREE") == 0) {
+				strcpy(companion_mesh.prefs.home_name[i], "SAVED");
+			}
+			tracking_maps_url(url, sizeof(url),
+					  companion_mesh.prefs.home_lat[i],
+					  companion_mesh.prefs.home_lon[i]);
+			snprintf(msg, sizeof(msg),
+				 "Точка успешно сохранена!\n📍 %d-%s\n%s",
+				 i + 1, companion_mesh.prefs.home_name[i], url);
 		}
 		save_prefs_to_flash();
-		{
-			char msg[160];
-
-			snprintf(msg, sizeof(msg),
-				 "Точка успешно сохранена!\n📍 %d-%s\n"
-				 "https://maps.google.com/?q=%.5f,%.5f",
-				 i + 1, companion_mesh.prefs.home_name[i],
-				 companion_mesh.prefs.home_lat[i],
-				 companion_mesh.prefs.home_lon[i]);
-			companion_mesh.vcontactNotify(msg);
-		}
+		companion_mesh.vcontactNotify(msg);
 		companion_home.save_active = false;
+		companion_geo.flags &= (uint8_t)~GEO_FLAG_SAVE_IS_GEO;
 		companion_home_restore_gps();
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY) && IS_ENABLED(CONFIG_ZEPHCORE_UI_DESIGN_BUTTON)
-		ui_pages_set_home_status(HOME_STATUS_SAVED);
+		if (!geo_point) {
+			ui_pages_set_home_status(HOME_STATUS_SAVED);
+		}
 #endif
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
 		buzzer_play(MELODY_HOME_SAVED);
 #endif
-		LOG_INF("home point %d saved: %.6f %.6f", i + 1,
-			companion_mesh.prefs.home_lat[i], companion_mesh.prefs.home_lon[i]);
+		LOG_INF("%s saved: %.6f %.6f", geo_point ? "geo point" : "home point",
+			geo_point ? companion_mesh.prefs.geo_lat_e7 / 1e7
+				  : companion_mesh.prefs.home_lat[companion_home.selected],
+			geo_point ? companion_mesh.prefs.geo_lon_e7 / 1e7
+				  : companion_mesh.prefs.home_lon[companion_home.selected]);
 		return;
 	}
 	if (k_uptime_get() - companion_home.save_started_ms >= HOME_FIX_TIMEOUT_MS) {
 		companion_home.save_active = false;
+		companion_geo.flags &= (uint8_t)~GEO_FLAG_SAVE_IS_GEO;
 		companion_home_restore_gps();
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY) && IS_ENABLED(CONFIG_ZEPHCORE_UI_DESIGN_BUTTON)
-		ui_pages_set_home_status(HOME_STATUS_NOFIX);
+		if (!geo_point) {
+			ui_pages_set_home_status(HOME_STATUS_NOFIX);
+		}
 #endif
-		LOG_WRN("home save: no GPS fix in time");
+		LOG_WRN("%s save: no GPS fix in time", geo_point ? "geo" : "home");
 	}
 }
 
@@ -1709,9 +1834,12 @@ static void companion_nav_set_enabled(bool enabled, char *reply)
 				companion_home.report_ms = (uint32_t)k_uptime_get() +
 					(uint32_t)companion_mesh.prefs.nav_report_interval_min * 60000U;
 			}
-			snprintf(msg + n, sizeof(msg) - n,
-				 "\nhttps://maps.google.com/?q=%.5f,%.5f",
-				 home_lat, home_lon);
+			{
+				char url[48];
+
+				tracking_maps_url(url, sizeof(url), home_lat, home_lon);
+				snprintf(msg + n, sizeof(msg) - n, "\n%s", url);
+			}
 			companion_mesh.vcontactNotify(msg);
 		}
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
@@ -1735,7 +1863,7 @@ static void companion_nav_set_enabled(bool enabled, char *reply)
 
 extern "C" void companion_home_save_from_ui(void)
 {
-	companion_home_start_save();
+	companion_home_start_save(false);
 }
 
 extern "C" void companion_nav_toggle_from_ui(void)
@@ -1785,6 +1913,23 @@ static bool companion_send_nav_telemetry_message(const char *text)
 	buzzer_play(MELODY_NAV_ON);
 #endif
 	return true;
+}
+
+/* Geofence alerts: hidden LoRa messages to the tracking group only. */
+static void companion_send_geo_message(const char *text)
+{
+	ChannelDetails tracks_channel;
+	const char *group_name = companion_mesh.prefs.tracking_group_name;
+
+	if (!companion_get_public_channel(group_name, tracks_channel)) {
+		LOG_WRN("geo: no %s channel", group_name);
+		return;
+	}
+	if (!companion_send_hidden_group_message(tracks_channel, text)) {
+		LOG_WRN("geo: unable to queue %s message", group_name);
+		return;
+	}
+	LOG_INF("geo: queued %s message: %s", group_name, text);
 }
 
 /* ZEPHCORE: navigation feedback per fix — wrong-way ladder, arrival and the
@@ -1851,16 +1996,16 @@ static void companion_nav_fix_process(void)
 
 	/* Arrived while walking to the point: success melody, then STOP. */
 	if (dist_m < HOME_ARRIVAL_M) {
-		char dur[16], dist[16], tail[128], msg[192];
+		char dur[16], dist[16], tail[128], msg[192], url[48];
 
 		tracking_duration_str(dur, sizeof(dur),
 			(uint32_t)(now - companion_home.nav_started_ms));
 		nav_distance_ru_str(dist, sizeof(dist), companion_home.travel_m);
+		tracking_maps_url(url, sizeof(url), pos.latitude_ndeg / 1e9,
+				  pos.longitude_ndeg / 1e9);
 		snprintf(tail, sizeof(tail),
-			 "📍 %d-%s\n⏱️: %s\n📏 %s\n"
-			 "https://maps.google.com/?q=%.5f,%.5f",
-			 home_index + 1, home_name, dur, dist,
-			 pos.latitude_ndeg / 1e9, pos.longitude_ndeg / 1e9);
+			 "📍 %d-%s\n⏱️: %s\n📏 %s\n%s",
+			 home_index + 1, home_name, dur, dist, url);
 		if (notify) {
 			snprintf(msg, sizeof(msg),
 				 "🏁 Вы прибыли в точку назначения!\n%s", tail);
@@ -1905,18 +2050,49 @@ static void companion_nav_fix_process(void)
 		companion_home.telemetry_ms = now +
 			(uint32_t)companion_mesh.prefs.nav_telemetry_interval_min * 60000U;
 		if (last < 0.0f || moved >= 50.0) {
-			char rep[48], msg[160];
+			char rep[48], msg[160], url[48];
 
 			companion_home.report_last_dist_m = (float)dist_m;
 			nav_report_str(rep, sizeof(rep), dist_m, bearing_deg);
+			tracking_maps_url(url, sizeof(url), pos.latitude_ndeg / 1e9,
+					  pos.longitude_ndeg / 1e9);
 			snprintf(msg, sizeof(msg),
-				 "📍 %d-%s\n📏 %s\n"
-				 "https://maps.google.com/?q=%.5f,%.5f",
-				 home_index + 1, home_name, rep,
-				 pos.latitude_ndeg / 1e9, pos.longitude_ndeg / 1e9);
+				 "📍 %d-%s\n📏 %s\n%s",
+				 home_index + 1, home_name, rep, url);
 			companion_send_nav_telemetry_message(msg);
 		}
 	}
+}
+
+/* Geofence check per fresh fix: exit and return alerts (ADR 0011). Main
+ * thread, event-driven like the nav feedback. */
+static void companion_geo_fix_process(void)
+{
+	if (!(companion_geo.flags & GEO_FLAG_ENABLED) || companion_home.save_active) {
+		return;
+	}
+	struct gps_position pos = {};
+	if (!gps_is_enabled() || !gps_get_last_known_position(&pos) || !pos.valid ||
+	    (k_uptime_get() - pos.timestamp_ms) > GEO_FIX_MAX_AGE_MS) {
+		return;
+	}
+	double dist_m = tracking_distance_m(pos.latitude_ndeg, pos.longitude_ndeg,
+		(int64_t)companion_mesh.prefs.geo_lat_e7 * 100,
+		(int64_t)companion_mesh.prefs.geo_lon_e7 * 100);
+	enum geofence_event ev = geofence_update(&companion_geo.fsm, dist_m,
+		(double)companion_mesh.prefs.geo_radius_m);
+	if (ev == GEO_EVENT_NONE) {
+		return;
+	}
+	char msg[160];
+	geofence_format_msg(msg, sizeof(msg), ev == GEO_EVENT_EXIT,
+			    (double)companion_mesh.prefs.geo_radius_m, dist_m,
+			    pos.latitude_ndeg / 1e9, pos.longitude_ndeg / 1e9);
+	companion_send_geo_message(msg);
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
+	buzzer_play(ev == GEO_EVENT_EXIT ? MELODY_WRONG : MELODY_ARRIVED);
+#endif
+	LOG_INF("geo: %s", msg);
 }
 
 /* ZEPHCORE: one "satellites lost" notice per outage; the LoRa reports resume
@@ -2322,8 +2498,8 @@ static bool handle_tracking_cli(const char *line, char *reply, bool silent)
 		if (strcmp(line, "wp clear") == 0) {
 			/* Point 1 (GPS HOME) is never renamed or reset. */
 			for (int i = 1; i < 10; i++) {
-				companion_mesh.prefs.home_lat[i] = 43.241117;
-				companion_mesh.prefs.home_lon[i] = 76.927301;
+				companion_mesh.prefs.home_lat[i] = ZC_POINT_DEFAULT_LAT_E7 / 1e7;
+				companion_mesh.prefs.home_lon[i] = ZC_POINT_DEFAULT_LON_E7 / 1e7;
 				companion_mesh.prefs.home_saved[i] = 0;
 				strcpy(companion_mesh.prefs.home_name[i], "FREE");
 			}
@@ -2370,7 +2546,7 @@ static bool handle_tracking_cli(const char *line, char *reply, bool silent)
 				strcpy(companion_mesh.prefs.home_name[slot], name);
 				k_event_post(&mesh_events, MESH_EVENT_PREFS_DIRTY);
 			}
-			companion_home_start_save();
+			companion_home_start_save(false);
 			if (name[0] != '\0') {
 				snprintf(reply, CLI_REPLY_SIZE,
 					 "OK - wp %d %s: waiting for fix",
@@ -2643,6 +2819,107 @@ static bool handle_tracking_cli(const char *line, char *reply, bool silent)
 	return false;
 }
 
+/* Geofence CLI (ADR 0011). geo save is local/app only — the remote allowlist
+ * keeps it out; set geo.point is the remote coordinate path. */
+static bool handle_geo_cli(const char *line, char *reply)
+{
+	bool geo_on = (companion_geo.flags & GEO_FLAG_ENABLED) != 0;
+
+	if (geo_on &&
+	    (strcmp(line, "gps off") == 0 ||
+	     strncmp(line, "set gps duty ", 13) == 0)) {
+		strcpy(reply, "ERROR: geo is on; use geo off");
+		return true;
+	}
+	if (strcmp(line, "geo") == 0 || strcmp(line, "geo on") == 0 ||
+	    strcmp(line, "geo off") == 0) {
+		if (strcmp(line, "geo") != 0) {
+			return companion_geo_set_enabled(strcmp(line, "geo on") == 0,
+							 reply);
+		}
+		snprintf(reply, CLI_REPLY_SIZE, "geo: %s  %u m  %.5f,%.5f",
+			 geo_on ? "on" : "off",
+			 companion_mesh.prefs.geo_radius_m,
+			 companion_mesh.prefs.geo_lat_e7 / 1e7,
+			 companion_mesh.prefs.geo_lon_e7 / 1e7);
+		return true;
+	}
+	if (strcmp(line, "geo save") == 0) {
+		if (!gps_is_available()) {
+			strcpy(reply, "ERROR: GPS unavailable");
+			return true;
+		}
+		if (companion_home.nav_active) {
+			strcpy(reply, "ERROR: navigation is on");
+			return true;
+		}
+		if (companion_home.save_active) {
+			strcpy(reply, "ERROR: saving point");
+			return true;
+		}
+		if (companion_tracking.enabled) {
+			strcpy(reply, "ERROR: tracking is active; use tracking off");
+			return true;
+		}
+		companion_home_start_save(true);
+		strcpy(reply, "OK - geo save: waiting for fix");
+		return true;
+	}
+	if (strcmp(line, "get geo.point") == 0) {
+		snprintf(reply, CLI_REPLY_SIZE, "geo.point: %.5f,%.5f (%s)",
+			 companion_mesh.prefs.geo_lat_e7 / 1e7,
+			 companion_mesh.prefs.geo_lon_e7 / 1e7,
+			 companion_mesh.prefs.geo_saved ? "saved" : "default");
+		return true;
+	}
+	if (strncmp(line, "set geo.point ", 14) == 0) {
+		double lat, lon;
+
+		if (!geofence_parse_point(line + 14, &lat, &lon)) {
+			strcpy(reply, "usage: set geo.point <lat> <lon>  e.g. set geo.point 43.24112 76.92730");
+			return true;
+		}
+		companion_mesh.prefs.geo_lat_e7 = (int32_t)llround(lat * 1e7);
+		companion_mesh.prefs.geo_lon_e7 = (int32_t)llround(lon * 1e7);
+		companion_mesh.prefs.geo_saved = 1;
+		save_prefs_to_flash();
+		if (geo_on) {
+			geofence_reset(&companion_geo.fsm);
+		}
+		snprintf(reply, CLI_REPLY_SIZE, "OK - geo.point %.5f,%.5f",
+			 companion_mesh.prefs.geo_lat_e7 / 1e7,
+			 companion_mesh.prefs.geo_lon_e7 / 1e7);
+		return true;
+	}
+	if (strcmp(line, "get geo.radius") == 0) {
+		snprintf(reply, CLI_REPLY_SIZE, "geo.radius: %u m (50..50000)",
+			 companion_mesh.prefs.geo_radius_m);
+		return true;
+	}
+	if (strncmp(line, "set geo.radius ", 15) == 0) {
+		const char *arg = line + 15;
+		char *end = NULL;
+		long meters = strtol(arg, &end, 10);
+
+		while (*end == ' ' || *end == '\r' || *end == '\n' || *end == '\t') {
+			end++;
+		}
+		if (arg[0] < '0' || arg[0] > '9' || *end != '\0' ||
+		    meters < (long)GEO_RADIUS_M_MIN || meters > (long)GEO_RADIUS_M_MAX) {
+			strcpy(reply, "usage: set geo.radius <meters 50..50000>");
+			return true;
+		}
+		companion_mesh.prefs.geo_radius_m = (uint16_t)meters;
+		save_prefs_to_flash();
+		if (geo_on) {
+			geofence_reset(&companion_geo.fsm);
+		}
+		snprintf(reply, CLI_REPLY_SIZE, "OK - geo.radius %u m", (unsigned)meters);
+		return true;
+	}
+	return false;
+}
+
 /* Offgrid is deliberately a runtime switch: a reboot always starts a client
  * in its normal non-forwarding mode.  The same CLI executor services USB and
  * vContact, so no separate remote-command implementation is needed. */
@@ -2756,6 +3033,7 @@ static void companion_cli_exec(const char *line, uint32_t sender_timestamp,
 #endif
 	if (handle_offgrid_cli(line, reply) ||
 	    handle_tracking_cli(line, reply, silent_notifications) ||
+	    handle_geo_cli(line, reply) ||
 	    handle_findme_cli(line, reply) ||
 	    handle_autoshutdown_emergency_cli(line, reply)) return;
 	if (handle_vcontact_settings_cli(line, reply)) {

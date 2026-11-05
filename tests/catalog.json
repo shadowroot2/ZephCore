@@ -83,6 +83,21 @@
       "source": "tests/unit/helper_tests.cpp"
     },
     {
+      "id": "UNIT-GEO-001",
+      "name": "Exit confirms on 2 fixes beyond, return at hysteresis and re-arms",
+      "source": "tests/unit/helper_tests.cpp"
+    },
+    {
+      "id": "UNIT-GEO-002",
+      "name": "Exit and return messages pin the template and fit the mesh frame",
+      "source": "tests/unit/helper_tests.cpp"
+    },
+    {
+      "id": "UNIT-GEO-003",
+      "name": "set geo.point accepts exactly two in-range numbers",
+      "source": "tests/unit/helper_tests.cpp"
+    },
+    {
       "id": "UNIT-CLI-005",
       "name": "wp save parses slot and name and pins the 10-char limit",
       "source": "tests/unit/helper_tests.cpp"
@@ -385,6 +400,11 @@
     {
       "id": "UNIT-PJSON-010",
       "name": "ShadoW minute timezones migrate once to float hours without losing custom prefs",
+      "source": "tests/unit/prefs_json_tests.cpp"
+    },
+    {
+      "id": "UNIT-PJSON-011",
+      "name": "geo.radius 0 on flash means unset and out-of-range clamps",
       "source": "tests/unit/prefs_json_tests.cpp"
     },
     {

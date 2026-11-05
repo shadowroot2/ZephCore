@@ -905,6 +905,21 @@ Like the standby depth, the choice follows from the duty interval alone, never f
 
 Repeaters and room servers default to `CONFIG_ZEPHCORE_REPEATER_GPS_INTERVAL_SEC` (48 h) for GPS duty — GPS wakes only for a periodic time-sync fix (5-minute acquire window). The interval is now unified with companion via `prefs.gps_interval` and is configurable at runtime via `set gps duty <sec>`; persists across reboots.
 
+**Geofence (`geo`, companion)**
+
+One saved point (`prefs.geo_lat_e7/geo_lon_e7`, via `geo save` or `set geo.point`) and one radius in meters
+(`prefs.geo_radius_m`, default 3000, range 50..50000) guard the node itself (ADR 0011). `geo on` owns
+the GPS duty while on: it saves the enabled/duty pair, keeps the GPS powered at 300 s, and restores
+the pair on `geo off` — the same ownership pattern as tracking, with which it is mutually exclusive;
+nav, a pending point save and a waiting SOS likewise refuse a toggle so every save/restore pair stays
+LIFO. `geo save` is the `wp save` pipeline with a geo target. Evaluation is per fresh fix (age ≤ 30 s)
+on the main-thread fix event (`helpers/GeoFence.h`, host-tested): exit fires on the 2nd consecutive fix
+beyond the radius, return on dropping below radius − 50 m, and each event fires once per state change.
+Both alerts go to the tracking group as hidden LoRa messages (`sendGroupMessage` without the local
+queue — never in the sender's own group feed, no vContact path), formatted by `geofence_format_msg`.
+The geo prefs sit in NodePrefs padding holes on purpose — companion DRAM is full and the struct must
+not grow.
+
 ### 7.4 USB (`adapters/usb/`)
 
 - **`ZephyrUSBCDC`** (every role): the USB device and its CDC ACM class, the 1200-baud touch into the bootloader, DTR

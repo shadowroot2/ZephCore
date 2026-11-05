@@ -28,6 +28,7 @@
 #include <CompanionSOSPolicy.h>
 #include <GpsSwitchPolicy.h>
 #include <TrackingMessage.h>
+#include <GeoFence.h>
 #include <RepeaterCLIHelp.h>
 #undef CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE
 #undef CONFIG_LOG
@@ -172,7 +173,7 @@ TEST(repeater_remote_help, "UNIT-CLI-001", "Repeater remote help is categorized 
 TEST(companion_cli_help, "UNIT-CLI-002", "Companion app and remote help are categorized and frame bounded") {
     const char *app_commands[] = {
         "help", "?", "help id", "help rf", "help cad", "help mesh", "help gps",
-        "help wifi", "help nav", "help extra", "help ui", "help power", "help stat", "help sys"
+        "help wifi", "help nav", "help geo", "help extra", "help ui", "help power", "help stat", "help sys"
     };
     for (const char *command : app_commands) {
         const char *reply = companion_app_cli_help(command);
@@ -193,6 +194,8 @@ TEST(companion_cli_help, "UNIT-CLI-002", "Companion app and remote help are cate
 	CHECK(std::strstr(companion_remote_cli_help("help sys"), "start ota") == nullptr);
 	CHECK(std::strstr(companion_remote_cli_help("help sys"), "start dfu") == nullptr);
 	CHECK(std::strstr(companion_remote_cli_help("help sys"), "erase") == nullptr);
+	CHECK(std::strstr(companion_remote_cli_help("help geo"), "geo save") == nullptr);
+	CHECK(std::strstr(companion_remote_cli_help("help geo"), "43.24112") != nullptr);
 	const char *local_only[] = {
 		"get wifi.pwd", "set wifi.pwd secret", "set wifi.ssid network", "set wifi.clear",
 		"set pin 123456", "set freq 869.525", "set radio 869.525,125,9,5",
@@ -202,6 +205,8 @@ TEST(companion_cli_help, "UNIT-CLI-002", "Companion app and remote help are cate
 		"nav telemetry", "nav telemetry on", "nav telemetry off",
 		"get nav.telemetry.interval", "set nav.telemetry.interval 10",
 		"get nav.interval", "set nav.interval 2",
+		"geo save",
+		"get geo.radius", "set geo.radius 3000",
 		"get wifi.ssid", "clear stats",
 	};
 	for (const char *command : local_only) {
@@ -211,6 +216,8 @@ TEST(companion_cli_help, "UNIT-CLI-002", "Companion app and remote help are cate
 		"set wifi.enabled 0", "get freq", "get radio", "get tx",
 		"set af 3", "get adc.multiplier", "get autoshutdown", "reboot",
 		"buzz", "leds", "gps", "tracking", "nav", "wp list",
+		"geo", "geo on", "geo off", "get geo.point",
+		"set geo.point 43.24112 76.92730",
 	};
 	for (const char *command : remote_allowed) {
 		CHECK(companion_remote_cli_command_allowed(command));
@@ -331,6 +338,50 @@ TEST(nav_report, "UNIT-NAV-003", "Periodic vContact report carries distance, sec
 	nav_report_str(buf, sizeof(buf), 840.4, 0.0);
 	CHECK(std::strcmp(buf, "840 м  С  ⬆️") == 0);
 	CHECK(std::strlen(buf) <= 159);
+}
+TEST(geofence_fsm, "UNIT-GEO-001", "Exit confirms on 2 fixes beyond, return at hysteresis and re-arms") {
+	struct geofence_state g;
+	geofence_reset(&g);
+	CHECK(geofence_update(&g, 100.0, 3000.0) == GEO_EVENT_NONE);
+	CHECK(geofence_update(&g, 3000.0, 3000.0) == GEO_EVENT_NONE);
+	/* One fix beyond is not enough; an approach resets the count. */
+	CHECK(geofence_update(&g, 3100.0, 3000.0) == GEO_EVENT_NONE);
+	CHECK(geofence_update(&g, 2900.0, 3000.0) == GEO_EVENT_NONE);
+	CHECK(geofence_update(&g, 3100.0, 3000.0) == GEO_EVENT_NONE);
+	/* Second consecutive beyond fires the exit exactly once. */
+	CHECK(geofence_update(&g, 3200.0, 3000.0) == GEO_EVENT_EXIT);
+	CHECK(geofence_update(&g, 3500.0, 3000.0) == GEO_EVENT_NONE);
+	/* Return needs the hysteresis band: 2980 is still out. */
+	CHECK(geofence_update(&g, 2980.0, 3000.0) == GEO_EVENT_NONE);
+	CHECK(geofence_update(&g, 2940.0, 3000.0) == GEO_EVENT_REENTER);
+	/* Re-armed: two beyond again fire a second exit. */
+	CHECK(geofence_update(&g, 3100.0, 3000.0) == GEO_EVENT_NONE);
+	CHECK(geofence_update(&g, 3100.0, 3000.0) == GEO_EVENT_EXIT);
+}
+TEST(geofence_msg, "UNIT-GEO-002", "Exit and return messages pin the template and fit the mesh frame") {
+	char buf[160];
+	geofence_format_msg(buf, sizeof(buf), true, 3000.0, 3500.0, 43.24112, 76.92730);
+	CHECK(std::strcmp(buf, "🚪 Вышел из геозоны (> 3.00 км)\n📏 Расстояние: 3.50 км\n"
+			      "📍 https://maps.google.com/?q=43.24112,76.92730") == 0);
+	CHECK(std::strlen(buf) <= 159);
+	geofence_format_msg(buf, sizeof(buf), false, 3000.0, 2900.0, 43.24112, 76.92730);
+	CHECK(std::strcmp(buf, "✅ Вернулся в геозону (< 3.00 км)\n📏 Расстояние: 2.90 км\n"
+			      "📍 https://maps.google.com/?q=43.24112,76.92730") == 0);
+	CHECK(std::strlen(buf) <= 159);
+}
+TEST(geofence_parse, "UNIT-GEO-003", "set geo.point accepts exactly two in-range numbers") {
+	double lat, lon;
+	CHECK(geofence_parse_point("43.24112 76.92730", &lat, &lon));
+	CHECK(lat > 43.241 && lat < 43.242 && lon > 76.927 && lon < 76.928);
+	CHECK(geofence_parse_point("  -45.5  -120.25  ", &lat, &lon));
+	CHECK(lat == -45.5 && lon == -120.25);
+	CHECK(geofence_parse_point("90 180", &lat, &lon));
+	CHECK(!geofence_parse_point("91 0", &lat, &lon));
+	CHECK(!geofence_parse_point("0 181", &lat, &lon));
+	CHECK(!geofence_parse_point("abc def", &lat, &lon));
+	CHECK(!geofence_parse_point("43.2", &lat, &lon));
+	CHECK(!geofence_parse_point("43.2 76.9 1", &lat, &lon));
+	CHECK(!geofence_parse_point("", &lat, &lon));
 }
 TEST(companion_wp_save, "UNIT-CLI-005", "wp save parses slot and name and pins the 10-char limit") {
 	int slot;

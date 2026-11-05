@@ -82,7 +82,7 @@ static inline const char *companion_app_cli_help(const char *line)
 	if (strcmp(line, "help") == 0 || strcmp(line, "?") == 0) {
 		return "Groups: id | rf | cad | mesh | gps"
 #if COMPANION_HAS_GPS
-		       " | nav"
+		       " | nav | geo"
 #endif
 #if IS_ENABLED(CONFIG_ZEPHCORE_COMPANION_WIFI)
 		       " | wifi"
@@ -124,6 +124,10 @@ static inline const char *companion_app_cli_help(const char *line)
 		       "wp save [n [name]]\nwp name [n] <name>\n"
 		       "get/set nav.interval\nget/set nav.telemetry.interval";
 	}
+	if (strcmp(line, "help geo") == 0) {
+		return "geo [on|off]\ngeo save\nget/set geo.point <lat> <lon>\n"
+		       "e.g. set geo.point 43.24112 76.92730\nget/set geo.radius (meters 50..50000)";
+	}
 #endif
 #if IS_ENABLED(CONFIG_ZEPHCORE_COMPANION_WIFI)
 	if (strcmp(line, "help wifi") == 0) {
@@ -158,7 +162,7 @@ static inline const char *companion_remote_cli_help(const char *line)
 	if (strcmp(line, "help") == 0 || strcmp(line, "?") == 0) {
 		return "Groups: id | rf | cad | mesh | gps"
 #if COMPANION_HAS_GPS
-		       " | nav"
+		       " | nav | geo"
 #endif
 #if IS_ENABLED(CONFIG_ZEPHCORE_COMPANION_WIFI)
 		       " | wifi"
@@ -186,6 +190,10 @@ static inline const char *companion_remote_cli_help(const char *line)
 #if COMPANION_HAS_GPS
 	if (strcmp(line, "help nav") == 0) {
 		return "nav\nwp list";
+	}
+	if (strcmp(line, "help geo") == 0) {
+		return "geo [on|off]\nget/set geo.point <lat> <lon>\n"
+		       "e.g. set geo.point 43.24112 76.92730";
 	}
 #endif
 #if IS_ENABLED(CONFIG_ZEPHCORE_COMPANION_WIFI)
@@ -222,6 +230,14 @@ static inline const char *companion_remote_cli_help(const char *line)
 
 static inline bool companion_remote_cli_command_allowed(const char *cmd)
 {
+	/* Geofence family: the toggle and set geo.point over the air, geo save
+	 * and the radius stay local. Matched in code so the busy allowlist
+	 * tables below stay as they are (DRAM on RAM-bound companions). */
+	if (strcmp(cmd, "geo") == 0 || strcmp(cmd, "geo on") == 0 ||
+	    strcmp(cmd, "geo off") == 0 || strcmp(cmd, "get geo.point") == 0 ||
+	    strncmp(cmd, "set geo.point ", 14) == 0) {
+		return true;
+	}
 	static const char *const exact[] = {
 		"get radio", "get freq", "get af", "get dutycycle", "get int.thresh", "get cad",
 		"get radio.rxgain", "get tx", "get rxdelay", "get agc.reset.interval",

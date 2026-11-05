@@ -21,6 +21,9 @@
 /* TZ_OFFSET_MIN / TZ_OFFSET_MAX and the quarter-hour helpers for tz_offset. */
 #include "tz_offset.h"
 
+/* GEO_RADIUS_M_* bounds and the geofence defaults (ADR 0011). */
+#include "GeoFence.h"
+
 /* ── Accepted radio parameter ranges ──
  * One definition for everything that accepts or validates a radio preset
  * (CLIs, the companion protocol, the load-time checks): a setter must never
@@ -70,6 +73,10 @@ struct NodePrefs {
 	/* ---- Common fields (both roles) ---- */
 	float airtime_factor;
 	char node_name[32];
+	/* ADR 0011 geofence fields sit in existing struct padding on purpose:
+	 * NodePrefs rides in the static mesh object and companion DRAM is full,
+	 * so it must not grow. Keep them in the holes if you touch this layout. */
+	uint32_t geo_lon_e7;
 	double node_lat, node_lon;
 	char password[16];
 	float freq;
@@ -209,12 +216,17 @@ struct NodePrefs {
 	uint16_t nav_telemetry_interval_min;
 	uint8_t fall_sensitivity;
 	uint8_t fall_enabled;
+	uint32_t geo_lat_e7; /* ADR 0011, padding hole — see geo_lon_e7 */
 	/* GPS HOME waypoint list: slot 0 is always named GPS HOME and is the
 	 * default selection; names of slots 1..9 are theirs to keep or change. */
 	double home_lat[10];
 	double home_lon[10];
 	uint8_t home_saved[10];
 	char home_name[10][12];
+	/* ADR 0011, tail padding — see geo_lon_e7. geo_radius_m is meters,
+	 * 0 on flash means "unset" (defaulted); geo on/off is runtime state. */
+	uint16_t geo_radius_m;
+	uint8_t geo_saved;
 };
 
 /* Range guards for prefs that came off flash: a blob can be intact and
@@ -313,6 +325,18 @@ static inline void sanitizeNodePrefs(NodePrefs* p) {
 		p->home_name[i][sizeof(p->home_name[i]) - 1] = '\0';
 	}
 	strcpy(p->home_name[0], "GPS HOME");
+	p->geo_lat_e7 = clampPref<int32_t>(p->geo_lat_e7, -900000000, 900000000);
+	p->geo_lon_e7 = clampPref<int32_t>(p->geo_lon_e7, -1800000000, 1800000000);
+	p->geo_saved = p->geo_saved ? 1 : 0;
+	/* 0 means "unset", so it falls back to the default zone rather than to
+	 * the clamp floor. */
+	if (p->geo_radius_m == 0) {
+		p->geo_radius_m = GEO_RADIUS_M_DEFAULT;
+	} else {
+		p->geo_radius_m = clampPref<uint16_t>(p->geo_radius_m,
+						     GEO_RADIUS_M_MIN,
+						     GEO_RADIUS_M_MAX);
+	}
 
 	p->cr           = clampPref<uint8_t>(p->cr, 5, 8);
 	p->tx_power_dbm = clampPref<int8_t>(p->tx_power_dbm, -9, 30);
@@ -510,11 +534,15 @@ static inline void initNodePrefs(NodePrefs* prefs) {
 	prefs->fall_enabled = 1;
 	/* Every slot starts at the Abay × Baitursynov intersection, Almaty. */
 	for (int i = 0; i < 10; i++) {
-		prefs->home_lat[i] = 43.241117;
-		prefs->home_lon[i] = 76.927301;
+		prefs->home_lat[i] = ZC_POINT_DEFAULT_LAT_E7 / 1e7;
+		prefs->home_lon[i] = ZC_POINT_DEFAULT_LON_E7 / 1e7;
 		prefs->home_saved[i] = 0;
 		strcpy(prefs->home_name[i], (i == 0) ? "GPS HOME" : "FREE");
 	}
+	prefs->geo_lat_e7 = GEO_LAT7_DEFAULT;
+	prefs->geo_lon_e7 = GEO_LON7_DEFAULT;
+	prefs->geo_saved = 0;
+	prefs->geo_radius_m = GEO_RADIUS_M_DEFAULT;
 	/* Companion-only default, set here so every caller of initNodePrefs() sees
 	 * it. 0 means disabled and is a legal stored value. */
 #ifdef CONFIG_ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS

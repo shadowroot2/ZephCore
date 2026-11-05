@@ -7,6 +7,7 @@
 #include <helpers/AdvertDataHelpers.h>
 #include <helpers/TxtDataHelpers.h>
 #include <helpers/RepeaterCLIHelp.h>
+#include <helpers/TrackingMessage.h>
 #include <helpers/battery_curve.h>
 #include <helpers/MeshcoreJson.h>
 #include <adapters/radio/LoRaRadio.h>
@@ -1693,7 +1694,9 @@ void RepeaterMesh::batteryAlertTick() {
         unsigned sats = pos.satellites > 99 ? 99 : pos.satellites;
         len += snprintf(text + len, 161 - len, "\n🛰️ %u fix", sats);
         if (len > 0 && len < 160) {
-            snprintf(text + len, 161 - len, "\n📍 https://maps.google.com/?q=%.5f,%.5f", lat, lon);
+            char url[48];
+            tracking_maps_url(url, sizeof(url), lat, lon);
+            snprintf(text + len, 161 - len, "\n📍 %s", url);
         }
     } else if (gps_is_available() && len > 0 && len < 160) {
         struct gps_state_info gsi = {};

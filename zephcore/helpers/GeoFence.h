@@ -1,0 +1,124 @@
+/* SPDX-License-Identifier: MIT */
+#pragma once
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+#include "TrackingMessage.h"
+
+/* Geofence ("поводок"): the node itself versus one saved point (ADR 0011).
+ * Pure logic — the caller feeds fresh fixes only (age <= GEO_FIX_MAX_AGE_MS)
+ * and owns the GPS duty. Exit fires on the GEO_EXIT_CONFIRM_FIXES-th
+ * consecutive fix beyond the radius; return fires once at
+ * radius - GEO_REENTER_HYST_M and re-arms the exit trigger. */
+
+#define GEO_EXIT_CONFIRM_FIXES	2
+#define GEO_REENTER_HYST_M	50.0
+#define GEO_DUTY_SEC		300U
+#define GEO_FIX_MAX_AGE_MS	30000U
+#define GEO_RADIUS_M_DEFAULT	3000U
+#define GEO_RADIUS_M_MIN	50U
+#define GEO_RADIUS_M_MAX	50000U
+/* The default saved point (Abay × Baitursynov, Almaty): home slots and the
+ * geofence point all start here. */
+#define ZC_POINT_DEFAULT_LAT_E7	43241117 /* 43.241117 deg x 1e7 */
+#define ZC_POINT_DEFAULT_LON_E7	76927301 /* 76.927301 deg x 1e7 */
+#define GEO_LAT7_DEFAULT	ZC_POINT_DEFAULT_LAT_E7
+#define GEO_LON7_DEFAULT	ZC_POINT_DEFAULT_LON_E7
+
+#define GEO_EMOJI_EXIT		"🚪"
+#define GEO_EMOJI_ENTER		"✅"
+
+enum geofence_event {
+	GEO_EVENT_NONE = 0,
+	GEO_EVENT_EXIT,
+	GEO_EVENT_REENTER,
+};
+
+struct geofence_state {
+	uint8_t outside; /* alerted and still out; re-arms on return */
+	uint8_t beyond;	 /* consecutive fixes past the radius */
+};
+
+static inline void geofence_reset(struct geofence_state *g)
+{
+	g->outside = 0;
+	g->beyond = 0;
+}
+
+/* Feed the distance of one fresh fix; returns the event to report, if any. */
+static inline enum geofence_event geofence_update(struct geofence_state *g,
+						  double dist_m,
+						  double radius_m)
+{
+	if (g->outside) {
+		if (dist_m < radius_m - GEO_REENTER_HYST_M) {
+			g->outside = 0;
+			g->beyond = 0;
+			return GEO_EVENT_REENTER;
+		}
+		return GEO_EVENT_NONE;
+	}
+	if (dist_m > radius_m) {
+		if (g->beyond + 1 >= GEO_EXIT_CONFIRM_FIXES) {
+			g->outside = 1;
+			g->beyond = 0;
+			return GEO_EVENT_EXIT;
+		}
+		g->beyond++;
+		return GEO_EVENT_NONE;
+	}
+	g->beyond = 0;
+	return GEO_EVENT_NONE;
+}
+
+/* "🚪 Вышел из геозоны (> 3.00 км)\n📏 Расстояние: 3.50 км\n📍 <maps link>",
+ * or the "✅ Вернулся в геозону (< ...)" twin. Fits the mesh text frame. */
+static inline void geofence_format_msg(char *buf, size_t len, bool exited,
+				       double radius_m, double dist_m,
+				       double lat_deg, double lon_deg)
+{
+	char r[16], d[16], url[48];
+
+	nav_distance_ru_str(r, sizeof(r), radius_m);
+	nav_distance_ru_str(d, sizeof(d), dist_m);
+	tracking_maps_url(url, sizeof(url), lat_deg, lon_deg);
+	snprintf(buf, len, "%s %s (%s %s)\n📏 Расстояние: %s\n📍 %s",
+		 exited ? GEO_EMOJI_EXIT : GEO_EMOJI_ENTER,
+		 exited ? "Вышел из геозоны" : "Вернулся в геозону",
+		 exited ? ">" : "<", r, d, url);
+}
+
+/* "43.24112 76.92730" -> two degrees in range. Exactly two finite numbers,
+ * no trailing tokens. */
+static inline bool geofence_parse_point(const char *arg, double *lat, double *lon)
+{
+	char *end;
+	double a = strtod(arg, &end);
+
+	if (end == arg) {
+		return false;
+	}
+	while (*end == ' ' || *end == '\t') {
+		end++;
+	}
+	const char *second = end;
+	double b = strtod(second, &end);
+
+	if (end == second) {
+		return false;
+	}
+	while (*end == ' ' || *end == '\r' || *end == '\n' || *end == '\t') {
+		end++;
+	}
+	if (*end != '\0' ||
+	    a < -90.0 || a > 90.0 || b < -180.0 || b > 180.0) {
+		return false;
+	}
+	*lat = a;
+	*lon = b;
+	return true;
+}
