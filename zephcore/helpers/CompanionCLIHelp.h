@@ -10,9 +10,10 @@
 	DT_HAS_COMPAT_STATUS_OKAY(quectel_lc76g) || \
 	DT_HAS_COMPAT_STATUS_OKAY(luatos_air530z))
 
-/* ZEPHCORE: arguments of "wp save [n] [name]" — an optional slot 1..10 and an
- * optional name of at most WP_SAVE_NAME_MAX chars (spaces count; slot 1 is
- * always GPS HOME). Returns the error reply, or NULL and fills the 0-based
+/* ZEPHCORE: arguments of "wp save [n] [name]" and "wp name [n] <name>" — an
+ * optional slot 1..10 and a name of at most WP_SAVE_NAME_MAX chars (spaces
+ * count; slot 1 is always GPS HOME). A name without a slot names the
+ * selected point. Returns the error reply, or NULL and fills the 0-based
  * slot and the name ("" keeps the default FREE -> SAVED naming rule). */
 #define WP_SAVE_NAME_MAX 10
 
@@ -27,12 +28,12 @@ static inline const char *companion_wp_save_parse(const char *args, int selected
 	while (*p == ' ') {
 		p++;
 	}
-	if (*p != '\0') {
+	if (*p >= '0' && *p <= '9') {
 		char *end;
 		long v = strtol(p, &end, 10);
 
-		if (end == p || (*end != '\0' && *end != ' ') || v < 1 || v > 10) {
-			return "Error: wp save 1..10";
+		if ((*end != '\0' && *end != ' ') || v < 1 || v > 10) {
+			return "Error: wp 1..10";
 		}
 		slot = (int)v - 1;
 		p = end;
@@ -119,7 +120,9 @@ static inline const char *companion_app_cli_help(const char *line)
 	}
 #if COMPANION_HAS_GPS
 	if (strcmp(line, "help nav") == 0) {
-		return "nav [on|off]\nwp [list|n|clear|save [n] [name]]\nget/set nav.interval";
+		return "nav [on|off]\nnav telemetry [on|off]\nwp [list|n|clear]\n"
+		       "wp save [n [name]]\nwp name [n] <name>\n"
+		       "get/set nav.interval\nget/set nav.telemetry.interval";
 	}
 #endif
 #if IS_ENABLED(CONFIG_ZEPHCORE_COMPANION_WIFI)

@@ -198,7 +198,10 @@ TEST(companion_cli_help, "UNIT-CLI-002", "Companion app and remote help are cate
 		"set pin 123456", "set freq 869.525", "set radio 869.525,125,9,5",
 		"set tx 22", "set adc.multiplier 1.0", "set autoshutdown 3200",
 		"shutdown", "shutdown y", "poweroff", "offgrid on", "offgrid off", "wp clear", "wp 1", "nav on", "nav off",
-		"wp save", "wp save 2", "wp save 2 Base", "get nav.interval", "set nav.interval 2",
+		"wp save", "wp save 2", "wp save 2 Base", "wp name 2 TEST", "wp name TEST",
+		"nav telemetry", "nav telemetry on", "nav telemetry off",
+		"get nav.telemetry.interval", "set nav.telemetry.interval 10",
+		"get nav.interval", "set nav.interval 2",
 		"get wifi.ssid", "clear stats",
 	};
 	for (const char *command : local_only) {
@@ -345,17 +348,18 @@ TEST(companion_wp_save, "UNIT-CLI-005", "wp save parses slot and name and pins t
 	CHECK(companion_wp_save_parse(" 2 Base  ", 4, &slot, name, sizeof(name)) == NULL);
 	CHECK(slot == 1);
 	CHECK(std::strcmp(name, "Base") == 0);
+	CHECK(companion_wp_save_parse("Base", 4, &slot, name, sizeof(name)) == NULL);
+	CHECK(slot == 4);
+	CHECK(std::strcmp(name, "Base") == 0);
 	CHECK(companion_wp_save_parse("10 1234567890", 4, &slot, name, sizeof(name)) == NULL);
 	CHECK(slot == 9);
 	CHECK(std::strcmp(name, "1234567890") == 0);
 	CHECK(std::strcmp(companion_wp_save_parse("0", 4, &slot, name, sizeof(name)),
-			  "Error: wp save 1..10") == 0);
+			  "Error: wp 1..10") == 0);
 	CHECK(std::strcmp(companion_wp_save_parse("11", 4, &slot, name, sizeof(name)),
-			  "Error: wp save 1..10") == 0);
-	CHECK(std::strcmp(companion_wp_save_parse("Base", 4, &slot, name, sizeof(name)),
-			  "Error: wp save 1..10") == 0);
+			  "Error: wp 1..10") == 0);
 	CHECK(std::strcmp(companion_wp_save_parse("3.5", 4, &slot, name, sizeof(name)),
-			  "Error: wp save 1..10") == 0);
+			  "Error: wp 1..10") == 0);
 	CHECK(std::strcmp(companion_wp_save_parse("1 Base", 4, &slot, name, sizeof(name)),
 			  "Error: point 1 stays GPS HOME") == 0);
 	CHECK(std::strcmp(companion_wp_save_parse("3 12345678901", 4, &slot, name, sizeof(name)),

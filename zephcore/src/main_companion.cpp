@@ -1543,11 +1543,11 @@ struct companion_home_state {
 	uint32_t saved_duty_sec;
 	int64_t save_started_ms;
 	int selected; /* 0..9; always 0 after boot */
-	char save_name[12]; /* name applied when the pending save lands ("" = default) */
 	struct nav_wrongway ww;
 	struct tracking_odometer nav_odo;
 	int64_t ladder_ms;    /* last wrong-way sample (0 = prime on next fix) */
 	int64_t report_ms;    /* next vContact nav report (0 = on next fix) */
+	int64_t telemetry_ms; /* next LoRa nav telemetry (0 = on next fix) */
 	int64_t nav_started_ms; /* travel time origin for the arrival report */
 };
 static struct companion_home_state companion_home;
@@ -1569,7 +1569,7 @@ static void companion_home_restore_gps(void)
 	}
 }
 
-static void companion_home_start_save(const char *name)
+static void companion_home_start_save(void)
 {
 	if (companion_home.save_active) {
 		return;
@@ -1578,12 +1578,6 @@ static void companion_home_start_save(const char *name)
 	companion_home.saved_duty_sec = gps_get_poll_interval_sec();
 	companion_home.save_active = true;
 	companion_home.save_started_ms = k_uptime_get();
-	if (name != NULL) {
-		strncpy(companion_home.save_name, name, sizeof(companion_home.save_name) - 1);
-		companion_home.save_name[sizeof(companion_home.save_name) - 1] = '\0';
-	} else {
-		companion_home.save_name[0] = '\0';
-	}
 	gps_set_poll_interval_sec(0);
 	if (!companion_home.gps_was_enabled) {
 		gps_enable(true);
@@ -1609,16 +1603,21 @@ static void companion_home_save_process(void)
 		companion_mesh.prefs.home_lat[i] = pos.latitude_ndeg / 1e9;
 		companion_mesh.prefs.home_lon[i] = pos.longitude_ndeg / 1e9;
 		companion_mesh.prefs.home_saved[i] = 1;
-		if (i != 0) {
-			if (companion_home.save_name[0] != '\0') {
-				strcpy(companion_mesh.prefs.home_name[i],
-				       companion_home.save_name);
-			} else if (strcmp(companion_mesh.prefs.home_name[i], "FREE") == 0) {
-				strcpy(companion_mesh.prefs.home_name[i], "SAVED");
-			}
+		if (i != 0 && strcmp(companion_mesh.prefs.home_name[i], "FREE") == 0) {
+			strcpy(companion_mesh.prefs.home_name[i], "SAVED");
 		}
-		companion_home.save_name[0] = '\0';
 		save_prefs_to_flash();
+		{
+			char msg[160];
+
+			snprintf(msg, sizeof(msg),
+				 "Точка успешно сохранена!\n📍 %d-%s\n"
+				 "https://maps.google.com/?q=%.5f,%.5f",
+				 i + 1, companion_mesh.prefs.home_name[i],
+				 companion_mesh.prefs.home_lat[i],
+				 companion_mesh.prefs.home_lon[i]);
+			companion_mesh.vcontactNotify(msg);
+		}
 		companion_home.save_active = false;
 		companion_home_restore_gps();
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY) && IS_ENABLED(CONFIG_ZEPHCORE_UI_DESIGN_BUTTON)
@@ -1661,6 +1660,7 @@ static void companion_nav_set_enabled(bool enabled, char *reply)
 		tracking_odometer_reset(&companion_home.nav_odo, k_uptime_get());
 		companion_home.ladder_ms = 0;
 		companion_home.report_ms = 0;
+		companion_home.telemetry_ms = 0;
 		companion_home.nav_started_ms = k_uptime_get();
 		gps_set_poll_interval_sec(0);
 		if (!companion_home.gps_was_enabled) {
@@ -1669,6 +1669,41 @@ static void companion_nav_set_enabled(bool enabled, char *reply)
 		snprintf(reply, CLI_REPLY_SIZE, "OK - Navigation to %d-%s",
 			 companion_home.selected + 1,
 			 companion_mesh.prefs.home_name[companion_home.selected]);
+		if (companion_mesh.prefs.nav_report_interval_min != 0) {
+			char msg[192];
+			struct gps_position pos = {};
+			double home_lat =
+				companion_mesh.prefs.home_lat[companion_home.selected];
+			double home_lon =
+				companion_mesh.prefs.home_lon[companion_home.selected];
+			int n = snprintf(msg, sizeof(msg),
+					 "🚀 Начало навигации к точке\n📍 %d-%s",
+					 companion_home.selected + 1,
+					 companion_mesh.prefs.home_name[companion_home.selected]);
+
+			if (gps_is_enabled() && gps_get_last_known_position(&pos) &&
+			    pos.valid &&
+			    (k_uptime_get() - pos.timestamp_ms) <= 30000) {
+				char rep[48];
+
+				nav_report_str(rep, sizeof(rep),
+					tracking_distance_m(pos.latitude_ndeg,
+						pos.longitude_ndeg,
+						(int64_t)(home_lat * 1e9),
+						(int64_t)(home_lon * 1e9)),
+					nav_bearing_deg(pos.latitude_ndeg / 1e9,
+						pos.longitude_ndeg / 1e9,
+						home_lat, home_lon));
+				n += snprintf(msg + n, sizeof(msg) - n, "\n📏 %s", rep);
+				/* The start notice doubles as the first report. */
+				companion_home.report_ms = k_uptime_get() +
+					(int64_t)companion_mesh.prefs.nav_report_interval_min * 60000;
+			}
+			snprintf(msg + n, sizeof(msg) - n,
+				 "\nhttps://maps.google.com/?q=%.5f,%.5f",
+				 home_lat, home_lon);
+			companion_mesh.vcontactNotify(msg);
+		}
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
 		buzzer_play(MELODY_NAV_ON);
 #endif
@@ -1690,7 +1725,7 @@ static void companion_nav_set_enabled(bool enabled, char *reply)
 
 extern "C" void companion_home_save_from_ui(void)
 {
-	companion_home_start_save(NULL);
+	companion_home_start_save();
 }
 
 extern "C" void companion_nav_toggle_from_ui(void)
@@ -1720,6 +1755,26 @@ extern "C" bool companion_home_get_point(double *lat, double *lon, bool *saved,
 extern "C" bool companion_nav_active(void)
 {
 	return companion_home.nav_active;
+}
+
+/* ZEPHCORE: navigation telemetry to the tracking group ("nav telemetry"). */
+static bool companion_send_nav_telemetry_message(const char *text)
+{
+	ChannelDetails tracks_channel;
+	const char *group_name = companion_mesh.prefs.tracking_group_name;
+
+	if (!companion_get_public_channel(group_name, tracks_channel)) {
+		return false;
+	}
+	if (!companion_send_visible_group_message(tracks_channel, text)) {
+		LOG_WRN("nav telemetry: unable to queue %s message", group_name);
+		return false;
+	}
+	LOG_INF("nav telemetry: queued %s message: %s", group_name, text);
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
+	buzzer_play(MELODY_TRACKING_SENT);
+#endif
+	return true;
 }
 
 /* ZEPHCORE: navigation feedback per fix — wrong-way ladder, arrival and the
@@ -1756,11 +1811,12 @@ static void companion_nav_fix_process(void)
 		companion_home.ladder_ms = now;
 		if (nav_wrongway_update(&companion_home.ww, dist_m)) {
 			if (notify) {
-				char dstr[16], msg[96];
+				char rep[48], msg[160];
 
-				nav_distance_ru_str(dstr, sizeof(dstr), dist_m);
+				nav_report_str(rep, sizeof(rep), dist_m, bearing_deg);
 				snprintf(msg, sizeof(msg),
-					 "Вы движетесь в неверном направлении: %s", dstr);
+					 "Вы движетесь в неверном направлении!\n📍 %d-%s\n📏 %s",
+					 home_index + 1, home_name, rep);
 				companion_mesh.vcontactNotify(msg);
 			}
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
@@ -1774,19 +1830,26 @@ static void companion_nav_fix_process(void)
 
 	/* Arrived while walking to the point: success melody, then STOP. */
 	if (dist_m < 5.0) {
-		if (notify) {
-			char dur[16], dist[16], msg[192];
+		char dur[16], dist[16], tail[128], msg[192];
 
-			tracking_duration_str(dur, sizeof(dur),
-				(uint32_t)(now - companion_home.nav_started_ms));
-			nav_distance_ru_str(dist, sizeof(dist),
-				companion_home.nav_odo.distance_mm / 1000.0);
+		tracking_duration_str(dur, sizeof(dur),
+			(uint32_t)(now - companion_home.nav_started_ms));
+		nav_distance_ru_str(dist, sizeof(dist),
+			companion_home.nav_odo.distance_mm / 1000.0);
+		snprintf(tail, sizeof(tail),
+			 "📍 %d-%s\n⏱️: %s\n📏 %s\n"
+			 "https://maps.google.com/?q=%.5f,%.5f",
+			 home_index + 1, home_name, dur, dist,
+			 pos.latitude_ndeg / 1e9, pos.longitude_ndeg / 1e9);
+		if (notify) {
 			snprintf(msg, sizeof(msg),
-				 "Вы прибыли в точку назначения!\n📍 %d-%s\n⏱️: %s\n📏 %s\n"
-				 "https://maps.google.com/?q=%.5f,%.5f",
-				 home_index + 1, home_name, dur, dist,
-				 pos.latitude_ndeg / 1e9, pos.longitude_ndeg / 1e9);
+				 "🏁 Вы прибыли в точку назначения!\n%s", tail);
 			companion_mesh.vcontactNotify(msg);
+		}
+		if (companion_mesh.prefs.nav_telemetry_enabled) {
+			snprintf(msg, sizeof(msg),
+				 "🏁 Прибыл в точку назначения!\n%s", tail);
+			companion_send_nav_telemetry_message(msg);
 		}
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
 		buzzer_play(MELODY_HOME_SAVED);
@@ -1798,12 +1861,27 @@ static void companion_nav_fix_process(void)
 
 	/* First fix after nav on, then every nav.interval minutes. */
 	if (notify && now >= companion_home.report_ms) {
-		char msg[48];
+		char rep[48], msg[96];
 
 		companion_home.report_ms = now +
 			(int64_t)companion_mesh.prefs.nav_report_interval_min * 60000;
-		nav_report_str(msg, sizeof(msg), dist_m, bearing_deg);
+		nav_report_str(rep, sizeof(rep), dist_m, bearing_deg);
+		snprintf(msg, sizeof(msg), "📍 %d-%s\n📏 %s",
+			 home_index + 1, home_name, rep);
 		companion_mesh.vcontactNotify(msg);
+	}
+
+	/* The same report over LoRa to the tracking group at its own cadence. */
+	if (companion_mesh.prefs.nav_telemetry_enabled &&
+	    now >= companion_home.telemetry_ms) {
+		char rep[48], msg[96];
+
+		companion_home.telemetry_ms = now +
+			(int64_t)companion_mesh.prefs.nav_telemetry_interval_min * 60000;
+		nav_report_str(rep, sizeof(rep), dist_m, bearing_deg);
+		snprintf(msg, sizeof(msg), "📍 %d-%s\n📏 %s",
+			 home_index + 1, home_name, rep);
+		companion_send_nav_telemetry_message(msg);
 	}
 }
 
@@ -2227,7 +2305,12 @@ static bool handle_tracking_cli(const char *line, char *reply, bool silent)
 				return true;
 			}
 			companion_home.selected = slot;
-			companion_home_start_save(name[0] != '\0' ? name : NULL);
+			if (name[0] != '\0') {
+				/* The name lands now; the coordinates wait for a fix. */
+				strcpy(companion_mesh.prefs.home_name[slot], name);
+				k_event_post(&mesh_events, MESH_EVENT_PREFS_DIRTY);
+			}
+			companion_home_start_save();
 			if (name[0] != '\0') {
 				snprintf(reply, CLI_REPLY_SIZE,
 					 "OK - wp %d %s: waiting for fix",
@@ -2236,6 +2319,28 @@ static bool handle_tracking_cli(const char *line, char *reply, bool silent)
 				snprintf(reply, CLI_REPLY_SIZE,
 					 "OK - wp %d: waiting for fix", slot + 1);
 			}
+			return true;
+		} else if (strncmp(line, "wp name", 7) == 0 &&
+			   (line[7] == '\0' || line[7] == ' ')) {
+			int slot;
+			char name[12];
+			const char *err;
+
+			err = companion_wp_save_parse(line + 7, companion_home.selected,
+						      &slot, name, sizeof(name));
+			if (err != NULL) {
+				strcpy(reply, err);
+				return true;
+			}
+			if (name[0] == '\0') {
+				strcpy(reply, "Error: wp name [n] <name>");
+				return true;
+			}
+			strcpy(companion_mesh.prefs.home_name[slot], name);
+			k_event_post(&mesh_events, MESH_EVENT_PREFS_DIRTY);
+			ui_request_render();
+			snprintf(reply, CLI_REPLY_SIZE, "OK - wp name %d %s",
+				 slot + 1, name);
 			return true;
 		} else {
 			long v = strtol(line + 3, nullptr, 10);
@@ -2327,6 +2432,57 @@ static bool handle_tracking_cli(const char *line, char *reply, bool silent)
 			snprintf(reply, CLI_REPLY_SIZE, "OK - nav.interval %lu min",
 				 minutes);
 		}
+		return true;
+	}
+	if (strcmp(line, "nav telemetry") == 0 ||
+	    strcmp(line, "nav telemetry on") == 0 ||
+	    strcmp(line, "nav telemetry off") == 0) {
+		if (strcmp(line, "nav telemetry on") == 0) {
+			companion_mesh.prefs.nav_telemetry_enabled = 1;
+			k_event_post(&mesh_events, MESH_EVENT_PREFS_DIRTY);
+			strcpy(reply, "OK - nav telemetry on");
+		} else if (strcmp(line, "nav telemetry off") == 0) {
+			companion_mesh.prefs.nav_telemetry_enabled = 0;
+			k_event_post(&mesh_events, MESH_EVENT_PREFS_DIRTY);
+			strcpy(reply, "OK - nav telemetry off");
+		} else {
+			snprintf(reply, CLI_REPLY_SIZE, "nav.telemetry: %s (%u min)",
+				 companion_mesh.prefs.nav_telemetry_enabled ?
+					"on" : "off",
+				 companion_mesh.prefs.nav_telemetry_interval_min);
+		}
+		return true;
+	}
+	if (strcmp(line, "get nav.telemetry.interval") == 0) {
+		snprintf(reply, CLI_REPLY_SIZE, "nav.telemetry.interval: %u min",
+			 companion_mesh.prefs.nav_telemetry_interval_min);
+		return true;
+	}
+	if (strncmp(line, "set nav.telemetry.interval ", 26) == 0) {
+		const char *arg = line + 26;
+		while (*arg == ' ') {
+			arg++;
+		}
+		char *end = NULL;
+		unsigned long minutes = strtoul(arg, &end, 10);
+		while (*end == ' ' || *end == '\r' || *end == '\n' || *end == '\t') {
+			end++;
+		}
+		if (arg[0] < '0' || arg[0] > '9' || *end != '\0' ||
+		    minutes < TRACKING_MIN_INTERVAL_MIN || minutes > UINT16_MAX) {
+			snprintf(reply, CLI_REPLY_SIZE,
+				 "ERROR: interval must be %u minutes or more",
+				 TRACKING_MIN_INTERVAL_MIN);
+			return true;
+		}
+		companion_mesh.prefs.nav_telemetry_interval_min = (uint16_t)minutes;
+		if (companion_home.nav_active) {
+			companion_home.telemetry_ms = k_uptime_get() +
+				(int64_t)minutes * 60000;
+		}
+		k_event_post(&mesh_events, MESH_EVENT_PREFS_DIRTY);
+		snprintf(reply, CLI_REPLY_SIZE, "OK - nav.telemetry.interval %lu min",
+			 minutes);
 		return true;
 	}
 	if (strcmp(line, "tracking") == 0) {

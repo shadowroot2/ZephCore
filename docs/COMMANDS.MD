@@ -16,6 +16,29 @@ LoRa CLI, capability оборудования и ограничения опас
 и соответствующий документ роли. BLE help должен помещаться в 172 байта
 текста, tagged remote reply — в 158 байт вместе с NUL.
 
+## Навигация companion (при GNSS)
+
+```text
+nav [on|off]
+nav telemetry [on|off]
+wp [list|n|clear]
+wp save [n [name]]
+wp name [n] <name]
+get/set nav.interval
+get/set nav.telemetry.interval
+```
+
+- Удалённо доступны только статус `nav` и `wp list`; остальное — local-only
+  (USB/BLE). Имена точек — до 10 символов (пробелы считаются), точка 1 всегда
+  `GPS HOME`.
+- `nav telemetry` (по умолчанию on) шлёт в группу tracking (`tracking_group`)
+  отчёт `📍 1-GPS HOME` + `📏 2.34 км  СВ  ↗️` по первому фиксу и далее раз в
+  `nav.telemetry.interval` (по умолчанию 10 мин, минимум 5) и сообщение
+  `🏁 Прибыл в точку назначения!` с точкой, временем в пути, пройденным
+  расстоянием и ссылкой на Google Maps при подходе ближе 5 м.
+- `nav.interval` — vContact-ритм (по умолчанию 1 мин; 0 = без уведомлений
+  навигации в vContact). Подробности — в [cli/companion.md](cli/companion.md).
+
 ## Удалённый CLI репиттера
 
 ```text

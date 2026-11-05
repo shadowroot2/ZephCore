@@ -180,12 +180,11 @@ static struct k_work_delayable advert_defer_work;
 #define HOME_HOLD_MS 1000U
 #define HOME_DOUBLE_MS 500U
 #define HOME_NAV_REFRESH_MS 5000U
-/* One action button: KEY_ENTER is the zephyr,input-longpress long-code, so a
- * short ENTER is already a hold and no double press can exist. Its NAV map:
- * tap = page, 2 taps = waypoint, hold = GO!, hold of HOME_SAVE_HOLD_MS = save. */
+/* One action button (ENTER_FROM_HOLD in ui_pages.h): its NAV map is tap =
+ * page, 2 taps = waypoint, hold = GO!, hold of HOME_SAVE_HOLD_MS = save.
+ * The ENTER press arrives after long_delay_ms, which the hold work subtracts
+ * to keep the physical threshold. */
 #define HOME_SAVE_HOLD_MS 5000U
-#define ENTER_IS_A_HOLD(node) || (DT_PROP_BY_IDX(node, long_codes, 0) == INPUT_KEY_ENTER)
-#define ENTER_FROM_HOLD (0 DT_FOREACH_STATUS_OKAY(zephyr_input_longpress, ENTER_IS_A_HOLD))
 #define LONGPRESS_DELAY_MS \
 	DT_PROP_OR(DT_COMPAT_GET_ANY_STATUS_OKAY(zephyr_input_longpress), long_delay_ms, 1000U)
 #define HOME_HOLD_DELAY_MS ((ENTER_FROM_HOLD) ? \
@@ -193,6 +192,7 @@ static struct k_work_delayable advert_defer_work;
 /* T1000-E style SOS: tap arms a window, hold in the window starts SOS. */
 #define SOS_ARM_WINDOW_MS 3000U
 static uint32_t sos_arm_until;
+static uint32_t sos_confirm_until; /* one-button SOS: second hold inside it sends */
 static uint32_t enter_press_at;
 static bool enter_captured;
 static bool home_press_active;
@@ -655,6 +655,10 @@ static void action_sos(void)
 		schedule_render();
 		return;
 	}
+	if (ENTER_FROM_HOLD) {
+		/* One action button: SOS sends from the first page only. */
+		return;
+	}
 
 	LOG_INF("SOS requested");
 	mesh_send_sos();
@@ -1100,6 +1104,33 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 			/* The hold threshold fires while the key is still down. */
 			home_press_active = true;
 			k_work_reschedule(&home_hold_work, K_MSEC(HOME_HOLD_DELAY_MS));
+			break;
+		}
+		if (ENTER_FROM_HOLD) {
+			/* One action button: no tap-then-hold window to shadow the
+			 * DFU/offgrid confirmations. SOS sends from the first
+			 * page only — one hold arms, the next hold inside the
+			 * confirm window sends. */
+			if (companion_sos_cancel_available()) {
+				enter_press_at = k_uptime_get_32();
+				enter_captured = true;
+				break;
+			}
+			if (ui_pages_current() == UI_PAGE_MESSAGES) {
+				if ((int32_t)(k_uptime_get_32() - sos_confirm_until) < 0) {
+					sos_confirm_until = 0;
+					LOG_INF("SOS requested");
+					mesh_send_sos();
+				} else {
+					sos_confirm_until = k_uptime_get_32() +
+						CONFIG_ZEPHCORE_UI_CONFIRM_WINDOW_MS;
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
+					buzzer_play(MELODY_ACK);
+#endif
+				}
+				break;
+			}
+			action_page_enter();
 			break;
 		}
 		/* ZEPHCORE: SOS window on the second button — the press after a

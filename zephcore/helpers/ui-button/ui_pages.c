@@ -1770,7 +1770,7 @@ static void render_gps_home(void)
 		draw_centered((int)DISP_H / 2 - LINE_H, buf);
 		draw_centered((int)DISP_H / 2, buf2);
 	}
-	const char *hint = "Hold to SAVE";
+	const char *hint = ENTER_FROM_HOLD ? "Hold >5 to SAVE" : "Hold to SAVE";
 	if (state.home_status == HOME_STATUS_SAVED) {
 		hint = "Saved";
 	} else if (state.home_status == HOME_STATUS_NOFIX) {

@@ -13,10 +13,17 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include <zephyr/devicetree.h>
+#include <zephyr/dt-bindings/input/input-event-codes.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* ZEPHCORE: one action button — KEY_ENTER is the zephyr,input-longpress
+ * long-code, so a short ENTER is already a hold and no double press exists. */
+#define ENTER_IS_A_HOLD(node) || (DT_PROP_BY_IDX(node, long_codes, 0) == INPUT_KEY_ENTER)
+#define ENTER_FROM_HOLD (0 DT_FOREACH_STATUS_OKAY(zephyr_input_longpress, ENTER_IS_A_HOLD))
 
 /* ========== Page Definitions ========== */
 enum ui_page {
