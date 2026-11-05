@@ -1703,6 +1703,10 @@ static void render_gps_home(void)
 	const char *home_name = "";
 	int home_index = 0;
 
+	if (state.home_status == HOME_STATUS_SAVED &&
+	    (int32_t)(k_uptime_get_32() - state.home_status_until) >= 0) {
+		state.home_status = HOME_STATUS_IDLE;
+	}
 	companion_home_get_point(&home_lat, &home_lon, &saved, &home_name, &home_index);
 	bool have_fix = false;
 	double dist_m = 0, bearing_deg = 0;
@@ -2319,6 +2323,9 @@ void ui_pages_set_tracking(bool enabled, uint16_t interval_minutes)
 void ui_pages_set_home_status(int status)
 {
 	state.home_status = status;
+	/* SAVED! shows for five seconds, then the coordinates return. */
+	state.home_status_until = status == HOME_STATUS_SAVED ?
+		k_uptime_get_32() + 5000U : 0;
 	ui_request_render();
 }
 

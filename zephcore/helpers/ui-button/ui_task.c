@@ -198,7 +198,9 @@ static bool enter_captured;
 static bool home_press_active;
 static bool nav_refresh_on;
 static struct k_work_delayable nav_refresh_work;
+#if !ENTER_FROM_HOLD
 static struct k_work_delayable home_defer_work;
+#endif
 
 #ifdef CONFIG_ZEPHCORE_UI_DISPLAY
 static struct k_work_delayable home_hold_work;
@@ -225,6 +227,7 @@ static void home_hold_handler(struct k_work *work)
 	ui_request_render_now();
 }
 
+#if !ENTER_FROM_HOLD
 static void home_defer_handler(struct k_work *work)
 {
 	ARG_UNUSED(work);
@@ -232,6 +235,7 @@ static void home_defer_handler(struct k_work *work)
 	mesh_nav_toggle();
 	ui_request_render_now();
 }
+#endif
 #endif
 
 static void nav_refresh_work_handler(struct k_work *work)
@@ -265,15 +269,14 @@ void ui_home_refresh_set(bool on)
  * GPS HOME press handling below is compiled for them. */
 static void action_home_key_short(void)
 {
+#if ENTER_FROM_HOLD
+	/* No double press exists: a short hold toggles navigation. */
+	mesh_nav_toggle();
+	ui_request_render_now();
+#else
 	struct ui_state *st = get_state();
 	uint32_t now = k_uptime_get_32();
 
-	if (ENTER_FROM_HOLD) {
-		/* No double press exists: a short hold toggles navigation. */
-		mesh_nav_toggle();
-		ui_request_render_now();
-		return;
-	}
 	if (st->home_save_confirm != 0 &&
 	    (int32_t)(now - st->home_save_confirm) <= CONFIG_ZEPHCORE_UI_CONFIRM_WINDOW_MS) {
 		/* One short press confirms the save started by the hold. */
@@ -294,6 +297,7 @@ static void action_home_key_short(void)
 		k_work_reschedule(&home_defer_work, K_MSEC(HOME_DOUBLE_MS));
 	}
 	ui_request_render_now();
+#endif
 }
 #endif /* CONFIG_ZEPHCORE_UI_DISPLAY */
 
@@ -1170,7 +1174,9 @@ int ui_init(void)
 	k_work_init_delayable(&advert_defer_work, advert_defer_handler);
 	k_work_init_delayable(&nav_refresh_work, nav_refresh_work_handler);
 #ifdef CONFIG_ZEPHCORE_UI_DISPLAY
+#if !ENTER_FROM_HOLD
 	k_work_init_delayable(&home_defer_work, home_defer_handler);
+#endif
 #ifdef CONFIG_ZEPHCORE_UI_DISPLAY
 	k_work_init_delayable(&home_hold_work, home_hold_handler);
 #endif

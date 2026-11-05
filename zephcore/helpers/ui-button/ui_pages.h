@@ -152,6 +152,7 @@ struct ui_state {
 	uint32_t dfu_confirm_time;   /* uptime ms when DFU confirm started (0=idle) */
 	uint32_t shutdown_confirm_time; /* uptime ms when shutdown confirm started (0=idle) */
 	int home_status;             /* HOME_STATUS_* */
+	uint32_t home_status_until;  /* HOME_STATUS_SAVED expiry (0 = none) */
 	uint32_t home_save_confirm;  /* uptime ms when save confirm started (0=idle) */
 	bool nav_active;
 	uint32_t home_wrong_way_until; /* "Wrong WAY!" while uptime < this (0=idle) */

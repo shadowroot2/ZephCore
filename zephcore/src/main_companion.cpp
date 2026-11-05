@@ -1540,26 +1540,20 @@ struct companion_home_state {
 	bool save_active;
 	bool nav_active;
 	bool gps_was_enabled;
+	bool travel_has_last;
 	uint32_t saved_duty_sec;
-	int64_t save_started_ms;
-	int selected; /* 0..9; always 0 after boot */
+	uint32_t save_started_ms;
+	uint8_t selected; /* 0..9; always 0 after boot */
 	struct nav_wrongway ww;
-	struct tracking_odometer nav_odo;
-	int64_t ladder_ms;    /* last wrong-way sample (0 = prime on next fix) */
-	int64_t report_ms;    /* next vContact nav report (0 = on next fix) */
-	int64_t telemetry_ms; /* next LoRa nav telemetry (0 = on next fix) */
-	int64_t nav_started_ms; /* travel time origin for the arrival report */
+	uint32_t ladder_ms;    /* last wrong-way sample (0 = prime on next fix) */
+	uint32_t report_ms;    /* next vContact nav report (0 = on next fix) */
+	uint32_t telemetry_ms; /* next LoRa nav telemetry (0 = on next fix) */
+	uint32_t nav_started_ms; /* travel time origin for the arrival report */
+	double travel_m;
+	int64_t travel_last_lat_ndeg;
+	int64_t travel_last_lon_ndeg;
 };
 static struct companion_home_state companion_home;
-#if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY) && IS_ENABLED(CONFIG_ZEPHCORE_UI_DESIGN_BUTTON)
-static struct k_work_delayable home_saved_clear_work;
-
-static void home_saved_clear_handler(struct k_work *work)
-{
-	ARG_UNUSED(work);
-	ui_pages_set_home_status(HOME_STATUS_IDLE);
-}
-#endif
 
 static void companion_home_restore_gps(void)
 {
@@ -1577,7 +1571,7 @@ static void companion_home_start_save(void)
 	companion_home.gps_was_enabled = gps_is_enabled();
 	companion_home.saved_duty_sec = gps_get_poll_interval_sec();
 	companion_home.save_active = true;
-	companion_home.save_started_ms = k_uptime_get();
+	companion_home.save_started_ms = (uint32_t)k_uptime_get();
 	gps_set_poll_interval_sec(0);
 	if (!companion_home.gps_was_enabled) {
 		gps_enable(true);
@@ -1622,8 +1616,6 @@ static void companion_home_save_process(void)
 		companion_home_restore_gps();
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY) && IS_ENABLED(CONFIG_ZEPHCORE_UI_DESIGN_BUTTON)
 		ui_pages_set_home_status(HOME_STATUS_SAVED);
-		/* SAVED! stays for five seconds, then the new coordinates. */
-		k_work_reschedule(&home_saved_clear_work, K_MSEC(5000));
 #endif
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
 		buzzer_play(MELODY_HOME_SAVED);
@@ -1657,11 +1649,12 @@ static void companion_nav_set_enabled(bool enabled, char *reply)
 		companion_home.saved_duty_sec = gps_get_poll_interval_sec();
 		companion_home.nav_active = true;
 		nav_wrongway_reset(&companion_home.ww);
-		tracking_odometer_reset(&companion_home.nav_odo, k_uptime_get());
+		companion_home.travel_m = 0;
+		companion_home.travel_has_last = false;
 		companion_home.ladder_ms = 0;
 		companion_home.report_ms = 0;
 		companion_home.telemetry_ms = 0;
-		companion_home.nav_started_ms = k_uptime_get();
+		companion_home.nav_started_ms = (uint32_t)k_uptime_get();
 		gps_set_poll_interval_sec(0);
 		if (!companion_home.gps_was_enabled) {
 			gps_enable(true);
@@ -1696,8 +1689,8 @@ static void companion_nav_set_enabled(bool enabled, char *reply)
 						home_lat, home_lon));
 				n += snprintf(msg + n, sizeof(msg) - n, "\n📏 %s", rep);
 				/* The start notice doubles as the first report. */
-				companion_home.report_ms = k_uptime_get() +
-					(int64_t)companion_mesh.prefs.nav_report_interval_min * 60000;
+				companion_home.report_ms = (uint32_t)k_uptime_get() +
+					(uint32_t)companion_mesh.prefs.nav_report_interval_min * 60000U;
 			}
 			snprintf(msg + n, sizeof(msg) - n,
 				 "\nhttps://maps.google.com/?q=%.5f,%.5f",
@@ -1798,16 +1791,27 @@ static void companion_nav_fix_process(void)
 		(int64_t)(home_lat * 1e9), (int64_t)(home_lon * 1e9));
 	double bearing_deg = nav_bearing_deg(pos.latitude_ndeg / 1e9,
 		pos.longitude_ndeg / 1e9, home_lat, home_lon);
-	int64_t now = k_uptime_get();
+	uint32_t now = k_uptime_get_32();
 	/* nav.interval 0 = no vContact nav notices at all; beeps and STOP stay. */
 	bool notify = companion_mesh.prefs.nav_report_interval_min != 0;
 
-	tracking_odometer_on_fix(&companion_home.nav_odo, now,
-		pos.latitude_ndeg, pos.longitude_ndeg, pos.speed_mms);
+	/* Walked distance: only moving fixes count, as the tracking odometer
+	 * does — GPS jitter at rest would otherwise accumulate. */
+	if ((unsigned)((pos.speed_mms * 36U + 5000U) / 10000U) >
+	    TRACKING_REPORT_STANDSTILL_KMH && companion_home.travel_has_last) {
+		companion_home.travel_m += tracking_distance_m(
+			companion_home.travel_last_lat_ndeg,
+			companion_home.travel_last_lon_ndeg,
+			pos.latitude_ndeg, pos.longitude_ndeg);
+	}
+	companion_home.travel_last_lat_ndeg = pos.latitude_ndeg;
+	companion_home.travel_last_lon_ndeg = pos.longitude_ndeg;
+	companion_home.travel_has_last = true;
 
 	/* The ladder samples at the NAV screen cadence: per-fix deltas are GPS
 	 * jitter and would keep resetting it. */
-	if (now - companion_home.ladder_ms >= HOME_NAV_REFRESH_MS) {
+	if (companion_home.ladder_ms == 0 ||
+	    (int32_t)(now - companion_home.ladder_ms) >= (int32_t)HOME_NAV_REFRESH_MS) {
 		companion_home.ladder_ms = now;
 		if (nav_wrongway_update(&companion_home.ww, dist_m)) {
 			if (notify) {
@@ -1834,8 +1838,7 @@ static void companion_nav_fix_process(void)
 
 		tracking_duration_str(dur, sizeof(dur),
 			(uint32_t)(now - companion_home.nav_started_ms));
-		nav_distance_ru_str(dist, sizeof(dist),
-			companion_home.nav_odo.distance_mm / 1000.0);
+		nav_distance_ru_str(dist, sizeof(dist), companion_home.travel_m);
 		snprintf(tail, sizeof(tail),
 			 "📍 %d-%s\n⏱️: %s\n📏 %s\n"
 			 "https://maps.google.com/?q=%.5f,%.5f",
@@ -1860,11 +1863,12 @@ static void companion_nav_fix_process(void)
 	}
 
 	/* First fix after nav on, then every nav.interval minutes. */
-	if (notify && now >= companion_home.report_ms) {
+	if (notify && (companion_home.report_ms == 0 ||
+		       (int32_t)(now - companion_home.report_ms) >= 0)) {
 		char rep[48], msg[96];
 
 		companion_home.report_ms = now +
-			(int64_t)companion_mesh.prefs.nav_report_interval_min * 60000;
+			(uint32_t)companion_mesh.prefs.nav_report_interval_min * 60000U;
 		nav_report_str(rep, sizeof(rep), dist_m, bearing_deg);
 		snprintf(msg, sizeof(msg), "📍 %d-%s\n📏 %s",
 			 home_index + 1, home_name, rep);
@@ -1873,11 +1877,12 @@ static void companion_nav_fix_process(void)
 
 	/* The same report over LoRa to the tracking group at its own cadence. */
 	if (companion_mesh.prefs.nav_telemetry_enabled &&
-	    now >= companion_home.telemetry_ms) {
+	    (companion_home.telemetry_ms == 0 ||
+	     (int32_t)(now - companion_home.telemetry_ms) >= 0)) {
 		char rep[48], msg[96];
 
 		companion_home.telemetry_ms = now +
-			(int64_t)companion_mesh.prefs.nav_telemetry_interval_min * 60000;
+			(uint32_t)companion_mesh.prefs.nav_telemetry_interval_min * 60000U;
 		nav_report_str(rep, sizeof(rep), dist_m, bearing_deg);
 		snprintf(msg, sizeof(msg), "📍 %d-%s\n📏 %s",
 			 home_index + 1, home_name, rep);
@@ -2422,8 +2427,8 @@ static bool handle_tracking_cli(const char *line, char *reply, bool silent)
 		}
 		companion_mesh.prefs.nav_report_interval_min = (uint16_t)minutes;
 		if (companion_home.nav_active) {
-			companion_home.report_ms = k_uptime_get() +
-				(int64_t)minutes * 60000;
+			companion_home.report_ms = (uint32_t)k_uptime_get() +
+				(uint32_t)minutes * 60000U;
 		}
 		k_event_post(&mesh_events, MESH_EVENT_PREFS_DIRTY);
 		if (minutes == 0) {
@@ -2477,8 +2482,8 @@ static bool handle_tracking_cli(const char *line, char *reply, bool silent)
 		}
 		companion_mesh.prefs.nav_telemetry_interval_min = (uint16_t)minutes;
 		if (companion_home.nav_active) {
-			companion_home.telemetry_ms = k_uptime_get() +
-				(int64_t)minutes * 60000;
+			companion_home.telemetry_ms = (uint32_t)k_uptime_get() +
+				(uint32_t)minutes * 60000U;
 		}
 		k_event_post(&mesh_events, MESH_EVENT_PREFS_DIRTY);
 		snprintf(reply, CLI_REPLY_SIZE, "OK - nav.telemetry.interval %lu min",
@@ -2919,9 +2924,6 @@ int main(void)
 		LOG_INF("GPS available");
 		gps_set_enable_callback(gps_enable_callback);
 		gps_set_fix_callback(gps_fix_callback);
-#if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY) && IS_ENABLED(CONFIG_ZEPHCORE_UI_DESIGN_BUTTON)
-		k_work_init_delayable(&home_saved_clear_work, home_saved_clear_handler);
-#endif
 		gps_set_event_callback(gps_event_callback);
 	}
 

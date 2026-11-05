@@ -119,38 +119,38 @@ static inline void nav_report_str(char *buf, size_t len, double dist_m,
 /* Wrong-way ladder: the distance grew by 30 m stepwise since the last sample
  * where it shrank — 30, 60, 90 ... away from the current position. Any
  * approach resets the ladder, so standing still on GPS jitter cannot
- * retrigger. */
+ * retrigger. Floats: the struct sits in RAM on every board. */
 struct nav_wrongway {
-	double prev_dist_m;
-	double away_m;
-	double mark_m;
+	float prev_dist_m;
+	float away_m;
+	float mark_m;
 };
 
 static inline void nav_wrongway_reset(struct nav_wrongway *w)
 {
-	w->prev_dist_m = -1.0;
-	w->away_m = 0.0;
-	w->mark_m = 30.0;
+	w->prev_dist_m = -1.0f;
+	w->away_m = 0.0f;
+	w->mark_m = 30.0f;
 }
 
 /* Feed the current distance; returns true at each new 30 m step away. */
 static inline bool nav_wrongway_update(struct nav_wrongway *w, double dist_m)
 {
-	if (w->prev_dist_m < 0.0) {
-		w->prev_dist_m = dist_m;
+	if (w->prev_dist_m < 0.0f) {
+		w->prev_dist_m = (float)dist_m;
 		return false;
 	}
 	double delta = dist_m - w->prev_dist_m;
-	w->prev_dist_m = dist_m;
+	w->prev_dist_m = (float)dist_m;
 	if (delta > 0.0) {
-		w->away_m += delta;
+		w->away_m += (float)delta;
 		if (w->away_m >= w->mark_m) {
-			w->mark_m += 30.0;
+			w->mark_m += 30.0f;
 			return true;
 		}
 	} else {
-		w->away_m = 0.0;
-		w->mark_m = 30.0;
+		w->away_m = 0.0f;
+		w->mark_m = 30.0f;
 	}
 	return false;
 }
