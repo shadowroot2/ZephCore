@@ -30,7 +30,8 @@ get/set nav.telemetry.interval
 
 - Удалённо доступны только статус `nav` и `wp list`; остальное — local-only
   (USB/BLE). Имена точек — до 10 символов (пробелы считаются), точка 1 всегда
-  `GPS HOME`.
+  `GPS HOME`. Выбор точки (`wp n`) и `nav on` отвечают с координатами точки:
+  `OK - wp 2 FREE  43.24112,76.92730`, `OK - Navigation to 1-GPS HOME  43.24112,76.92730`.
 - `nav telemetry` (по умолчанию off) шлёт в группу tracking (`tracking_group`)
   отчёт `📍 1-GPS HOME` + `📏 2.34 км  СВ  ↗️` со ссылкой на текущую позицию по
   первому фиксу и далее раз в `nav.telemetry.interval` (по умолчанию 10 мин,

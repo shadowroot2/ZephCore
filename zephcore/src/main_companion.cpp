@@ -1670,9 +1670,11 @@ static void companion_nav_set_enabled(bool enabled, char *reply)
 		if (!companion_home.gps_was_enabled) {
 			gps_enable(true);
 		}
-		snprintf(reply, CLI_REPLY_SIZE, "OK - Navigation to %d-%s",
+		snprintf(reply, CLI_REPLY_SIZE, "OK - Navigation to %d-%s  %.5f,%.5f",
 			 companion_home.selected + 1,
-			 companion_mesh.prefs.home_name[companion_home.selected]);
+			 companion_mesh.prefs.home_name[companion_home.selected],
+			 companion_mesh.prefs.home_lat[companion_home.selected],
+			 companion_mesh.prefs.home_lon[companion_home.selected]);
 		if (companion_mesh.prefs.nav_report_interval_min != 0) {
 			char msg[192];
 			struct gps_position pos = {};
@@ -2401,8 +2403,10 @@ static bool handle_tracking_cli(const char *line, char *reply, bool silent)
 			if (v >= 1 && v <= 10) {
 				companion_home.selected = (int)v - 1;
 				ui_request_render();
-				snprintf(reply, CLI_REPLY_SIZE, "OK - wp %ld %s",
-					 v, companion_mesh.prefs.home_name[companion_home.selected]);
+				snprintf(reply, CLI_REPLY_SIZE, "OK - wp %ld %s  %.5f,%.5f",
+					 v, companion_mesh.prefs.home_name[companion_home.selected],
+					 companion_mesh.prefs.home_lat[companion_home.selected],
+					 companion_mesh.prefs.home_lon[companion_home.selected]);
 			} else {
 				strcpy(reply, "Error: wp 1..10");
 			}
