@@ -40,5 +40,9 @@ a beep.
 
 ## Other changes
 
+- **Offline message queue 256 → 128 entries.** The queue holds messages waiting for the phone app;
+  each entry costs 173 bytes of DRAM, so this frees 22 KB — the biggest single saving on DRAM-bound
+  companions like the Heltec V3. 128 undelivered messages is still generous: the app drains them one
+  by one after reconnect. Boards with their own value (T-Beam and ThinkNode M5 at 100) keep it.
 - **`help geo` group after `nav`** in the app, remote and USB help, with a coordinate example; remote
   CLI accepts `geo`, `geo on|off`, `get/set geo.point` but not `geo save` or the radius.

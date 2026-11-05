@@ -604,7 +604,7 @@ mesh::Mesh
 ### 6.2 CompanionMesh
 
 Handles the binary BLE protocol with ~50 command opcodes. Key features:
-- **Offline queue**: circular buffer with peek/confirm pattern (survives BLE drops); `CONFIG_ZEPHCORE_OFFLINE_QUEUE_SIZE`, default 256 frames (lowered on RAM-bound boards)
+- **Offline queue**: circular buffer with peek/confirm pattern (survives BLE drops); `CONFIG_ZEPHCORE_OFFLINE_QUEUE_SIZE`, default 128 frames (173 B each; MeshCore's 256 kept on boards that ask for it)
 - **ACK tracking**: 8-slot table, computes expected ACK = SHA256(secret + hash)[0:4]
 - **Contact iteration**: Streaming protocol with `lastmod` filtering for incremental sync. The dump advances only
   while a client is connected and every connected transport has room; it is cancelled when the last client leaves
