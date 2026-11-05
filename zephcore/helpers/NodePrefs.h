@@ -503,7 +503,7 @@ static inline void initNodePrefs(NodePrefs* prefs) {
 	prefs->auto_shutdown_emergency = 1;
 	prefs->tracking_interval_minutes = 10;
 	prefs->nav_report_interval_min = 1;
-	prefs->nav_telemetry_enabled = 1;
+	prefs->nav_telemetry_enabled = 0;
 	prefs->nav_telemetry_interval_min = 10;
 	strcpy(prefs->tracking_group_name, "#tracks");
 	prefs->fall_sensitivity = 3;

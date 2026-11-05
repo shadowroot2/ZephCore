@@ -127,6 +127,7 @@ static void companion_sos_tx_done(void);
 static void companion_tracking_odometer_fix(void);
 static void companion_home_save_process(void);
 static void companion_nav_fix_process(void);
+static void companion_nav_link_check(void);
 static void companion_tracking_process(void);
 static uint32_t companion_custom_ms_until_next(void);
 static void companion_fall_detected(void);
@@ -585,6 +586,7 @@ static void mesh_event_loop(void)
 
 		companion_sos_process();
 		companion_tracking_process();
+		companion_nav_link_check();
 		uint32_t next_custom = companion_custom_ms_until_next();
 		if (next_custom == UINT32_MAX) {
 			k_timer_stop(&custom_timer);
@@ -1364,6 +1366,9 @@ static uint32_t companion_custom_ms_until_next(void)
 		if (remaining <= 0) next = 0;
 		else if ((uint64_t)remaining < next) next = (uint32_t)remaining;
 	}
+	if (companion_home.nav_active) {
+		include(now + NAV_LINK_CHECK_MS);
+	}
 	return next;
 }
 
@@ -1421,7 +1426,7 @@ static bool companion_send_tracking_message(const struct gps_position &pos)
 	LOG_INF("tracking: queued %s message: %s", group_name, text);
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
 	if (!companion_tracking.silent_reports) {
-		buzzer_play(MELODY_TRACKING_SENT);
+		buzzer_play(MELODY_NAV_ON);
 	}
 #endif
 	return true;
@@ -1534,6 +1539,8 @@ extern "C" void companion_tracking_toggle_from_ui(void)
 
 /* ===== GPS HOME: save the point and navigate to it ===== */
 #define HOME_FIX_TIMEOUT_MS (5U * 60U * 1000U)
+#define HOME_ARRIVAL_M 15.0
+#define NAV_LINK_CHECK_MS 30000U
 #define HOME_NAV_REFRESH_MS 5000U
 
 struct companion_home_state {
@@ -1541,14 +1548,16 @@ struct companion_home_state {
 	bool nav_active;
 	bool gps_was_enabled;
 	bool travel_has_last;
+	bool link_lost_sent;
+	uint8_t selected; /* 0..9; always 0 after boot */
 	uint32_t saved_duty_sec;
 	uint32_t save_started_ms;
-	uint8_t selected; /* 0..9; always 0 after boot */
 	struct nav_wrongway ww;
 	uint32_t ladder_ms;    /* last wrong-way sample (0 = prime on next fix) */
 	uint32_t report_ms;    /* next vContact nav report (0 = on next fix) */
 	uint32_t telemetry_ms; /* next LoRa nav telemetry (0 = on next fix) */
 	uint32_t nav_started_ms; /* travel time origin for the arrival report */
+	float report_last_dist_m; /* distance at the last LoRa report (<0 = prime) */
 	double travel_m;
 	int64_t travel_last_lat_ndeg;
 	int64_t travel_last_lon_ndeg;
@@ -1654,6 +1663,8 @@ static void companion_nav_set_enabled(bool enabled, char *reply)
 		companion_home.ladder_ms = 0;
 		companion_home.report_ms = 0;
 		companion_home.telemetry_ms = 0;
+		companion_home.report_last_dist_m = -1.0f;
+		companion_home.link_lost_sent = false;
 		companion_home.nav_started_ms = (uint32_t)k_uptime_get();
 		gps_set_poll_interval_sec(0);
 		if (!companion_home.gps_was_enabled) {
@@ -1765,7 +1776,7 @@ static bool companion_send_nav_telemetry_message(const char *text)
 	}
 	LOG_INF("nav telemetry: queued %s message: %s", group_name, text);
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
-	buzzer_play(MELODY_TRACKING_SENT);
+	buzzer_play(MELODY_NAV_ON);
 #endif
 	return true;
 }
@@ -1833,7 +1844,7 @@ static void companion_nav_fix_process(void)
 	}
 
 	/* Arrived while walking to the point: success melody, then STOP. */
-	if (dist_m < 5.0) {
+	if (dist_m < HOME_ARRIVAL_M) {
 		char dur[16], dist[16], tail[128], msg[192];
 
 		tracking_duration_str(dur, sizeof(dur),
@@ -1875,18 +1886,56 @@ static void companion_nav_fix_process(void)
 		companion_mesh.vcontactNotify(msg);
 	}
 
-	/* The same report over LoRa to the tracking group at its own cadence. */
+	/* The same report over LoRa to the tracking group at its own cadence,
+	 * but only once the distance to the point has moved by 50 m — the
+	 * tracking movement rule, so a parked navigator stays quiet. */
 	if (companion_mesh.prefs.nav_telemetry_enabled &&
 	    (companion_home.telemetry_ms == 0 ||
 	     (int32_t)(now - companion_home.telemetry_ms) >= 0)) {
-		char rep[48], msg[96];
+		float last = companion_home.report_last_dist_m;
+		double delta = dist_m - (double)last;
+		double moved = delta < 0.0 ? -delta : delta;
 
 		companion_home.telemetry_ms = now +
 			(uint32_t)companion_mesh.prefs.nav_telemetry_interval_min * 60000U;
-		nav_report_str(rep, sizeof(rep), dist_m, bearing_deg);
-		snprintf(msg, sizeof(msg), "📍 %d-%s\n📏 %s",
-			 home_index + 1, home_name, rep);
-		companion_send_nav_telemetry_message(msg);
+		if (last < 0.0f || moved >= 50.0) {
+			char rep[48], msg[160];
+
+			companion_home.report_last_dist_m = (float)dist_m;
+			nav_report_str(rep, sizeof(rep), dist_m, bearing_deg);
+			snprintf(msg, sizeof(msg),
+				 "📍 %d-%s\n📏 %s\n"
+				 "https://maps.google.com/?q=%.5f,%.5f",
+				 home_index + 1, home_name, rep,
+				 pos.latitude_ndeg / 1e9, pos.longitude_ndeg / 1e9);
+			companion_send_nav_telemetry_message(msg);
+		}
+	}
+}
+
+/* ZEPHCORE: one "satellites lost" notice per outage; the LoRa reports resume
+ * once the fix is back, and its distance counts as changed. */
+static void companion_nav_link_check(void)
+{
+	if (!companion_home.nav_active ||
+	    !companion_mesh.prefs.nav_telemetry_enabled) {
+		return;
+	}
+	struct gps_position pos = {};
+	bool fresh = gps_is_enabled() && gps_get_last_known_position(&pos) &&
+		pos.valid && (k_uptime_get() - pos.timestamp_ms) <= 30000;
+
+	if (fresh) {
+		if (companion_home.link_lost_sent) {
+			companion_home.link_lost_sent = false;
+			companion_home.report_last_dist_m = -1.0f;
+		}
+		return;
+	}
+	if (companion_home.travel_has_last && !companion_home.link_lost_sent) {
+		companion_home.link_lost_sent = true;
+		companion_send_nav_telemetry_message(
+			"🛰️ Связь со спутниками потеряна...");
 	}
 }
 
