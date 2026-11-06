@@ -125,8 +125,8 @@ static inline const char *companion_app_cli_help(const char *line)
 		       "get/set nav.interval\nget/set nav.telemetry.interval";
 	}
 	if (strcmp(line, "help geo") == 0) {
-		return "geo [on|off]\ngeo stat\ngeo save\nget/set geo.point <lat> <lon>\n"
-		       "e.g. set geo.point 43.241117 76.927301\nget/set geo.radius (meters 50..50000)";
+		return "geo [on|off|save|log]\nget/set geo.point <lat>,<lon>\n"
+		       "e.g. set geo.point 43.241117,76.927301\nget/set geo.radius (meters 50..50000)";
 	}
 #endif
 #if IS_ENABLED(CONFIG_ZEPHCORE_COMPANION_WIFI)
@@ -197,11 +197,11 @@ static inline const char *companion_remote_cli_help(const char *line)
 	}
 	if (strcmp(line, "help geo") == 0) {
 #if IS_ENABLED(CONFIG_ZEPHCORE_REMOTE_POINT_SAVE_CLI)
-		return "geo [on|off]\ngeo stat\ngeo save\nget/set geo.point <lat> <lon>\n"
-		       "e.g. set geo.point 43.241117 76.927301";
+		return "geo [on|off|save|log]\nget/set geo.point <lat>,<lon>\n"
+		       "e.g. set geo.point 43.241117,76.927301";
 #else
-		return "geo [on|off]\ngeo stat\nget/set geo.point <lat> <lon>\n"
-		       "e.g. set geo.point 43.241117 76.927301";
+		return "geo [on|off|log]\nget/set geo.point <lat>,<lon>\n"
+		       "e.g. set geo.point 43.241117,76.927301";
 #endif
 	}
 #endif
@@ -243,7 +243,7 @@ static inline bool companion_remote_cli_command_allowed(const char *cmd)
 	 * and the radius stay local. Matched in code so the busy allowlist
 	 * tables below stay as they are (DRAM on RAM-bound companions). */
 	if (strcmp(cmd, "geo") == 0 || strcmp(cmd, "geo on") == 0 ||
-	    strcmp(cmd, "geo off") == 0 || strcmp(cmd, "geo stat") == 0 ||
+	    strcmp(cmd, "geo off") == 0 || strcmp(cmd, "geo log") == 0 ||
 	    strcmp(cmd, "get geo.point") == 0 ||
 	    strncmp(cmd, "set geo.point ", 14) == 0) {
 		return true;

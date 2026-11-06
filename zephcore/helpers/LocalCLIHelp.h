@@ -52,10 +52,8 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 	DT_HAS_COMPAT_STATUS_OKAY(luatos_air530z)
 		"nav [start|stop]\r\n"
 		"wp [list|n|clear]\r\n"
-		"geo on|off\r\n"
-		"geo stat\r\n"
-		"geo save\r\n"
-		"get/set geo.point (set geo.point 43.241117 76.927301)\r\n"
+		"geo [on|off|save|log]\r\n"
+		"get/set geo.point (set geo.point 43.241117,76.927301)\r\n"
 		"get/set geo.radius (meters 50..50000)\r\n"
 #endif
 #if IS_ENABLED(CONFIG_ZEPHCORE_COMPANION_WIFI)

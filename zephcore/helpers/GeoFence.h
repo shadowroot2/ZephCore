@@ -133,8 +133,8 @@ static inline void geofence_format_msg(char *buf, size_t len, bool exited,
 	snprintf(buf, len, "%s %s\n📏 %s\n📍 %s", emoji, head, d, url);
 }
 
-/* "43.24112 76.92730" -> two degrees in range. Exactly two finite numbers,
- * no trailing tokens. */
+/* "43.24112,76.92730" -> two degrees in range (a space between them is also
+ * accepted). Exactly two finite numbers, no trailing tokens. */
 static inline bool geofence_parse_point(const char *arg, double *lat, double *lon)
 {
 	char *end;
@@ -143,7 +143,7 @@ static inline bool geofence_parse_point(const char *arg, double *lat, double *lo
 	if (end == arg) {
 		return false;
 	}
-	while (*end == ' ' || *end == '\t') {
+	while (*end == ' ' || *end == '\t' || *end == ',') {
 		end++;
 	}
 	const char *second = end;

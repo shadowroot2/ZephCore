@@ -28,7 +28,7 @@ an ADR of their own.
 profile opens both saves to remote CLI via `CONFIG_ZEPHCORE_REMOTE_POINT_SAVE_CLI`; the default
 coordinates are the home-slot defaults 43.241117 / 76.927301). `get/set geo.point <lat> <lon>` reads and
 writes the point manually and is the only coordinate-edit path available over remote CLI; the help text shows
-an example (`set geo.point 43.241117 76.927301`).
+an example (`set geo.point 43.241117,76.927301`).
 
 **Radius.** One global `set geo.radius <m>` — the help text states meters. Guard 50..50000, default 3000.
 Radius is the zone size; the toggle below is the on/off switch.
@@ -48,6 +48,10 @@ geo owns the duty, `gps off` and `set gps duty` are refused (the same block trac
 persists across reboots (`prefs.geo_on`): at boot a stored `on` re-pins the duty like `geo on`. The first
 fix after boot reports the zone state exactly once — `✅ Вернулся в геозону` when inside,
 `🚪 Вышел из геозоны` when beyond the radius.
+
+**CLI surface (2026-11-06).** The help line merges to `geo [on|off|save|log]`; the bare `geo`
+reply carries `INSIDE`/`OUTSIDE`/`NOFIX` plus the compact radius (`50m`, `2.5km`); `geo log`
+reports the persisted last in/out stamps; `set geo.point` takes `lat,lon` in one argument.
 
 **Point save.** `geo save` runs the exact `wp save` pipeline (`companion_home_start_save` /
 `companion_home_save_process` with a geo target flag): force a fix, capture it, return the GPS to what it

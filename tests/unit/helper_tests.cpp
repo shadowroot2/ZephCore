@@ -216,8 +216,8 @@ TEST(companion_cli_help, "UNIT-CLI-002", "Companion app and remote help are cate
 		"set wifi.enabled 0", "get freq", "get radio", "get tx",
 		"set af 3", "get adc.multiplier", "get autoshutdown", "reboot",
 		"buzz", "leds", "gps", "tracking", "nav", "wp list",
-		"geo", "geo on", "geo off", "geo stat", "get geo.point",
-		"set geo.point 43.241117 76.927301",
+		"geo", "geo on", "geo off", "geo log", "get geo.point",
+		"set geo.point 43.241117,76.927301",
 	};
 	for (const char *command : remote_allowed) {
 		CHECK(companion_remote_cli_command_allowed(command));
@@ -387,7 +387,7 @@ TEST(geofence_msg, "UNIT-GEO-002", "Exit and return messages pin the template an
 }
 TEST(geofence_parse, "UNIT-GEO-003", "set geo.point accepts exactly two in-range numbers") {
 	double lat, lon;
-	CHECK(geofence_parse_point("43.24112 76.92730", &lat, &lon));
+	CHECK(geofence_parse_point("43.24112,76.92730", &lat, &lon));
 	CHECK(lat > 43.241 && lat < 43.242 && lon > 76.927 && lon < 76.928);
 	CHECK(geofence_parse_point("  -45.5  -120.25  ", &lat, &lon));
 	CHECK(lat == -45.5 && lon == -120.25);

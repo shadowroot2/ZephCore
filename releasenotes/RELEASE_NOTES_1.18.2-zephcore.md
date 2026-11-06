@@ -11,7 +11,7 @@ it comes back.
 ## Geofence (`geo`)
 
 `geo save` stores the current GPS fix as the geofence point (the same wait-for-fix capture as
-`wp save`), `set geo.point 43.241117 76.927301` sets it by hand — that is also the only coordinate edit
+`wp save`), `set geo.point 43.241117,76.927301` sets it by hand — that is also the only coordinate edit
 available from remote CLI. `get/set geo.radius <m>` sets one radius in meters for the whole zone
 (default 3000, range 50–50000).
 
@@ -46,9 +46,13 @@ device itself.
 
 ## Other changes
 
-- **`geo stat`** — the last zone return and exit with timestamps:
-  `last in: 22.12.2006 17:44:22; out: 22.12.2006 17:50:03` (UTC). The stamps
-  survive a reboot.
+- **`geo` status and `geo log`**: the bare `geo` reply shows the zone state and a
+  compact radius — `geo: on INSIDE 3km 43.24112,76.92730` (INSIDE/OUTSIDE from a
+  fresh fix, NOFIX without one; radius in meters up to 999, then km). `geo log`
+  reports the last zone return and exit with timestamps
+  (`last in: 22.12.2006 17:44:22; out: 22.12.2006 17:50:03`, UTC, survive a
+  reboot). `set geo.point 43.24112,76.92730` takes the coordinates in one
+  comma-separated argument, and the geo help merges into `geo [on|off|save|log]`.
 - **M3-MAMA: `wp save` and `geo save` over the remote CLI** (`geo save` stays
   local-only on every other build).
 - **Save confirmations got a 💾**: `💾 Точка успешно сохранена!` for `wp save` and

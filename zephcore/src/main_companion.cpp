@@ -2825,6 +2825,25 @@ static bool handle_tracking_cli(const char *line, char *reply, bool silent)
 	return false;
 }
 
+/* "50m", "999m", "1km", "2.5km" — the zone radius as the geo reply shows it. */
+static void geo_radius_str(char *buf, size_t len, unsigned meters)
+{
+	if (meters < 1000U) {
+		snprintf(buf, len, "%um", meters);
+		return;
+	}
+	unsigned hundredths = (meters + 5U) / 10U; /* km x 100 */
+	unsigned frac = hundredths % 100U;
+
+	if (frac == 0) {
+		snprintf(buf, len, "%ukm", hundredths / 100U);
+	} else if (frac % 10U == 0) {
+		snprintf(buf, len, "%u.%ukm", hundredths / 100U, frac / 10U);
+	} else {
+		snprintf(buf, len, "%u.%02ukm", hundredths / 100U, frac);
+	}
+}
+
 /* "22.12.2006 17:44:22" — UTC, like the clock command. */
 static void geo_format_utc(char *buf, size_t len, uint32_t epoch)
 {
@@ -2855,9 +2874,23 @@ static bool handle_geo_cli(const char *line, char *reply)
 			return companion_geo_set_enabled(strcmp(line, "geo on") == 0,
 							 reply);
 		}
-		snprintf(reply, CLI_REPLY_SIZE, "geo: %s  %u m  %.5f,%.5f",
-			 geo_on ? "on" : "off",
-			 companion_mesh.prefs.geo_radius_m,
+		char r[12];
+		const char *zone = "NOFIX";
+		struct gps_position pos = {};
+
+		if (gps_is_enabled() && gps_get_last_known_position(&pos) &&
+		    pos.valid &&
+		    (k_uptime_get() - pos.timestamp_ms) <= GEO_FIX_MAX_AGE_MS) {
+			double dist_m = tracking_distance_m(
+				pos.latitude_ndeg, pos.longitude_ndeg,
+				(int64_t)companion_mesh.prefs.geo_lat_e7 * 100,
+				(int64_t)companion_mesh.prefs.geo_lon_e7 * 100);
+			zone = dist_m > (double)companion_mesh.prefs.geo_radius_m ?
+				       "OUTSIDE" : "INSIDE";
+		}
+		geo_radius_str(r, sizeof(r), companion_mesh.prefs.geo_radius_m);
+		snprintf(reply, CLI_REPLY_SIZE, "geo: %s %s %s %.5f,%.5f",
+			 geo_on ? "on" : "off", zone, r,
 			 companion_mesh.prefs.geo_lat_e7 / 1e7,
 			 companion_mesh.prefs.geo_lon_e7 / 1e7);
 		return true;
@@ -2883,7 +2916,7 @@ static bool handle_geo_cli(const char *line, char *reply)
 		strcpy(reply, "OK - geo save: waiting for fix");
 		return true;
 	}
-	if (strcmp(line, "geo stat") == 0) {
+	if (strcmp(line, "geo log") == 0) {
 		char in_s[24] = "-", out_s[24] = "-";
 
 		if (companion_mesh.prefs.geo_last_in_utc != 0) {
@@ -2908,7 +2941,7 @@ static bool handle_geo_cli(const char *line, char *reply)
 		double lat, lon;
 
 		if (!geofence_parse_point(line + 14, &lat, &lon)) {
-			strcpy(reply, "usage: set geo.point <lat> <lon>  e.g. set geo.point 43.241117 76.927301");
+			strcpy(reply, "usage: set geo.point <lat>,<lon>  e.g. set geo.point 43.241117,76.927301");
 			return true;
 		}
 		companion_mesh.prefs.geo_lat_e7 = (int32_t)llround(lat * 1e7);
