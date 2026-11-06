@@ -195,7 +195,7 @@ TEST(companion_cli_help, "UNIT-CLI-002", "Companion app and remote help are cate
 	CHECK(std::strstr(companion_remote_cli_help("help sys"), "start dfu") == nullptr);
 	CHECK(std::strstr(companion_remote_cli_help("help sys"), "erase") == nullptr);
 	CHECK(std::strstr(companion_remote_cli_help("help geo"), "geo save") == nullptr);
-	CHECK(std::strstr(companion_remote_cli_help("help geo"), "43.24112") != nullptr);
+	CHECK(std::strstr(companion_remote_cli_help("help geo"), "43.241117") != nullptr);
 	const char *local_only[] = {
 		"get wifi.pwd", "set wifi.pwd secret", "set wifi.ssid network", "set wifi.clear",
 		"set pin 123456", "set freq 869.525", "set radio 869.525,125,9,5",
@@ -217,7 +217,7 @@ TEST(companion_cli_help, "UNIT-CLI-002", "Companion app and remote help are cate
 		"set af 3", "get adc.multiplier", "get autoshutdown", "reboot",
 		"buzz", "leds", "gps", "tracking", "nav", "wp list",
 		"geo", "geo on", "geo off", "get geo.point",
-		"set geo.point 43.24112 76.92730",
+		"set geo.point 43.241117 76.927301",
 	};
 	for (const char *command : remote_allowed) {
 		CHECK(companion_remote_cli_command_allowed(command));
@@ -339,33 +339,42 @@ TEST(nav_report, "UNIT-NAV-003", "Periodic vContact report carries distance, sec
 	CHECK(std::strcmp(buf, "840 м  С  ⬆️") == 0);
 	CHECK(std::strlen(buf) <= 159);
 }
-TEST(geofence_fsm, "UNIT-GEO-001", "Exit confirms on 2 fixes beyond, return at hysteresis and re-arms") {
+TEST(geofence_fsm, "UNIT-GEO-001", "Exit fires on the first fix beyond, return at hysteresis and re-arms") {
 	struct geofence_state g;
 	geofence_reset(&g);
 	CHECK(geofence_update(&g, 100.0, 3000.0) == GEO_EVENT_NONE);
 	CHECK(geofence_update(&g, 3000.0, 3000.0) == GEO_EVENT_NONE);
-	/* One fix beyond is not enough; an approach resets the count. */
-	CHECK(geofence_update(&g, 3100.0, 3000.0) == GEO_EVENT_NONE);
-	CHECK(geofence_update(&g, 2900.0, 3000.0) == GEO_EVENT_NONE);
-	CHECK(geofence_update(&g, 3100.0, 3000.0) == GEO_EVENT_NONE);
-	/* Second consecutive beyond fires the exit exactly once. */
-	CHECK(geofence_update(&g, 3200.0, 3000.0) == GEO_EVENT_EXIT);
+	/* First fix beyond the radius fires the exit, exactly once. */
+	CHECK(geofence_update(&g, 3100.0, 3000.0) == GEO_EVENT_EXIT);
 	CHECK(geofence_update(&g, 3500.0, 3000.0) == GEO_EVENT_NONE);
 	/* Return needs the hysteresis band: 2980 is still out. */
 	CHECK(geofence_update(&g, 2980.0, 3000.0) == GEO_EVENT_NONE);
 	CHECK(geofence_update(&g, 2940.0, 3000.0) == GEO_EVENT_REENTER);
-	/* Re-armed: two beyond again fire a second exit. */
-	CHECK(geofence_update(&g, 3100.0, 3000.0) == GEO_EVENT_NONE);
+	/* Re-armed: the next beyond fix fires a second exit. */
 	CHECK(geofence_update(&g, 3100.0, 3000.0) == GEO_EVENT_EXIT);
+}
+TEST(geofence_boot, "UNIT-GEO-005", "After boot the first fix reports the zone state exactly once") {
+	struct geofence_state g;
+	geofence_boot_arm(&g);
+	/* First fix inside: one return message, then quiet. */
+	CHECK(geofence_update(&g, 100.0, 3000.0) == GEO_EVENT_REENTER);
+	CHECK(geofence_update(&g, 100.0, 3000.0) == GEO_EVENT_NONE);
+	/* First fix beyond: one exit message, then quiet. */
+	geofence_boot_arm(&g);
+	CHECK(geofence_update(&g, 3100.0, 3000.0) == GEO_EVENT_EXIT);
+	CHECK(geofence_update(&g, 3100.0, 3000.0) == GEO_EVENT_NONE);
+	/* No boot arm: silent inside. */
+	geofence_reset(&g);
+	CHECK(geofence_update(&g, 100.0, 3000.0) == GEO_EVENT_NONE);
 }
 TEST(geofence_msg, "UNIT-GEO-002", "Exit and return messages pin the template and fit the mesh frame") {
 	char buf[160];
 	geofence_format_msg(buf, sizeof(buf), true, 3000.0, 3500.0, 43.24112, 76.92730);
-	CHECK(std::strcmp(buf, "🚪 Вышел из геозоны (> 3.00 км)\n📏 Расстояние: 3.50 км\n"
+	CHECK(std::strcmp(buf, "🚪 Вышел из геозоны\n📐 Радиус: 3.00 км\n📏 Расстояние: 3.50 км\n"
 			      "📍 https://maps.google.com/?q=43.24112,76.92730") == 0);
 	CHECK(std::strlen(buf) <= 159);
 	geofence_format_msg(buf, sizeof(buf), false, 3000.0, 2900.0, 43.24112, 76.92730);
-	CHECK(std::strcmp(buf, "✅ Вернулся в геозону (< 3.00 км)\n📏 Расстояние: 2.90 км\n"
+	CHECK(std::strcmp(buf, "✅ Вернулся в геозону\n📐 Радиус: 3.00 км\n📏 Расстояние: 2.90 км\n"
 			      "📍 https://maps.google.com/?q=43.24112,76.92730") == 0);
 	CHECK(std::strlen(buf) <= 159);
 }
@@ -382,6 +391,12 @@ TEST(geofence_parse, "UNIT-GEO-003", "set geo.point accepts exactly two in-range
 	CHECK(!geofence_parse_point("43.2", &lat, &lon));
 	CHECK(!geofence_parse_point("43.2 76.9 1", &lat, &lon));
 	CHECK(!geofence_parse_point("", &lat, &lon));
+}
+TEST(geofence_defaults, "UNIT-GEO-004", "The default point is Almaty 43.241117 76.927301 for home and geo") {
+	CHECK(GEO_LAT7_DEFAULT == 432411170);
+	CHECK(GEO_LON7_DEFAULT == 769273010);
+	CHECK(ZC_POINT_DEFAULT_LAT_E7 / 1e7 == 43.241117);
+	CHECK(ZC_POINT_DEFAULT_LON_E7 / 1e7 == 76.927301);
 }
 TEST(companion_wp_save, "UNIT-CLI-005", "wp save parses slot and name and pins the 10-char limit") {
 	int slot;

@@ -126,7 +126,7 @@ static inline const char *companion_app_cli_help(const char *line)
 	}
 	if (strcmp(line, "help geo") == 0) {
 		return "geo [on|off]\ngeo save\nget/set geo.point <lat> <lon>\n"
-		       "e.g. set geo.point 43.24112 76.92730\nget/set geo.radius (meters 50..50000)";
+		       "e.g. set geo.point 43.241117 76.927301\nget/set geo.radius (meters 50..50000)";
 	}
 #endif
 #if IS_ENABLED(CONFIG_ZEPHCORE_COMPANION_WIFI)
@@ -193,7 +193,7 @@ static inline const char *companion_remote_cli_help(const char *line)
 	}
 	if (strcmp(line, "help geo") == 0) {
 		return "geo [on|off]\nget/set geo.point <lat> <lon>\n"
-		       "e.g. set geo.point 43.24112 76.92730";
+		       "e.g. set geo.point 43.241117 76.927301";
 	}
 #endif
 #if IS_ENABLED(CONFIG_ZEPHCORE_COMPANION_WIFI)

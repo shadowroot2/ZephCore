@@ -17,19 +17,23 @@ available from remote CLI. `get/set geo.radius <m>` sets one radius in meters fo
 
 `geo on` watches the distance to the point on every fresh GPS fix. While it is on, the GPS stays
 powered at duty 300 s and `geo off` returns the GPS to exactly the state it was in before — the same
-duty ownership as tracking, so `geo` and `tracking` refuse to run together.
+duty ownership as tracking, so `geo` and `tracking` refuse to run together. The toggle survives a
+reboot: a stored `on` re-pins the duty at boot, and the first fix after boot reports the zone state
+once — back inside below the radius sends the return message, still beyond sends the exit message.
 
-When you leave the zone (two fixes in a row beyond the radius) and when you return (below radius − 50
+When you leave the zone (the first fix beyond the radius) and when you return (below radius − 50
 m), the node sends to the tracking group (`set tracking.group`, default `#tracks`):
 
 ```
-🚪 Вышел из геозоны (> 3.00 км)
+🚪 Вышел из геозоны
+📐 Радиус: 3.00 км
 📏 Расстояние: 3.50 км
 📍 https://maps.google.com/?q=43.24112,76.92730
 ```
 
 ```
-✅ Вернулся в геозону (< 3.00 км)
+✅ Вернулся в геозону
+📐 Радиус: 3.00 км
 📏 Расстояние: 2.90 км
 📍 https://maps.google.com/?q=43.24112,76.92730
 ```

@@ -167,6 +167,7 @@ protected:
 		def("geo_lat_e7", _p->geo_lat_e7);
 		def("geo_lon_e7", _p->geo_lon_e7);
 		def("geo_saved", _p->geo_saved);
+		def("geo_on", _p->geo_on);
 		def("geo_radius", _p->geo_radius_m);
 		def("adc_mult", _p->adc_multiplier);
 		def("pwr_sav_en", _p->powersaving_enabled);

@@ -84,7 +84,7 @@
     },
     {
       "id": "UNIT-GEO-001",
-      "name": "Exit confirms on 2 fixes beyond, return at hysteresis and re-arms",
+      "name": "Exit fires on the first fix beyond, return at hysteresis and re-arms",
       "source": "tests/unit/helper_tests.cpp"
     },
     {
@@ -95,6 +95,16 @@
     {
       "id": "UNIT-GEO-003",
       "name": "set geo.point accepts exactly two in-range numbers",
+      "source": "tests/unit/helper_tests.cpp"
+    },
+    {
+      "id": "UNIT-GEO-004",
+      "name": "The default point is Almaty 43.241117 76.927301 for home and geo",
+      "source": "tests/unit/helper_tests.cpp"
+    },
+    {
+      "id": "UNIT-GEO-005",
+      "name": "After boot the first fix reports the zone state exactly once",
       "source": "tests/unit/helper_tests.cpp"
     },
     {
@@ -405,6 +415,11 @@
     {
       "id": "UNIT-PJSON-011",
       "name": "geo.radius 0 on flash means unset and out-of-range clamps",
+      "source": "tests/unit/prefs_json_tests.cpp"
+    },
+    {
+      "id": "UNIT-PJSON-012",
+      "name": "initNodePrefs puts the Almaty default point in home slots and geo",
       "source": "tests/unit/prefs_json_tests.cpp"
     },
     {

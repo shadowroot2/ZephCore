@@ -1641,6 +1641,8 @@ static bool companion_geo_set_enabled(bool enabled, char *reply)
 		}
 		geofence_reset(&companion_geo.fsm);
 		gps_set_poll_interval_sec(GEO_DUTY_SEC);
+		companion_mesh.prefs.geo_on = 1;
+		save_prefs_to_flash();
 		snprintf(reply, CLI_REPLY_SIZE, "OK - geo on (radius %u m)",
 			 companion_mesh.prefs.geo_radius_m);
 		return true;
@@ -1651,6 +1653,8 @@ static bool companion_geo_set_enabled(bool enabled, char *reply)
 	}
 	companion_geo.flags &= (uint8_t)~(GEO_FLAG_ENABLED | GEO_FLAG_GPS_STARTED);
 	geofence_reset(&companion_geo.fsm);
+	companion_mesh.prefs.geo_on = 0;
+	save_prefs_to_flash();
 	strcpy(reply, "OK - geo off");
 	return true;
 }
@@ -1722,7 +1726,7 @@ static void companion_home_save_process(void)
 			tracking_maps_url(url, sizeof(url),
 					  companion_mesh.prefs.geo_lat_e7 / 1e7,
 					  companion_mesh.prefs.geo_lon_e7 / 1e7);
-			snprintf(msg, sizeof(msg), "Геоточка сохранена!\n%s", url);
+			snprintf(msg, sizeof(msg), "💾 Центр геозоны сохранен!\n%s", url);
 		} else {
 			int i = companion_home.selected;
 
@@ -1736,7 +1740,7 @@ static void companion_home_save_process(void)
 					  companion_mesh.prefs.home_lat[i],
 					  companion_mesh.prefs.home_lon[i]);
 			snprintf(msg, sizeof(msg),
-				 "Точка успешно сохранена!\n📍 %d-%s\n%s",
+				 "💾 Точка успешно сохранена!\n📍 %d-%s\n%s",
 				 i + 1, companion_mesh.prefs.home_name[i], url);
 		}
 		save_prefs_to_flash();
@@ -2876,7 +2880,7 @@ static bool handle_geo_cli(const char *line, char *reply)
 		double lat, lon;
 
 		if (!geofence_parse_point(line + 14, &lat, &lon)) {
-			strcpy(reply, "usage: set geo.point <lat> <lon>  e.g. set geo.point 43.24112 76.92730");
+			strcpy(reply, "usage: set geo.point <lat> <lon>  e.g. set geo.point 43.241117 76.927301");
 			return true;
 		}
 		companion_mesh.prefs.geo_lat_e7 = (int32_t)llround(lat * 1e7);
@@ -3417,6 +3421,21 @@ int main(void)
 			LOG_INF("GPS: Restoring enabled state");
 			gps_enable(true);
 		}
+	}
+
+	/* Geofence survives reboot (ADR 0011): re-pin the duty like geo on and
+	 * report the zone state once on the first fix. */
+	if (companion_mesh.prefs.geo_on && gps_is_available()) {
+		companion_geo.saved_duty_sec = gps_get_poll_interval_sec();
+		companion_geo.flags |= GEO_FLAG_ENABLED;
+		if (!gps_is_enabled()) {
+			companion_geo.flags |= GEO_FLAG_GPS_STARTED;
+			gps_enable(true);
+		}
+		gps_set_poll_interval_sec(GEO_DUTY_SEC);
+		geofence_boot_arm(&companion_geo.fsm);
+		LOG_INF("geo: restored from prefs (radius %u m)",
+			companion_mesh.prefs.geo_radius_m);
 	}
 
 	/* Apply RX boost and duty cycle from prefs */

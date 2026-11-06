@@ -15,7 +15,7 @@
  * consecutive fix beyond the radius; return fires once at
  * radius - GEO_REENTER_HYST_M and re-arms the exit trigger. */
 
-#define GEO_EXIT_CONFIRM_FIXES	2
+#define GEO_EXIT_CONFIRM_FIXES	1
 #define GEO_REENTER_HYST_M	50.0
 #define GEO_DUTY_SEC		300U
 #define GEO_FIX_MAX_AGE_MS	30000U
@@ -23,9 +23,9 @@
 #define GEO_RADIUS_M_MIN	50U
 #define GEO_RADIUS_M_MAX	50000U
 /* The default saved point (Abay × Baitursynov, Almaty): home slots and the
- * geofence point all start here. */
-#define ZC_POINT_DEFAULT_LAT_E7	43241117 /* 43.241117 deg x 1e7 */
-#define ZC_POINT_DEFAULT_LON_E7	76927301 /* 76.927301 deg x 1e7 */
+ * geofence point all start here. Degrees x 1e7. */
+#define ZC_POINT_DEFAULT_LAT_E7	432411170 /* 43.241117 */
+#define ZC_POINT_DEFAULT_LON_E7	769273010 /* 76.927301 */
 #define GEO_LAT7_DEFAULT	ZC_POINT_DEFAULT_LAT_E7
 #define GEO_LON7_DEFAULT	ZC_POINT_DEFAULT_LON_E7
 
@@ -39,14 +39,24 @@ enum geofence_event {
 };
 
 struct geofence_state {
-	uint8_t outside; /* alerted and still out; re-arms on return */
-	uint8_t beyond;	 /* consecutive fixes past the radius */
+	uint8_t outside;   /* alerted and still out; re-arms on return */
+	uint8_t beyond;	   /* consecutive fixes past the radius */
+	uint8_t boot_fix;  /* next fix reports the zone state once (post-boot) */
 };
 
 static inline void geofence_reset(struct geofence_state *g)
 {
 	g->outside = 0;
 	g->beyond = 0;
+	g->boot_fix = 0;
+}
+
+/* Post-boot re-arm: the first fix reports once — REENTER if inside the zone,
+ * EXIT if beyond the radius. */
+static inline void geofence_boot_arm(struct geofence_state *g)
+{
+	geofence_reset(g);
+	g->boot_fix = 1;
 }
 
 /* Feed the distance of one fresh fix; returns the event to report, if any. */
@@ -54,6 +64,9 @@ static inline enum geofence_event geofence_update(struct geofence_state *g,
 						  double dist_m,
 						  double radius_m)
 {
+	bool boot = g->boot_fix != 0;
+
+	g->boot_fix = 0;
 	if (g->outside) {
 		if (dist_m < radius_m - GEO_REENTER_HYST_M) {
 			g->outside = 0;
@@ -63,7 +76,7 @@ static inline enum geofence_event geofence_update(struct geofence_state *g,
 		return GEO_EVENT_NONE;
 	}
 	if (dist_m > radius_m) {
-		if (g->beyond + 1 >= GEO_EXIT_CONFIRM_FIXES) {
+		if (boot || g->beyond + 1 >= GEO_EXIT_CONFIRM_FIXES) {
 			g->outside = 1;
 			g->beyond = 0;
 			return GEO_EVENT_EXIT;
@@ -72,11 +85,11 @@ static inline enum geofence_event geofence_update(struct geofence_state *g,
 		return GEO_EVENT_NONE;
 	}
 	g->beyond = 0;
-	return GEO_EVENT_NONE;
+	return boot ? GEO_EVENT_REENTER : GEO_EVENT_NONE;
 }
 
-/* "🚪 Вышел из геозоны (> 3.00 км)\n📏 Расстояние: 3.50 км\n📍 <maps link>",
- * or the "✅ Вернулся в геозону (< ...)" twin. Fits the mesh text frame. */
+/* "🚪 Вышел из геозоны\n📐 Радиус: 3.00 км\n📏 Расстояние: 3.50 км\n📍 <link>",
+ * or the "✅ Вернулся в геозону" twin. Fits the mesh text frame. */
 static inline void geofence_format_msg(char *buf, size_t len, bool exited,
 				       double radius_m, double dist_m,
 				       double lat_deg, double lon_deg)
@@ -86,10 +99,10 @@ static inline void geofence_format_msg(char *buf, size_t len, bool exited,
 	nav_distance_ru_str(r, sizeof(r), radius_m);
 	nav_distance_ru_str(d, sizeof(d), dist_m);
 	tracking_maps_url(url, sizeof(url), lat_deg, lon_deg);
-	snprintf(buf, len, "%s %s (%s %s)\n📏 Расстояние: %s\n📍 %s",
+	snprintf(buf, len, "%s %s\n📐 Радиус: %s\n📏 Расстояние: %s\n📍 %s",
 		 exited ? GEO_EMOJI_EXIT : GEO_EMOJI_ENTER,
 		 exited ? "Вышел из геозоны" : "Вернулся в геозону",
-		 exited ? ">" : "<", r, d, url);
+		 r, d, url);
 }
 
 /* "43.24112 76.92730" -> two degrees in range. Exactly two finite numbers,

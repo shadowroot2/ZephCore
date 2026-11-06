@@ -224,9 +224,10 @@ struct NodePrefs {
 	uint8_t home_saved[10];
 	char home_name[10][12];
 	/* ADR 0011, tail padding — see geo_lon_e7. geo_radius_m is meters,
-	 * 0 on flash means "unset" (defaulted); geo on/off is runtime state. */
+	 * 0 on flash means "unset" (defaulted); geo_on persists the toggle. */
 	uint16_t geo_radius_m;
 	uint8_t geo_saved;
+	uint8_t geo_on;
 };
 
 /* Range guards for prefs that came off flash: a blob can be intact and
@@ -328,6 +329,7 @@ static inline void sanitizeNodePrefs(NodePrefs* p) {
 	p->geo_lat_e7 = clampPref<int32_t>(p->geo_lat_e7, -900000000, 900000000);
 	p->geo_lon_e7 = clampPref<int32_t>(p->geo_lon_e7, -1800000000, 1800000000);
 	p->geo_saved = p->geo_saved ? 1 : 0;
+	p->geo_on = p->geo_on ? 1 : 0;
 	/* 0 means "unset", so it falls back to the default zone rather than to
 	 * the clamp floor. */
 	if (p->geo_radius_m == 0) {
@@ -542,6 +544,7 @@ static inline void initNodePrefs(NodePrefs* prefs) {
 	prefs->geo_lat_e7 = GEO_LAT7_DEFAULT;
 	prefs->geo_lon_e7 = GEO_LON7_DEFAULT;
 	prefs->geo_saved = 0;
+	prefs->geo_on = 0;
 	prefs->geo_radius_m = GEO_RADIUS_M_DEFAULT;
 	/* Companion-only default, set here so every caller of initNodePrefs() sees
 	 * it. 0 means disabled and is a legal stored value. */

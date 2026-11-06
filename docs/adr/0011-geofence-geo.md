@@ -25,7 +25,7 @@ an ADR of their own.
 **Point.** `geo save` is local-CLI-only (like `wp save`: it starts the same wait-for-fix capture; the default
 coordinates are the home-slot defaults 43.241117 / 76.927301). `get/set geo.point <lat> <lon>` reads and
 writes the point manually and is the only coordinate-edit path available over remote CLI; the help text shows
-an example (`set geo.point 43.24112 76.92730`).
+an example (`set geo.point 43.241117 76.927301`).
 
 **Radius.** One global `set geo.radius <m>` — the help text states meters. Guard 50..50000, default 3000.
 Radius is the zone size; the toggle below is the on/off switch.
@@ -35,7 +35,10 @@ current GPS enabled state and duty, enable GPS, set duty to 300 s. Off: restore 
 waiting for a fix, same as `tracking off`). Mutual guard with tracking — one owner of the GPS duty at a time:
 `geo on` refuses while tracking is on and `tracking on` refuses while geo is on. While geo is on, `gps off`
 and `set gps duty` are refused (the same block tracking applies); a toggle is refused while navigating or
-while a point save is running. Toggle state is runtime, like tracking and nav; point and radius persist.
+while a point save is running. The toggle persists across reboots (`prefs.geo_on`): at boot a stored `on`
+re-pins the duty like `geo on` and the restore target becomes the prefs state. The first fix after boot
+reports the zone state exactly once — `✅ Вернулся в геозону` when inside, `🚪 Вышел из геозоны` when
+beyond the radius.
 
 **Point save.** `geo save` runs the exact `wp save` pipeline (`companion_home_start_save` /
 `companion_home_save_process` with a geo target flag): force a fix, capture it, return the GPS to what it
@@ -44,7 +47,7 @@ was. One save at a time — `wp save` and `geo save` refuse each other.
 **Events.** Evaluated per fresh fix (age <= 30 s) on the main-thread `MESH_EVENT_GPS_FIX` path next to
 `companion_nav_fix_process`; `dist = tracking_distance_m(own, geo point)`. No fix, no evaluation.
 
-- EXIT: 2 consecutive fixes with `dist > radius` -> one message.
+- EXIT: the first fix with `dist > radius` -> one message.
 - REENTER: `dist < radius - 50 m` -> one message, and the exit trigger re-arms.
 
 No repeats while the state does not change.
@@ -55,17 +58,19 @@ No repeats while the state does not change.
 vContact, no BLE/USB text path. Local feedback is a buzzer/UI signal only, not a message.
 
 ```
-🚪 Вышел из геозоны (> %s)
+🚪 Вышел из геозоны
+📐 Радиус: %s
 📏 Расстояние: %s
 📍 https://maps.google.com/?q=%.5f,%.5f
 
-✅ Вернулся в геозону (< %s)
+✅ Вернулся в геозону
+📐 Радиус: %s
 📏 Расстояние: %s
 📍 https://maps.google.com/?q=%.5f,%.5f
 ```
 
-Both `%s` distances come from `nav_distance_ru_str` ("3.00 км"); the first is the radius, the second the
-distance at event time. Emojis are single constants.
+Both distance lines come from `nav_distance_ru_str` ("50 м", "3.00 км") — the
+radius is the zone size, the other is the distance at event time. Emojis are single constants.
 
 **Help.** The `geo` group goes right after `nav` in LocalCLIHelp.h; the companion help lists the remote-allowed
 subset with the coordinate example.
@@ -75,13 +80,16 @@ the allowlist tables (those pointers cost DRAM). `geo save`, `get geo.radius` an
 local/app only.
 
 **Prefs (prefs.json/zc only; the legacy PrefsCodec is frozen).** `geo_lat_e7`, `geo_lon_e7` (degrees x 1e7),
-`geo_saved`, `geo_radius_m` — default point 43.241117 / 76.927301 with `geo_saved = 0`, default radius 3000 m,
+`geo_saved`, `geo_on`, `geo_radius_m` — default point 43.241117 / 76.927301 with `geo_saved = 0`, toggle off,
+default radius 3000 m,
 range guards 50..50000. The fields sit in existing NodePrefs padding holes on purpose: NodePrefs rides in the
 static mesh object and companion DRAM (Heltec V3) has single-digit bytes free, so the struct must not grow.
 
 ## Consequences
 
-- Alert latency is bounded by the pinned duty: up to 2 x 300 s of confirmation plus fix acquisition. That
+- Alert latency is bounded by the pinned duty: one duty wake (300 s) plus fix acquisition. Exit fires on
+  the first fix beyond the radius (2026-11-06, was two — latency preferred over boundary debounce; the
+  50 m re-arm hysteresis remains the chatter guard). That
   fits the 3 km use case; radii at the 50 m end will alert late — the fix is `set geo.radius` larger or a
   future duty knob, not silent per-board tuning.
 - Hidden send means the sender's group feed has no record of its own alerts; the local log line is the trace.
