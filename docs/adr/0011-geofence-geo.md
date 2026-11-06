@@ -55,7 +55,7 @@ No repeats while the state does not change.
 **Messages (LoRa only).** Both go to the tracking group via `sendGroupMessage` through a new
 `companion_send_hidden_group_message` — the same send as the visible helper minus
 `queueLocalAutomatedChannelMessage`, so the alert never appears in the sender's local group feed. No
-vContact, no BLE/USB text path. Local feedback is a buzzer/UI signal only, not a message.
+vContact, no BLE/USB text path. Nothing is signalled on the device itself.
 
 ```
 🚪 Вышел из геозоны

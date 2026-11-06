@@ -2093,9 +2093,6 @@ static void companion_geo_fix_process(void)
 			    (double)companion_mesh.prefs.geo_radius_m, dist_m,
 			    pos.latitude_ndeg / 1e9, pos.longitude_ndeg / 1e9);
 	companion_send_geo_message(msg);
-#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
-	buzzer_play(ev == GEO_EVENT_EXIT ? MELODY_WRONG : MELODY_ARRIVED);
-#endif
 	LOG_INF("geo: %s", msg);
 }
 

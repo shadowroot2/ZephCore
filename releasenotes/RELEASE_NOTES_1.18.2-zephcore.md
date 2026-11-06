@@ -39,11 +39,13 @@ m), the node sends to the tracking group (`set tracking.group`, default `#tracks
 ```
 
 Both go out over LoRa only and hidden: they never appear in your own outgoing group feed and are not
-sent to the v-contact, so the group is the one place that sees them. On the device itself the alert is
-a beep.
+sent to the v-contact, so the group is the one place that sees them. Nothing is signalled on the
+device itself.
 
 ## Other changes
 
+- **Save confirmations got a 💾**: `💾 Точка успешно сохранена!` for `wp save` and
+  `💾 Центр геозоны сохранен!` for `geo save`, both still followed by the maps link.
 - **Offline message queue 256 → 128 entries.** The queue holds messages waiting for the phone app;
   each entry costs 173 bytes of DRAM, so this frees 22 KB — the biggest single saving on DRAM-bound
   companions like the Heltec V3. 128 undelivered messages is still generous: the app drains them one
