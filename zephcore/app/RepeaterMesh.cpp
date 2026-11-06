@@ -7,7 +7,6 @@
 #include <helpers/AdvertDataHelpers.h>
 #include <helpers/TxtDataHelpers.h>
 #include <helpers/RepeaterCLIHelp.h>
-#include <helpers/TrackingMessage.h>
 #include <helpers/battery_curve.h>
 #include <helpers/MeshcoreJson.h>
 #include <adapters/radio/LoRaRadio.h>
@@ -1653,19 +1652,6 @@ void RepeaterMesh::batteryAlertTick() {
 
     const uint8_t percent = battery_curve_lookup(&battery_curve_default, mv);
 
-    double lat = _prefs.node_lat, lon = _prefs.node_lon;
-    struct gps_position pos = {};
-    if (gps_is_available() && gps_get_last_known_position(&pos) &&
-        (pos.latitude_ndeg != 0 || pos.longitude_ndeg != 0) &&
-        pos.latitude_ndeg >= -90000000000LL && pos.latitude_ndeg <= 90000000000LL &&
-        pos.longitude_ndeg >= -180000000000LL && pos.longitude_ndeg <= 180000000000LL) {
-        lat = pos.latitude_ndeg / 1e9;
-        lon = pos.longitude_ndeg / 1e9;
-    }
-    const bool has_location = isfinite(lat) && isfinite(lon) &&
-        lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180 &&
-        (lat != 0 || lon != 0);
-
     /* Same public-channel PSK/hash and plaintext envelope as BaseChatMesh.
      * 160 text bytes includes the sender prefix; no channel table is needed. */
     mesh::GroupChannel channel = {};
@@ -1687,23 +1673,9 @@ void RepeaterMesh::batteryAlertTick() {
     }
     char uptime[10];
     snprintf(uptime, sizeof(uptime), "%uч%02uм", (unsigned)(up_min / 60U), (unsigned)(up_min % 60U));
-    int len = snprintf(text, 161, "%.31s: Низкий заряд!\n🪫 %u%% %u.%02uV\n🌡️ %s\n⏱️ %s",
-                       _prefs.node_name, percent, mv / 1000U, (mv % 1000U) / 10U,
-                       temperature, uptime);
-    if (has_location && len > 0 && len < 160) {
-        unsigned sats = pos.satellites > 99 ? 99 : pos.satellites;
-        len += snprintf(text + len, 161 - len, "\n🛰️ %u fix", sats);
-        if (len > 0 && len < 160) {
-            char url[48];
-            tracking_maps_url(url, sizeof(url), lat, lon);
-            snprintf(text + len, 161 - len, "\n📍 %s", url);
-        }
-    } else if (gps_is_available() && len > 0 && len < 160) {
-        struct gps_state_info gsi = {};
-        gps_get_state_info(&gsi);
-        unsigned sats = gsi.satellites > 99 ? 99 : gsi.satellites;
-        snprintf(text + len, 161 - len, "\n🛰️ %u no fix", sats);
-    }
+    snprintf(text, 161, "%.31s: Низкий заряд!\n🪫 %u%% %u.%02uV\n🌡️ %s\n⏱️ %s",
+             _prefs.node_name, percent, mv / 1000U, (mv % 1000U) / 10U,
+             temperature, uptime);
     mesh::Packet* pkt = createGroupDatagram(PAYLOAD_TYPE_GRP_TXT, channel,
                                            data, 5 + strlen(text));
     if (!pkt) {

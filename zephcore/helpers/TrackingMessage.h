@@ -56,6 +56,28 @@ static inline void tracking_maps_url(char *buf, size_t len,
 		 lat_deg, lon_deg);
 }
 
+/* The arrival notice: "<head>\n📍 <point>\n⏱️: <dur>\n📏 <dist>\n<link>".
+ * `len` is the send budget after the headline (MAX_TEXT_LEN minus the
+ * "name: " prefix on LoRa); when it does not fit, the ⏱ and 📏 lines drop
+ * in that order so the maps link — always last — survives whole. */
+static inline void nav_format_arrival(char *buf, size_t len, const char *head,
+				      int point_idx, const char *point_name,
+				      const char *dur, const char *dist,
+				      const char *url)
+{
+	int n = snprintf(buf, len, "%s\n📍 %d-%s\n⏱️: %s\n📏 %s\n%s",
+			 head, point_idx, point_name, dur, dist, url);
+	if (n > 0 && (size_t)n < len) {
+		return;
+	}
+	n = snprintf(buf, len, "%s\n📍 %d-%s\n📏 %s\n%s",
+		     head, point_idx, point_name, dist, url);
+	if (n > 0 && (size_t)n < len) {
+		return;
+	}
+	snprintf(buf, len, "%s\n📍 %d-%s\n%s", head, point_idx, point_name, url);
+}
+
 /* One tracking report: "🏃 12 км/ч ↗️ СВ · <maps link>" while moving,
  * "🅿️ <maps link>" at standstill. speed_mms/bearing_mdeg are GNSS nav data. */
 static inline void tracking_format_report(char *buf, size_t len,

@@ -10,8 +10,10 @@ Status: accepted (recorded 2026-11-05)
   never shown in local outgoing; (3) one global radius, set in meters.
 - Follow-ups the same day: a `geo` help group placed after `nav`; remote coordinate edits only via
   `set geo.point` (help shows a coordinate example); a return-to-zone message; all event messages LoRa-only
-  (no vContact/BLE path); a `geo on|off` toggle available in every CLI, first in the group, owning the GPS
-  duty while on (save state → GPS on, duty 300 s → restore on off).
+  (no vContact/BLE path); a `geo on|off` toggle available in every CLI, first in the group, pinning the GPS
+  duty while on (GPS on, duty 500 s). 2026-11-06: the GPS duty ownership model was rewritten — tracking,
+  nav, geo and sos are users of one GPS, the configured duty lives in `prefs.gps_interval` and only the
+  last user out powers the GPS down; tracking, nav and sos outrank geo.
 - Reused cores: `tracking_distance_m` and `nav_distance_ru_str` (TrackingMessage.h); the wait-for-fix save
   process of `wp save` (`companion_home_start_save`, main_companion.cpp); the GPS save/restore pattern of
   `companion_tracking_set_enabled` (main_companion.cpp:1501); the remote CLI allowlist
@@ -30,15 +32,21 @@ an example (`set geo.point 43.241117 76.927301`).
 **Radius.** One global `set geo.radius <m>` — the help text states meters. Guard 50..50000, default 3000.
 Radius is the zone size; the toggle below is the on/off switch.
 
-**Toggle.** `geo on|off`, available in every CLI and the first line of the `geo` help group. On: save the
-current GPS enabled state and duty, enable GPS, set duty to 300 s. Off: restore both (refused while an SOS is
-waiting for a fix, same as `tracking off`). Mutual guard with tracking — one owner of the GPS duty at a time:
-`geo on` refuses while tracking is on and `tracking on` refuses while geo is on. While geo is on, `gps off`
-and `set gps duty` are refused (the same block tracking applies); a toggle is refused while navigating or
-while a point save is running. The toggle persists across reboots (`prefs.geo_on`): at boot a stored `on`
-re-pins the duty like `geo on` and the restore target becomes the prefs state. The first fix after boot
-reports the zone state exactly once — `✅ Вернулся в геозону` when inside, `🚪 Вышел из геозоны` when
-beyond the radius.
+**GPS duty ownership (2026-11-06).** The GPS has four users — tracking, nav, geo and sos. Each on
+ensures the GPS is powered and sets its own duty (tracking and nav 0, geo 500 s); the configured duty
+lives in `prefs.gps_interval` and no feature ever writes it, so it survives reboots by construction.
+When a user leaves and one of the higher-rank three is still active, nothing is touched; when only geo
+remains, its 500 s pin is re-asserted; with nobody left the GPS powers down and the live duty returns
+to `prefs.gps_interval` (`companion_gps_user_left`). Tracking, nav and sos outrank geo:
+`geo on`/`geo off` under them leaves the GPS and duty alone. After a reboot
+tracking and nav are gone and the configured duty returns; geo stays on and re-pins 500 s.
+
+**Toggle.** `geo on|off`, available in every CLI and the first line of the `geo` help group. On: GPS on
+and duty 500 s when geo is the only user (see ownership above); a point save is refused meanwhile. While
+geo owns the duty, `gps off` and `set gps duty` are refused (the same block tracking applies). The toggle
+persists across reboots (`prefs.geo_on`): at boot a stored `on` re-pins the duty like `geo on`. The first
+fix after boot reports the zone state exactly once — `✅ Вернулся в геозону` when inside,
+`🚪 Вышел из геозоны` when beyond the radius.
 
 **Point save.** `geo save` runs the exact `wp save` pipeline (`companion_home_start_save` /
 `companion_home_save_process` with a geo target flag): force a fix, capture it, return the GPS to what it
@@ -59,18 +67,22 @@ vContact, no BLE/USB text path. Nothing is signalled on the device itself.
 
 ```
 🚪 Вышел из геозоны
-📐 Радиус: %s
-📏 Расстояние: %s
+📐 %s
+📏 %s
 📍 https://maps.google.com/?q=%.5f,%.5f
 
 ✅ Вернулся в геозону
-📐 Радиус: %s
-📏 Расстояние: %s
+📐 %s
+📏 %s
 📍 https://maps.google.com/?q=%.5f,%.5f
 ```
 
-Both distance lines come from `nav_distance_ru_str` ("50 м", "3.00 км") — the
-radius is the zone size, the other is the distance at event time. Emojis are single constants.
+Both distance lines come from `geofence_dist_str` — the compact form the zone
+messages use ("50м", "3км", "3.5км", unit glued to the value); the first is the
+radius, the other is the distance at event time. Emojis are single constants. The
+message is formatted into the real send budget (`MAX_TEXT_LEN` minus the
+"name: " prefix `sendGroupMessage` adds) and drops the radius line first when it
+does not fit, so the maps link is never cut.
 
 **Help.** The `geo` group goes right after `nav` in LocalCLIHelp.h; the companion help lists the remote-allowed
 subset with the coordinate example.
@@ -87,13 +99,14 @@ static mesh object and companion DRAM (Heltec V3) has single-digit bytes free, s
 
 ## Consequences
 
-- Alert latency is bounded by the pinned duty: one duty wake (300 s) plus fix acquisition. Exit fires on
+- Alert latency is bounded by the pinned duty: one duty wake (500 s) plus fix acquisition. Exit fires on
   the first fix beyond the radius (2026-11-06, was two — latency preferred over boundary debounce; the
   50 m re-arm hysteresis remains the chatter guard). That
   fits the 3 km use case; radii at the 50 m end will alert late — the fix is `set geo.radius` larger or a
   future duty knob, not silent per-board tuning.
 - Hidden send means the sender's group feed has no record of its own alerts; the local log line is the trace.
-- Duty restore assumes geo and tracking never run together (mutual guard) and SOS restore runs first
-  (existing guard on the restore path).
-- The GPS duty pin makes geo on/off a visible power trade-off: GPS stays powered at 5 min cadence until
-  `geo off`.
+- The configured duty is never written by features, so nested on/off orders and reboots cannot lose it;
+  only `set gps duty` changes it. While tracking or nav holds duty 0 over geo, the leash rides on their
+  fixes; when they leave and only geo remains, its 500 s pin is re-asserted.
+- The GPS duty pin makes geo on/off a visible power trade-off: GPS stays powered at the 500 s cadence
+  until `geo off` or a higher-rank user takes over.

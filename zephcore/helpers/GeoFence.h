@@ -17,7 +17,7 @@
 
 #define GEO_EXIT_CONFIRM_FIXES	1
 #define GEO_REENTER_HYST_M	50.0
-#define GEO_DUTY_SEC		300U
+#define GEO_DUTY_SEC		500U
 #define GEO_FIX_MAX_AGE_MS	30000U
 #define GEO_RADIUS_M_DEFAULT	3000U
 #define GEO_RADIUS_M_MIN	50U
@@ -88,21 +88,49 @@ static inline enum geofence_event geofence_update(struct geofence_state *g,
 	return boot ? GEO_EVENT_REENTER : GEO_EVENT_NONE;
 }
 
-/* "🚪 Вышел из геозоны\n📐 Радиус: 3.00 км\n📏 Расстояние: 3.50 км\n📍 <link>",
- * or the "✅ Вернулся в геозону" twin. Fits the mesh text frame. */
+/* "50м", "950м", "3км", "3.5км", "3.25км" — compact zone-message form, the
+ * unit glued to the value; trailing zeros are trimmed. */
+static inline void geofence_dist_str(char *buf, size_t len, double meters)
+{
+	if (meters < 1000.0) {
+		snprintf(buf, len, "%uм", (unsigned)(meters + 0.5));
+		return;
+	}
+	unsigned hundredths = (unsigned)(meters / 10.0 + 0.5); /* km x 100 */
+	unsigned frac = hundredths % 100U;
+
+	if (frac == 0) {
+		snprintf(buf, len, "%uкм", hundredths / 100U);
+	} else if (frac % 10U == 0) {
+		snprintf(buf, len, "%u.%uкм", hundredths / 100U, frac / 10U);
+	} else {
+		snprintf(buf, len, "%u.%02uкм", hundredths / 100U, frac);
+	}
+}
+
+/* "🚪 Вышел из геозоны\n📐 3км\n📏 3.5км\n📍 <link>", or the
+ * "✅ Вернулся в геозону" twin. `len` is the real send budget
+ * (MAX_TEXT_LEN minus the "name: " prefix the send path adds): when the
+ * message does not fit, the radius line goes first so the maps link — always
+ * the last line — is never cut mid-URL. */
 static inline void geofence_format_msg(char *buf, size_t len, bool exited,
 				       double radius_m, double dist_m,
 				       double lat_deg, double lon_deg)
 {
-	char r[16], d[16], url[48];
+	char r[12], d[12], url[48];
+	const char *head = exited ? "Вышел из геозоны" : "Вернулся в геозону";
+	const char *emoji = exited ? GEO_EMOJI_EXIT : GEO_EMOJI_ENTER;
+	int n;
 
-	nav_distance_ru_str(r, sizeof(r), radius_m);
-	nav_distance_ru_str(d, sizeof(d), dist_m);
+	geofence_dist_str(r, sizeof(r), radius_m);
+	geofence_dist_str(d, sizeof(d), dist_m);
 	tracking_maps_url(url, sizeof(url), lat_deg, lon_deg);
-	snprintf(buf, len, "%s %s\n📐 Радиус: %s\n📏 Расстояние: %s\n📍 %s",
-		 exited ? GEO_EMOJI_EXIT : GEO_EMOJI_ENTER,
-		 exited ? "Вышел из геозоны" : "Вернулся в геозону",
-		 r, d, url);
+	n = snprintf(buf, len, "%s %s\n📐 %s\n📏 %s\n📍 %s",
+		     emoji, head, r, d, url);
+	if (n > 0 && (size_t)n < len) {
+		return;
+	}
+	snprintf(buf, len, "%s %s\n📏 %s\n📍 %s", emoji, head, d, url);
 }
 
 /* "43.24112 76.92730" -> two degrees in range. Exactly two finite numbers,

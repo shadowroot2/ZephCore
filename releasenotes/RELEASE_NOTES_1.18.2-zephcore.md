@@ -11,13 +11,15 @@ it comes back.
 ## Geofence (`geo`)
 
 `geo save` stores the current GPS fix as the geofence point (the same wait-for-fix capture as
-`wp save`), `set geo.point 43.24112 76.92730` sets it by hand — that is also the only coordinate edit
+`wp save`), `set geo.point 43.241117 76.927301` sets it by hand — that is also the only coordinate edit
 available from remote CLI. `get/set geo.radius <m>` sets one radius in meters for the whole zone
 (default 3000, range 50–50000).
 
 `geo on` watches the distance to the point on every fresh GPS fix. While it is on, the GPS stays
-powered at duty 300 s and `geo off` returns the GPS to exactly the state it was in before — the same
-duty ownership as tracking, so `geo` and `tracking` refuse to run together. The toggle survives a
+powered at duty 500 s. The GPS now has four users — tracking, nav, geo and sos: whoever leaves last
+powers it down and returns `gps duty` to your configured value (which no feature overwrites, so it
+survives reboots and any on/off order); with only geo left, its 500 s duty comes back. Tracking, nav
+and sos outrank geo — `geo on|off` under them leaves the GPS alone. The toggle survives a
 reboot: a stored `on` re-pins the duty at boot, and the first fix after boot reports the zone state
 once — back inside below the radius sends the return message, still beyond sends the exit message.
 
@@ -26,15 +28,15 @@ m), the node sends to the tracking group (`set tracking.group`, default `#tracks
 
 ```
 🚪 Вышел из геозоны
-📐 Радиус: 3.00 км
-📏 Расстояние: 3.50 км
+📐 3км
+📏 3.5км
 📍 https://maps.google.com/?q=43.24112,76.92730
 ```
 
 ```
 ✅ Вернулся в геозону
-📐 Радиус: 3.00 км
-📏 Расстояние: 2.90 км
+📐 3км
+📏 2.9км
 📍 https://maps.google.com/?q=43.24112,76.92730
 ```
 

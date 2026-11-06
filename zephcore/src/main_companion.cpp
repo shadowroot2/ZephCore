@@ -129,6 +129,7 @@ static void companion_tracking_odometer_fix(void);
 static void companion_home_save_process(void);
 static void companion_nav_fix_process(void);
 static void companion_geo_fix_process(void);
+static void companion_gps_user_left(void);
 static void companion_nav_link_check(void);
 static void companion_tracking_process(void);
 static uint32_t companion_custom_ms_until_next(void);
@@ -834,12 +835,10 @@ enum companion_emergency_type {
 
 struct companion_sos_state {
 	bool pending;
-	bool gps_started_by_sos;
 	bool silent;
 	enum companion_emergency_type type;
 	uint32_t started_ms;
 	uint32_t next_waiting_message_ms;
-	uint32_t saved_gps_duty_sec;
 };
 
 static struct companion_sos_state companion_sos;
@@ -921,13 +920,9 @@ static void companion_fall_cancel_pending(void)
 		return;
 	}
 
-	/* Return GPS exactly to its state before the fall event. */
-	gps_set_poll_interval_sec(companion_sos.saved_gps_duty_sec);
-	if (companion_sos.gps_started_by_sos) {
-		gps_enable(false);
-	}
 	memset(&companion_sos, 0, sizeof(companion_sos));
 	atomic_set(&companion_manual_sos_pending, 0);
+	companion_gps_user_left();
 	companion_sos_ui_clear();
 }
 
@@ -996,12 +991,9 @@ extern "C" void companion_sos_cancel_from_ui(void)
 		return;
 	}
 
-	gps_set_poll_interval_sec(companion_sos.saved_gps_duty_sec);
-	if (companion_sos.gps_started_by_sos) {
-		gps_enable(false);
-	}
 	memset(&companion_sos, 0, sizeof(companion_sos));
 	atomic_set(&companion_manual_sos_pending, 0);
+	companion_gps_user_left();
 	companion_sos_tone.pending = false;
 	companion_sos_ui_clear();
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
@@ -1118,11 +1110,26 @@ static bool companion_send_sos_message(bool allow_coordinates)
 	}
 
 	uint16_t battery_mv = get_battery_mv();
+	size_t name_prefix = strlen(companion_mesh.prefs.node_name) + 2;
+	size_t budget = ((size_t)MAX_TEXT_LEN > name_prefix ?
+			 MAX_TEXT_LEN - name_prefix : 0) + 1;
+	int n = -1;
+
+	/* The temperature line is the first to go when the node name leaves too
+	 * little of MAX_TEXT_LEN, then the battery line: the coordinates —
+	 * always last — must reach the group whole. */
 	if (has_gps) {
-		snprintf(text, sizeof(text),
-			 "%s\n🔋 %u.%02uV\n🌡️ %s\n%s", prefix,
-			 battery_mv / 1000U, (battery_mv % 1000U) / 10U,
-			 temperature, gps);
+		n = snprintf(text, budget, "%s\n🔋 %u.%02uV\n🌡️ %s\n%s",
+			     prefix, battery_mv / 1000U,
+			     (battery_mv % 1000U) / 10U, temperature, gps);
+		if (n < 0 || (size_t)n >= budget) {
+			n = snprintf(text, budget, "%s\n🔋 %u.%02uV\n%s",
+				     prefix, battery_mv / 1000U,
+				     (battery_mv % 1000U) / 10U, gps);
+		}
+		if (n < 0 || (size_t)n >= budget) {
+			snprintf(text, budget, "%s\n%s", prefix, gps);
+		}
 	} else {
 		snprintf(text, sizeof(text), "%s\n🔋 %u.%02uV\n🌡️ %s", prefix,
 			 battery_mv / 1000U, (battery_mv % 1000U) / 10U,
@@ -1158,14 +1165,11 @@ static bool companion_sos_finish(bool fresh_fix)
 {
 	bool success = companion_sos_send_now(fresh_fix);
 
-	/* SOS temporarily forces continuous acquisition. Restore the configured
-	 * duty cycle and enabled state after the message is queued. */
-	gps_set_poll_interval_sec(companion_sos.saved_gps_duty_sec);
-	if (companion_sos.gps_started_by_sos) {
-		gps_enable(false);
-	}
+	/* SOS temporarily forces continuous acquisition; the last GPS user out
+	 * powers the GPS down (ADR 0011). */
 	memset(&companion_sos, 0, sizeof(companion_sos));
 	atomic_set(&companion_manual_sos_pending, 0);
+	companion_gps_user_left();
 	return success;
 }
 
@@ -1249,8 +1253,6 @@ static bool companion_emergency_request(enum companion_emergency_type type,
 		companion_sos_button_cancelable(true,
 			type == COMPANION_EMERGENCY_FALL));
 	companion_sos.started_ms = k_uptime_get_32();
-	companion_sos.gps_started_by_sos = !gps_was_enabled;
-	companion_sos.saved_gps_duty_sec = gps_get_poll_interval_sec();
 	companion_sos_ui_waiting();
 	companion_send_sos_waiting_message();
 	companion_sos.next_waiting_message_ms = companion_sos.started_ms +
@@ -1351,9 +1353,7 @@ static void companion_sos_tx_done(void)
 
 struct companion_tracking_state {
 	bool enabled;
-	bool gps_started_by_tracking;
 	bool silent_reports;
-	uint32_t saved_gps_duty_sec;
 	uint32_t started_ms;
 	int64_t next_report_ms;
 	bool has_last_sent_position;
@@ -1393,15 +1393,34 @@ static struct companion_home_state companion_home;
 
 /* ===== Geofence: own position vs one saved point (ADR 0011) ===== */
 #define GEO_FLAG_ENABLED	BIT(0)
-#define GEO_FLAG_GPS_STARTED	BIT(1) /* we powered the GPS; power it back off */
-#define GEO_FLAG_SAVE_IS_GEO	BIT(2) /* the active home save captures the geo point */
+#define GEO_FLAG_SAVE_IS_GEO	BIT(1) /* the active home save captures the geo point */
 
 struct companion_geo_state {
-	uint32_t saved_duty_sec;
 	uint8_t flags;
 	struct geofence_state fsm;
 };
 static struct companion_geo_state companion_geo;
+
+/* A GPS user (tracking, nav, geo, sos) has just left. While one of the
+ * higher-rank users remains, the GPS is left alone; while only geo remains,
+ * its 500 s pin is re-asserted; with nobody left the GPS powers down and the
+ * configured duty (prefs.gps_interval — never written by features) returns. */
+static void companion_gps_user_left(void)
+{
+	if (companion_tracking.enabled || companion_home.nav_active ||
+	    companion_sos.pending) {
+		return;
+	}
+	if (companion_geo.flags & GEO_FLAG_ENABLED) {
+		if (!gps_is_enabled()) {
+			gps_enable(true);
+		}
+		gps_set_poll_interval_sec(GEO_DUTY_SEC);
+		return;
+	}
+	gps_set_poll_interval_sec(companion_mesh.prefs.gps_interval);
+	gps_enable(false);
+}
 
 static uint32_t companion_custom_ms_until_next(void)
 {
@@ -1541,10 +1560,6 @@ static bool companion_tracking_set_enabled(bool enabled, char *reply, bool silen
 			strcpy(reply, "ERROR: GPS unavailable");
 			return false;
 		}
-		if (companion_geo.flags & GEO_FLAG_ENABLED) {
-			strcpy(reply, "ERROR: geo is on; use geo off");
-			return false;
-		}
 		if (companion_home.save_active &&
 		    (companion_geo.flags & GEO_FLAG_SAVE_IS_GEO)) {
 			strcpy(reply, "ERROR: saving geo point");
@@ -1553,8 +1568,6 @@ static bool companion_tracking_set_enabled(bool enabled, char *reply, bool silen
 		bool gps_was_enabled = gps_is_enabled();
 		companion_tracking.enabled = true;
 		companion_tracking.silent_reports = silent;
-		companion_tracking.gps_started_by_tracking = !gps_was_enabled;
-		companion_tracking.saved_gps_duty_sec = gps_get_poll_interval_sec();
 		companion_tracking.started_ms = k_uptime_get_32();
 		tracking_odometer_reset(&tracking_odo, k_uptime_get());
 		companion_tracking.next_report_ms = k_uptime_get() +
@@ -1576,17 +1589,10 @@ static bool companion_tracking_set_enabled(bool enabled, char *reply, bool silen
 		return true;
 	}
 
-	if (companion_sos.pending) {
-		strcpy(reply, "ERROR: SOS is waiting for GPS fix");
-		return false;
-	}
 	tracking_odometer_finish(&tracking_odo, k_uptime_get());
 	companion_send_tracking_summary();
-	gps_set_poll_interval_sec(companion_tracking.saved_gps_duty_sec);
-	if (companion_tracking.gps_started_by_tracking) {
-		gps_enable(false);
-	}
 	memset(&companion_tracking, 0, sizeof(companion_tracking));
+	companion_gps_user_left();
 	companion_tracking_ui_update();
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
 	if (!silent) {
@@ -1597,21 +1603,13 @@ static bool companion_tracking_set_enabled(bool enabled, char *reply, bool silen
 	return true;
 }
 
-/* Geofence toggle (ADR 0011): on pins the GPS at GEO_DUTY_SEC, off restores
- * the state it found. Refused where another owner of the GPS duty is active,
- * so every save/restore pair stays LIFO. */
+/* Geofence toggle (ADR 0011). Tracking, nav and sos outrank geo: while one
+ * of them runs, geo leaves the GPS alone. Duty memory is prefs.gps_interval
+ * and the last GPS user out powers the GPS down. */
 static bool companion_geo_set_enabled(bool enabled, char *reply)
 {
 	if (companion_home.save_active) {
 		strcpy(reply, "ERROR: saving point");
-		return false;
-	}
-	if (companion_home.nav_active) {
-		strcpy(reply, "ERROR: navigation is on");
-		return false;
-	}
-	if (companion_sos.pending) {
-		strcpy(reply, "ERROR: SOS is waiting for GPS fix");
 		return false;
 	}
 	bool on = (companion_geo.flags & GEO_FLAG_ENABLED) != 0;
@@ -1627,34 +1625,28 @@ static bool companion_geo_set_enabled(bool enabled, char *reply)
 			strcpy(reply, "ERROR: GPS unavailable");
 			return false;
 		}
-		if (companion_tracking.enabled) {
-			strcpy(reply, "ERROR: tracking is active; use tracking off");
-			return false;
-		}
-		companion_geo.saved_duty_sec = gps_get_poll_interval_sec();
 		companion_geo.flags |= GEO_FLAG_ENABLED;
-		if (!gps_is_enabled()) {
-			companion_geo.flags |= GEO_FLAG_GPS_STARTED;
-			gps_enable(true);
-		} else {
-			gps_request_fresh_fix();
-		}
 		geofence_reset(&companion_geo.fsm);
-		gps_set_poll_interval_sec(GEO_DUTY_SEC);
+		if (!companion_tracking.enabled && !companion_home.nav_active &&
+		    !companion_sos.pending) {
+			if (!gps_is_enabled()) {
+				gps_enable(true);
+			} else {
+				gps_request_fresh_fix();
+			}
+			gps_set_poll_interval_sec(GEO_DUTY_SEC);
+		}
 		companion_mesh.prefs.geo_on = 1;
 		save_prefs_to_flash();
 		snprintf(reply, CLI_REPLY_SIZE, "OK - geo on (radius %u m)",
 			 companion_mesh.prefs.geo_radius_m);
 		return true;
 	}
-	gps_set_poll_interval_sec(companion_geo.saved_duty_sec);
-	if (companion_geo.flags & GEO_FLAG_GPS_STARTED) {
-		gps_enable(false);
-	}
-	companion_geo.flags &= (uint8_t)~(GEO_FLAG_ENABLED | GEO_FLAG_GPS_STARTED);
+	companion_geo.flags &= (uint8_t)~GEO_FLAG_ENABLED;
 	geofence_reset(&companion_geo.fsm);
 	companion_mesh.prefs.geo_on = 0;
 	save_prefs_to_flash();
+	companion_gps_user_left();
 	strcpy(reply, "OK - geo off");
 	return true;
 }
@@ -1787,8 +1779,6 @@ static void companion_nav_set_enabled(bool enabled, char *reply)
 			strcpy(reply, "ERROR: GPS unavailable");
 			return;
 		}
-		companion_home.gps_was_enabled = gps_is_enabled();
-		companion_home.saved_duty_sec = gps_get_poll_interval_sec();
 		companion_home.nav_active = true;
 		nav_wrongway_reset(&companion_home.ww);
 		companion_home.travel_m = 0;
@@ -1800,7 +1790,7 @@ static void companion_nav_set_enabled(bool enabled, char *reply)
 		companion_home.link_lost_sent = false;
 		companion_home.nav_started_ms = (uint32_t)k_uptime_get();
 		gps_set_poll_interval_sec(0);
-		if (!companion_home.gps_was_enabled) {
+		if (!gps_is_enabled()) {
 			gps_enable(true);
 		}
 		snprintf(reply, CLI_REPLY_SIZE, "OK - Navigation to %d-%s  %.5f,%.5f",
@@ -1854,7 +1844,7 @@ static void companion_nav_set_enabled(bool enabled, char *reply)
 		return;
 	} else {
 		companion_home.nav_active = false;
-		companion_home_restore_gps();
+		companion_gps_user_left();
 		strcpy(reply, "OK - nav stop");
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
 		buzzer_play(MELODY_NAV_OFF);
@@ -2000,24 +1990,26 @@ static void companion_nav_fix_process(void)
 
 	/* Arrived while walking to the point: success melody, then STOP. */
 	if (dist_m < HOME_ARRIVAL_M) {
-		char dur[16], dist[16], tail[128], msg[192], url[48];
+		char dur[16], dist[12], url[48], msg[MAX_TEXT_LEN + 1];
+		size_t name_prefix = strlen(companion_mesh.prefs.node_name) + 2;
 
 		tracking_duration_str(dur, sizeof(dur),
 			(uint32_t)(now - companion_home.nav_started_ms));
-		nav_distance_ru_str(dist, sizeof(dist), companion_home.travel_m);
+		geofence_dist_str(dist, sizeof(dist), companion_home.travel_m);
 		tracking_maps_url(url, sizeof(url), pos.latitude_ndeg / 1e9,
 				  pos.longitude_ndeg / 1e9);
-		snprintf(tail, sizeof(tail),
-			 "📍 %d-%s\n⏱️: %s\n📏 %s\n%s",
-			 home_index + 1, home_name, dur, dist, url);
 		if (notify) {
-			snprintf(msg, sizeof(msg),
-				 "🏁 Вы прибыли в точку назначения!\n%s", tail);
+			nav_format_arrival(msg, sizeof(msg),
+					   "🏁 Вы прибыли в точку назначения!",
+					   home_index + 1, home_name, dur, dist, url);
 			companion_mesh.vcontactNotify(msg);
 		}
 		if (companion_mesh.prefs.nav_telemetry_enabled) {
-			snprintf(msg, sizeof(msg),
-				 "🏁 Прибыл в точку назначения!\n%s", tail);
+			nav_format_arrival(msg,
+					   ((size_t)MAX_TEXT_LEN > name_prefix ?
+						    MAX_TEXT_LEN - name_prefix : 0) + 1,
+					   "🏁 Прибыл!",
+					   home_index + 1, home_name, dur, dist, url);
 			companion_send_nav_telemetry_message(msg);
 		}
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
@@ -2088,8 +2080,14 @@ static void companion_geo_fix_process(void)
 	if (ev == GEO_EVENT_NONE) {
 		return;
 	}
-	char msg[160];
-	geofence_format_msg(msg, sizeof(msg), ev == GEO_EVENT_EXIT,
+	char msg[MAX_TEXT_LEN + 1];
+	/* sendGroupMessage prefixes "name: " and cuts the text at MAX_TEXT_LEN. */
+	size_t name_prefix = strlen(companion_mesh.prefs.node_name) + 2;
+
+	geofence_format_msg(msg,
+			    ((size_t)MAX_TEXT_LEN > name_prefix ?
+				     MAX_TEXT_LEN - name_prefix : 0) + 1,
+			    ev == GEO_EVENT_EXIT,
 			    (double)companion_mesh.prefs.geo_radius_m, dist_m,
 			    pos.latitude_ndeg / 1e9, pos.longitude_ndeg / 1e9);
 	companion_send_geo_message(msg);
@@ -3423,10 +3421,8 @@ int main(void)
 	/* Geofence survives reboot (ADR 0011): re-pin the duty like geo on and
 	 * report the zone state once on the first fix. */
 	if (companion_mesh.prefs.geo_on && gps_is_available()) {
-		companion_geo.saved_duty_sec = gps_get_poll_interval_sec();
 		companion_geo.flags |= GEO_FLAG_ENABLED;
 		if (!gps_is_enabled()) {
-			companion_geo.flags |= GEO_FLAG_GPS_STARTED;
 			gps_enable(true);
 		}
 		gps_set_poll_interval_sec(GEO_DUTY_SEC);

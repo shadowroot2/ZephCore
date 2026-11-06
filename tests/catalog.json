@@ -89,7 +89,7 @@
     },
     {
       "id": "UNIT-GEO-002",
-      "name": "Exit and return messages pin the template and fit the mesh frame",
+      "name": "Exit and return messages pin the template and fit the send budget",
       "source": "tests/unit/helper_tests.cpp"
     },
     {

@@ -905,16 +905,26 @@ Like the standby depth, the choice follows from the duty interval alone, never f
 
 Repeaters and room servers default to `CONFIG_ZEPHCORE_REPEATER_GPS_INTERVAL_SEC` (48 h) for GPS duty — GPS wakes only for a periodic time-sync fix (5-minute acquire window). The interval is now unified with companion via `prefs.gps_interval` and is configurable at runtime via `set gps duty <sec>`; persists across reboots.
 
+**GPS duty users: tracking, nav, geo, sos**
+
+The four features share one GPS. Each on ensures the GPS is powered and sets its own duty (tracking and
+nav 0, geo 500 s); the configured duty lives in `prefs.gps_interval` and no feature writes it, so it
+survives reboots and nested on/off orders. When a user leaves and one of the higher-rank three is still
+active, nothing is touched; when only geo remains, its 500 s pin is re-asserted; with nobody left the
+GPS powers down and the live duty returns to `prefs.gps_interval` (`companion_gps_user_left` in
+main_companion.cpp). Tracking, nav and sos outrank geo. After a reboot
+tracking and nav are gone (runtime state) and the configured duty returns; geo persists (`prefs.geo_on`).
+The `wp save`/`geo save` pipeline is not a user: it force-leases the GPS for one fix and restores the
+exact prior state (ADR 0011).
+
 **Geofence (`geo`, companion)**
 
 One saved point (`prefs.geo_lat_e7/geo_lon_e7`, via `geo save` or `set geo.point`) and one radius in meters
-(`prefs.geo_radius_m`, default 3000, range 50..50000) guard the node itself (ADR 0011). `geo on` owns
-the GPS duty while on: it saves the enabled/duty pair, keeps the GPS powered at 300 s, and restores
-the pair on `geo off` — the same ownership pattern as tracking, with which it is mutually exclusive;
-nav, a pending point save and a waiting SOS likewise refuse a toggle so every save/restore pair stays
-LIFO. The toggle persists (`prefs.geo_on`): a stored `on` re-pins the duty at boot and the first fix
-reports the zone state once (`geofence_boot_arm`). `geo save` is the `wp save` pipeline with a geo
-target. Evaluation is per fresh fix (age ≤ 30 s)
+(`prefs.geo_radius_m`, default 3000, range 50..50000) guard the node itself (ADR 0011). `geo on` pins
+the GPS at 500 s when it is the only user (see the ownership rules above) and is refused only while a
+point save is running. The toggle persists (`prefs.geo_on`): a stored `on` re-pins the duty at boot and
+the first fix reports the zone state once (`geofence_boot_arm`). `geo save` is the `wp save` pipeline
+with a geo target. Evaluation is per fresh fix (age ≤ 30 s)
 on the main-thread fix event (`helpers/GeoFence.h`, host-tested): exit fires on the first fix
 beyond the radius, return on dropping below radius − 50 m, and each event fires once per state change.
 Both alerts go to the tracking group as hidden LoRa messages (`sendGroupMessage` without the local

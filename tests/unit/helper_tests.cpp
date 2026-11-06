@@ -367,16 +367,23 @@ TEST(geofence_boot, "UNIT-GEO-005", "After boot the first fix reports the zone s
 	geofence_reset(&g);
 	CHECK(geofence_update(&g, 100.0, 3000.0) == GEO_EVENT_NONE);
 }
-TEST(geofence_msg, "UNIT-GEO-002", "Exit and return messages pin the template and fit the mesh frame") {
+TEST(geofence_msg, "UNIT-GEO-002", "Exit and return messages pin the template and fit the send budget") {
 	char buf[160];
 	geofence_format_msg(buf, sizeof(buf), true, 3000.0, 3500.0, 43.24112, 76.92730);
-	CHECK(std::strcmp(buf, "🚪 Вышел из геозоны\n📐 Радиус: 3.00 км\n📏 Расстояние: 3.50 км\n"
+	CHECK(std::strcmp(buf, "🚪 Вышел из геозоны\n📐 3км\n📏 3.5км\n"
 			      "📍 https://maps.google.com/?q=43.24112,76.92730") == 0);
-	CHECK(std::strlen(buf) <= 159);
+	/* Worst-case budget: MAX_TEXT_LEN 160 minus a 31-char node name and
+	 * the ": " the send path prefixes; the map link must survive it. */
+	CHECK(std::strlen(buf) <= 127);
 	geofence_format_msg(buf, sizeof(buf), false, 3000.0, 2900.0, 43.24112, 76.92730);
-	CHECK(std::strcmp(buf, "✅ Вернулся в геозону\n📐 Радиус: 3.00 км\n📏 Расстояние: 2.90 км\n"
+	CHECK(std::strcmp(buf, "✅ Вернулся в геозону\n📐 3км\n📏 2.9км\n"
 			      "📍 https://maps.google.com/?q=43.24112,76.92730") == 0);
-	CHECK(std::strlen(buf) <= 159);
+	CHECK(std::strlen(buf) <= 127);
+	/* Tight budget: the radius line goes first, the link stays whole. */
+	geofence_format_msg(buf, 100, true, 3000.0, 3500.0, 43.24112, 76.92730);
+	CHECK(std::strstr(buf, "📐") == nullptr);
+	CHECK(std::strstr(buf, "https://maps.google.com/?q=43.24112,76.92730") != nullptr);
+	CHECK(std::strlen(buf) + 1 <= 100);
 }
 TEST(geofence_parse, "UNIT-GEO-003", "set geo.point accepts exactly two in-range numbers") {
 	double lat, lon;
