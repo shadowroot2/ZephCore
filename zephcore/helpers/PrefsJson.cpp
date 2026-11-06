@@ -170,6 +170,10 @@ protected:
 		def("geo_on", _p->geo_on);
 		def("geo_in_ts", _p->geo_last_in_utc);
 		def("geo_out_ts", _p->geo_last_out_utc);
+		def("geo_stat_day", _p->geo_stat_day);
+		def("geo_out_sec", _p->geo_out_sec);
+		def("geo_stat_in", _p->geo_stat_in);
+		def("geo_stat_out", _p->geo_stat_out);
 		def("geo_radius", _p->geo_radius_m);
 		def("adc_mult", _p->adc_multiplier);
 		def("pwr_sav_en", _p->powersaving_enabled);

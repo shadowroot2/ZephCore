@@ -232,6 +232,12 @@ struct NodePrefs {
 	uint8_t geo_on;
 	uint32_t geo_last_in_utc;
 	uint32_t geo_last_out_utc;
+	/* geo log day stats: UTC day number (epoch/86400), seconds outside the
+	 * zone that day, and the in/out event counters. */
+	uint32_t geo_stat_day;
+	uint32_t geo_out_sec;
+	uint16_t geo_stat_in;
+	uint16_t geo_stat_out;
 };
 
 /* Range guards for prefs that came off flash: a blob can be intact and

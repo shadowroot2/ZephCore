@@ -50,8 +50,9 @@ device itself.
   compact radius — `geo: on INSIDE 3km 43.24112,76.92730` (INSIDE/OUTSIDE from a
   fresh fix, NOFIX without one; radius in meters up to 999, then km). `geo log`
   reports the last zone return and exit with timestamps
-  (`last in: 22.12.2006 17:44:22; out: 22.12.2006 17:50:03`, UTC, survive a
-  reboot). `set geo.point 43.24112,76.92730` takes the coordinates in one
+  (`last in: 22.12.2006 17:44:22; out: 22.12.2006 17:50:03`, local time via
+  `tz.offset`, survive a
+  reboot) together with the day's stats — `today: outside 2ч15м; in 3, out 3`. `set geo.point 43.24112,76.92730` takes the coordinates in one
   comma-separated argument, and the geo help merges into `geo [on|off|save|log]`.
 - **M3-MAMA: `wp save` and `geo save` over the remote CLI** (`geo save` stays
   local-only on every other build).

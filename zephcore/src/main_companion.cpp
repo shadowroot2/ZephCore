@@ -2061,6 +2061,25 @@ static void companion_nav_fix_process(void)
 	}
 }
 
+/* Display timezone shift in seconds (tz.offset is display-only). */
+static int32_t companion_geo_tz_shift(void)
+{
+	return (int32_t)tz_offset_minutes(companion_mesh.prefs.tz_offset) * 60;
+}
+
+/* geo log day stats — reset at the local day change. */
+static void companion_geo_stat_rollover(uint32_t now)
+{
+	uint32_t today = (uint32_t)(((int64_t)now + companion_geo_tz_shift()) / 86400);
+
+	if (companion_mesh.prefs.geo_stat_day != today) {
+		companion_mesh.prefs.geo_stat_day = today;
+		companion_mesh.prefs.geo_out_sec = 0;
+		companion_mesh.prefs.geo_stat_in = 0;
+		companion_mesh.prefs.geo_stat_out = 0;
+	}
+}
+
 /* Geofence check per fresh fix: exit and return alerts (ADR 0011). Main
  * thread, event-driven like the nav feedback. */
 static void companion_geo_fix_process(void)
@@ -2076,15 +2095,36 @@ static void companion_geo_fix_process(void)
 	double dist_m = tracking_distance_m(pos.latitude_ndeg, pos.longitude_ndeg,
 		(int64_t)companion_mesh.prefs.geo_lat_e7 * 100,
 		(int64_t)companion_mesh.prefs.geo_lon_e7 * 100);
+	bool boot_report = companion_geo.fsm.boot_fix != 0;
 	enum geofence_event ev = geofence_update(&companion_geo.fsm, dist_m,
 		(double)companion_mesh.prefs.geo_radius_m);
 	if (ev == GEO_EVENT_NONE) {
 		return;
 	}
+	uint32_t now = rtc_clock.getCurrentTime();
+
+	companion_geo_stat_rollover(now);
 	if (ev == GEO_EVENT_EXIT) {
-		companion_mesh.prefs.geo_last_out_utc = rtc_clock.getCurrentTime();
+		companion_mesh.prefs.geo_last_out_utc = now;
+		if (!boot_report) {
+			companion_mesh.prefs.geo_stat_out++;
+		}
 	} else {
-		companion_mesh.prefs.geo_last_in_utc = rtc_clock.getCurrentTime();
+		companion_mesh.prefs.geo_last_in_utc = now;
+		if (!boot_report) {
+			uint32_t day_start = (uint32_t)(
+				(int64_t)companion_mesh.prefs.geo_stat_day * 86400 -
+				companion_geo_tz_shift());
+			uint32_t from = companion_mesh.prefs.geo_last_out_utc >
+						day_start ?
+				companion_mesh.prefs.geo_last_out_utc : day_start;
+
+			companion_mesh.prefs.geo_stat_in++;
+			if (companion_mesh.prefs.geo_last_out_utc != 0 &&
+			    now > from) {
+				companion_mesh.prefs.geo_out_sec += now - from;
+			}
+		}
 	}
 	save_prefs_to_flash();
 	char msg[MAX_TEXT_LEN + 1];
@@ -2844,10 +2884,11 @@ static void geo_radius_str(char *buf, size_t len, unsigned meters)
 	}
 }
 
-/* "22.12.2006 17:44:22" — UTC, like the clock command. */
-static void geo_format_utc(char *buf, size_t len, uint32_t epoch)
+/* "22.12.2006 17:44:22" — local wall time (tz.offset is display-only). */
+static void geo_format_local(char *buf, size_t len, uint32_t epoch)
 {
-	time_t t = (time_t)epoch;
+	time_t t = (time_t)((int64_t)epoch +
+		(int32_t)tz_offset_minutes(companion_mesh.prefs.tz_offset) * 60);
 	struct tm tmv;
 
 	gmtime_r(&t, &tmv);
@@ -2917,17 +2958,47 @@ static bool handle_geo_cli(const char *line, char *reply)
 		return true;
 	}
 	if (strcmp(line, "geo log") == 0) {
-		char in_s[24] = "-", out_s[24] = "-";
+		char in_s[24] = "-", out_s[24] = "-", dur[16];
+		uint32_t now = rtc_clock.getCurrentTime();
+		uint32_t outside_sec;
+		struct gps_position pos = {};
 
+		companion_geo_stat_rollover(now);
 		if (companion_mesh.prefs.geo_last_in_utc != 0) {
-			geo_format_utc(in_s, sizeof(in_s),
+			geo_format_local(in_s, sizeof(in_s),
 				       companion_mesh.prefs.geo_last_in_utc);
 		}
 		if (companion_mesh.prefs.geo_last_out_utc != 0) {
-			geo_format_utc(out_s, sizeof(out_s),
+			geo_format_local(out_s, sizeof(out_s),
 				       companion_mesh.prefs.geo_last_out_utc);
 		}
-		snprintf(reply, CLI_REPLY_SIZE, "last in: %s; out: %s", in_s, out_s);
+		outside_sec = companion_mesh.prefs.geo_out_sec;
+		/* The running tail of an ongoing exit counts toward today too. */
+		if (gps_is_enabled() && gps_get_last_known_position(&pos) &&
+		    pos.valid &&
+		    (k_uptime_get() - pos.timestamp_ms) <= GEO_FIX_MAX_AGE_MS &&
+		    companion_mesh.prefs.geo_last_out_utc != 0) {
+			double dist_m = tracking_distance_m(
+				pos.latitude_ndeg, pos.longitude_ndeg,
+				(int64_t)companion_mesh.prefs.geo_lat_e7 * 100,
+				(int64_t)companion_mesh.prefs.geo_lon_e7 * 100);
+			uint32_t day_start = (uint32_t)(
+				(int64_t)companion_mesh.prefs.geo_stat_day * 86400 -
+				companion_geo_tz_shift());
+			uint32_t from = companion_mesh.prefs.geo_last_out_utc >
+						day_start ?
+				companion_mesh.prefs.geo_last_out_utc : day_start;
+
+			if (dist_m > (double)companion_mesh.prefs.geo_radius_m &&
+			    now > from) {
+				outside_sec += now - from;
+			}
+		}
+		tracking_duration_str(dur, sizeof(dur), outside_sec * 1000U);
+		snprintf(reply, CLI_REPLY_SIZE,
+			 "last in: %s; out: %s\ntoday: outside %s; in %u, out %u",
+			 in_s, out_s, dur, companion_mesh.prefs.geo_stat_in,
+			 companion_mesh.prefs.geo_stat_out);
 		return true;
 	}
 	if (strcmp(line, "get geo.point") == 0) {
