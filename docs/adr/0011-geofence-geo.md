@@ -24,7 +24,8 @@ Status: accepted (recorded 2026-11-05)
 **Scope.** Own position vs a single geofence point. No per-contact radii and no group leash — those would be
 an ADR of their own.
 
-**Point.** `geo save` is local-CLI-only (like `wp save`: it starts the same wait-for-fix capture; the default
+**Point.** `geo save` is local-CLI-only (like `wp save`: it starts the same wait-for-fix capture; the M3-MAMA
+profile opens both saves to remote CLI via `CONFIG_ZEPHCORE_REMOTE_POINT_SAVE_CLI`; the default
 coordinates are the home-slot defaults 43.241117 / 76.927301). `get/set geo.point <lat> <lon>` reads and
 writes the point manually and is the only coordinate-edit path available over remote CLI; the help text shows
 an example (`set geo.point 43.241117 76.927301`).

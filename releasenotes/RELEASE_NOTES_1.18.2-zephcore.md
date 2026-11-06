@@ -46,6 +46,11 @@ device itself.
 
 ## Other changes
 
+- **`geo stat`** — the last zone return and exit with timestamps:
+  `last in: 22.12.2006 17:44:22; out: 22.12.2006 17:50:03` (UTC). The stamps
+  survive a reboot.
+- **M3-MAMA: `wp save` and `geo save` over the remote CLI** (`geo save` stays
+  local-only on every other build).
 - **Save confirmations got a 💾**: `💾 Точка успешно сохранена!` for `wp save` and
   `💾 Центр геозоны сохранен!` for `geo save`, both still followed by the maps link.
 - **Offline message queue 256 → 128 entries.** The queue holds messages waiting for the phone app;

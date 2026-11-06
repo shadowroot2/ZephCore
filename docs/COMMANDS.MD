@@ -48,6 +48,7 @@ get/set nav.telemetry.interval
 
 ```text
 geo on|off
+geo stat
 geo save
 get/set geo.point
 get/set geo.radius
@@ -63,7 +64,9 @@ get/set geo.radius
   tracking по LoRa (`🚪 Вышел из геозоны` / `✅ Вернулся в геозону`, второй
   строкой `📐 <радиус>`),
   в исходящих не появляются; локального сигнала нет.
-- `geo save` — точка с текущего фикса (как `wp save`), local-only. Удалённо
+- `geo stat` — время последних входа и выхода: `last in: 22.12.2006 17:44:22; out: 22.12.2006 17:50:03`
+  (UTC; `-` пока событий не было; переживает перезагрузку).
+- `geo save` — точка с текущего фикса (как `wp save`), local-only (на M3-MAMA доступно удалённо). Удалённо
   координаты правятся только через `set geo.point 43.241117 76.927301`.
 - `set geo.radius <m>` — радиус в метрах (50..50000, по умолчанию 3000),
   local-only. Подробности — в [cli/companion.md](cli/companion.md).

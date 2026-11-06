@@ -125,7 +125,7 @@ static inline const char *companion_app_cli_help(const char *line)
 		       "get/set nav.interval\nget/set nav.telemetry.interval";
 	}
 	if (strcmp(line, "help geo") == 0) {
-		return "geo [on|off]\ngeo save\nget/set geo.point <lat> <lon>\n"
+		return "geo [on|off]\ngeo stat\ngeo save\nget/set geo.point <lat> <lon>\n"
 		       "e.g. set geo.point 43.241117 76.927301\nget/set geo.radius (meters 50..50000)";
 	}
 #endif
@@ -189,11 +189,20 @@ static inline const char *companion_remote_cli_help(const char *line)
 	}
 #if COMPANION_HAS_GPS
 	if (strcmp(line, "help nav") == 0) {
+#if IS_ENABLED(CONFIG_ZEPHCORE_REMOTE_POINT_SAVE_CLI)
+		return "nav\nwp list\nwp save";
+#else
 		return "nav\nwp list";
+#endif
 	}
 	if (strcmp(line, "help geo") == 0) {
-		return "geo [on|off]\nget/set geo.point <lat> <lon>\n"
+#if IS_ENABLED(CONFIG_ZEPHCORE_REMOTE_POINT_SAVE_CLI)
+		return "geo [on|off]\ngeo stat\ngeo save\nget/set geo.point <lat> <lon>\n"
 		       "e.g. set geo.point 43.241117 76.927301";
+#else
+		return "geo [on|off]\ngeo stat\nget/set geo.point <lat> <lon>\n"
+		       "e.g. set geo.point 43.241117 76.927301";
+#endif
 	}
 #endif
 #if IS_ENABLED(CONFIG_ZEPHCORE_COMPANION_WIFI)
@@ -234,10 +243,19 @@ static inline bool companion_remote_cli_command_allowed(const char *cmd)
 	 * and the radius stay local. Matched in code so the busy allowlist
 	 * tables below stay as they are (DRAM on RAM-bound companions). */
 	if (strcmp(cmd, "geo") == 0 || strcmp(cmd, "geo on") == 0 ||
-	    strcmp(cmd, "geo off") == 0 || strcmp(cmd, "get geo.point") == 0 ||
+	    strcmp(cmd, "geo off") == 0 || strcmp(cmd, "geo stat") == 0 ||
+	    strcmp(cmd, "get geo.point") == 0 ||
 	    strncmp(cmd, "set geo.point ", 14) == 0) {
 		return true;
 	}
+	/* Point saves over the air — only where the product asks for it
+	 * (the M3-MAMA profile). */
+#if IS_ENABLED(CONFIG_ZEPHCORE_REMOTE_POINT_SAVE_CLI)
+	if (strcmp(cmd, "geo save") == 0 || strcmp(cmd, "wp save") == 0 ||
+	    strncmp(cmd, "wp save ", 8) == 0) {
+		return true;
+	}
+#endif
 	static const char *const exact[] = {
 		"get radio", "get freq", "get af", "get dutycycle", "get int.thresh", "get cad",
 		"get radio.rxgain", "get tx", "get rxdelay", "get agc.reset.interval",

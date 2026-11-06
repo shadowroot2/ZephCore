@@ -51,6 +51,7 @@ NodePrefs sample() {
     strcpy(p.wifi_ssid, "MyNet"); strcpy(p.wifi_pwd, "secret");
     p.geo_lat_e7 = 475000000; p.geo_lon_e7 = -192500000;
     p.geo_saved = 1; p.geo_radius_m = 1500; p.geo_on = 1;
+    p.geo_last_in_utc = 1166803462; p.geo_last_out_utc = 1166803803;
     return p;
 }
 
@@ -80,6 +81,7 @@ TEST(pjson_companion_roundtrip, "UNIT-PJSON-001", "Companion prefs survive prefs
     CHECK(q.offgrid_home_freq == 869.618f);
     CHECK(q.geo_lat_e7 == 475000000 && q.geo_lon_e7 == -192500000);
     CHECK(q.geo_saved == 1 && q.geo_radius_m == 1500 && q.geo_on == 1);
+    CHECK(q.geo_last_in_utc == 1166803462 && q.geo_last_out_utc == 1166803803);
 }
 
 TEST(pjson_server_roundtrip, "UNIT-PJSON-002", "Server prefs survive prefs.json field for field") {
@@ -275,4 +277,5 @@ TEST(pjson_geo_defaults, "UNIT-PJSON-012", "initNodePrefs puts the Almaty defaul
     CHECK(p.home_lat[0] == 43.241117 && p.home_lon[0] == 76.927301);
     CHECK(p.geo_lat_e7 == 432411170 && p.geo_lon_e7 == 769273010);
     CHECK(p.geo_saved == 0 && p.geo_radius_m == 3000 && p.geo_on == 0);
+    CHECK(p.geo_last_in_utc == 0 && p.geo_last_out_utc == 0);
 }

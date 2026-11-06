@@ -380,6 +380,13 @@ config ZEPHCORE_MAX_CONTACTS
 	help
 	  Maximum number of contacts that can be stored.
 
+config ZEPHCORE_REMOTE_POINT_SAVE_CLI
+	bool "Remote CLI accepts wp save and geo save"
+	default n
+	help
+	  Let a remote CLI contact run the point saves (wp save, geo save).
+	  They stay local-only everywhere else; the M3-MAMA profile opts in.
+
 config ZEPHCORE_MAX_CHANNELS
 	int "Maximum number of channels"
 	default 40

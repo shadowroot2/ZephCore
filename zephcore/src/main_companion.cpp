@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <time.h>
 #include <zephyr/kernel.h>
 #include <zephyr/sys/util.h>
 
@@ -2080,6 +2081,12 @@ static void companion_geo_fix_process(void)
 	if (ev == GEO_EVENT_NONE) {
 		return;
 	}
+	if (ev == GEO_EVENT_EXIT) {
+		companion_mesh.prefs.geo_last_out_utc = rtc_clock.getCurrentTime();
+	} else {
+		companion_mesh.prefs.geo_last_in_utc = rtc_clock.getCurrentTime();
+	}
+	save_prefs_to_flash();
 	char msg[MAX_TEXT_LEN + 1];
 	/* sendGroupMessage prefixes "name: " and cuts the text at MAX_TEXT_LEN. */
 	size_t name_prefix = strlen(companion_mesh.prefs.node_name) + 2;
@@ -2818,6 +2825,18 @@ static bool handle_tracking_cli(const char *line, char *reply, bool silent)
 	return false;
 }
 
+/* "22.12.2006 17:44:22" — UTC, like the clock command. */
+static void geo_format_utc(char *buf, size_t len, uint32_t epoch)
+{
+	time_t t = (time_t)epoch;
+	struct tm tmv;
+
+	gmtime_r(&t, &tmv);
+	snprintf(buf, len, "%02d.%02d.%04d %02d:%02d:%02d",
+		 tmv.tm_mday, tmv.tm_mon + 1, tmv.tm_year + 1900,
+		 tmv.tm_hour, tmv.tm_min, tmv.tm_sec);
+}
+
 /* Geofence CLI (ADR 0011). geo save is local/app only — the remote allowlist
  * keeps it out; set geo.point is the remote coordinate path. */
 static bool handle_geo_cli(const char *line, char *reply)
@@ -2862,6 +2881,20 @@ static bool handle_geo_cli(const char *line, char *reply)
 		}
 		companion_home_start_save(true);
 		strcpy(reply, "OK - geo save: waiting for fix");
+		return true;
+	}
+	if (strcmp(line, "geo stat") == 0) {
+		char in_s[24] = "-", out_s[24] = "-";
+
+		if (companion_mesh.prefs.geo_last_in_utc != 0) {
+			geo_format_utc(in_s, sizeof(in_s),
+				       companion_mesh.prefs.geo_last_in_utc);
+		}
+		if (companion_mesh.prefs.geo_last_out_utc != 0) {
+			geo_format_utc(out_s, sizeof(out_s),
+				       companion_mesh.prefs.geo_last_out_utc);
+		}
+		snprintf(reply, CLI_REPLY_SIZE, "last in: %s; out: %s", in_s, out_s);
 		return true;
 	}
 	if (strcmp(line, "get geo.point") == 0) {

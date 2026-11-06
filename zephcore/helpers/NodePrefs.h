@@ -224,10 +224,14 @@ struct NodePrefs {
 	uint8_t home_saved[10];
 	char home_name[10][12];
 	/* ADR 0011, tail padding — see geo_lon_e7. geo_radius_m is meters,
-	 * 0 on flash means "unset" (defaulted); geo_on persists the toggle. */
+	 * 0 on flash means "unset" (defaulted); geo_on persists the toggle. The
+	 * last-in/out stamps (unix seconds, 0 = none) live after the tail pad —
+	 * the struct grew by 8 B once the offline-queue cut freed the DRAM. */
 	uint16_t geo_radius_m;
 	uint8_t geo_saved;
 	uint8_t geo_on;
+	uint32_t geo_last_in_utc;
+	uint32_t geo_last_out_utc;
 };
 
 /* Range guards for prefs that came off flash: a blob can be intact and

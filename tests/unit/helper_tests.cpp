@@ -216,7 +216,7 @@ TEST(companion_cli_help, "UNIT-CLI-002", "Companion app and remote help are cate
 		"set wifi.enabled 0", "get freq", "get radio", "get tx",
 		"set af 3", "get adc.multiplier", "get autoshutdown", "reboot",
 		"buzz", "leds", "gps", "tracking", "nav", "wp list",
-		"geo", "geo on", "geo off", "get geo.point",
+		"geo", "geo on", "geo off", "geo stat", "get geo.point",
 		"set geo.point 43.241117 76.927301",
 	};
 	for (const char *command : remote_allowed) {
