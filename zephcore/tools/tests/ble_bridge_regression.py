@@ -217,8 +217,14 @@ static void k_msgq_purge(int *) { ++purges; }
 #define BT_ID_DEFAULT 0
 #define BT_HCI_ERR_REMOTE_USER_TERM_CONN 0x13
 #define BT_HCI_ERR_TERM_DUE_TO_MIC_FAIL 0x3d
-static bt_conn *bt_conn_lookup_addr_le(int, const bt_addr_le_t *) {
-    ++cancels; return pending_acl ? &fake_conn : nullptr;
+static bt_conn *bt_conn_lookup_addr_le(int, const bt_addr_le_t *peer) {
+    ++cancels;
+    return (pending_acl && bt_addr_le_cmp(peer, &fake_peer) == 0) ? &fake_conn : nullptr;
+}
+#define BT_CONN_TYPE_LE 1
+static void bt_conn_foreach(int, void (*func)(bt_conn *, void *), void *data) {
+    ++cancels;
+    if (pending_acl) func(&fake_conn, data);
 }
 static int bt_conn_disconnect(bt_conn *, uint8_t) { ++disconnects; return 0; }
 static int bt_unpair(int, const bt_addr_le_t *addr) {
@@ -277,7 +283,11 @@ static void start_advertising();
 static bool send_control(uint8_t, const uint8_t *);
 static void maintain_tx_queue(int64_t);
 static const uint8_t s_default_lmk[16]{};
+#define BT_ADDR_LE_PUBLIC 0
 #define BT_ADDR_LE_RANDOM 1
+static bool bt_addr_le_is_rpa(const bt_addr_le_t *addr) {
+    return addr && addr->type == BT_ADDR_LE_RANDOM && (addr->a.val[5] & 0xc0) == 0x40;
+}
 static constexpr int BRIDGE_BLE=0, FORWARD_PRIORITY_MAX=7;
 static int s_transport=BRIDGE_BLE;
 static const char *transport_name(int) { return "ble"; }
@@ -300,6 +310,8 @@ functions = [
     'static void retry_in_flight_tx()',
     'static void finish_link_uptime_locked(int64_t now)',
     'static struct bt_conn *detach_link(const struct bt_conn *expected = nullptr)',
+    'static void remember_le_conn(struct bt_conn *conn, void *user_data)',
+    'static struct bt_conn *peer_conn_lookup()',
     'static void cancel_pending_connection()',
     'static bool peer_acl_present()',
     'static void reset_link(const struct bt_conn *expected = nullptr)',
@@ -728,6 +740,46 @@ int main() {
     disconnected(&fake_conn,0x13); assert(s_retry_at_ms==now_ms+RETRY_MS && !unpairs);
     fresh(); connected(&foreign,0); assert(disconnects==1 && s_conn==&fake_conn);
 
+    // A privacy-enabled peer presents an RPA before its IRK is in our bond:
+    // accept on probation, then check the identity SMP distributes.
+    fresh(false);
+    fake_peer.type=BT_ADDR_LE_RANDOM; fake_peer.a.val[5]=0x40; fake_peer.a.val[0]=2;
+    connected(&fake_conn,0);
+    assert(s_conn==&fake_conn && disconnects==0 && s_pairing_required && !s_pairing_complete);
+    BridgeFrame probe=data_frame();
+    probe.magic=BRIDGE_MAGIC; probe.version=BRIDGE_VERSION;
+    probe.hash=frame_hash(probe.raw,probe.raw_len);
+    assert(!accept_frame(&fake_conn,&probe,sizeof(probe)) && rx_queued==0);
+    // SMP distributed a foreign identity: drop the link and the bond it made.
+    fake_peer.type=BT_ADDR_LE_PUBLIC; fake_peer.a.val[0]=2;
+    pairing_complete(&fake_conn,true);
+    assert(!s_conn && disconnects==1 && s_last_fault==BRIDGE_FAULT_PEER);
+    assert(s_bond_recovery_pending==BT_SECURITY_ERR_AUTH_FAIL && !unpairs);
+    ble_bridge_maintain(); assert(unpairs==1); // recovery clears the wrong bond
+    // SMP distributed the configured identity: the link proceeds.
+    fresh(false);
+    fake_peer.type=BT_ADDR_LE_RANDOM; fake_peer.a.val[5]=0x40; fake_peer.a.val[0]=2;
+    connected(&fake_conn,0); assert(s_conn==&fake_conn && disconnects==0);
+    fake_peer.type=s_prefs.peer_addr_type;
+    memcpy(fake_peer.a.val,s_prefs.peer_mac,6);
+    pairing_complete(&fake_conn,true);
+    assert(s_conn==&fake_conn && s_pairing_complete && !disconnects);
+    assert(s_bond_recovery_pending==0);
+    // The bond written by a completed pairing outranks a queued recovery.
+    fresh(); s_bond_recovery_attempted=1; s_bond_recovery_retry_at_ms=now_ms+1000;
+    s_bond_recovery_pending=BT_SECURITY_ERR_PIN_OR_KEY_MISSING;
+    pairing_complete(&fake_conn,true);
+    assert(s_bond_recovery_pending==0 && !unpairs);
+    queue_peer_bond_recovery(BT_SECURITY_ERR_AUTH_FAIL);
+    assert(s_bond_recovery_pending==BT_SECURITY_ERR_AUTH_FAIL);
+    // An ACL whose address is an unresolved RPA must still be found.
+    fresh(false);
+    fake_peer.type=BT_ADDR_LE_RANDOM; fake_peer.a.val[5]=0x40; fake_peer.a.val[0]=2;
+    pending_acl=true;
+    assert(peer_acl_present());
+    cancel_pending_connection(); assert(disconnects==1);
+    pending_acl=false;
+
     // Synchronous security request errors and a delayed L2 event.
     fresh(false); security_request_error=-EIO; connected(&fake_conn,0);
     assert(disconnects==1 && s_last_fault==BRIDGE_FAULT_SECURITY_REQUEST && !discovers);
@@ -1005,7 +1057,7 @@ int main() {
     ble_bridge_clear_logs(); ble_bridge_get_logs(log_buffer.reply,sizeof(log_buffer.reply),0,1);
     assert(strcmp(log_buffer.reply,"bridge logs: empty")==0);
     bridge_log(BRIDGE_LOG_SECURITY,9); assert(s_bridge_log_count==1);
-    puts("BLE bridge: PASS (queue stress; RX fuzz; SMP/MTU/GATT stages; ACK TX; health timing; bond recovery; late callbacks; CLI bounds)");
+    puts("BLE bridge: PASS (queue stress; RX fuzz; SMP/MTU/GATT stages; ACK TX; health timing; bond recovery; RPA peer verification; late callbacks; CLI bounds)");
 }
 '''
 
