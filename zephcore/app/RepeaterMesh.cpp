@@ -1672,7 +1672,11 @@ void RepeaterMesh::batteryAlertTick() {
         up_min = 99U * 60U + 59U;
     }
     char uptime[10];
-    snprintf(uptime, sizeof(uptime), "%uч%02uм", (unsigned)(up_min / 60U), (unsigned)(up_min % 60U));
+    if (up_min < 60U) {
+        snprintf(uptime, sizeof(uptime), "%uм", (unsigned)up_min);
+    } else {
+        snprintf(uptime, sizeof(uptime), "%uч%02uм", (unsigned)(up_min / 60U), (unsigned)(up_min % 60U));
+    }
     snprintf(text, 161, "%.31s: Низкий заряд!\n🪫 %u%% %u.%02uV\n🌡️ %s\n⏱️ %s",
              _prefs.node_name, percent, mv / 1000U, (mv % 1000U) / 10U,
              temperature, uptime);

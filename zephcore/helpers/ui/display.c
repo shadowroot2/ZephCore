@@ -379,12 +379,14 @@ static void color_flush_ops(void)
 
 /* Auto-off work */
 static struct k_work_delayable auto_off_work;
+static bool auto_off_hold;
 
 static void auto_off_handler(struct k_work *work)
 {
 	ARG_UNUSED(work);
-	/* Don't blank display while Doom easter egg is playing */
-	if (doom_game_is_running()) {
+	/* Don't blank display while Doom easter egg is playing or while a
+	 * hold pins the backlight on (navigation). */
+	if (doom_game_is_running() || auto_off_hold) {
 		return;
 	}
 	/* E-paper content persists without power — blanking wastes a full
@@ -936,6 +938,14 @@ void mc_display_reset_auto_off(void)
 		k_work_reschedule(&auto_off_work, K_MSEC(timeout));
 	}
 #endif
+}
+
+void mc_display_set_auto_off_hold(bool hold)
+{
+	auto_off_hold = hold;
+	if (!hold) {
+		mc_display_reset_auto_off();
+	}
 }
 
 void mc_display_epd_full_reset(void)

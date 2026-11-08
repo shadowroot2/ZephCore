@@ -735,7 +735,11 @@ static void format_uptime(uint64_t uptime_ms, char *out, size_t out_len)
 	if (min > 99U * 60U + 59U) {
 		min = 99U * 60U + 59U;
 	}
-	snprintf(out, out_len, "%uч%02uм", (unsigned)(min / 60U), (unsigned)(min % 60U));
+	if (min < 60U) {
+		snprintf(out, out_len, "%uм", (unsigned)min);
+	} else {
+		snprintf(out, out_len, "%uч%02uм", (unsigned)(min / 60U), (unsigned)(min % 60U));
+	}
 }
 
 /* Queue the low-battery notice in the #zephcore group. This is
@@ -800,15 +804,33 @@ static bool companion_send_auto_shutdown_emergency(uint16_t battery_mv,
 		}
 	}
 	format_uptime(uptime_ms, uptime, sizeof(uptime));
+	uint8_t percent = zephyr_board.getBattPercent();
+	size_t name_prefix = strlen(companion_mesh_ptr->prefs.node_name) + 2;
+	size_t budget = ((size_t)MAX_TEXT_LEN > name_prefix ?
+			 MAX_TEXT_LEN - name_prefix : 0) + 1;
+	/* The temperature line is the first to go when the node name leaves too
+	 * little of MAX_TEXT_LEN, then the uptime line: the map link — always
+	 * last — must reach the group whole. */
 	if (has_gps) {
-		snprintf(text, sizeof(text),
-			 "Отключение!\n🪫 %u.%02uV\n🌡️ %s\n⏱️ %s\n%s",
-			 battery_mv / 1000U, (battery_mv % 1000U) / 10U,
-			 temperature, uptime, gps);
+		int n = snprintf(text, budget,
+				 "Отключение!\n🪫 %u%% %u.%02uV\n🌡️ %s\n⏱️ %s\n%s",
+				 percent, battery_mv / 1000U,
+				 (battery_mv % 1000U) / 10U, temperature, uptime, gps);
+		if (n < 0 || (size_t)n >= budget) {
+			n = snprintf(text, budget,
+				     "Отключение!\n🪫 %u%% %u.%02uV\n⏱️ %s\n%s",
+				     percent, battery_mv / 1000U,
+				     (battery_mv % 1000U) / 10U, uptime, gps);
+		}
+		if (n < 0 || (size_t)n >= budget) {
+			snprintf(text, budget, "Отключение!\n🪫 %u%% %u.%02uV\n%s",
+				 percent, battery_mv / 1000U,
+				 (battery_mv % 1000U) / 10U, gps);
+		}
 	} else {
-		snprintf(text, sizeof(text),
-			 "Отключение!\n🪫 %u.%02uV\n🌡️ %s\n⏱️ %s",
-			 battery_mv / 1000U, (battery_mv % 1000U) / 10U,
+		snprintf(text, budget,
+			 "Отключение!\n🪫 %u%% %u.%02uV\n🌡️ %s\n⏱️ %s",
+			 percent, battery_mv / 1000U, (battery_mv % 1000U) / 10U,
 			 temperature, uptime);
 	}
 
@@ -1528,23 +1550,56 @@ static void companion_tracking_odometer_fix(void)
 
 static void companion_send_tracking_summary(void)
 {
+	struct gps_position pos;
+	bool has_fix = gps_get_last_known_position(&pos);
+	char text[160], vtext[176];
+
+	tracking_format_summary(text, sizeof(text), &tracking_odo,
+				has_fix ? pos.latitude_ndeg : 0,
+				has_fix ? pos.longitude_ndeg : 0, has_fix);
+	snprintf(vtext, sizeof(vtext), "Трекинг завершён\n%s", text);
+	companion_mesh.vcontactNotify(vtext);
+
 	ChannelDetails tracks_channel;
 	const char *group_name = companion_mesh.prefs.tracking_group_name;
 	if (!companion_get_public_channel(group_name, tracks_channel)) {
 		return;
 	}
-
-	struct gps_position pos;
-	bool has_fix = gps_get_last_known_position(&pos);
-	char text[160];
-	tracking_format_summary(text, sizeof(text), &tracking_odo,
-				has_fix ? pos.latitude_ndeg : 0,
-				has_fix ? pos.longitude_ndeg : 0, has_fix);
 	if (!companion_send_visible_group_message(tracks_channel, text)) {
 		LOG_WRN("tracking: unable to queue %s summary", group_name);
 		return;
 	}
 	LOG_INF("tracking: queued %s summary: %s", group_name, text);
+}
+
+/* Track-start notice to the v-contact and the tracking group: one text, the
+ * report interval and the map link only while a last fix is known. */
+static void companion_send_tracking_start(void)
+{
+	struct gps_position pos;
+	bool has_fix = gps_get_last_known_position(&pos);
+	char text[160];
+	int n;
+
+	n = snprintf(text, sizeof(text), "🟢 Начало отправки трека\n⏲️ %u мин",
+		     companion_mesh.prefs.tracking_interval_minutes);
+	if (has_fix) {
+		char url[48];
+
+		tracking_maps_url(url, sizeof(url), pos.latitude_ndeg / 1e9,
+				  pos.longitude_ndeg / 1e9);
+		snprintf(text + n, sizeof(text) - n, "\n📍 %s", url);
+	}
+	companion_mesh.vcontactNotify(text);
+
+	ChannelDetails tracks_channel;
+	const char *group_name = companion_mesh.prefs.tracking_group_name;
+	if (!companion_get_public_channel(group_name, tracks_channel)) {
+		return;
+	}
+	if (!companion_send_visible_group_message(tracks_channel, text)) {
+		LOG_WRN("tracking: unable to queue %s start", group_name);
+	}
 }
 
 static bool companion_tracking_set_enabled(bool enabled, char *reply, bool silent = false)
@@ -1585,6 +1640,7 @@ static bool companion_tracking_set_enabled(bool enabled, char *reply, bool silen
 			buzzer_play(MELODY_TRACKING_ON);
 		}
 #endif
+		companion_send_tracking_start();
 		snprintf(reply, CLI_REPLY_SIZE, "OK - tracking on (%u min)",
 			 companion_mesh.prefs.tracking_interval_minutes);
 		return true;
@@ -1655,10 +1711,7 @@ static bool companion_geo_set_enabled(bool enabled, char *reply)
 extern "C" void companion_tracking_toggle_from_ui(void)
 {
 	char reply[CLI_REPLY_SIZE];
-	if (companion_tracking_set_enabled(!companion_tracking.enabled, reply)) {
-		companion_mesh_ptr->vcontactNotify(companion_tracking.enabled ?
-			"Tracking: вкл" : "Tracking: выкл");
-	}
+	companion_tracking_set_enabled(!companion_tracking.enabled, reply);
 }
 
 static void companion_home_restore_gps(void)
@@ -1794,6 +1847,10 @@ static void companion_nav_set_enabled(bool enabled, char *reply)
 		if (!gps_is_enabled()) {
 			gps_enable(true);
 		}
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
+		mc_display_set_auto_off_hold(true);
+		mc_display_on();
+#endif
 		snprintf(reply, CLI_REPLY_SIZE, "OK - Navigation to %d-%s  %.5f,%.5f",
 			 companion_home.selected + 1,
 			 companion_mesh.prefs.home_name[companion_home.selected],
@@ -1846,6 +1903,9 @@ static void companion_nav_set_enabled(bool enabled, char *reply)
 	} else {
 		companion_home.nav_active = false;
 		companion_gps_user_left();
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
+		mc_display_set_auto_off_hold(false);
+#endif
 		strcpy(reply, "OK - nav stop");
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
 		buzzer_play(MELODY_NAV_OFF);

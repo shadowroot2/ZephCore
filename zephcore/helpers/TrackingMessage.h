@@ -301,7 +301,11 @@ static inline void tracking_duration_str(char *buf, size_t len, uint32_t ms)
 {
 	uint32_t min = (ms + 30000U) / 60000U;
 
-	snprintf(buf, len, "%uч%02uм", min / 60, min % 60);
+	if (min < 60U) {
+		snprintf(buf, len, "%uм", min);
+	} else {
+		snprintf(buf, len, "%uч%02uм", min / 60, min % 60);
+	}
 }
 
 /* Three lines: "🏁 12.4 км · 2ч15м · 🚶 1ч48м", the stop/speed line, and
@@ -321,11 +325,18 @@ static inline void tracking_format_summary(char *buf, size_t len,
 		: 0;
 	unsigned maxk = (unsigned)((o->max_speed_mms * 36U + 5000U) / 10000U);
 	unsigned stopmin = (unsigned)((o->stopped_ms + 30000U) / 60000U);
+	char stopbuf[12];
+
+	if (stopmin > 59U) {
+		tracking_duration_str(stopbuf, sizeof(stopbuf), o->stopped_ms);
+	} else {
+		snprintf(stopbuf, sizeof(stopbuf), "%u мин", stopmin);
+	}
 	int n = snprintf(buf, len,
 			 "🏁 %u.%uкм (%u.%u / %u км/ч)\n⏱️ %s\n🚶 %s\n"
-			 "🅿️ %u мин (%u)",
+			 "🅿️ %s (%u)",
 			 km10 / 10, km10 % 10, avg10 / 10, avg10 % 10, maxk,
-			 total, moving, stopmin, o->stops);
+			 total, moving, stopbuf, o->stops);
 
 	if (has_fix && n > 0 && (size_t)n < len) {
 		char url[48];

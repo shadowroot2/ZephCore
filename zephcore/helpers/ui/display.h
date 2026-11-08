@@ -311,6 +311,12 @@ void mc_display_reset_auto_off(void);
 void mc_display_set_auto_off_ms(uint32_t ms);
 
 /**
+ * Pin the display (and its backlight) on while held: the auto-off timer
+ * never blanks it. Releasing re-arms the timer from now.
+ */
+void mc_display_set_auto_off_hold(bool hold);
+
+/**
  * EPD-only: force a full panel reset cycle before normal page rendering.
  * No-op on non-EPD displays or when display is not initialized.
  */

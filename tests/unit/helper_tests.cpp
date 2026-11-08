@@ -280,7 +280,7 @@ TEST(tracking_summary_format, "UNIT-TRACK-003", "Session summary fits the mesh f
 	memset(&o, 0, sizeof(o));
 	char buf[160];
 	tracking_format_summary(buf, sizeof(buf), &o, 55751240000LL, 37618420000LL, true);
-	CHECK(std::strcmp(buf, "🏁 0.0км (0.0 / 0 км/ч)\n⏱️ 0ч00м\n🚶 0ч00м\n"
+	CHECK(std::strcmp(buf, "🏁 0.0км (0.0 / 0 км/ч)\n⏱️ 0м\n🚶 0м\n"
 		"🅿️ 0 мин (0)\n"
 		"📍 https://maps.google.com/?q=55.75124,37.61842") == 0);
 	o.distance_mm = 999900000;
@@ -291,6 +291,7 @@ TEST(tracking_summary_format, "UNIT-TRACK-003", "Session summary fits the mesh f
 	tracking_format_summary(buf, sizeof(buf), &o, -123456780000LL, -89123450000LL, true);
 	CHECK(std::strlen(buf) <= 159);
 	CHECK(std::strstr(buf, "999.9км") != nullptr);
+	CHECK(std::strstr(buf, "🅿️ 9ч55м (99)") != nullptr);
 	CHECK(std::strstr(buf, "км/ч") != nullptr);
 	CHECK(std::strstr(buf, "-123.45678,-89.12345") != nullptr);
 	tracking_format_summary(buf, sizeof(buf), &o, 0, 0, false);
