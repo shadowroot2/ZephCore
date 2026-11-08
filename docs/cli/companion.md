@@ -29,6 +29,7 @@ help
 │  ├─ get/set name
 │  ├─ get/set owner.info
 │  ├─ get/set prv.key
+│  ├─ get/set pin
 │  └─ get public.key
 ├─ rf
 │  ├─ get/set freq
@@ -181,7 +182,7 @@ help
    └─ reboot
 ```
 
-`wifi`, Fall и display/input rotation показываются только при наличии соответствующей возможности сборки. Удалённо не выполняются `get/set prv.key`, `get/set wifi.pwd`, `get/set wifi.ssid`, `set wifi.clear`, `set pin`, `set freq`, `set radio`, `set tx`, `set adc.multiplier`, `set autoshutdown`, `offgrid on|off`, `clear stats`, `shutdown`, `poweroff`, OTA/DFU и `erase`.
+`wifi`, Fall и display/input rotation показываются только при наличии соответствующей возможности сборки. Удалённо не выполняются `get/set prv.key`, `get/set pin`, `get/set wifi.pwd`, `get/set wifi.ssid`, `set wifi.clear`, `set freq`, `set radio`, `set tx`, `set adc.multiplier`, `set autoshutdown`, `offgrid on|off`, `clear stats`, `shutdown`, `poweroff`, OTA/DFU и `erase`.
 
 ### Команды и описание
 
@@ -268,6 +269,7 @@ help
 - `get/set output.power 22|28|default (nominal dBm)` — выбирает номинальную выходную мощность Heltec V4.3: 22 → SX1262 10 dBm, 28 → SX1262 22 dBm. Это не измеренная мощность; default возвращает штатный TX.
 - `get/set owner.info` — читает/задаёт текстовую информацию о владельце.
 - `get/set path.hash.mode` — читает/задаёт формат хешей узлов в маршруте: 0..2.
+- `get/set pin` — читает/задаёт BLE passkey паринга: 6 цифр (100000-999999), `set pin 0` возвращает дефолт 123456. Применяется к следующему парингу, bond'ы не трогаются; значение переживает перезагрузку. Local-only, при `CONFIG_BT`.
 - `get/set prv.key` — читает/задаёт секретный ключ identity. Не публикуйте ответ; изменение меняет идентичность узла.
 - `get/set radio` — читает/задаёт параметры LoRa: частоту, полосу, SF и CR.
 - `get/set radio.fem.rxgain` — читает/задаёт усиление внешнего приёмного усилителя; нужен поддерживаемый FEM.

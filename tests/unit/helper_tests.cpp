@@ -198,7 +198,7 @@ TEST(companion_cli_help, "UNIT-CLI-002", "Companion app and remote help are cate
 	CHECK(std::strstr(companion_remote_cli_help("help geo"), "43.241117") != nullptr);
 	const char *local_only[] = {
 		"get wifi.pwd", "set wifi.pwd secret", "set wifi.ssid network", "set wifi.clear",
-		"set pin 123456", "set freq 869.525", "set radio 869.525,125,9,5",
+		"set pin 123456", "get pin", "set freq 869.525", "set radio 869.525,125,9,5",
 		"set tx 22", "set adc.multiplier 1.0", "set autoshutdown 3200",
 		"shutdown", "shutdown y", "poweroff", "offgrid on", "offgrid off", "wp clear", "wp 1", "nav start", "nav stop",
 		"wp save", "wp save 2", "wp save 2 Base", "wp name 2 TEST", "wp name TEST",

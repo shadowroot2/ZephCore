@@ -70,6 +70,18 @@ get/set geo.radius
 - `set geo.radius <m>` — радиус в метрах (50..50000, по умолчанию 3000),
   local-only. Подробности — в [cli/companion.md](cli/companion.md).
 
+## Bluetooth companion (pin)
+
+```text
+get/set pin
+```
+
+- `get/set pin` — BLE passkey паринга (6 цифр), local-only (USB/BLE).
+  `set pin 0` возвращает дефолт 123456 (`CONFIG_ZEPHCORE_BLE_PASSKEY`),
+  иначе 100000-999999. Применяется к следующему парингу, bond'ы не
+  трогаются, значение переживает перезагрузку. Удалённо не выполняется
+  (в remote allowlist семья отсутствует). При `CONFIG_BT`.
+
 ## Удалённый CLI репиттера
 
 ```text

@@ -3165,6 +3165,40 @@ static bool handle_findme_cli(const char *line, char *reply)
 	return true;
 }
 
+#if IS_ENABLED(CONFIG_BT)
+/* BLE pairing passkey. "set pin 0" restores the Kconfig default, anything
+ * else is 6 digits; applies to the next pairing, bonds are untouched.
+ * Local only — the remote allowlist denies the family. */
+static bool handle_pin_cli(const char *line, char *reply)
+{
+	if (strcmp(line, "get pin") == 0) {
+		snprintf(reply, CLI_REPLY_SIZE, "pin: %06u",
+			 (unsigned)zephcore_ble_get_passkey());
+		return true;
+	}
+	if (strncmp(line, "set pin ", 8) == 0) {
+		char *end;
+		unsigned long v = strtoul(&line[8], &end, 10);
+
+		if (end == &line[8] || *end != '\0' ||
+		    (v != 0UL && (v < 100000UL || v > 999999UL))) {
+			strcpy(reply, "Error: pin must be 0 (default) or 100000-999999");
+			return true;
+		}
+		companion_mesh.prefs.ble_pin = (uint32_t)v;
+		save_prefs_to_flash();
+		zephcore_ble_set_passkey((uint32_t)v);
+		if (v == 0UL) {
+			strcpy(reply, "OK - pin default");
+		} else {
+			snprintf(reply, CLI_REPLY_SIZE, "OK - pin %06lu", v);
+		}
+		return true;
+	}
+	return false;
+}
+#endif
+
 
 
 /* The CompanionMesh::handleCommand callback runs on the main thread. Remote
@@ -3232,6 +3266,9 @@ static void companion_cli_exec(const char *line, uint32_t sender_timestamp,
 	    handle_geo_cli(line, reply) ||
 	    handle_findme_cli(line, reply) ||
 	    handle_autoshutdown_emergency_cli(line, reply)) return;
+#if IS_ENABLED(CONFIG_BT)
+	if (handle_pin_cli(line, reply)) return;
+#endif
 	if (handle_vcontact_settings_cli(line, reply)) {
 		return;
 	}

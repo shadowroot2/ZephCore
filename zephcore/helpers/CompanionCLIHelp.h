@@ -91,7 +91,11 @@ static inline const char *companion_app_cli_help(const char *line)
 		       "Use: help <group>";
 	}
 	if (strcmp(line, "help id") == 0) {
-		return "get role\nget/set name\nget/set owner.info\nget/set prv.key\nget public.key";
+		return "get role\nget/set name\nget/set owner.info\nget/set prv.key\n"
+#if IS_ENABLED(CONFIG_BT)
+		       "get/set pin\n"
+#endif
+		       "get public.key";
 	}
 	if (strcmp(line, "help stat") == 0) {
 		return "stats-packets\nstats-radio\nstats-core\nclear stats";
