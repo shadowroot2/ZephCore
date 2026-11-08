@@ -1746,15 +1746,18 @@ static void render_gps_home(void)
 	}
 	y += LINE_H;
 
-	if (have_fix) {
-		int w;
-		nav_distance_str(buf, sizeof(buf), dist_m);
-		mc_display_text(0, y, buf, false);
-		w = 2 * (int)mc_display_font_width();
-		mc_display_text((int)DISP_W - w, y, nav_cardinal_en(bearing_deg), false);
-	} else {
-		mc_display_text(0, y, "?? km", false);
-		mc_display_text(DISP_W - 10, y, "?", false);
+	if (!state.nav_active) {
+		/* While navigating the big center readout replaces this row. */
+		if (have_fix) {
+			int w;
+			nav_distance_str(buf, sizeof(buf), dist_m);
+			mc_display_text(0, y, buf, false);
+			w = 2 * (int)mc_display_font_width();
+			mc_display_text((int)DISP_W - w, y, nav_cardinal_en(bearing_deg), false);
+		} else {
+			mc_display_text(0, y, "?? km", false);
+			mc_display_text(DISP_W - 10, y, "?", false);
+		}
 	}
 	if (state.home_status == HOME_STATUS_WAITING) {
 		draw_centered((int)DISP_H / 2 - LINE_H / 2, "Waiting GPS FIX...");
@@ -1766,6 +1769,23 @@ static void render_gps_home(void)
 		   (int32_t)(k_uptime_get_32() - state.home_wrong_way_until) < 0) {
 		mc_display_on();
 		draw_centered((int)DISP_H / 2 - LINE_H / 2, "Wrong WAY!");
+	} else if (state.nav_active) {
+		/* Navigating: the center is the readout — distance over
+		 * direction, one font size up. The default font is restored
+		 * right away; the rest of the page keeps it. */
+		int bh;
+
+		mc_display_font_large(true);
+		bh = (int)mc_display_font_height();
+		if (have_fix) {
+			nav_distance_str(buf, sizeof(buf), dist_m);
+		} else {
+			strcpy(buf, "?? km");
+		}
+		draw_centered((int)DISP_H / 2 - bh, buf);
+		draw_centered((int)DISP_H / 2,
+			      have_fix ? nav_cardinal_en(bearing_deg) : "?");
+		mc_display_font_large(false);
 	} else {
 		char buf2[24];
 

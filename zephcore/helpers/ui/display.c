@@ -535,17 +535,18 @@ int mc_display_init(void)
 		}
 	}
 
-	/* NAV page font: the next size up from the default one. */
+	/* NAV page font: the largest one that fits a distance line ("99.99 km",
+	 * 8 chars) across the panel width. */
 	int large_idx = -1;
 	{
-		uint8_t large_h = 0;
+		uint8_t large_w = 0;
 
 		for (int i = 0; i < num_fonts; i++) {
 			uint8_t fw = 0, fh = 0;
 
 			cfb_get_font_size(disp_dev, i, &fw, &fh);
-			if (fh > best_h && (large_h == 0 || fh < large_h)) {
-				large_h = fh;
+			if ((int)fw * 8 <= (int)mc_display_width() && fw > large_w) {
+				large_w = fw;
 				large_idx = i;
 			}
 		}
