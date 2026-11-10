@@ -55,6 +55,7 @@ extern "C" void bt_ctlr_assert_handle(char *file, uint32_t line)
 #include <Serial.h>
 #include <adapters/clock/ZephyrRTCDiscover.h>
 #include <ZephyrSensorManager.h>
+#include <adapters/gps/ZephyrGPSManager.h>
 #include <zephyr_poweroff.h>
 #if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
 #include <app/RepeaterBridge.h> /* ZEPHCORE: bridge UI */
@@ -445,6 +446,7 @@ static void wake_callback(void *user_data)
 /* Global instances */
 mesh::ZephyrRTCClock rtc_clock;
 
+#if ZEPHCORE_HAS_GPS
 /* GPS event callback - called when GPS work handlers need the main thread
  * to process a state transition (wake from standby, fix done, timeout).
  * Runs from system work queue context — just posts an event, no blocking. */
@@ -452,9 +454,11 @@ static void gps_event_callback(void)
 {
 	k_event_post(&mesh_events, MESH_EVENT_GPS_ACTION);
 }
+#endif
 
 static RepeaterDataStore data_store;
 
+#if ZEPHCORE_HAS_GPS
 /* GPS fix callback (main thread, from gps_process_event()) - syncs RTC from
  * GPS time.
  * Servers do NOT update prefs lat/lon from GPS — prefs coordinates are the
@@ -486,6 +490,7 @@ static void gps_fix_callback(double lat, double lon, int64_t utc_time)
 	LOG_INF("GPS fix: lat=%d.%06d lon=%d.%06d",
 		lat_deg, lat_frac, lon_deg, lon_frac);
 }
+#endif
 
 #ifdef ZEPHCORE_LORA
 mesh::ZephyrBoard zephyr_board;
@@ -545,12 +550,14 @@ static void server_event_loop(void)
 		k_event_clear(&mesh_events, events);
 		loopWakeNote(events);
 
+#if ZEPHCORE_HAS_GPS
 		/* GPS state transitions must run on main thread (GNSS driver
 		 * modem_chat blocks on system work queue semaphore). */
 		if (events & MESH_EVENT_GPS_ACTION) {
 			gps_process_event();
 			ui_set_gps_available(gps_is_available());  /* the boot probe may clear it */
 		}
+#endif
 
 		/* Console input: assemble + echo, then run each finished line here
 		 * (main thread) BEFORE loop() drains any outbound packets it
@@ -724,10 +731,12 @@ int server_main(const ServerRole &role)
 
 	/* GPS callbacks only.  Duty interval and repeater mode are applied by
 	 * apply_boot_prefs() after loadPrefs() below. */
+#if ZEPHCORE_HAS_GPS
 	if (gps_is_available()) {
 		gps_set_fix_callback(gps_fix_callback);
 		gps_set_event_callback(gps_event_callback);
 	}
+#endif
 
 	/* Charge/heartbeat work starts inside ui_init(). */
 	ui_set_battery_provider(get_battery_mv, []() { return zephyr_board.getBattPercent(); });

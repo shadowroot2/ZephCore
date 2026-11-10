@@ -182,14 +182,14 @@ static const enum ui_page active_pages[] = {
 #else
 static const enum ui_page active_pages[] = {
 	UI_PAGE_MESSAGES,
+#if ZEPHCORE_HAS_GPS
 	UI_PAGE_TRACKING, /* ZEPHCORE: safety/tracking pages */
-#if DT_HAS_COMPAT_STATUS_OKAY(gnss_nmea_generic) || \
-	DT_HAS_COMPAT_STATUS_OKAY(quectel_lc76g) || \
-	DT_HAS_COMPAT_STATUS_OKAY(luatos_air530z)
 	UI_PAGE_GPS_HOME,
-#endif
 	UI_PAGE_SOS,
 	UI_PAGE_GPS,
+#else
+	UI_PAGE_SOS,
+#endif
 #ifdef CONFIG_ZEPHCORE_UI_BUZZER
 	UI_PAGE_BUZZER,
 #endif

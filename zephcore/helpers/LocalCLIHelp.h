@@ -45,11 +45,14 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"findme\r\n"
 #endif
 		"sos\r\n"
+#if !defined(CONFIG_ZEPHCORE_NO_GPS)
 		"gps [on|off|setloc|advert]\r\n"
 		"tracking [on|off]\r\n"
-#if DT_HAS_COMPAT_STATUS_OKAY(gnss_nmea_generic) || \
+#endif
+#if !defined(CONFIG_ZEPHCORE_NO_GPS) && \
+	(DT_HAS_COMPAT_STATUS_OKAY(gnss_nmea_generic) || \
 	DT_HAS_COMPAT_STATUS_OKAY(quectel_lc76g) || \
-	DT_HAS_COMPAT_STATUS_OKAY(luatos_air530z)
+	DT_HAS_COMPAT_STATUS_OKAY(luatos_air530z))
 		"nav [start|stop]\r\n"
 		"wp [list|n|clear]\r\n"
 		"geo [on|off|save|log]\r\n"
@@ -89,12 +92,23 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 #endif
 		"get/set flood.advert.interval\r\nget/set flood.max\r\n"
 		"get/set flood.max.advert\r\nget/set flood.max.unscoped\r\n"
-		"get/set freq\r\nget/set gps duty\r\n"
+		"get/set freq\r\n"
+#if !defined(CONFIG_ZEPHCORE_NO_GPS)
+		"get/set gps duty\r\n"
+#endif
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
 		"get/set input.rotate\r\n"
 #endif
-		"get/set int.thresh\r\nget/set lat\r\nget/set leds.hb\r\n"
-		"get/set leds.radio\r\nget/set lon\r\nget/set meshtimesync\r\n"
+		"get/set int.thresh\r\n"
+#if !defined(CONFIG_ZEPHCORE_NO_GPS)
+		"get/set lat\r\n"
+#endif
+		"get/set leds.hb\r\n"
+		"get/set leds.radio\r\n"
+#if !defined(CONFIG_ZEPHCORE_NO_GPS)
+		"get/set lon\r\n"
+#endif
+		"get/set meshtimesync\r\n"
 		"get/set name\r\n"
 #if defined(CONFIG_BOARD_HELTEC_WIFI_LORA32_V43)
 		"get/set output.power 22|28|default (nominal dBm)\r\n"
@@ -102,7 +116,9 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"get/set owner.info\r\n"
 		"get/set path.hash.mode\r\nget/set prv.key\r\nget/set radio\r\n"
 		"get/set radio.fem.rxgain\r\nget/set radio.rxgain\r\n"
+#if !defined(CONFIG_ZEPHCORE_NO_GPS)
 		"get/set tracking.group\r\nget/set tracking.interval\r\n"
+#endif
 		"get/set tx\r\nget/set tz.offset (hours)\r\n"
 		"get/set v.batteryalert\r\nget/set v.contact\r\n"
 		"start ota\r\nstart dfu\r\n"
@@ -130,12 +146,13 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"clock\r\n"
 		"clock sync\r\n"
 		"time <epoch>\r\n"
-#if DT_HAS_COMPAT_STATUS_OKAY(gnss_nmea_generic) || \
+#if !defined(CONFIG_ZEPHCORE_NO_GPS) && \
+	(DT_HAS_COMPAT_STATUS_OKAY(gnss_nmea_generic) || \
     DT_HAS_COMPAT_STATUS_OKAY(u_blox_m8) || \
     DT_HAS_COMPAT_STATUS_OKAY(u_blox_f9p) || \
     DT_HAS_COMPAT_STATUS_OKAY(quectel_lcx6g) || \
     DT_HAS_COMPAT_STATUS_OKAY(quectel_lc76g) || \
-    DT_HAS_COMPAT_STATUS_OKAY(luatos_air530z)
+    DT_HAS_COMPAT_STATUS_OKAY(luatos_air530z))
 		"gps\r\n"
 		"gps on|off|sync|setloc|advert\r\n"
 #endif
@@ -160,12 +177,13 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"clear stats\r\n"
 		"get role\r\n"
 		"get public.key\r\n"
-#if DT_HAS_COMPAT_STATUS_OKAY(gnss_nmea_generic) || \
+#if !defined(CONFIG_ZEPHCORE_NO_GPS) && \
+	(DT_HAS_COMPAT_STATUS_OKAY(gnss_nmea_generic) || \
     DT_HAS_COMPAT_STATUS_OKAY(u_blox_m8) || \
     DT_HAS_COMPAT_STATUS_OKAY(u_blox_f9p) || \
     DT_HAS_COMPAT_STATUS_OKAY(quectel_lcx6g) || \
     DT_HAS_COMPAT_STATUS_OKAY(quectel_lc76g) || \
-    DT_HAS_COMPAT_STATUS_OKAY(luatos_air530z)
+    DT_HAS_COMPAT_STATUS_OKAY(luatos_air530z))
 		"get gps diag\r\n"
 		"get gps\r\n"
 #endif
@@ -250,19 +268,25 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"get/set flood.max.advert\r\n"
 		"get/set flood.max.unscoped\r\n"
 		"get/set freq\r\n"
+#if !defined(CONFIG_ZEPHCORE_NO_GPS)
 		"get/set gps duty\r\n"
 		"get/set gps standby\r\n"
+#endif
 		"get/set guest.password\r\n"
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_JOYSTICK) || IS_ENABLED(CONFIG_ZEPHCORE_UI_KEYBOARD)
 		"get/set input.rotate\r\n"
 #endif
 		"get/set int.thresh\r\n"
+#if !defined(CONFIG_ZEPHCORE_NO_GPS)
 		"get/set lat\r\n"
+#endif
 		"get/set leds.hb\r\n"
 		"get/set leds.radio\r\n"
 		"get/set leds\r\n"
 		"get/set leds.brightness\r\n"
+#if !defined(CONFIG_ZEPHCORE_NO_GPS)
 		"get/set lon\r\n"
+#endif
 		"get/set loop.detect\r\n"
 		"get/set meshtimesync\r\n"
 		"get/set multi.acks\r\n"
@@ -324,7 +348,9 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"ver\r\nboard\r\nadvert\r\nadvert.zerohop\r\n"
 		"clock sync\r\ntime <epoch>\r\n"
 #if !defined(CONFIG_BOARD_RPI_PICO)
+#if !defined(CONFIG_ZEPHCORE_NO_GPS)
 		"gps on|off|setloc|advert\r\nget gps diag\r\n"
+#endif
 		"neighbors\r\nneighbor.remove <pubkey>\r\n"
 #endif
 		"tempradio <freq> <bw> <sf> <cr> <minutes>\r\n"
@@ -338,7 +364,10 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"get/set allow.read.only\r\nget/set flood.advert.interval\r\n"
 		"get/set advert.interval\r\nget/set guest.password\r\n"
 		"get/set prv.key\r\nget/set name\r\nget/set repeat\r\n"
-		"get/set lat\r\nget/set lon\r\nget/set radio\r\n"
+#if !defined(CONFIG_ZEPHCORE_NO_GPS)
+		"get/set lat\r\nget/set lon\r\n"
+#endif
+		"get/set radio\r\n"
 		"get/set radio.rxgain\r\n"
 		"get/set flood.max.advert\r\n"
 		"get/set flood.max.unscoped\r\nget/set flood.max\r\n"
@@ -347,7 +376,9 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"get/set loop.detect\r\nget/set tx\r\nget/set freq\r\n"
 		"get/set adc.multiplier\r\nget/set rxduty\r\n"
 #if !defined(CONFIG_BOARD_RPI_PICO)
+#if !defined(CONFIG_ZEPHCORE_NO_GPS)
 		"get/set gps duty\r\n"
+#endif
 #endif
 		"get/set meshtimesync\r\n"
 		"set cad.auto\r\nset cad.offset\r\nset probe.interval\r\n"

@@ -120,6 +120,14 @@ source "$(ZEPHYR_BASE)/subsys/logging/Kconfig.template.log_config"
 
 menu "ZephCore"
 
+config ZEPHCORE_NO_GPS
+	bool "Build without GPS features"
+	default n
+	help
+	  Kill switch for everything GPS: the gps/lat/lon CLI family, nav, geo,
+	  tracking and the GPS screens disappear from the build (companion and
+	  server roles alike). Use for nodes that go out without a GNSS module.
+
 config ZEPHCORE_QSPI_RDID_PROBE
 	bool "QSPI flash bring-up probe"
 	help

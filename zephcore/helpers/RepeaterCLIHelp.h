@@ -14,9 +14,13 @@
 #else
 #define REPEATER_HELP_HAS_DISPLAY_ROTATE 0
 #endif
+#ifdef CONFIG_ZEPHCORE_NO_GPS
+#define REPEATER_HELP_HAS_GNSS 0
+#else
 #define REPEATER_HELP_HAS_GNSS (DT_HAS_COMPAT_STATUS_OKAY(gnss_nmea_generic) || \
 	DT_HAS_COMPAT_STATUS_OKAY(quectel_lc76g) || \
 	DT_HAS_COMPAT_STATUS_OKAY(luatos_air530z))
+#endif
 #define REPEATER_HELP_HAS_ADC (DT_NODE_EXISTS(DT_PATH(zephyr_user)) && \
 	DT_NODE_HAS_PROP(DT_PATH(zephyr_user), io_channels))
 #define REPEATER_HELP_HAS_FEM DT_NODE_HAS_PROP(DT_ALIAS(lora0), lna_bypass_gpios)
@@ -66,7 +70,10 @@ static inline const char *repeater_remote_cli_help(const char *line, bool bridge
 #if REPEATER_HELP_HAS_CAD
 		" | cad"
 #endif
-		" | mesh | find | gps"
+		" | mesh | find"
+#if REPEATER_HELP_HAS_GNSS
+		" | gps"
+#endif
 #if REPEATER_HELP_HAS_UI
 		" | ui"
 #endif
@@ -126,14 +133,12 @@ static inline const char *repeater_remote_cli_help(const char *line, bool bridge
 	REMOTE_HELP_STRING(access,
 		"password <value>\nget/set guest.password\n"
 		"setperm <permissions> <pubkey>");
-	REMOTE_HELP_STRING(gps,
 #if REPEATER_HELP_HAS_GNSS
+	REMOTE_HELP_STRING(gps,
 		"gps\ngps on|off\ngps sync|setloc|advert\nget gps diag\n"
 		"get/set gps duty\nget/set gps standby\n"
-#else
-		"gps advert\n"
-#endif
 		"get/set lat\nget/set lon");
+#endif
 #if REPEATER_HELP_HAS_UI
 	REMOTE_HELP_STRING(ui,
 #if REPEATER_HELP_HAS_LEDS
@@ -240,7 +245,9 @@ static inline const char *repeater_remote_cli_help(const char *line, bool bridge
 #endif
 	if (strcmp(line, "help mesh") == 0) return mesh;
 	if (strcmp(line, "help find") == 0) return find;
+#if REPEATER_HELP_HAS_GNSS
 	if (strcmp(line, "help gps") == 0) return gps;
+#endif
 #if REPEATER_HELP_HAS_UI
 	if (strcmp(line, "help ui") == 0) return ui;
 #endif

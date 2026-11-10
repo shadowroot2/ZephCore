@@ -554,6 +554,7 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
 				*(dp - 1) = 0;  // remove last CR
 			}
 		}
+#if ZEPHCORE_HAS_GPS
 	} else if (memcmp(command, "gps on", 6) == 0) {
 		if (_sensors->setSettingValue("gps", "1")) {
 			_prefs->gps_enabled = 1;
@@ -640,6 +641,7 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
 				 gps_get_last_known_position(&pos) ? "fix" : "no fix",
 				 (int)gsi.satellites);
 		}
+#endif
 	} else if (memcmp(command, "powersaving on", 14) == 0) {
 		/* Upstream's replies.  ESP32 light-sleep builds: allowed again
 		 * once the console window closes (upstream ESP32 waits 2 min
@@ -1023,10 +1025,12 @@ void CommonCLI::handleGetCmd(uint32_t sender_timestamp, const char* command, cha
 	} else if (memcmp(config, "repeat", 6) == 0) {
 		bool on = _callbacks->hasOffgridMode() ? _callbacks->isOffgridActive() : !_prefs->disable_fwd;
 		snprintf(reply, CLI_REPLY_SIZE, "> %s", on ? "on" : "off");
+#if ZEPHCORE_HAS_GPS
 	} else if (memcmp(config, "lat", 3) == 0) {
 		snprintf(reply, CLI_REPLY_SIZE, "> %.6f", _prefs->node_lat);
 	} else if (memcmp(config, "lon", 3) == 0) {
 		snprintf(reply, CLI_REPLY_SIZE, "> %.6f", _prefs->node_lon);
+#endif
 	} else if (memcmp(config, "flood.max.advert", 16) == 0) {
 		snprintf(reply, CLI_REPLY_SIZE, "> %u", (uint32_t)_prefs->flood_max_advert);
 	} else if (memcmp(config, "flood.max.unscoped", 18) == 0) {
@@ -1122,6 +1126,7 @@ void CommonCLI::handleGetCmd(uint32_t sender_timestamp, const char* command, cha
 		char hours[TZ_OFFSET_TEXT_LEN];
 		tz_offset_format_hours(tz_offset_minutes(_prefs->tz_offset), hours, sizeof(hours));
 		snprintf(reply, CLI_REPLY_SIZE, "> %s", hours);
+#if ZEPHCORE_HAS_GPS
 	} else if (memcmp(config, "gps diag", 8) == 0) {
 		/* What the last module-configuration attempt actually did.
 		 * Self-limits on the remote path like cad.stats/meshtimesync:
@@ -1164,6 +1169,7 @@ void CommonCLI::handleGetCmd(uint32_t sender_timestamp, const char* command, cha
 					 state, gsi.satellites);
 			}
 		}
+#endif
 #if IS_ENABLED(CONFIG_ZEPHCORE_MEM_STATS)
 	} else if (memcmp(config, "mem", 3) == 0) {
 		memStatsLine(atoi(&config[3]), reply);
@@ -1494,6 +1500,7 @@ void CommonCLI::handleSetCmd(uint32_t sender_timestamp, const char* command, cha
 		} else {
 			strcpy(reply, "Error: must be on or off");
 		}
+#if ZEPHCORE_HAS_GPS
 	} else if (memcmp(config, "lat ", 4) == 0) {
 		_prefs->node_lat = cliIsDefault(&config[4]) ? cliDefaults()->node_lat
 													: atof(&config[4]);
@@ -1504,6 +1511,7 @@ void CommonCLI::handleSetCmd(uint32_t sender_timestamp, const char* command, cha
 													: atof(&config[4]);
 		savePrefs();
 		strcpy(reply, "OK");
+#endif
 	} else if (memcmp(config, "flood.max.advert ", 17) == 0) {
 		long m;
 		if (cliNum(&config[17], cliDefaults()->flood_max_advert, &m) && m >= 0 && m <= 64) {
@@ -1731,6 +1739,7 @@ void CommonCLI::handleSetCmd(uint32_t sender_timestamp, const char* command, cha
 			tz_offset_format_hours(tz_offset_minutes(_prefs->tz_offset), hours, sizeof(hours));
 			snprintf(reply, CLI_REPLY_SIZE, "OK - tz.offset=%s", hours);
 		}
+#if ZEPHCORE_HAS_GPS
 	} else if (memcmp(config, "gps diag", 8) == 0) {
 		// set gps diag <0|1|on|off> — arm module-configuration reporting.
 		// Not persisted: clears on reboot, by design.
@@ -1790,6 +1799,7 @@ void CommonCLI::handleSetCmd(uint32_t sender_timestamp, const char* command, cha
 			if (val == 0) strcpy(reply, "OK - gps duty=0 (always on)");
 			else snprintf(reply, CLI_REPLY_SIZE, "OK - gps duty=%u s", (unsigned)val);
 		}
+#endif
 	} else if (memcmp(config, "meshtimesync ", 13) == 0) {
 		int on = cliOnOff(&config[13], cliDefaults()->meshtimesync);
 		if (_callbacks->getMeshTimeSync() == nullptr) {

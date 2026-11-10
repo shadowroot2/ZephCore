@@ -5,10 +5,15 @@
 #include <string.h>
 #include <zephyr/sys/util.h>
 
-/* The nav/wp group exists only on boards whose DT has a GNSS receiver. */
+/* The nav/wp group exists only on boards whose DT has a GNSS receiver and
+ * the build did not switch GPS off (NO_GPS / CONFIG_ZEPHCORE_NO_GPS). */
+#ifdef CONFIG_ZEPHCORE_NO_GPS
+#define COMPANION_HAS_GPS 0
+#else
 #define COMPANION_HAS_GPS (DT_HAS_COMPAT_STATUS_OKAY(gnss_nmea_generic) || \
 	DT_HAS_COMPAT_STATUS_OKAY(quectel_lc76g) || \
 	DT_HAS_COMPAT_STATUS_OKAY(luatos_air530z))
+#endif
 
 /* ZEPHCORE: arguments of "wp save [n] [name]" and "wp name [n] <name>" — an
  * optional slot 1..10 and a name of at most WP_SAVE_NAME_MAX chars (spaces
@@ -80,9 +85,9 @@ static_assert(sizeof(COMPANION_REMOTE_WIFI_HELP) <= 158,
 static inline const char *companion_app_cli_help(const char *line)
 {
 	if (strcmp(line, "help") == 0 || strcmp(line, "?") == 0) {
-		return "Groups: id | rf | cad | mesh | gps"
+		return "Groups: id | rf | cad | mesh"
 #if COMPANION_HAS_GPS
-		       " | nav | geo"
+		       " | gps | nav | geo"
 #endif
 #if IS_ENABLED(CONFIG_ZEPHCORE_COMPANION_WIFI)
 		       " | wifi"
@@ -98,7 +103,7 @@ static inline const char *companion_app_cli_help(const char *line)
 		       "get public.key";
 	}
 	if (strcmp(line, "help stat") == 0) {
-		return "stats-packets\nstats-radio\nstats-core\nclear stats";
+		return "stats-packets\nstats-radio\nstats-core\nclear stats\nsend.heard <ts>";
 	}
 	if (strcmp(line, "help sys") == 0) {
 		return "ver\nboard\nuptime\ntz\nclock sync\ntime <epoch>\nget dc.restarts\n"
@@ -119,9 +124,11 @@ static inline const char *companion_app_cli_help(const char *line)
 		       "get/set meshtimesync\nget/set flood.advert.interval\nget/set flood.max\n"
 		       "get/set flood.max.advert\nget/set flood.max.unscoped";
 	}
+#if COMPANION_HAS_GPS
 	if (strcmp(line, "help gps") == 0) {
 		return "gps [on|off|setloc|advert]\nget/set gps duty\nget/set lat\nget/set lon";
 	}
+#endif
 #if COMPANION_HAS_GPS
 	if (strcmp(line, "help nav") == 0) {
 		return "nav [start|stop]\nnav telemetry [on|off]\nwp [list|n|clear]\n"
@@ -139,8 +146,11 @@ static inline const char *companion_app_cli_help(const char *line)
 	}
 #endif
 	if (strcmp(line, "help extra") == 0) {
-		return "findme\nsos\ntracking [on|off]\nget/set tracking.group\n"
+		return "findme\nsos\n"
+#if COMPANION_HAS_GPS
+		       "tracking [on|off]\nget/set tracking.group\n"
 		       "get/set tracking.interval\n"
+#endif
 #if defined(ZEPHCORE_FALL_DETECTOR)
 		       "fall on|off\nget/set fall.sens (1-5)\n"
 #endif
@@ -164,9 +174,9 @@ static inline const char *companion_app_cli_help(const char *line)
 static inline const char *companion_remote_cli_help(const char *line)
 {
 	if (strcmp(line, "help") == 0 || strcmp(line, "?") == 0) {
-		return "Groups: id | rf | cad | mesh | gps"
+		return "Groups: id | rf | cad | mesh"
 #if COMPANION_HAS_GPS
-		       " | nav | geo"
+		       " | gps | nav | geo"
 #endif
 #if IS_ENABLED(CONFIG_ZEPHCORE_COMPANION_WIFI)
 		       " | wifi"
@@ -188,9 +198,11 @@ static inline const char *companion_remote_cli_help(const char *line)
 		return "advert[.zerohop]\nget/set: advert.interval meshtimesync\n"
 		       "flood.{advert.interval,max,max.advert,max.unscoped}";
 	}
+#if COMPANION_HAS_GPS
 	if (strcmp(line, "help gps") == 0) {
 		return "gps [on|off|setloc|advert]\nget/set gps duty\nget/set lat\nget/set lon";
 	}
+#endif
 #if COMPANION_HAS_GPS
 	if (strcmp(line, "help nav") == 0) {
 #if IS_ENABLED(CONFIG_ZEPHCORE_REMOTE_POINT_SAVE_CLI)
@@ -213,8 +225,11 @@ static inline const char *companion_remote_cli_help(const char *line)
 	if (strcmp(line, "help wifi") == 0) return COMPANION_REMOTE_WIFI_HELP;
 #endif
 	if (strcmp(line, "help extra") == 0) {
-		return "findme\nsos\ntracking [on|off]\nget/set tracking.group\n"
+		return "findme\nsos\n"
+#if COMPANION_HAS_GPS
+		       "tracking [on|off]\nget/set tracking.group\n"
 		       "get/set tracking.interval\n"
+#endif
 #if defined(ZEPHCORE_FALL_DETECTOR)
 		       "fall on|off\nget/set fall.sens (1-5)\n"
 #endif
@@ -246,6 +261,7 @@ static inline bool companion_remote_cli_command_allowed(const char *cmd)
 	/* Geofence family: the toggle and set geo.point over the air, geo save
 	 * and the radius stay local. Matched in code so the busy allowlist
 	 * tables below stay as they are (DRAM on RAM-bound companions). */
+#if COMPANION_HAS_GPS
 	if (strcmp(cmd, "geo") == 0 || strcmp(cmd, "geo on") == 0 ||
 	    strcmp(cmd, "geo off") == 0 || strcmp(cmd, "geo log") == 0 ||
 	    strcmp(cmd, "get geo.point") == 0 ||
@@ -260,6 +276,7 @@ static inline bool companion_remote_cli_command_allowed(const char *cmd)
 		return true;
 	}
 #endif
+#endif
 	static const char *const exact[] = {
 		"get radio", "get freq", "get af", "get dutycycle", "get int.thresh", "get cad",
 		"get radio.rxgain", "get tx", "get rxdelay", "get agc.reset.interval",
@@ -267,16 +284,26 @@ static inline bool companion_remote_cli_command_allowed(const char *cmd)
 		"get radio.fem.rxgain", "reboot", "get name",
 		"get wifi.enabled", "get wifi.status", "get wifi.ip", "board", "ver",
 		"get tz.offset", "get role", "get public.key", "uptime", "tz", "clock sync",
-		"advert", "advert.zerohop", "findme", "sos", "tracking", "tracking on",
+		"advert", "advert.zerohop", "findme", "sos",
+#if COMPANION_HAS_GPS
+		"tracking", "tracking on",
 		"tracking off", "nav", "wp list",
+#endif
 		"fall on", "fall off", "leds on", "leds off", "buzz on", "buzz off",
 		"buzz", "leds",
-		"stats-packets", "stats-radio", "stats-core", "gps", "gps on", "gps off",
+		"stats-packets", "stats-radio", "stats-core",
+#if COMPANION_HAS_GPS
+		"gps", "gps on", "gps off",
 		"gps setloc", "gps advert",
+#endif
 		"get dc.restarts", "get bootloader.ver", "get owner.info", "get advert.interval",
 		"get meshtimesync", "get flood.advert.interval", "get flood.max",
-		"get flood.max.advert", "get flood.max.unscoped", "get gps duty", "get lat",
-		"get lon", "get tracking.group", "get tracking.interval", "get fall.sens",
+		"get flood.max.advert", "get flood.max.unscoped",
+#if COMPANION_HAS_GPS
+		"get gps duty", "get lat",
+		"get lon", "get tracking.group", "get tracking.interval",
+#endif
+		"get fall.sens",
 		"get v.contact", "get leds.hb", "get leds.radio", "get adc.multiplier",
 		"get autoshutdown", "get autoshutdown.emergency", "get v.batteryalert",
 		"get display.rotate", "get input.rotate",
@@ -289,9 +316,13 @@ static inline bool companion_remote_cli_command_allowed(const char *cmd)
 		"time ", "set owner.info ", "set advert.interval ", "set meshtimesync ",
 		"set flood.advert.interval ", "set flood.max ", "set flood.max.advert ",
 		"set flood.max.unscoped ", "set cad.auto ", "set cad.offset ",
-		"set probe.interval ", "set cad.busycap ", "set cad.reset", "gps advert ",
+		"set probe.interval ", "set cad.busycap ", "set cad.reset",
+#if COMPANION_HAS_GPS
+		"gps advert ",
 		"set gps duty ", "set lat ", "set lon ", "set tracking.group ",
-		"set tracking.interval ", "set fall.sens ", "set v.contact ", "set leds.hb ",
+		"set tracking.interval ",
+#endif
+		"set fall.sens ", "set v.contact ", "set leds.hb ",
 		"set leds.radio ", "set autoshutdown.emergency ", "set v.batteryalert ",
 		"set display.rotate ", "set input.rotate ",
 	};

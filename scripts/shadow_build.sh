@@ -2,20 +2,22 @@
 set -euo pipefail
 
 usage() {
-	echo "usage: $0 <profile> <companion|repeater|bridge> [433|868] [--run]" >&2
+	echo "usage: $0 <profile> <companion|repeater|bridge> [433|868] [nogps] [--run]" >&2
 	exit 2
 }
 
-(( $# >= 2 && $# <= 4 )) || usage
+(( $# >= 2 && $# <= 5 )) || usage
 
 profile=$1
 role=$2
 variant=""
 run=false
+no_gps=false
 shift 2
 for arg in "$@"; do
 	case $arg in
 		433|868) [[ -z $variant ]] || usage; variant=$arg ;;
+		nogps) no_gps=true ;;
 		--run) run=true ;;
 		*) usage ;;
 	esac
@@ -46,6 +48,14 @@ case $profile in
 	heltec_v3)
 		target=heltec_wifi_lora32_v3/esp32s3/procpu
 		stem=heltec_wifi_lora32_v3-esp32s3-procpu
+		platform=esp32
+		format=esp-sysbuild
+		chip=esp32s3
+		sysbuild=true
+		;;
+	heltec_v4)
+		target=heltec_wifi_lora32_v4/esp32s3/procpu
+		stem=heltec_wifi_lora32_v4-esp32s3-procpu
 		platform=esp32
 		format=esp-sysbuild
 		chip=esp32s3
@@ -107,14 +117,22 @@ case $role in
 	*) usage ;;
 esac
 
+if $no_gps; then
+	confs="${confs:+$confs;}boards/common/no_gps.conf"
+	role_tag+=-nogps
+fi
+
 build_tag=$role
 [[ -n $variant ]] && build_tag+="-$variant"
+$no_gps && build_tag+="-nogps"
 build_dir="builds/${profile}-${build_tag}"
 sdk_dir=${ZEPHYR_SDK_INSTALL_DIR:-"$PWD/zephyr-sdk-1.0.1"}
 ccache_dir=${CCACHE_DIR:-"${TMPDIR:-/tmp}/zephcore-ccache"}
 cmd=(./.venv/bin/west build -d "$build_dir" -b "$target" zephcore --pristine)
 $sysbuild && cmd+=(--sysbuild)
-[[ -n $confs ]] && cmd+=(-- -DEXTRA_CONF_FILE="$confs")
+extra_cmake=()
+[[ -n $confs ]] && extra_cmake+=("-DEXTRA_CONF_FILE=$confs")
+[[ ${#extra_cmake[@]} -gt 0 ]] && cmd+=(-- "${extra_cmake[@]}")
 
 echo "board:    $target"
 echo "role:     $role_tag"

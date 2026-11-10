@@ -16,6 +16,12 @@ LoRa CLI, capability оборудования и ограничения опас
 и соответствующий документ роли. BLE help должен помещаться в 172 байта
 текста, tagged remote reply — в 158 байт вместе с NUL.
 
+Сборка без GPS (`scripts/shadow_build.sh <плата> <роль> nogps`, это
+`CONFIG_ZEPHCORE_NO_GPS`) убирает из прошивки всё, что связано с GPS: группы
+`gps`, `nav`, `geo`, команды `tracking`, `lat`/`lon` и экраны GPS/NAV/TRACKING.
+В help их нет, команды не выполняются; остальной CLI не меняется. Одинаково для
+companion и repeater/room server.
+
 ## Навигация companion (при GNSS)
 
 ```text

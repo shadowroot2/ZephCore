@@ -497,10 +497,12 @@ static void mesh_event_loop(void)
 		}
 		if (events & MESH_EVENT_GPS_FIX) {
 			companion_sos_process();
+#if ZEPHCORE_HAS_GPS
 			companion_tracking_odometer_fix();
 			companion_home_save_process();
 			companion_nav_fix_process();
 			companion_geo_fix_process();
+#endif
 		}
 		if (events & MESH_EVENT_LORA_TX_DONE) companion_sos_tx_done();
 
@@ -590,9 +592,11 @@ static void mesh_event_loop(void)
 		}
 
 		companion_sos_process();
+#if ZEPHCORE_HAS_GPS
 		companion_tracking_process();
 		companion_home_save_process();
 		companion_nav_link_check();
+#endif
 		uint32_t next_custom = companion_custom_ms_until_next();
 		if (next_custom == UINT32_MAX) {
 			k_timer_stop(&custom_timer);
@@ -1474,6 +1478,7 @@ static uint32_t companion_custom_ms_until_next(void)
 	return next;
 }
 
+#if ZEPHCORE_HAS_GPS
 static uint32_t companion_tracking_interval_ms(void)
 {
 	return (uint32_t)companion_mesh.prefs.tracking_interval_minutes * 60000U;
@@ -1708,12 +1713,17 @@ static bool companion_geo_set_enabled(bool enabled, char *reply)
 	return true;
 }
 
+#endif
+
 extern "C" void companion_tracking_toggle_from_ui(void)
 {
+#if ZEPHCORE_HAS_GPS
 	char reply[CLI_REPLY_SIZE];
 	companion_tracking_set_enabled(!companion_tracking.enabled, reply);
+#endif
 }
 
+#if ZEPHCORE_HAS_GPS
 static void companion_home_restore_gps(void)
 {
 	gps_set_poll_interval_sec(companion_home.saved_duty_sec);
@@ -1960,26 +1970,35 @@ static void companion_nav_set_enabled(bool enabled, char *reply, bool announce =
 #endif
 }
 
+#endif
+
 extern "C" void companion_home_save_from_ui(void)
 {
+#if ZEPHCORE_HAS_GPS
 	companion_home_start_save(false);
+#endif
 }
 
 extern "C" void companion_nav_toggle_from_ui(void)
 {
+#if ZEPHCORE_HAS_GPS
 	char reply[CLI_REPLY_SIZE];
 	companion_nav_set_enabled(!companion_home.nav_active, reply);
+#endif
 }
 
 extern "C" void companion_wp_cycle_from_ui(void)
 {
+#if ZEPHCORE_HAS_GPS
 	companion_home.selected = (companion_home.selected + 1) % 10;
 	ui_request_render();
+#endif
 }
 
 extern "C" bool companion_home_get_point(double *lat, double *lon, bool *saved,
 					const char **name, int *index)
 {
+#if ZEPHCORE_HAS_GPS
 	int i = companion_home.selected;
 	*lat = companion_mesh.prefs.home_lat[i];
 	*lon = companion_mesh.prefs.home_lon[i];
@@ -1987,13 +2006,26 @@ extern "C" bool companion_home_get_point(double *lat, double *lon, bool *saved,
 	*name = companion_mesh.prefs.home_name[i];
 	*index = i;
 	return true;
+#else
+	*lat = 0;
+	*lon = 0;
+	*saved = false;
+	*name = "";
+	*index = 0;
+	return false;
+#endif
 }
 
 extern "C" bool companion_nav_active(void)
 {
+#if ZEPHCORE_HAS_GPS
 	return companion_home.nav_active;
+#else
+	return false;
+#endif
 }
 
+#if ZEPHCORE_HAS_GPS
 /* ZEPHCORE: navigation telemetry to the tracking group ("nav telemetry"). */
 static bool companion_send_nav_telemetry_message(const char *text)
 {
@@ -2271,11 +2303,18 @@ static void companion_nav_link_check(void)
 	}
 }
 
+#endif
+
 extern "C" bool companion_tracking_gps_control_allowed(void)
 {
+#if ZEPHCORE_HAS_GPS
 	return !companion_tracking.enabled;
+#else
+	return false;
+#endif
 }
 
+#if ZEPHCORE_HAS_GPS
 static void companion_tracking_process(void)
 {
 	if (!companion_tracking.enabled) {
@@ -2310,6 +2349,8 @@ static void companion_tracking_process(void)
 		companion_tracking.last_sent_lon_ndeg = pos.longitude_ndeg;
 	}
 }
+
+#endif
 
 /* ========== Companion CLI ==========
  * The CommonCLI behind CompanionMesh::handleCommand, whose front-ends are the
@@ -2661,6 +2702,7 @@ static bool handle_fall_cli(const char *line, char *reply)
 }
 #endif
 
+#if ZEPHCORE_HAS_GPS
 static bool handle_tracking_cli(const char *line, char *reply, bool silent)
 {
 	if (companion_tracking.enabled &&
@@ -3026,8 +3068,11 @@ static void geo_format_local(char *buf, size_t len, uint32_t epoch)
 		 tmv.tm_hour, tmv.tm_min, tmv.tm_sec);
 }
 
+#endif
+
 /* Geofence CLI (ADR 0011). geo save is local/app only — the remote allowlist
  * keeps it out; set geo.point is the remote coordinate path. */
+#if ZEPHCORE_HAS_GPS
 static bool handle_geo_cli(const char *line, char *reply)
 {
 	bool geo_on = (companion_geo.flags & GEO_FLAG_ENABLED) != 0;
@@ -3185,6 +3230,8 @@ static bool handle_geo_cli(const char *line, char *reply)
 	return false;
 }
 
+#endif
+
 /* Offgrid is deliberately a runtime switch: a reboot always starts a client
  * in its normal non-forwarding mode.  The same CLI executor services USB and
  * vContact, so no separate remote-command implementation is needed. */
@@ -3298,10 +3345,13 @@ static void companion_cli_exec(const char *line, uint32_t sender_timestamp,
 	const char *requested_line = line;
 	bool silent_notifications = companion_cli_silent_notifications(sender_timestamp);
 	reply[0] = '\0';
-	if (strcmp(line, "gps diag") == 0 ||
+	if (
+#if ZEPHCORE_HAS_GPS
+	    strcmp(line, "gps diag") == 0 ||
 	    strcmp(line, "get gps diag") == 0 ||
 	    strcmp(line, "set gps diag") == 0 ||
 	    strncmp(line, "set gps diag ", 13) == 0 ||
+#endif
 	    strcmp(line, "get multi.acks") == 0 ||
 	    strcmp(line, "set multi.acks") == 0 ||
 	    strncmp(line, "set multi.acks ", 15) == 0 ||
@@ -3332,8 +3382,10 @@ static void companion_cli_exec(const char *line, uint32_t sender_timestamp,
 	if (handle_fall_cli(line, reply)) return;
 #endif
 	if (handle_offgrid_cli(line, reply) ||
+#if ZEPHCORE_HAS_GPS
 	    handle_tracking_cli(line, reply, silent_notifications) ||
 	    handle_geo_cli(line, reply) ||
+#endif
 	    handle_findme_cli(line, reply) ||
 	    handle_autoshutdown_emergency_cli(line, reply)) return;
 #if IS_ENABLED(CONFIG_BT)
@@ -3711,6 +3763,7 @@ int main(void)
 
 	/* The GPS is powered at boot: match its power to prefs, then start the
 	 * state machine if enabled. */
+#if ZEPHCORE_HAS_GPS
 	if (gps_is_available()) {
 		gps_set_poll_interval_sec(companion_mesh.prefs.gps_interval);
 		gps_set_standby_max_sec(companion_mesh.prefs.gps_standby_max);
@@ -3734,6 +3787,7 @@ int main(void)
 		LOG_INF("geo: restored from prefs (radius %u m)",
 			companion_mesh.prefs.geo_radius_m);
 	}
+#endif
 
 	/* Apply RX boost and duty cycle from prefs */
 	lora_radio.setRxBoost(companion_mesh.prefs.rx_boost != 0);
