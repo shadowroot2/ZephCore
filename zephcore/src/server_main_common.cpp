@@ -909,3 +909,22 @@ int server_main(const ServerRole &role)
 
 	return 0;
 }
+
+/* UI hooks the shared button UI asks behind the companion API: a server
+ * role has no nav points and no SOS to cancel. main_companion.cpp carries
+ * the real ones. */
+extern "C" bool companion_sos_cancel_available(void)
+{
+	return false;
+}
+
+extern "C" bool companion_home_get_point(double *lat, double *lon, bool *saved,
+					const char **name, int *index)
+{
+	*lat = 0;
+	*lon = 0;
+	*saved = false;
+	*name = "";
+	*index = 0;
+	return false;
+}
