@@ -74,6 +74,9 @@ case $role in
 			if [[ $profile == lilygo_techo && $variant == 433 ]]; then
 				confs=boards/nrf52840/lilygo_techo/lilygo_techo_433.conf
 				role_tag=companion-433
+			elif [[ $profile == heltec_v3 && $variant == 433 ]]; then
+				confs=boards/esp32/heltec_wifi_lora32_v3/heltec_v3_433.conf
+				role_tag=companion-433
 			else
 				echo "unsupported companion variant: $profile $variant" >&2
 				exit 2
