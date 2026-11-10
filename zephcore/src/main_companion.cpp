@@ -1822,7 +1822,55 @@ static void companion_home_save_process(void)
 	}
 }
 
-static void companion_nav_set_enabled(bool enabled, char *reply)
+/* "head\n📍 <point>[\n📏 <report>]\n<link>" — the nav start/stop notice for
+ * the v-contact and the tracking group. The link is the CURRENT position
+ * (no fix — no link); the report line draws only on a fresh fix and drops
+ * first when the budget is tight so the link stays whole. Returns true when
+ * the report line made it in. */
+static bool companion_nav_format_notice(char *buf, size_t cap, const char *head)
+{
+	struct gps_position pos = {};
+	double home_lat = companion_mesh.prefs.home_lat[companion_home.selected];
+	double home_lon = companion_mesh.prefs.home_lon[companion_home.selected];
+	bool have_fix = gps_is_enabled() && gps_get_last_known_position(&pos) &&
+		pos.valid && (k_uptime_get() - pos.timestamp_ms) <= 30000;
+
+	if (have_fix) {
+		char rep[48], url[48];
+		int n;
+
+		nav_report_str(rep, sizeof(rep),
+			       tracking_distance_m(pos.latitude_ndeg, pos.longitude_ndeg,
+						   (int64_t)(home_lat * 1e9),
+						   (int64_t)(home_lon * 1e9)),
+			       nav_bearing_deg(pos.latitude_ndeg / 1e9,
+					       pos.longitude_ndeg / 1e9,
+					       home_lat, home_lon));
+		tracking_maps_url(url, sizeof(url),
+				  pos.latitude_ndeg / 1e9, pos.longitude_ndeg / 1e9);
+		n = snprintf(buf, cap, "%s\n📍 %d-%s\n📏 %s\n%s", head,
+			     companion_home.selected + 1,
+			     companion_mesh.prefs.home_name[companion_home.selected],
+			     rep, url);
+		if (n > 0 && (size_t)n < cap) {
+			return true;
+		}
+		n = snprintf(buf, cap, "%s\n📍 %d-%s\n%s", head,
+			     companion_home.selected + 1,
+			     companion_mesh.prefs.home_name[companion_home.selected],
+			     url);
+		if (n > 0 && (size_t)n < cap) {
+			return false;
+		}
+		/* Even the short form overflows: no link beats a cut one. */
+	}
+	snprintf(buf, cap, "%s\n📍 %d-%s", head,
+		 companion_home.selected + 1,
+		 companion_mesh.prefs.home_name[companion_home.selected]);
+	return false;
+}
+
+static void companion_nav_set_enabled(bool enabled, char *reply, bool announce = true)
 {
 	if (enabled == companion_home.nav_active) {
 		snprintf(reply, CLI_REPLY_SIZE, "nav: %s", enabled ? "on" : "off");
@@ -1848,8 +1896,13 @@ static void companion_nav_set_enabled(bool enabled, char *reply)
 			gps_enable(true);
 		}
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
-		mc_display_set_auto_off_hold(true);
-		mc_display_on();
+		/* E-paper shows the readout with the panel unpowered — its
+		 * frontlight stays on the auto-off timer instead of pinned
+		 * on (power). Emissive panels are held until nav stop. */
+		if (!mc_display_is_epd()) {
+			mc_display_set_auto_off_hold(true);
+			mc_display_on();
+		}
 #endif
 		snprintf(reply, CLI_REPLY_SIZE, "OK - Navigation to %d-%s  %.5f,%.5f",
 			 companion_home.selected + 1,
@@ -1858,39 +1911,12 @@ static void companion_nav_set_enabled(bool enabled, char *reply)
 			 companion_mesh.prefs.home_lon[companion_home.selected]);
 		if (companion_mesh.prefs.nav_report_interval_min != 0) {
 			char msg[192];
-			struct gps_position pos = {};
-			double home_lat =
-				companion_mesh.prefs.home_lat[companion_home.selected];
-			double home_lon =
-				companion_mesh.prefs.home_lon[companion_home.selected];
-			int n = snprintf(msg, sizeof(msg),
-					 "🚀 Начало навигации к точке\n📍 %d-%s",
-					 companion_home.selected + 1,
-					 companion_mesh.prefs.home_name[companion_home.selected]);
 
-			if (gps_is_enabled() && gps_get_last_known_position(&pos) &&
-			    pos.valid &&
-			    (k_uptime_get() - pos.timestamp_ms) <= 30000) {
-				char rep[48];
-
-				nav_report_str(rep, sizeof(rep),
-					tracking_distance_m(pos.latitude_ndeg,
-						pos.longitude_ndeg,
-						(int64_t)(home_lat * 1e9),
-						(int64_t)(home_lon * 1e9)),
-					nav_bearing_deg(pos.latitude_ndeg / 1e9,
-						pos.longitude_ndeg / 1e9,
-						home_lat, home_lon));
-				n += snprintf(msg + n, sizeof(msg) - n, "\n📏 %s", rep);
+			if (companion_nav_format_notice(msg, sizeof(msg),
+							"🚀 Начало навигации к точке")) {
 				/* The start notice doubles as the first report. */
 				companion_home.report_ms = (uint32_t)k_uptime_get() +
 					(uint32_t)companion_mesh.prefs.nav_report_interval_min * 60000U;
-			}
-			{
-				char url[48];
-
-				tracking_maps_url(url, sizeof(url), home_lat, home_lon);
-				snprintf(msg + n, sizeof(msg) - n, "\n%s", url);
 			}
 			companion_mesh.vcontactNotify(msg);
 		}
@@ -1906,6 +1932,24 @@ static void companion_nav_set_enabled(bool enabled, char *reply)
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
 		mc_display_set_auto_off_hold(false);
 #endif
+		if (announce) {
+			char msg[192], lora[MAX_TEXT_LEN + 1];
+			size_t name_prefix = strlen(companion_mesh.prefs.node_name) + 2;
+			size_t budget = ((size_t)MAX_TEXT_LEN > name_prefix ?
+					 MAX_TEXT_LEN - name_prefix : 0) + 1;
+			ChannelDetails tracks_channel;
+
+			companion_nav_format_notice(msg, sizeof(msg),
+					"🛑 Навигация остановлена");
+			companion_mesh.vcontactNotify(msg);
+			companion_nav_format_notice(lora, budget,
+					"🛑 Навигация остановлена");
+			if (companion_get_public_channel(
+				    companion_mesh.prefs.tracking_group_name,
+				    tracks_channel)) {
+				(void)companion_send_visible_group_message(tracks_channel, lora);
+			}
+		}
 		strcpy(reply, "OK - nav stop");
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
 		buzzer_play(MELODY_NAV_OFF);
@@ -2077,7 +2121,7 @@ static void companion_nav_fix_process(void)
 		buzzer_play(MELODY_ARRIVED);
 #endif
 		char reply[CLI_REPLY_SIZE];
-		companion_nav_set_enabled(false, reply);
+		companion_nav_set_enabled(false, reply, false);
 		return;
 	}
 
@@ -2500,6 +2544,31 @@ static bool handle_uptime_cli(const char *line, char *reply)
 		 (unsigned long long)((seconds / 3600U) % 24U),
 		 (unsigned long long)((seconds / 60U) % 60U),
 		 (unsigned long long)(seconds % 60U));
+	return true;
+}
+
+static bool handle_send_heard_cli(const char *line, char *reply)
+{
+	const char *arg = nullptr;
+	if (strncmp(line, "send.heard ", 11) == 0) {
+		arg = line + 11;
+	} else if (strncmp(line, "get send.heard ", 15) == 0) {
+		arg = line + 15;
+	} else if (strcmp(line, "send.heard") == 0 || strcmp(line, "get send.heard") == 0) {
+		strcpy(reply, "Error: usage send.heard <ts>");
+		return true;
+	} else {
+		return false;
+	}
+
+	char *end = nullptr;
+	unsigned long ts = strtoul(arg, &end, 10);
+	if (end == arg || *end != '\0') {
+		strcpy(reply, "Error: bad timestamp");
+		return true;
+	}
+	int n = companion_mesh.queryChannelSendHeard((uint32_t)ts);
+	snprintf(reply, CLI_REPLY_SIZE, "> %d", n);
 	return true;
 }
 
@@ -3253,7 +3322,8 @@ static void companion_cli_exec(const char *line, uint32_t sender_timestamp,
 		return;
 	}
 	if (strcmp(line, "shutdown y") == 0) line = "poweroff";
-	if (handle_uptime_cli(line, reply) || handle_tz_cli(line, reply)) return;
+	if (handle_uptime_cli(line, reply) || handle_tz_cli(line, reply) ||
+	    handle_send_heard_cli(line, reply)) return;
 	if (handle_sos_cli(line, reply, silent_notifications)) {
 		companion_cli_notify(requested_line, reply);
 		return;
