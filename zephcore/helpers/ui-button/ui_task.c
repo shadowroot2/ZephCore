@@ -1333,6 +1333,11 @@ void ui_notify(enum ui_event event)
 
 	if (is_msg_event && !get_state()->app_connected) {
 		ui_led_flash_msg();
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY) && !IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
+		/* No buzzer to announce a message (e-paper T-Echo): flash the
+		 * backlight twice so it is noticeable without a phone. */
+		mc_display_backlight_blink(2);
+#endif
 	}
 
 	/* Wake display on non-message notifications (app connect/disconnect etc).

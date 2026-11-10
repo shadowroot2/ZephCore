@@ -187,6 +187,33 @@ static inline void backlight_set(bool on)
 	}
 }
 
+/* Backlight blink (message notice on boards without a buzzer): an even
+ * number of toggles per blink, so the backlight ends where it started. */
+static struct k_work_delayable backlight_blink_work;
+static uint8_t backlight_blink_toggles_left;
+
+static void backlight_blink_handler(struct k_work *work)
+{
+	ARG_UNUSED(work);
+	if (backlight_blink_toggles_left == 0) {
+		return;
+	}
+	backlight_blink_toggles_left--;
+	backlight_set(!backlight_on);
+	if (backlight_blink_toggles_left > 0) {
+		k_work_reschedule(&backlight_blink_work, K_MSEC(150));
+	}
+}
+
+void mc_display_backlight_blink(uint8_t times)
+{
+	if (!disp_initialized || backlight_blink_toggles_left > 0) {
+		return;
+	}
+	backlight_blink_toggles_left = (uint8_t)(times * 2U);
+	k_work_reschedule(&backlight_blink_work, K_MSEC(150));
+}
+
 static inline void panel_vdd_enable(void)
 {
 	if (panel_vdd_reg && device_is_ready(panel_vdd_reg)) {
@@ -593,6 +620,7 @@ int mc_display_init(void)
 
 	/* Set up auto-off timer and schedule initial timeout */
 	k_work_init_delayable(&auto_off_work, auto_off_handler);
+	k_work_init_delayable(&backlight_blink_work, backlight_blink_handler);
 	mc_display_reset_auto_off();
 
 	LOG_INF("display initialized (%ux%u, font %ux%u)",
@@ -641,6 +669,7 @@ void mc_display_on(void)
 	if (!disp_initialized) {
 		return;
 	}
+	k_work_cancel_delayable(&backlight_blink_work);
 
 	if (!disp_on) {
 		/* EPD: content persists (bistable) — no need to unblank,
@@ -667,6 +696,7 @@ void mc_display_off(void)
 	if (!disp_initialized) {
 		return;
 	}
+	k_work_cancel_delayable(&backlight_blink_work);
 
 	if (disp_on) {
 		display_blanking_on(disp_dev);

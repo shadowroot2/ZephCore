@@ -78,6 +78,14 @@ void mc_display_off(void);
 void mc_display_backlight_off(void);
 
 /**
+ * Flash the backlight `times` times (2 toggles each, 150 ms step) and leave
+ * it where it was. No-op without a backlight regulator or during a running
+ * blink; an explicit mc_display_on/off cancels it. For boards that announce
+ * messages with the backlight because they have no buzzer.
+ */
+void mc_display_backlight_blink(uint8_t times);
+
+/**
  * @return true if the display is currently on
  */
 bool mc_display_is_on(void);
