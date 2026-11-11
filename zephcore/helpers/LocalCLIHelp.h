@@ -48,6 +48,8 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 #if !defined(CONFIG_ZEPHCORE_NO_GPS)
 		"gps [on|off|setloc|advert]\r\n"
 		"tracking [on|off]\r\n"
+#else
+		"gps setloc|advert\r\n"
 #endif
 #if !defined(CONFIG_ZEPHCORE_NO_GPS) && \
 	(DT_HAS_COMPAT_STATUS_OKAY(gnss_nmea_generic) || \
@@ -99,15 +101,9 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
 		"get/set input.rotate\r\n"
 #endif
-		"get/set int.thresh\r\n"
-#if !defined(CONFIG_ZEPHCORE_NO_GPS)
-		"get/set lat\r\n"
-#endif
+		"get/set int.thresh\r\nget/set lat\r\n"
 		"get/set leds.hb\r\n"
-		"get/set leds.radio\r\n"
-#if !defined(CONFIG_ZEPHCORE_NO_GPS)
-		"get/set lon\r\n"
-#endif
+		"get/set leds.radio\r\nget/set lon\r\n"
 		"get/set meshtimesync\r\n"
 		"get/set name\r\n"
 #if defined(CONFIG_BOARD_HELTEC_WIFI_LORA32_V43)
@@ -276,17 +272,11 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_JOYSTICK) || IS_ENABLED(CONFIG_ZEPHCORE_UI_KEYBOARD)
 		"get/set input.rotate\r\n"
 #endif
-		"get/set int.thresh\r\n"
-#if !defined(CONFIG_ZEPHCORE_NO_GPS)
-		"get/set lat\r\n"
-#endif
+		"get/set int.thresh\r\nget/set lat\r\n"
 		"get/set leds.hb\r\n"
 		"get/set leds.radio\r\n"
 		"get/set leds\r\n"
-		"get/set leds.brightness\r\n"
-#if !defined(CONFIG_ZEPHCORE_NO_GPS)
-		"get/set lon\r\n"
-#endif
+		"get/set leds.brightness\r\nget/set lon\r\n"
 		"get/set loop.detect\r\n"
 		"get/set meshtimesync\r\n"
 		"get/set multi.acks\r\n"
@@ -350,6 +340,8 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 #if !defined(CONFIG_BOARD_RPI_PICO)
 #if !defined(CONFIG_ZEPHCORE_NO_GPS)
 		"gps on|off|setloc|advert\r\nget gps diag\r\n"
+#else
+		"gps setloc|advert\r\n"
 #endif
 		"neighbors\r\nneighbor.remove <pubkey>\r\n"
 #endif
@@ -364,10 +356,7 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"get/set allow.read.only\r\nget/set flood.advert.interval\r\n"
 		"get/set advert.interval\r\nget/set guest.password\r\n"
 		"get/set prv.key\r\nget/set name\r\nget/set repeat\r\n"
-#if !defined(CONFIG_ZEPHCORE_NO_GPS)
-		"get/set lat\r\nget/set lon\r\n"
-#endif
-		"get/set radio\r\n"
+		"get/set lat\r\nget/set lon\r\nget/set radio\r\n"
 		"get/set radio.rxgain\r\n"
 		"get/set flood.max.advert\r\n"
 		"get/set flood.max.unscoped\r\nget/set flood.max\r\n"

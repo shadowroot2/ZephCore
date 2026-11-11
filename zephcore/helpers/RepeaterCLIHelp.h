@@ -70,10 +70,7 @@ static inline const char *repeater_remote_cli_help(const char *line, bool bridge
 #if REPEATER_HELP_HAS_CAD
 		" | cad"
 #endif
-		" | mesh | find"
-#if REPEATER_HELP_HAS_GNSS
-		" | gps"
-#endif
+		" | mesh | find | gps"
 #if REPEATER_HELP_HAS_UI
 		" | ui"
 #endif
@@ -133,12 +130,14 @@ static inline const char *repeater_remote_cli_help(const char *line, bool bridge
 	REMOTE_HELP_STRING(access,
 		"password <value>\nget/set guest.password\n"
 		"setperm <permissions> <pubkey>");
-#if REPEATER_HELP_HAS_GNSS
 	REMOTE_HELP_STRING(gps,
+#if REPEATER_HELP_HAS_GNSS
 		"gps\ngps on|off\ngps sync|setloc|advert\nget gps diag\n"
 		"get/set gps duty\nget/set gps standby\n"
-		"get/set lat\nget/set lon");
+#else
+		"gps advert\n"
 #endif
+		"get/set lat\nget/set lon");
 #if REPEATER_HELP_HAS_UI
 	REMOTE_HELP_STRING(ui,
 #if REPEATER_HELP_HAS_LEDS
@@ -245,9 +244,7 @@ static inline const char *repeater_remote_cli_help(const char *line, bool bridge
 #endif
 	if (strcmp(line, "help mesh") == 0) return mesh;
 	if (strcmp(line, "help find") == 0) return find;
-#if REPEATER_HELP_HAS_GNSS
 	if (strcmp(line, "help gps") == 0) return gps;
-#endif
 #if REPEATER_HELP_HAS_UI
 	if (strcmp(line, "help ui") == 0) return ui;
 #endif

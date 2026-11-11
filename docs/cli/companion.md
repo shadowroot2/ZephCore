@@ -20,7 +20,7 @@
 
 ### BLE CLI: Companion
 
-На сборке без WiFi `help` выводит `Groups: id | rf | cad | mesh | gps | extra | ui | power | stat | sys`. На WiFi companion между `gps` и `extra` добавляется `wifi`; команды группы выводятся по `help <group>`. В сборке без GPS (`nogps`) группы `gps`, `nav`, `geo` и команда `tracking` отсутствуют полностью:
+На сборке без WiFi `help` выводит `Groups: id | rf | cad | mesh | gps | extra | ui | power | stat | sys`. На WiFi companion между `gps` и `extra` добавляется `wifi`; команды группы выводятся по `help <group>`. В сборке без GPS (`nogps`) группы `nav`, `geo` и команда `tracking` отсутствуют полностью, группа `gps` сокращается до ручной позиции (`gps setloc|advert`, `get/set lat`, `get/set lon`):
 
 ```text
 help

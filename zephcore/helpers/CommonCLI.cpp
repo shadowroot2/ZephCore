@@ -597,6 +597,7 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
 		} else {
 			strcpy(reply, "gps provider not found");
 		}
+#endif
 	} else if (memcmp(command, "gps setloc", 10) == 0) {
 		_prefs->node_lat = _sensors->node_lat;
 		_prefs->node_lon = _sensors->node_lon;
@@ -625,6 +626,7 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
 		} else {
 			strcpy(reply, "error");
 		}
+#if ZEPHCORE_HAS_GPS
 	} else if (memcmp(command, "gps", 3) == 0) {
 		/* Upstream's line. "standby" where upstream says "deactivated": the
 		 * GPS is on but asleep between duty-cycle fixes. Detail: get gps. */
@@ -1025,12 +1027,10 @@ void CommonCLI::handleGetCmd(uint32_t sender_timestamp, const char* command, cha
 	} else if (memcmp(config, "repeat", 6) == 0) {
 		bool on = _callbacks->hasOffgridMode() ? _callbacks->isOffgridActive() : !_prefs->disable_fwd;
 		snprintf(reply, CLI_REPLY_SIZE, "> %s", on ? "on" : "off");
-#if ZEPHCORE_HAS_GPS
 	} else if (memcmp(config, "lat", 3) == 0) {
 		snprintf(reply, CLI_REPLY_SIZE, "> %.6f", _prefs->node_lat);
 	} else if (memcmp(config, "lon", 3) == 0) {
 		snprintf(reply, CLI_REPLY_SIZE, "> %.6f", _prefs->node_lon);
-#endif
 	} else if (memcmp(config, "flood.max.advert", 16) == 0) {
 		snprintf(reply, CLI_REPLY_SIZE, "> %u", (uint32_t)_prefs->flood_max_advert);
 	} else if (memcmp(config, "flood.max.unscoped", 18) == 0) {
@@ -1500,7 +1500,6 @@ void CommonCLI::handleSetCmd(uint32_t sender_timestamp, const char* command, cha
 		} else {
 			strcpy(reply, "Error: must be on or off");
 		}
-#if ZEPHCORE_HAS_GPS
 	} else if (memcmp(config, "lat ", 4) == 0) {
 		_prefs->node_lat = cliIsDefault(&config[4]) ? cliDefaults()->node_lat
 													: atof(&config[4]);
@@ -1511,7 +1510,6 @@ void CommonCLI::handleSetCmd(uint32_t sender_timestamp, const char* command, cha
 													: atof(&config[4]);
 		savePrefs();
 		strcpy(reply, "OK");
-#endif
 	} else if (memcmp(config, "flood.max.advert ", 17) == 0) {
 		long m;
 		if (cliNum(&config[17], cliDefaults()->flood_max_advert, &m) && m >= 0 && m <= 64) {
