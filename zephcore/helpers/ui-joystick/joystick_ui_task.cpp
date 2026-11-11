@@ -584,7 +584,11 @@ void JoystickUITask::begin(BaseChatMesh *mesh, mesh::ZephyrRTCClock *rtc, NodePr
 	_contacts = new ContactsScreen(this, rtc);
 	_unread = new UnreadScreen(this, rtc);
 	_advert = new AdvertScreen(this, rtc);
+#if ZEPHCORE_HAS_GPS
 	_gps = new GPSSettingsScreen(this, rtc);
+#else
+	_gps = nullptr;
+#endif
 	_system = new SystemScreen(this, rtc);
 	_system_time = new SystemTimeScreen(this, rtc);
 	_telemetry = new TelemetryScreen(this, rtc);
@@ -627,7 +631,12 @@ void JoystickUITask::setCurrScreen(UIScreen *s)
 void JoystickUITask::gotoHomeScreen()         { setCurrScreen(_home); }
 void JoystickUITask::gotoContactsScreen()     { setCurrScreen(_contacts); }
 void JoystickUITask::gotoAdvertScreen()       { setCurrScreen(_advert); }
-void JoystickUITask::gotoGPSScreen()          { setCurrScreen(_gps); }
+void JoystickUITask::gotoGPSScreen()
+{
+#if ZEPHCORE_HAS_GPS
+	setCurrScreen(_gps);
+#endif
+}
 void JoystickUITask::gotoSystemScreen()       { setCurrScreen(_system); }
 void JoystickUITask::gotoSystemTimeScreen()   { setCurrScreen(_system_time); }
 void JoystickUITask::gotoTelemetryScreen()    { setCurrScreen(_telemetry); }
@@ -998,6 +1007,7 @@ void JoystickUITask::toggleBuzzer()
 #endif
 }
 
+#if ZEPHCORE_HAS_GPS
 bool JoystickUITask::isGPSAvailable() const
 {
 	return gps_is_available();
@@ -1044,6 +1054,32 @@ void JoystickUITask::adjustGpsDuty(int step)
 	if (idx >= kCount) idx = kCount - 1;
 	mesh_save_gps_duty_sec(kPresets[idx]);
 }
+#else
+bool JoystickUITask::isGPSAvailable() const
+{
+	return false;
+}
+
+bool JoystickUITask::getGPSState() const
+{
+	return false;
+}
+
+void JoystickUITask::toggleGPS()
+{
+	showAlert("No GPS", 1000);
+}
+
+uint32_t JoystickUITask::getGpsDutySec() const
+{
+	return 0;
+}
+
+void JoystickUITask::adjustGpsDuty(int step)
+{
+	(void)step;
+}
+#endif
 
 void JoystickUITask::playCountdownAlarm()
 {

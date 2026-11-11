@@ -699,6 +699,7 @@ bool AdvertScreen::handleInput(char key)
 	return false;
 }
 
+#if ZEPHCORE_HAS_GPS
 #define GPS_SPEED_MIN_M    2.0f    /* min move to count as motion (m) */
 #define GPS_HEADING_MIN_M  5.0f   /* min move to update heading (m) */
 #define GPS_MAX_SPEED_KMH  300.0f
@@ -907,6 +908,8 @@ bool GPSSettingsScreen::handleInput(char key)
 	if (key == KEY_CANCEL || key == KEY_HOME) { _task->gotoHomeScreen(); return true; }
 	return false;
 }
+
+#endif
 
 RadioStatsScreen::RadioStatsScreen(JoystickUITask *task)
 	: _task(task)

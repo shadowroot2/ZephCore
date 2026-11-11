@@ -620,10 +620,14 @@ static const char *tiny_page_title(enum ui_page p)
 	case UI_PAGE_BLUETOOTH: return "BLUETOOTH";
 	case UI_PAGE_WIFI:      return "WIFI";
 	case UI_PAGE_ADVERT:    return "ADVERT";
+#if ZEPHCORE_HAS_GPS
 	case UI_PAGE_GPS:       return "GPS";
 	case UI_PAGE_TRACKING:  return "TRACKING";
+#endif
 	case UI_PAGE_SOS:       return "SOS";
+#if ZEPHCORE_HAS_GPS
 	case UI_PAGE_GPS_HOME:  return "NAV";
+#endif
 	case UI_PAGE_BUZZER:    return "BUZZER";
 	case UI_PAGE_LEDS:      return "LEDS";
 	case UI_PAGE_SENSORS:   return "SENSORS";
@@ -1311,6 +1315,7 @@ static void render_sos(void)
 	render_sos_mono();
 }
 
+#if ZEPHCORE_HAS_GPS
 static void render_tracking_mono(void)
 {
 	char buf[32];
@@ -1533,6 +1538,8 @@ static void render_gps(void)
 	}
 }
 
+#endif
+
 static void render_buzzer(void)
 {
 	char buf[24];
@@ -1694,6 +1701,7 @@ static void render_bridge_info(void)
 	mc_display_text(0, y, buf, false);
 }
 
+#if ZEPHCORE_HAS_GPS
 static void render_gps_home(void)
 {
 	char buf[24];
@@ -1810,6 +1818,8 @@ static void render_gps_home(void)
 		}
 	}
 }
+
+#endif
 
 static void render_sensors(void)
 {
@@ -2144,10 +2154,14 @@ static const page_render_fn renderers[] = {
 	[UI_PAGE_WIFI]      = render_wifi,
 #endif
 	[UI_PAGE_ADVERT]    = render_advert,
+#if ZEPHCORE_HAS_GPS
 	[UI_PAGE_GPS]       = render_gps,
 	[UI_PAGE_TRACKING]  = render_tracking,
+#endif
 	[UI_PAGE_SOS]       = render_sos,
+#if ZEPHCORE_HAS_GPS
 	[UI_PAGE_GPS_HOME]  = render_gps_home,
+#endif
 	[UI_PAGE_BUZZER]    = render_buzzer,
 	[UI_PAGE_LEDS]      = render_leds,
 	[UI_PAGE_SENSORS]   = render_sensors,
