@@ -14,6 +14,7 @@ add_executable(zephcore_unit
   unit/identity_tests.cpp
   unit/timesync_tests.cpp
   unit/helper_tests.cpp
+  unit/tracking_backlog_tests.cpp
   unit/timezone_tests.cpp
   unit/sensor_manager_tests.cpp
   unit/radio_tests.cpp

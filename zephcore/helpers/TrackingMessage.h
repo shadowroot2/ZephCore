@@ -98,6 +98,62 @@ static inline void tracking_format_report(char *buf, size_t len,
 		 tracking_report_sector(bearing_mdeg), url);
 }
 
+/* ===== Deferred points: a report no neighbour repeated, re-sent later =====
+ * The buffer keeps when and where; the message says both so a point that
+ * arrives late still has its moment: "🕓 12:34 📍 <maps link>". */
+
+struct tracking_deferred_point {
+	uint32_t time_s; /* wall clock at the fix (RTC, unix seconds) */
+	int64_t lat_ndeg;
+	int64_t lon_ndeg;
+};
+
+/* One deferred point, local wall clock via tz_minutes from UTC. */
+static inline void tracking_format_deferred_point(char *buf, size_t len,
+	const struct tracking_deferred_point *p, int16_t tz_minutes)
+{
+	char url[48];
+	int64_t local = (int64_t)p->time_s + (int64_t)tz_minutes * 60;
+	uint32_t day_sec = (uint32_t)(local < 0 ? 0 : local % 86400);
+
+	tracking_maps_url(url, sizeof(url), p->lat_ndeg / 1e9, p->lon_ndeg / 1e9);
+	snprintf(buf, len, "🕓 %02u:%02u 📍 %s",
+		 day_sec / 3600U, (day_sec % 3600U) / 60U, url);
+}
+
+/* Up to two deferred points per message: "🕓 12:34 📍 <link>\n🕓 12:39
+ * 📍 <link>". `len` is the send budget after the "name: " prefix; a point
+ * is dropped whole rather than cutting a maps link. Returns how many points
+ * were packed. */
+static inline int tracking_format_deferred(char *buf, size_t len,
+	const struct tracking_deferred_point *pts, int n, int16_t tz_minutes)
+{
+	int packed = 0;
+	size_t off = 0;
+	int i;
+
+	buf[0] = '\0';
+	for (i = 0; i < n; i++) {
+		char line[72];
+		size_t line_len, need;
+
+		tracking_format_deferred_point(line, sizeof(line), &pts[i], tz_minutes);
+		line_len = strlen(line);
+		need = line_len + (off ? 1U : 0U);
+		if (off + need > len) {
+			break;
+		}
+		if (off) {
+			buf[off++] = '\n';
+		}
+		memcpy(buf + off, line, line_len);
+		off += line_len;
+		packed++;
+	}
+	buf[off] = '\0';
+	return packed;
+}
+
 /* ===== Navigation to a saved point ===== */
 
 static inline double nav_bearing_deg(double lat0, double lon0, double lat1, double lon1)

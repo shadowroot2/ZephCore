@@ -716,6 +716,21 @@
       "id": "UNIT-SENSOR-005",
       "name": "Solar charge telemetry reports nominal 6W while charging and 0W otherwise",
       "source": "tests/unit/sensor_manager_tests.cpp"
+    },
+    {
+      "id": "UNIT-TRACKBUF-001",
+      "name": "Deferred points carry their time and a whole map link",
+      "source": "tests/unit/tracking_backlog_tests.cpp"
+    },
+    {
+      "id": "UNIT-TRACKBUF-002",
+      "name": "The backlog keeps point order and the verdict moves points in and out",
+      "source": "tests/unit/tracking_backlog_tests.cpp"
+    },
+    {
+      "id": "UNIT-TRACKBUF-003",
+      "name": "The flush schedule: verdict after a send, probe and drain deadlines",
+      "source": "tests/unit/tracking_backlog_tests.cpp"
     }
   ]
 }

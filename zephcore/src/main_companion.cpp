@@ -79,6 +79,7 @@ LOG_MODULE_REGISTER(zephcore_main, CONFIG_ZEPHCORE_MAIN_LOG_LEVEL);
 #include <helpers/CompanionSOSPolicy.h>
 #include <helpers/GpsSwitchPolicy.h>
 #include <helpers/TrackingMessage.h>
+#include <helpers/TrackingBacklog.h>
 #include <helpers/GeoFence.h>
 #include <helpers/pm_sleep_guard.h>
 #include <helpers/StatsFormatHelper.h>
@@ -133,6 +134,7 @@ static void companion_geo_fix_process(void);
 static void companion_gps_user_left(void);
 static void companion_nav_link_check(void);
 static void companion_tracking_process(void);
+static void companion_tracking_backlog_process(void);
 static uint32_t companion_custom_ms_until_next(void);
 static void companion_fall_detected(void);
 static void companion_fall_prealert(void);
@@ -594,6 +596,7 @@ static void mesh_event_loop(void)
 		companion_sos_process();
 #if ZEPHCORE_HAS_GPS
 		companion_tracking_process();
+		companion_tracking_backlog_process();
 		companion_home_save_process();
 		companion_nav_link_check();
 #endif
@@ -954,11 +957,13 @@ static void companion_fall_cancel_pending(void)
 }
 
 static bool companion_send_visible_group_message(ChannelDetails &channel,
-						const char *text)
+						const char *text,
+						uint32_t *out_hash = nullptr)
 {
 	uint32_t timestamp = rtc_clock.getCurrentTimeUnique();
 	if (!companion_mesh_ptr->sendGroupMessage(timestamp, channel.channel,
-			companion_mesh_ptr->prefs.node_name, text, (int)strlen(text))) {
+			companion_mesh_ptr->prefs.node_name, text, (int)strlen(text),
+			out_hash)) {
 		return false;
 	}
 	companion_mesh_ptr->queueLocalAutomatedChannelMessage(channel.channel,
@@ -1391,6 +1396,20 @@ struct companion_tracking_state {
 static struct companion_tracking_state companion_tracking;
 static struct tracking_odometer tracking_odo;
 
+#if ZEPHCORE_HAS_GPS
+/* ===== Tracking deferred backlog =====
+ * A report no neighbour repeated reached nobody. Its point (time + coords)
+ * waits in this ring and goes out again, oldest first, as
+ * "🕓 HH:MM 📍 <link>" once a send is heard again; a fresh point joins the
+ * tail while older points wait, so the track keeps its order. The head is
+ * probed 10 s before each report (the verdict lands before the report
+ * routes its point); a heard send drains the ring one message per 10 s. */
+static struct tracking_backlog tracking_backlog_buf;
+/* When the head may be probed next (INT64_MAX = disarmed): armed at each
+ * report advance, consumed by a probe send. */
+static int64_t tracking_backlog_probe_ms = INT64_MAX;
+#endif
+
 /* ===== GPS HOME: save the point and navigate to it ===== */
 #define HOME_FIX_TIMEOUT_MS (5U * 60U * 1000U)
 #define HOME_ARRIVAL_M 15.0
@@ -1469,6 +1488,26 @@ static uint32_t companion_custom_ms_until_next(void)
 		if (remaining <= 0) next = 0;
 		else if ((uint64_t)remaining < next) next = (uint32_t)remaining;
 	}
+#if ZEPHCORE_HAS_GPS
+	{
+		/* Deferred backlog: the heard-verdict of an inflight send, else
+		 * the next flush attempt (probe or drain). */
+		int64_t deadline = INT64_MAX;
+
+		if (tracking_backlog_buf.inflight) {
+			deadline = tracking_backlog_buf.inflight_due_ms;
+		} else if (tracking_backlog_buf.count > 0) {
+			deadline = tracking_backlog_buf.draining
+				? tracking_backlog_buf.next_send_ms
+				: tracking_backlog_probe_ms;
+		}
+		if (deadline != INT64_MAX) {
+			int64_t remaining = deadline - k_uptime_get();
+			if (remaining <= 0) next = 0;
+			else if ((uint64_t)remaining < next) next = (uint32_t)remaining;
+		}
+	}
+#endif
 	if (companion_home.nav_active) {
 		include(now + NAV_LINK_CHECK_MS);
 	}
@@ -1513,7 +1552,8 @@ static bool companion_tracking_moved_min_distance(const struct gps_position &pos
 	return distance_sq >= TRACKING_MOVEMENT_METERS * TRACKING_MOVEMENT_METERS;
 }
 
-static bool companion_send_tracking_message(const struct gps_position &pos)
+static bool companion_send_tracking_message(const struct gps_position &pos,
+					    uint32_t *out_hash = nullptr)
 {
 	ChannelDetails tracks_channel;
 	const char *group_name = companion_mesh.prefs.tracking_group_name;
@@ -1525,7 +1565,7 @@ static bool companion_send_tracking_message(const struct gps_position &pos)
 	tracking_format_report(text, sizeof(text),
 			       pos.latitude_ndeg / 1e9, pos.longitude_ndeg / 1e9,
 			       pos.speed_mms, pos.bearing_mdeg);
-	if (!companion_send_visible_group_message(tracks_channel, text)) {
+	if (!companion_send_visible_group_message(tracks_channel, text, out_hash)) {
 		LOG_WRN("tracking: unable to queue %s message", group_name);
 		return false;
 	}
@@ -1538,6 +1578,101 @@ static bool companion_send_tracking_message(const struct gps_position &pos)
 #endif
 	return true;
 }
+
+#if ZEPHCORE_HAS_GPS
+/* One deferred message: up to two oldest backlog points, "🕓 HH:MM 📍 <link>"
+ * each. The points leave the ring only when the send is heard. */
+static bool companion_send_tracking_deferred(void)
+{
+	struct tracking_backlog *b = &tracking_backlog_buf;
+	ChannelDetails tracks_channel;
+	const char *group_name = companion_mesh.prefs.tracking_group_name;
+
+	if (!companion_get_public_channel(group_name, tracks_channel)) {
+		LOG_WRN("tracking: no %s channel for deferred points", group_name);
+		return false;
+	}
+
+	struct tracking_deferred_point pts[2];
+	int n = b->count < 2 ? (int)b->count : 2;
+	int i;
+	for (i = 0; i < n; i++) {
+		pts[i] = b->pts[i];
+	}
+
+	char text[MAX_TEXT_LEN];
+	int budget = MAX_TEXT_LEN - (int)strlen(companion_mesh.prefs.node_name) - 2;
+	int packed = tracking_format_deferred(text, (size_t)budget, pts, n,
+		tz_offset_minutes(companion_mesh.prefs.tz_offset));
+	if (packed <= 0) {
+		LOG_WRN("tracking: deferred point does not fit the text frame");
+		return false;
+	}
+
+	uint32_t hash = 0;
+	if (!companion_send_visible_group_message(tracks_channel, text, &hash)) {
+		LOG_WRN("tracking: unable to queue deferred points");
+		return false;
+	}
+
+	LOG_INF("tracking: queued deferred message (%d pts, %d pending): %s",
+		packed, b->count, text);
+	tracking_backlog_begin(b, hash, k_uptime_get(), packed);
+	return true;
+}
+
+static void companion_tracking_backlog_process(void)
+{
+	struct tracking_backlog *b = &tracking_backlog_buf;
+	int64_t now = k_uptime_get();
+
+	/* With no report to anchor the probe to (`tracking off`), retry on a
+	 * fixed period so an ended session still flushes what accumulated. */
+	if (!companion_tracking.enabled && !b->draining && !b->inflight &&
+	    b->count > 0 && tracking_backlog_probe_ms == INT64_MAX) {
+		tracking_backlog_probe_ms = now + TRACKING_BACKLOG_PROBE_RETRY_MS;
+	}
+
+	switch (tracking_backlog_next(b, now, tracking_backlog_probe_ms)) {
+	case TRACKING_BACKLOG_VERDICT: {
+		int dupes = companion_mesh_ptr->getContentionTracker()
+				.extractDupeCount(b->inflight_hash);
+		bool heard = dupes > 0;
+
+		tracking_backlog_verdict(b, heard);
+		LOG_INF("tracking: deferred send %s (%d repeats, %d pending)",
+			heard ? "heard" : "not heard", dupes, b->count);
+		break;
+	}
+	case TRACKING_BACKLOG_SEND: {
+		bool probe = !b->draining;
+
+		if (probe) {
+			/* The window's probe attempt has run: the fresh report
+			 * of this interval must not overtake the backlog. */
+			b->probe_ran = true;
+		}
+		if (!companion_send_tracking_deferred()) {
+			/* Queue full or no channel: try the head again in
+			 * 10 s, not on the next loop pass. */
+			if (probe) {
+				tracking_backlog_probe_ms =
+					now + TRACKING_BACKLOG_DRAIN_INTERVAL_MS;
+			} else {
+				b->next_send_ms =
+					now + TRACKING_BACKLOG_DRAIN_INTERVAL_MS;
+			}
+		} else if (probe) {
+			/* One probe per report window. */
+			tracking_backlog_probe_ms = INT64_MAX;
+		}
+		break;
+	}
+	default:
+		break;
+	}
+}
+#endif
 
 static void companion_tracking_odometer_fix(void)
 {
@@ -1633,6 +1768,10 @@ static bool companion_tracking_set_enabled(bool enabled, char *reply, bool silen
 		tracking_odometer_reset(&tracking_odo, k_uptime_get());
 		companion_tracking.next_report_ms = k_uptime_get() +
 			companion_tracking_interval_ms();
+		/* A backlog carried over from a previous session probes in the
+		 * first report's window. */
+		tracking_backlog_probe_ms = companion_tracking.next_report_ms -
+			TRACKING_BACKLOG_PROBE_LEAD_MS;
 		gps_set_poll_interval_sec(0);
 		if (!gps_was_enabled) {
 			gps_enable(true);
@@ -1654,6 +1793,9 @@ static bool companion_tracking_set_enabled(bool enabled, char *reply, bool silen
 	tracking_odometer_finish(&tracking_odo, k_uptime_get());
 	companion_send_tracking_summary();
 	memset(&companion_tracking, 0, sizeof(companion_tracking));
+	/* No report window anchors the probe any more: it re-arms on the
+	 * retry period so the backlog still flushes after the session. */
+	tracking_backlog_probe_ms = INT64_MAX;
 	companion_gps_user_left();
 	companion_tracking_ui_update();
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
@@ -2327,6 +2469,14 @@ static void companion_tracking_process(void)
 	}
 	/* A delayed maintenance pass still begins the next full interval now. */
 	companion_tracking.next_report_ms = now + companion_tracking_interval_ms();
+	/* The backlog probe window opens 10 s before the next report, so its
+	 * verdict lands before the report routes its point. */
+	tracking_backlog_probe_ms = companion_tracking.next_report_ms -
+		TRACKING_BACKLOG_PROBE_LEAD_MS;
+	/* Consumed by this report: after a probe the fresh point joins the
+	 * tail even when the probe emptied the backlog. */
+	bool defer_fresh = tracking_backlog_defers_fresh(&tracking_backlog_buf);
+	tracking_backlog_buf.probe_ran = false;
 
 	struct gps_position pos = {};
 	struct gps_state_info gsi;
@@ -2343,11 +2493,38 @@ static void companion_tracking_process(void)
 		LOG_INF("tracking: interval skipped (movement under 50 m)");
 		return;
 	}
-	if (companion_send_tracking_message(pos)) {
-		companion_tracking.has_last_sent_position = true;
-		companion_tracking.last_sent_lat_ndeg = pos.latitude_ndeg;
-		companion_tracking.last_sent_lon_ndeg = pos.longitude_ndeg;
+
+	struct tracking_deferred_point pt;
+
+	pt.time_s = (uint32_t)rtc_clock.getCurrentTime();
+	pt.lat_ndeg = pos.latitude_ndeg;
+	pt.lon_ndeg = pos.longitude_ndeg;
+
+	if (defer_fresh) {
+		/* Older points still wait for a repeat (or the probe just
+		 * opened the tap): the fresh one joins the tail so the track
+		 * keeps its order. */
+		tracking_backlog_push(&tracking_backlog_buf, pt.time_s,
+				      pt.lat_ndeg, pt.lon_ndeg);
+		LOG_INF("tracking: point buffered (%d pending)",
+			tracking_backlog_buf.count);
+	} else {
+		uint32_t hash = 0;
+
+		if (companion_send_tracking_message(pos, &hash)) {
+			/* The report goes out now; when no repeater repeats
+			 * it, the point joins the backlog for a deferred
+			 * re-send. */
+			tracking_backlog_begin_live(&tracking_backlog_buf, hash,
+						    k_uptime_get(), &pt);
+		} else {
+			tracking_backlog_push(&tracking_backlog_buf, pt.time_s,
+					      pt.lat_ndeg, pt.lon_ndeg);
+		}
 	}
+	companion_tracking.has_last_sent_position = true;
+	companion_tracking.last_sent_lat_ndeg = pos.latitude_ndeg;
+	companion_tracking.last_sent_lon_ndeg = pos.longitude_ndeg;
 }
 
 #endif
