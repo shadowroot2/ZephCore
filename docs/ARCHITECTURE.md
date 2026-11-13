@@ -922,9 +922,10 @@ exact prior state (ADR 0011).
 A tracking report that no neighbour repeated reached nobody. Its point (fix time + coords) waits in a
 16-slot ring (`helpers/TrackingBacklog.h`, host-tested) and is re-sent as `🕓 HH:MM 📍 <link>` lines —
 two points per message, the one place where the fix's wall-clock time is shown (`tz.offset` local).
-Live reports keep their format while the ring is empty. The head is probed 10 s before each report
-(so its verdict lands before the report routes its point); after a probe the fresh point joins the
-tail, so a later report never overtakes an earlier one. A send's verdict is the ContentionTracker dupe
+Live reports keep their format while the ring is empty. The head is probed 2.5 min before each
+report — the whole ring drains before the report is due, so the scheduled point goes out live as
+always. A fresh point joins the tail only while older points wait, so a later report never overtakes
+an earlier one. A send's verdict is the ContentionTracker dupe
 count asked 5 s after the send (`extractDupeCount > 0` = heard, the joystick's criterion): heard drops
 the points the message carried and the ring then flushes one message per 10 s; not heard keeps them
 and the head is probed again in the next report window (every 60 s while `tracking off`, so an ended

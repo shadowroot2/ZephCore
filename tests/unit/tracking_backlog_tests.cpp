@@ -2,7 +2,7 @@
 /*
  * Host tests for the tracking deferred backlog: the "🕓 HH:MM 📍 <link>"
  * message, the ring of points no repeater repeated, and the flush schedule
- * (probe 10 s before the report, verdict 5 s after a send, drain 10 s apart).
+ * (probe 2.5 min before the report, verdict 5 s after a send, drain 10 s apart).
  */
 
 #include <TrackingBacklog.h>
@@ -94,16 +94,6 @@ TEST(tracking_backlog_ring, "UNIT-TRACKBUF-002",
 	CHECK(b.pts[0].time_s == 1003U);
 	CHECK(b.pts[TRACKING_BACKLOG_SLOTS - 1].time_s ==
 	      1000U + TRACKING_BACKLOG_SLOTS + 2U);
-
-	/* The fresh report joins the tail while points wait — and after a
-	 * probe, even when the probe emptied the backlog. */
-	tracking_backlog_reset(&b);
-	CHECK(!tracking_backlog_defers_fresh(&b));
-	b.probe_ran = true;
-	CHECK(tracking_backlog_defers_fresh(&b));
-	b.probe_ran = false;
-	tracking_backlog_push(&b, PT1234, LAT, LON);
-	CHECK(tracking_backlog_defers_fresh(&b));
 }
 
 TEST(tracking_backlog_schedule, "UNIT-TRACKBUF-003",

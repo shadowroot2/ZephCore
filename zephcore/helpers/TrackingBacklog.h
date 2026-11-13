@@ -13,8 +13,8 @@
  * TRACKING_BACKLOG_VERDICT_MS after the send (ContentionTracker dupe count,
  * one-shot). While the tap is closed the head is probed at the caller's
  * probe deadline — TRACKING_BACKLOG_PROBE_LEAD_MS before the next tracking
- * report, so the verdict lands before the report routes its point. A heard
- * send opens the tap: the backlog then flushes one message every
+ * report, long enough for the ring to drain before the report is due, so
+ * the scheduled point goes out live as always. A heard send opens the tap: the backlog then flushes one message every
  * TRACKING_BACKLOG_DRAIN_INTERVAL_MS. A message carries up to two points
  * (tracking_format_deferred).
  */
@@ -24,7 +24,9 @@
 #define TRACKING_BACKLOG_SLOTS 16
 #define TRACKING_BACKLOG_VERDICT_MS 5000
 #define TRACKING_BACKLOG_DRAIN_INTERVAL_MS 10000
-#define TRACKING_BACKLOG_PROBE_LEAD_MS 10000
+/* 2.5 min before the report: the whole ring drains in less, so the report
+ * is due only once the backlog is out and goes live as always. */
+#define TRACKING_BACKLOG_PROBE_LEAD_MS 150000
 /* With no report running (`tracking off`) the probe repeats on this period
  * so an ended session still flushes what accumulated. */
 #define TRACKING_BACKLOG_PROBE_RETRY_MS 60000
@@ -39,7 +41,6 @@ struct tracking_backlog {
 	struct tracking_deferred_point pts[TRACKING_BACKLOG_SLOTS];
 	uint8_t count;
 	bool draining;     /* the last backlog send was heard: keep flushing */
-	bool probe_ran;   /* the head was probed in this report window */
 	bool inflight;   /* a message is awaiting its heard verdict */
 	uint32_t inflight_hash;
 	int64_t inflight_sent_ms;
@@ -49,14 +50,6 @@ struct tracking_backlog {
 	struct tracking_deferred_point inflight_live_pt;
 	int64_t next_send_ms;   /* the drain deadline (valid while draining) */
 };
-
-/* The fresh report joins the tail while older points wait, and after a probe
- * ("последняя капля ... добавляем в конец") so it never overtakes them;
- * otherwise it goes out live as always. */
-static inline bool tracking_backlog_defers_fresh(const struct tracking_backlog *b)
-{
-	return b->count > 0 || b->probe_ran;
-}
 
 static inline void tracking_backlog_reset(struct tracking_backlog *b)
 {

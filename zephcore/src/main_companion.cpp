@@ -1647,11 +1647,6 @@ static void companion_tracking_backlog_process(void)
 	case TRACKING_BACKLOG_SEND: {
 		bool probe = !b->draining;
 
-		if (probe) {
-			/* The window's probe attempt has run: the fresh report
-			 * of this interval must not overtake the backlog. */
-			b->probe_ran = true;
-		}
 		if (!companion_send_tracking_deferred()) {
 			/* Queue full or no channel: try the head again in
 			 * 10 s, not on the next loop pass. */
@@ -2469,14 +2464,10 @@ static void companion_tracking_process(void)
 	}
 	/* A delayed maintenance pass still begins the next full interval now. */
 	companion_tracking.next_report_ms = now + companion_tracking_interval_ms();
-	/* The backlog probe window opens 10 s before the next report, so its
-	 * verdict lands before the report routes its point. */
+	/* The backlog probe window opens 2.5 min before the next report: the
+	 * ring drains before the report is due, so its point goes out live. */
 	tracking_backlog_probe_ms = companion_tracking.next_report_ms -
 		TRACKING_BACKLOG_PROBE_LEAD_MS;
-	/* Consumed by this report: after a probe the fresh point joins the
-	 * tail even when the probe emptied the backlog. */
-	bool defer_fresh = tracking_backlog_defers_fresh(&tracking_backlog_buf);
-	tracking_backlog_buf.probe_ran = false;
 
 	struct gps_position pos = {};
 	struct gps_state_info gsi;
@@ -2500,10 +2491,10 @@ static void companion_tracking_process(void)
 	pt.lat_ndeg = pos.latitude_ndeg;
 	pt.lon_ndeg = pos.longitude_ndeg;
 
-	if (defer_fresh) {
-		/* Older points still wait for a repeat (or the probe just
-		 * opened the tap): the fresh one joins the tail so the track
-		 * keeps its order. */
+	if (!tracking_backlog_empty(&tracking_backlog_buf)) {
+		/* Older points still wait for a repeat: the fresh one joins
+		 * the tail so the track keeps its order and goes out with
+		 * them. */
 		tracking_backlog_push(&tracking_backlog_buf, pt.time_s,
 				      pt.lat_ndeg, pt.lon_ndeg);
 		LOG_INF("tracking: point buffered (%d pending)",
