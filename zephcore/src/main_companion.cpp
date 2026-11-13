@@ -135,6 +135,9 @@ static void companion_gps_user_left(void);
 static void companion_nav_link_check(void);
 static void companion_tracking_process(void);
 static void companion_tracking_backlog_process(void);
+#if IS_ENABLED(CONFIG_ZEPHCORE_POWER_ANNOUNCE)
+static bool companion_power_announce(bool on);
+#endif
 static uint32_t companion_custom_ms_until_next(void);
 static void companion_fall_detected(void);
 static void companion_fall_prealert(void);
@@ -201,6 +204,16 @@ static CompanionMesh *companion_mesh_ptr;
 static k_tid_t mesh_thread;
 static K_SEM_DEFINE(persist_done, 0, 1);
 static atomic_t manual_shutdown_requested;
+#if IS_ENABLED(CONFIG_ZEPHCORE_POWER_ANNOUNCE)
+/* The boot notice waits out the boot advert's flood jitter and airtime:
+ * Mesh::sendFlood de-prioritizes adverts, so a text queued alongside would
+ * jump it in the TX queue. */
+#define POWER_ANNOUNCE_DELAY_MS 5000
+/* When the boot notice is due (0 = disarmed): the boot advert goes first and
+ * a text out-prioritizes an advert in the TX queue, so the notice waits for
+ * the advert's airtime instead of jumping it. */
+static int64_t power_announce_at_ms;
+#endif
 
 static void manual_shutdown_work_fn(struct k_work *work)
 {
@@ -464,10 +477,19 @@ static void mesh_event_loop(void)
 			k_sem_give(&persist_done);
 		}
 		if (events & MESH_EVENT_MANUAL_SHUTDOWN) {
-			bool notify = companion_serial.isConnected() &&
-				companion_mesh_ptr->isVContactEnabled();
-			if (notify) {
+			bool queued = false;
+#if IS_ENABLED(CONFIG_ZEPHCORE_POWER_ANNOUNCE)
+			/* The power-off notice goes out right after the shutdown
+			 * melody the UI played. */
+			queued = companion_power_announce(false);
+#endif
+			if (companion_serial.isConnected() &&
+			    companion_mesh_ptr->isVContactEnabled()) {
 				companion_mesh_ptr->vcontactNotify("Выключение: кнопка");
+				queued = true;
+			}
+			/* The notices need airtime before the power goes. */
+			if (queued) {
 				k_work_schedule(&manual_shutdown_work, K_MSEC(8000));
 			} else {
 				k_work_schedule(&manual_shutdown_work, K_NO_WAIT);
@@ -599,6 +621,12 @@ static void mesh_event_loop(void)
 		companion_tracking_backlog_process();
 		companion_home_save_process();
 		companion_nav_link_check();
+#endif
+#if IS_ENABLED(CONFIG_ZEPHCORE_POWER_ANNOUNCE)
+		if (power_announce_at_ms && k_uptime_get() >= power_announce_at_ms) {
+			power_announce_at_ms = 0;
+			companion_power_announce(true);
+		}
 #endif
 		uint32_t next_custom = companion_custom_ms_until_next();
 		if (next_custom == UINT32_MAX) {
@@ -970,6 +998,31 @@ static bool companion_send_visible_group_message(ChannelDetails &channel,
 			timestamp, text);
 	return true;
 }
+
+#if IS_ENABLED(CONFIG_ZEPHCORE_POWER_ANNOUNCE)
+/* Power on/off notices to the tracking group (M3-MAMA's family channel). */
+static bool companion_power_announce(bool on)
+{
+	ChannelDetails ch;
+
+	if (!companion_get_public_channel(companion_mesh.prefs.tracking_group_name,
+					  ch)) {
+		LOG_WRN("power announce: no %s channel",
+			companion_mesh.prefs.tracking_group_name);
+		return false;
+	}
+
+	const char *text = on ? "🚀 Устройство включилось!"
+			     : "⏻ Устройство выключается!";
+	if (!companion_send_visible_group_message(ch, text)) {
+		LOG_WRN("power announce: unable to queue power-%s notice",
+			on ? "on" : "off");
+		return false;
+	}
+	LOG_INF("power announce: queued power-%s notice", on ? "on" : "off");
+	return true;
+}
+#endif
 
 /* Geofence alerts (ADR 0011): out over LoRa only, never queued into the
  * local group feed. */
@@ -1506,6 +1559,13 @@ static uint32_t companion_custom_ms_until_next(void)
 			if (remaining <= 0) next = 0;
 			else if ((uint64_t)remaining < next) next = (uint32_t)remaining;
 		}
+	}
+#endif
+#if IS_ENABLED(CONFIG_ZEPHCORE_POWER_ANNOUNCE)
+	if (power_announce_at_ms) {
+		int64_t remaining = power_announce_at_ms - k_uptime_get();
+		if (remaining <= 0) next = 0;
+		else if ((uint64_t)remaining < next) next = (uint32_t)remaining;
 	}
 #endif
 	if (companion_home.nav_active) {
@@ -2586,9 +2646,12 @@ static void radio_reconfigure(bool preset_changed)
 static bool power_notify_shutdown(uint16_t battery_mv)
 {
 	bool queued = false;
+#if IS_ENABLED(CONFIG_ZEPHCORE_POWER_ANNOUNCE)
+	queued = companion_power_announce(false);
+#endif
 	if (companion_mesh.prefs.auto_shutdown_emergency) {
 		queued = companion_send_auto_shutdown_emergency(
-			battery_mv, (uint32_t)k_uptime_get());
+			battery_mv, (uint32_t)k_uptime_get()) || queued;
 	}
 	if (companion_transport_up() && companion_mesh.isVContactEnabled()) {
 		companion_mesh.vcontactNotify("Выключение: низкий заряд");
@@ -3917,6 +3980,14 @@ int main(void)
 		LOG_INF("buzzer: mode=%u (from prefs)", bmode);
 	}
 	ui_play_startup_chime();
+#endif
+
+	/* The boot advert introduces the node right after the startup chime;
+	 * every companion sends it at boot (the server roles send theirs from
+	 * server_main_common.cpp). */
+	companion_mesh_ptr->sendSelfAdvert(true);
+#if IS_ENABLED(CONFIG_ZEPHCORE_POWER_ANNOUNCE)
+	power_announce_at_ms = k_uptime_get() + POWER_ANNOUNCE_DELAY_MS;
 #endif
 
 	/* Straight to the LED gate: it also governs the TX LED and exists in every

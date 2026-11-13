@@ -17,6 +17,10 @@ Current difference:
 - four short presses: LEDs;
 - five short presses: GPS.
 
+Power on/off notices on the tracking group (`CONFIG_ZEPHCORE_POWER_ANNOUNCE`):
+`🚀 Устройство включилось!` right after the boot advert, `⏻ Устройство
+выключается!` just before power-off.
+
 The single-tap delayed action and the two-tap action are swapped relative to M3.
 The SOS gesture and the Tracking/Advert feedback sounds are unchanged.
 

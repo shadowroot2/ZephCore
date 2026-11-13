@@ -577,10 +577,11 @@ static void server_event_loop(void)
 #ifdef ZEPHCORE_LORA
 
 		/* Deferred boot advert — sent on the main thread (see
-		 * initial_advert_work_fn); loop() below drains the queued packet. */
+		 * initial_advert_work_fn); loop() below drains the queued
+		 * packet. Flood: the boot advert is the node's wide hello. */
 		if (server_role && (events & MESH_EVENT_INIT_ADVERT)) {
 			LOG_INF("Sending deferred initial advertisement");
-			server_role->callbacks->sendSelfAdvertisement(500, false);
+			server_role->callbacks->sendSelfAdvertisement(500, true);
 		}
 
 #if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)

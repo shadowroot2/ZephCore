@@ -395,6 +395,14 @@ config ZEPHCORE_REMOTE_POINT_SAVE_CLI
 	  Let a remote CLI contact run the point saves (wp save, geo save).
 	  They stay local-only everywhere else; the M3-MAMA profile opts in.
 
+config ZEPHCORE_POWER_ANNOUNCE
+	bool "Announce power on and power off on the tracking group"
+	default n
+	help
+	  Send a short notice to the tracking group when the node powers on
+	  (right after the boot advert) and just before it powers off. The
+	  M3-MAMA profile opts in.
+
 config ZEPHCORE_MAX_CHANNELS
 	int "Maximum number of channels"
 	default 40

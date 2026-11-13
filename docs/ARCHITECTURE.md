@@ -932,6 +932,22 @@ and the head is probed again in the next report window (every 60 s while `tracki
 session still flushes). The ring evicts the oldest of its 16 points (~80 min at the 5-minute minimum
 interval) — the newest positions are the ones a searcher needs.
 
+**Boot advert (all roles)**
+
+Every companion announces itself with a flood advert right after the startup chime
+(`sendSelfAdvert(true)` in main_companion.cpp); the server roles send the same wide hello from their
+deferred initial advert (server_main_common.cpp, flood instead of the old zero-hop). The advert is
+the node's introduction at power-on, before any notice a profile may add after it.
+
+**Power on/off notices (`CONFIG_ZEPHCORE_POWER_ANNOUNCE`)**
+
+A personal-profile flag (default n — `mama.conf` opts in): a short notice to the tracking group at
+power-on (`🚀 Устройство включилось!`) and before power-off (`⏻ Устройство выключается!`). The boot
+one is sent on a 5 s deadline after the boot advert rather than queued with it — `Mesh::sendFlood`
+de-prioritizes adverts (pri 3 vs text pri 1), so a text queued alongside would jump the advert in the
+TX queue. The power-off one rides the manual-shutdown handler (right after the shutdown melody) and
+the low-battery policy, both keeping their 8 s grace so the notice reaches the air before System OFF.
+
 **Geofence (`geo`, companion)**
 
 One saved point (`prefs.geo_lat_e7/geo_lon_e7`, via `geo save` or `set geo.point`) and one radius in meters
