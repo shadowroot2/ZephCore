@@ -177,6 +177,20 @@ xiao_nrf54l15/nrf54l15/cpuapp
 > its USB-C port is a CH340x UART bridge carrying the console, not a programming port.
 > Untested on hardware.
 
+## RP2040
+
+<!-- boards:rp2040 -->
+```
+rpi_pico/rp2040/w   # source-only, no published firmware
+```
+<!-- /boards -->
+
+> **Raspberry Pi Pico W + Waveshare SX1262** (`rpi_pico`): RP2040 with the
+> SX1262 on SPI1, pinout matching MeshCore's PicoW_repeater variant. Console
+> on USB CDC; `start dfu` reboots into the RP2040 ROM mass-storage bootloader.
+> Repeater bring-up — source-only, no release carries firmware for it.
+> Untested on hardware.
+
 ## Native Linux
 
 Not `west build -b` boards — `EXTRA_CONF_FILE` presets on top of `native_sim`

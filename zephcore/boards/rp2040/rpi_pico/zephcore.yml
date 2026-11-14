@@ -1,0 +1,4 @@
+# ZephCore board manifest — schema in zephcore/scripts/board_manifest.py
+#
+# Raspberry Pi Pico W (RP2040) + Waveshare SX1262, repeater bring-up.
+target: rpi_pico/rp2040/w

@@ -45,6 +45,11 @@ case $profile in
 		target=lilygo_techo
 		stem=lilygo_techo
 		;;
+	rpi_pico)
+		target=rpi_pico/rp2040/w
+		stem=rpi_pico
+		platform=rp2040
+		;;
 	heltec_v3)
 		target=heltec_wifi_lora32_v3/esp32s3/procpu
 		stem=heltec_wifi_lora32_v3-esp32s3-procpu

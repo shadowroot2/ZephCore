@@ -189,6 +189,7 @@ ZephCore — прошивка для LoRa mesh-узлов, совместима�
 | nRF54L | 4 | 3 |
 | EFR32MG24 | 1 | 1 |
 | STM32WL | 1 | 1 |
+| RP2040 | 1 | 0 |
 | Native Linux (пресеты) | 3 | 3 |
 <!-- /boards -->
 

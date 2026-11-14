@@ -161,6 +161,7 @@ set(_platform_conf_of_nrf54l  ${_zc}/nrf54l_common.conf)
 set(_platform_conf_of_esp32   ${_zc}/esp32_common.conf)
 set(_platform_conf_of_mg24    ${_zc}/mg24_common.conf)
 set(_platform_conf_of_stm32wl ${_zc}/stm32wl_common.conf)
+set(_platform_conf_of_rp2040  ${_zc}/rp2040_common.conf)
 set(_platform_conf_of_linux   ${CMAKE_CURRENT_SOURCE_DIR}/boards/linux_native/linux_common.conf)
 zephcore_add_conf(${_zc}/zephcore_common.conf)
 if(ZEPHCORE_PLATFORM)
@@ -518,6 +519,14 @@ if(CONFIG_SOC_FAMILY_ESPRESSIF_ESP32)
       "identity keygen will fall back to CPU jitter alone. Check "
       "hal/espressif components/bootloader_support/src/.")
   endif()
+endif()
+
+# RP2040 has no TRNG: entropy_rpi_pico wraps pico_rand (ROSC bits + timer +
+# RAM-hash seed). Its ROSC sampler calls pico-sdk sleep_until(), which the
+# rpi_pico hal glue never compiles (hardware_timer yes, pico_time no) — this
+# one Zephyr sleep is the whole shim.
+if(ZEPHCORE_PLATFORM STREQUAL "rp2040")
+  target_sources(app PRIVATE adapters/rng/pico_time_sleep_shim.c)
 endif()
 
 # ESP32 light sleep (boards/common/pm_esp32.conf): console guards (TX flush
