@@ -353,14 +353,24 @@ static inline void tracking_odometer_finish(struct tracking_odometer *o, int64_t
 	tracking_odometer_segment(o, now_ms, o->last_speed_mms, false, 0, 0);
 }
 
-static inline void tracking_duration_str(char *buf, size_t len, uint32_t ms)
+/* "8м", "9ч59м", "1д23ч15м" — minutes only, h+min, or d+h+min. Clamped at
+ * 99д23ч59м so the worst case still fits the mesh text frame. */
+static inline void tracking_duration_str(char *buf, size_t len, uint64_t ms)
 {
-	uint32_t min = (ms + 30000U) / 60000U;
+	uint64_t min = (ms + 30000U) / 60000U;
 
+	if (min > 99U * 24U * 60U + 23U * 60U + 59U) {
+		min = 99U * 24U * 60U + 23U * 60U + 59U;
+	}
 	if (min < 60U) {
-		snprintf(buf, len, "%uм", min);
+		snprintf(buf, len, "%uм", (unsigned)min);
+	} else if (min < 24U * 60U) {
+		snprintf(buf, len, "%uч%02uм", (unsigned)(min / 60U),
+			 (unsigned)(min % 60U));
 	} else {
-		snprintf(buf, len, "%uч%02uм", min / 60, min % 60);
+		snprintf(buf, len, "%uд%uч%02uм",
+			 (unsigned)(min / (24U * 60U)),
+			 (unsigned)((min / 60U) % 24U), (unsigned)(min % 60U));
 	}
 }
 
@@ -371,7 +381,7 @@ static inline void tracking_format_summary(char *buf, size_t len,
 					   int64_t end_lat_ndeg, int64_t end_lon_ndeg,
 					   bool has_fix)
 {
-	char total[12], moving[12];
+	char total[16], moving[16];
 
 	tracking_duration_str(total, sizeof(total), o->moving_ms + o->stopped_ms);
 	tracking_duration_str(moving, sizeof(moving), o->moving_ms);
@@ -381,7 +391,7 @@ static inline void tracking_format_summary(char *buf, size_t len,
 		: 0;
 	unsigned maxk = (unsigned)((o->max_speed_mms * 36U + 5000U) / 10000U);
 	unsigned stopmin = (unsigned)((o->stopped_ms + 30000U) / 60000U);
-	char stopbuf[12];
+	char stopbuf[16];
 
 	if (stopmin > 59U) {
 		tracking_duration_str(stopbuf, sizeof(stopbuf), o->stopped_ms);

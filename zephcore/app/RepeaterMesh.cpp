@@ -31,6 +31,7 @@
 #include <ZephyrMQTTPublisher.h>
 #endif
 #include <helpers/PacketLog.h>
+#include <helpers/TrackingMessage.h>
 
 static constexpr uint32_t BATTERY_CHECK_MS = 30000;
 
@@ -1667,16 +1668,8 @@ void RepeaterMesh::batteryAlertTick() {
     if (isfinite(t)) {
         snprintf(temperature, sizeof(temperature), "%.1f°C", (double)t);
     }
-    uint64_t up_min = (now + 30000U) / 60000U;
-    if (up_min > 99U * 60U + 59U) {
-        up_min = 99U * 60U + 59U;
-    }
-    char uptime[10];
-    if (up_min < 60U) {
-        snprintf(uptime, sizeof(uptime), "%uм", (unsigned)up_min);
-    } else {
-        snprintf(uptime, sizeof(uptime), "%uч%02uм", (unsigned)(up_min / 60U), (unsigned)(up_min % 60U));
-    }
+    char uptime[16];
+    tracking_duration_str(uptime, sizeof(uptime), (uint64_t)now);
     snprintf(text, 161, "%.31s: Низкий заряд!\n🪫 %u%% %u.%02uV\n🌡️ %s\n⏱️ %s",
              _prefs.node_name, percent, mv / 1000U, (mv % 1000U) / 10U,
              temperature, uptime);

@@ -296,6 +296,15 @@ TEST(tracking_summary_format, "UNIT-TRACK-003", "Session summary fits the mesh f
 	CHECK(std::strstr(buf, "-123.45678,-89.12345") != nullptr);
 	tracking_format_summary(buf, sizeof(buf), &o, 0, 0, false);
 	CHECK(std::strstr(buf, "maps.google.com") == nullptr);
+	/* Durations grow a day part once they pass 24 h: "1д23ч15м", and the
+	 * text frame forces the 99д23ч59м ceiling. */
+	char dur[16];
+	tracking_duration_str(dur, sizeof(dur), 170100000ULL);
+	CHECK(std::strcmp(dur, "1д23ч15м") == 0);
+	tracking_duration_str(dur, sizeof(dur), 86400000ULL * 100);
+	CHECK(std::strcmp(dur, "99д23ч59м") == 0);
+	tracking_duration_str(dur, sizeof(dur), 35700000ULL);
+	CHECK(std::strcmp(dur, "9ч55м") == 0);
 }
 TEST(nav_format, "UNIT-NAV-001", "Distance, bearing and cardinal labels for navigation") {
 	char buf[24];

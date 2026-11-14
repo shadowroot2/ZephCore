@@ -764,17 +764,8 @@ static bool companion_get_emergency_channel(ChannelDetails &emergency_channel)
 
 static void format_uptime(uint64_t uptime_ms, char *out, size_t out_len)
 {
-	/* Clamped at 99h59m so the shutdown notice always fits the mesh frame. */
-	uint64_t min = (uptime_ms + 30000U) / 60000U;
-
-	if (min > 99U * 60U + 59U) {
-		min = 99U * 60U + 59U;
-	}
-	if (min < 60U) {
-		snprintf(out, out_len, "%uм", (unsigned)min);
-	} else {
-		snprintf(out, out_len, "%uч%02uм", (unsigned)(min / 60U), (unsigned)(min % 60U));
-	}
+	/* "8м" / "9ч59м" / "1д23ч15м" — tracking_duration_str owns the text. */
+	tracking_duration_str(out, out_len, uptime_ms);
 }
 
 /* Queue the low-battery notice in the #zephcore group. This is
@@ -789,7 +780,7 @@ static bool companion_send_auto_shutdown_emergency(uint16_t battery_mv,
 		return false;
 	}
 
-	char uptime[10];
+	char uptime[16];
 	char text[160];
 	char temperature[10] = "n/a";
 	char gps[72];
