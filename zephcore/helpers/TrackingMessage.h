@@ -225,6 +225,13 @@ static inline void nav_report_str(char *buf, size_t len, double dist_m,
 		 tracking_report_arrow((uint32_t)(bearing_deg * 1000.0)));
 }
 
+/* Arrival fires on the distance the screen shows: the readout rounds to
+ * whole metres, so raw 25.4 ("25 m") must count inside a 25 m radius. */
+static inline bool nav_arrival_reached(double dist_m, double radius_m)
+{
+	return dist_m < radius_m + 0.5;
+}
+
 /* Wrong-way ladder: the distance grew by 30 m stepwise since the last sample
  * where it shrank — 30, 60, 90 ... away from the current position. Any
  * approach resets the ladder, so standing still on GPS jitter cannot

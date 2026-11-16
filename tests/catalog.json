@@ -83,6 +83,11 @@
       "source": "tests/unit/helper_tests.cpp"
     },
     {
+      "id": "UNIT-NAV-004",
+      "name": "Arrival fires on the readout distance, rounding metres up to the radius",
+      "source": "tests/unit/helper_tests.cpp"
+    },
+    {
       "id": "UNIT-GEO-001",
       "name": "Exit fires on the first fix beyond, return at hysteresis and re-arms",
       "source": "tests/unit/helper_tests.cpp"

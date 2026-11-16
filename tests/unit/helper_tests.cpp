@@ -349,6 +349,17 @@ TEST(nav_report, "UNIT-NAV-003", "Periodic vContact report carries distance, sec
 	CHECK(std::strcmp(buf, "840 м  С  ⬆️") == 0);
 	CHECK(std::strlen(buf) <= 159);
 }
+TEST(nav_arrival, "UNIT-NAV-004", "Arrival fires on the readout distance, rounding metres up to the radius") {
+	/* The screen rounds to whole metres (25.4 -> "25 m"), so the trigger
+	 * must accept anything that still reads inside the radius. */
+	CHECK(nav_arrival_reached(0.0, 25.0));
+	CHECK(nav_arrival_reached(24.9, 25.0));
+	CHECK(nav_arrival_reached(25.4, 25.0));
+	CHECK(!nav_arrival_reached(25.6, 25.0));
+	CHECK(!nav_arrival_reached(30.0, 25.0));
+	CHECK(nav_arrival_reached(14.4, 14.5));
+	CHECK(!nav_arrival_reached(15.6, 14.5));
+}
 TEST(geofence_fsm, "UNIT-GEO-001", "Exit fires on the first fix beyond, return at hysteresis and re-arms") {
 	struct geofence_state g;
 	geofence_reset(&g);

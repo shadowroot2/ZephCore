@@ -1456,7 +1456,7 @@ static int64_t tracking_backlog_probe_ms = INT64_MAX;
 
 /* ===== GPS HOME: save the point and navigate to it ===== */
 #define HOME_FIX_TIMEOUT_MS (5U * 60U * 1000U)
-#define HOME_ARRIVAL_M 15.0
+#define HOME_ARRIVAL_M 25.0
 #define NAV_LINK_CHECK_MS 30000U
 #define HOME_NAV_REFRESH_MS 5000U
 
@@ -2094,10 +2094,11 @@ static void companion_nav_set_enabled(bool enabled, char *reply, bool announce =
 			gps_enable(true);
 		}
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
-		/* E-paper shows the readout with the panel unpowered — its
-		 * frontlight stays on the auto-off timer instead of pinned
-		 * on (power). Emissive panels are held until nav stop. */
-		if (!mc_display_is_epd()) {
+		/* Hold the display and its backlight until nav stops. A board
+		 * that opts out (T-Echo: CONFIG_ZEPHCORE_NAV_HOLD_BACKLIGHT=n)
+		 * leaves the frontlight to the auto-off timer — the E-Paper
+		 * picture itself needs no power to stay. */
+		if (IS_ENABLED(CONFIG_ZEPHCORE_NAV_HOLD_BACKLIGHT)) {
 			mc_display_set_auto_off_hold(true);
 			mc_display_on();
 		}
@@ -2314,7 +2315,7 @@ static void companion_nav_fix_process(void)
 	}
 
 	/* Arrived while walking to the point: success melody, then STOP. */
-	if (dist_m < HOME_ARRIVAL_M) {
+	if (nav_arrival_reached(dist_m, HOME_ARRIVAL_M)) {
 		char dur[16], dist[12], url[48], msg[MAX_TEXT_LEN + 1];
 		size_t name_prefix = strlen(companion_mesh.prefs.node_name) + 2;
 
