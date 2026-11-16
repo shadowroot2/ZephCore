@@ -942,7 +942,10 @@ the node's introduction at power-on, before any notice a profile may add after i
 **Power on/off notices (`CONFIG_ZEPHCORE_POWER_ANNOUNCE`)**
 
 A personal-profile flag (default n — `mama.conf` opts in): a short notice to the tracking group at
-power-on (`🚀 Устройство включилось!`) and before power-off (`⏻ Устройство выключается!`). The boot
+power-on (`🚀 Устройство включилось!`) and before a manual power-off (`📴 Устройство выключается!`).
+A low-battery power-off sends the same family channel the statistics notice (`Отключение!` with
+charge, temperature, uptime and the GPS line) instead — a bare "выключается" would leave the family
+guessing why. The boot
 one is sent on a 5 s deadline after the boot advert rather than queued with it — `Mesh::sendFlood`
 de-prioritizes adverts (pri 3 vs text pri 1), so a text queued alongside would jump the advert in the
 TX queue. The power-off one rides the manual-shutdown handler (right after the shutdown melody) and

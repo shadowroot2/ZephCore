@@ -768,20 +768,15 @@ static void format_uptime(uint64_t uptime_ms, char *out, size_t out_len)
 	tracking_duration_str(out, out_len, uptime_ms);
 }
 
-/* Queue the low-battery notice in the #zephcore group. This is
- * deliberately called only by companion_shutdown_hook(), which is invoked by
- * ui_auto_shutdown_check() after its low-voltage confirmation — never by a
- * manual shutdown action. */
-static bool companion_send_auto_shutdown_emergency(uint16_t battery_mv,
-								uint32_t uptime_ms)
+/* Format the power-off statistics notice: "Отключение!" with charge,
+ * temperature, uptime and the GPS line; text must hold 160 bytes. The
+ * temperature line is the first to go when the node name leaves too little of
+ * MAX_TEXT_LEN, then the uptime line: the map link — always last — must reach
+ * the group whole. */
+static void companion_format_shutdown_notice(char *text, uint16_t battery_mv,
+					     uint32_t uptime_ms)
 {
-	ChannelDetails emergency_channel;
-	if (!companion_get_emergency_channel(emergency_channel)) {
-		return false;
-	}
-
 	char uptime[16];
-	char text[160];
 	char temperature[10] = "n/a";
 	char gps[72];
 	bool has_gps = gps_is_available();
@@ -859,7 +854,22 @@ static bool companion_send_auto_shutdown_emergency(uint16_t battery_mv,
 			 percent, battery_mv / 1000U, (battery_mv % 1000U) / 10U,
 			 temperature, uptime);
 	}
+}
 
+/* Queue the low-battery notice in the #zephcore group. This is
+ * deliberately called only by companion_shutdown_hook(), which is invoked by
+ * ui_auto_shutdown_check() after its low-voltage confirmation — never by a
+ * manual shutdown action. */
+static bool companion_send_auto_shutdown_emergency(uint16_t battery_mv,
+								uint32_t uptime_ms)
+{
+	ChannelDetails emergency_channel;
+	if (!companion_get_emergency_channel(emergency_channel)) {
+		return false;
+	}
+	char text[160];
+
+	companion_format_shutdown_notice(text, battery_mv, uptime_ms);
 	if (!companion_mesh_ptr->sendGroupMessage(rtc_clock.getCurrentTimeUnique(),
 							  emergency_channel.channel,
 							  companion_mesh_ptr->prefs.node_name,
@@ -1004,13 +1014,37 @@ static bool companion_power_announce(bool on)
 	}
 
 	const char *text = on ? "🚀 Устройство включилось!"
-			     : "⏻ Устройство выключается!";
+			     : "📴 Устройство выключается!";
 	if (!companion_send_visible_group_message(ch, text)) {
 		LOG_WRN("power announce: unable to queue power-%s notice",
 			on ? "on" : "off");
 		return false;
 	}
 	LOG_INF("power announce: queued power-%s notice", on ? "on" : "off");
+	return true;
+}
+
+/* The family notice at a low-battery power-off carries the statistics —
+ * a bare "выключается" would leave the family guessing why. */
+static bool companion_power_announce_off_stats(uint16_t battery_mv,
+						uint32_t uptime_ms)
+{
+	ChannelDetails ch;
+
+	if (!companion_get_public_channel(companion_mesh.prefs.tracking_group_name,
+					  ch)) {
+		LOG_WRN("power announce: no %s channel",
+			companion_mesh.prefs.tracking_group_name);
+		return false;
+	}
+	char text[160];
+
+	companion_format_shutdown_notice(text, battery_mv, uptime_ms);
+	if (!companion_send_visible_group_message(ch, text)) {
+		LOG_WRN("power announce: unable to queue power-off stats notice");
+		return false;
+	}
+	LOG_INF("power announce: queued power-off stats notice: %s", text);
 	return true;
 }
 #endif
@@ -2639,7 +2673,10 @@ static bool power_notify_shutdown(uint16_t battery_mv)
 {
 	bool queued = false;
 #if IS_ENABLED(CONFIG_ZEPHCORE_POWER_ANNOUNCE)
-	queued = companion_power_announce(false);
+	/* The family channel gets the statistics at an auto power-off, never
+	 * the bare line (that one is the manual power-off's). */
+	queued = companion_power_announce_off_stats(battery_mv,
+						    (uint32_t)k_uptime_get());
 #endif
 	if (companion_mesh.prefs.auto_shutdown_emergency) {
 		queued = companion_send_auto_shutdown_emergency(
