@@ -24,6 +24,11 @@ becomes 5).
 
 ## Other changes
 
+- **A waypoint save lands on the point it was asked for, and a set name survives it.** The save
+  captured its target when the GPS fix arrived, so re-selecting points while `Waiting GPS FIX...`
+  was up could write the coordinates into another slot and name that slot `SAVED`. The target is
+  now pinned when the save starts. A name you set (say `2-HOME`) is never overwritten — only an
+  unnamed `FREE` slot becomes `SAVED`.
 - **WiFi companions no longer freeze when the app stops reading.** If an app connected over WiFi
   stopped reading (for example in the middle of a contact sync), the node could stop answering on
   USB, Bluetooth and WiFi, and stay stuck as long as that connection stayed open. The node now

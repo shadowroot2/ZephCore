@@ -1501,6 +1501,7 @@ struct companion_home_state {
 	bool travel_has_last;
 	bool link_lost_sent;
 	uint8_t selected; /* 0..9; always 0 after boot */
+	uint8_t save_slot; /* target pinned when the save was requested */
 	uint32_t saved_duty_sec;
 	uint32_t save_started_ms;
 	struct nav_wrongway ww;
@@ -1962,6 +1963,7 @@ static void companion_home_start_save(bool geo_point)
 	companion_home.gps_was_enabled = gps_is_enabled();
 	companion_home.saved_duty_sec = gps_get_poll_interval_sec();
 	companion_home.save_active = true;
+	companion_home.save_slot = companion_home.selected;
 	companion_home.save_started_ms = (uint32_t)k_uptime_get();
 	if (geo_point) {
 		companion_geo.flags |= GEO_FLAG_SAVE_IS_GEO;
@@ -2006,12 +2008,12 @@ static void companion_home_save_process(void)
 					  companion_mesh.prefs.geo_lon_e7 / 1e7);
 			snprintf(msg, sizeof(msg), "💾 Центр геозоны сохранен!\n%s", url);
 		} else {
-			int i = companion_home.selected;
+			int i = companion_home.save_slot;
 
 			companion_mesh.prefs.home_lat[i] = pos.latitude_ndeg / 1e9;
 			companion_mesh.prefs.home_lon[i] = pos.longitude_ndeg / 1e9;
 			companion_mesh.prefs.home_saved[i] = 1;
-			if (i != 0 && strcmp(companion_mesh.prefs.home_name[i], "FREE") == 0) {
+			if (companion_wp_save_autonames(i, companion_mesh.prefs.home_name[i])) {
 				strcpy(companion_mesh.prefs.home_name[i], "SAVED");
 			}
 			tracking_maps_url(url, sizeof(url),
@@ -2036,9 +2038,9 @@ static void companion_home_save_process(void)
 #endif
 		LOG_INF("%s saved: %.6f %.6f", geo_point ? "geo point" : "home point",
 			geo_point ? companion_mesh.prefs.geo_lat_e7 / 1e7
-				  : companion_mesh.prefs.home_lat[companion_home.selected],
+				  : companion_mesh.prefs.home_lat[companion_home.save_slot],
 			geo_point ? companion_mesh.prefs.geo_lon_e7 / 1e7
-				  : companion_mesh.prefs.home_lon[companion_home.selected]);
+				  : companion_mesh.prefs.home_lon[companion_home.save_slot]);
 		return;
 	}
 	if (k_uptime_get() - companion_home.save_started_ms >= HOME_FIX_TIMEOUT_MS) {

@@ -459,6 +459,13 @@ TEST(companion_wp_save, "UNIT-CLI-005", "wp save parses slot and name and pins t
 	CHECK(std::strcmp(companion_wp_save_parse("3 12345678901", 4, &slot, name, sizeof(name)),
 			  "Error: name max 10 chars") == 0);
 }
+TEST(companion_wp_save_autonames, "UNIT-CLI-006", "A set name survives every save; only FREE becomes SAVED") {
+	CHECK(companion_wp_save_autonames(1, "FREE"));
+	CHECK(!companion_wp_save_autonames(1, "HOME"));
+	CHECK(!companion_wp_save_autonames(1, "SAVED"));
+	CHECK(!companion_wp_save_autonames(0, "FREE"));
+	CHECK(!companion_wp_save_autonames(0, "GPS HOME"));
+}
 TEST(gps_switch_policy, "UNIT-UI-001", "A physical GPS switch overrides the saved startup state") {
 	CHECK(gps_switch_effective_enabled(false, false, true));
 	CHECK(!gps_switch_effective_enabled(false, true, false));

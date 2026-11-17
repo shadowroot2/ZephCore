@@ -68,6 +68,14 @@ static inline const char *companion_wp_save_parse(const char *args, int selected
 	return NULL;
 }
 
+/* ZEPHCORE: whether a slot save may invent the default name. Only an
+ * unnamed slot (FREE) becomes SAVED; a name the user set (e.g. 2-HOME)
+ * survives every save, re-saves included; point 1 stays GPS HOME. */
+static inline bool companion_wp_save_autonames(int slot, const char *name)
+{
+	return slot != 0 && strcmp(name, "FREE") == 0;
+}
+
 #define COMPANION_WIFI_HELP \
 	"get wifi.status\nget wifi.ip\nget wifi.ssid\nset wifi.ssid <name>\n" \
 	"get wifi.pwd\nset wifi.pwd <password>\nget wifi.enabled\n" \

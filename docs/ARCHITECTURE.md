@@ -915,7 +915,9 @@ GPS powers down and the live duty returns to `prefs.gps_interval` (`companion_gp
 main_companion.cpp). Tracking, nav and sos outrank geo. After a reboot
 tracking and nav are gone (runtime state) and the configured duty returns; geo persists (`prefs.geo_on`).
 The `wp save`/`geo save` pipeline is not a user: it force-leases the GPS for one fix and restores the
-exact prior state (ADR 0011).
+exact prior state (ADR 0011). The target slot is pinned when the save is requested — re-selecting
+points while the fix is pending (`wp <n>`, double-tap cycle) does not redirect the save, and a set
+name is never overwritten (only an unnamed `FREE` slot becomes `SAVED`).
 
 **Tracking deferred backlog (companion)**
 
