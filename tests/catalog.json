@@ -48,6 +48,11 @@
       "source": "tests/unit/helper_tests.cpp"
     },
     {
+      "id": "UNIT-GPSLEASE-001",
+      "name": "The save pipeline holds the GPS lease and one holder answers for the group",
+      "source": "tests/unit/helper_tests.cpp"
+    },
+    {
       "id": "UNIT-UI-002",
       "name": "Display timezone labels fit E-Paper rows and local epochs stay bounded",
       "source": "tests/unit/timezone_tests.cpp"

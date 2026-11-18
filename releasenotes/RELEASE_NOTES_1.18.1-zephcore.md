@@ -35,6 +35,13 @@ becomes 5).
   first seconds after the send. `0` means nobody repeated it yet, `-1` means the timestamp is
   unknown or the measurement already expired. One-shot — the stored send is consumed — and best
   queried a few seconds after sending.
+- **A point save no longer fights the other GPS users.** The save force-leases the GPS for its fix,
+  but the last feature to stop could switch the receiver off under it, and the save's restore of the
+  pre-save state could kill the GPS of a `tracking`/`nav`/`sos` that started while the fix was
+  pending. The save now counts as a GPS user and hands the receiver back to whoever needs it now.
+  `nav start` is refused while a save is running, the screen's save button does nothing while
+  navigating (as `wp save` already refused), and `gps off`/`set gps duty` are refused — naming the
+  user — while any of tracking, navigation, sos, a save or geo needs the receiver.
 - **`nav start` now announces itself over LoRa too.** With `nav telemetry on`, the start notice
   (`🚀 Начало навигации к точке` with the point line and, on a fresh fix, the distance line and a
   maps link) goes to the tracking group like the stop notice already did. Before, the first LoRa

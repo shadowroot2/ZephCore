@@ -27,6 +27,7 @@
 #include <CompanionCLIAudio.h>
 #include <CompanionSOSPolicy.h>
 #include <GpsSwitchPolicy.h>
+#include <GpsLease.h>
 #include <SendFeedbackIndex.h>
 #include <TrackingMessage.h>
 #include <GeoFence.h>
@@ -472,6 +473,18 @@ TEST(gps_switch_policy, "UNIT-UI-001", "A physical GPS switch overrides the save
 	CHECK(!gps_switch_effective_enabled(false, true, false));
 	CHECK(!gps_switch_effective_enabled(true, false, true));
 	CHECK(gps_switch_effective_enabled(true, true, false));
+}
+TEST(gps_lease_owner, "UNIT-GPSLEASE-001",
+     "The save pipeline holds the GPS lease and one holder answers for the group") {
+	CHECK(gps_lease_held_by(false, false, false, false, false) == GPS_LEASE_FREE);
+	/* The wp/geo save force-lease is a holder like any feature. */
+	CHECK(gps_lease_held_by(false, false, false, true, false) == GPS_LEASE_SAVE);
+	/* Priority order: tracking, nav, sos, save, geo. */
+	CHECK(gps_lease_held_by(true, true, true, true, true) == GPS_LEASE_TRACKING);
+	CHECK(gps_lease_held_by(false, true, true, true, true) == GPS_LEASE_NAV);
+	CHECK(gps_lease_held_by(false, false, true, true, true) == GPS_LEASE_SOS);
+	CHECK(gps_lease_held_by(false, false, false, true, true) == GPS_LEASE_SAVE);
+	CHECK(gps_lease_held_by(false, false, false, false, true) == GPS_LEASE_GEO);
 }
 TEST(battery_curve, "UNIT-BATTERY-001", "Battery endpoints interpolation multicell scaling and monotonicity") {
     CHECK(battery_curve_lookup(&battery_curve_default, 0) == 0);

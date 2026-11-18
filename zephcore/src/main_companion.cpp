@@ -78,6 +78,7 @@ LOG_MODULE_REGISTER(zephcore_main, CONFIG_ZEPHCORE_MAIN_LOG_LEVEL);
 #include <helpers/CompanionCLIAudio.h>
 #include <helpers/CompanionSOSPolicy.h>
 #include <helpers/GpsSwitchPolicy.h>
+#include <helpers/GpsLease.h>
 #include <helpers/TrackingMessage.h>
 #include <helpers/TrackingBacklog.h>
 #include <helpers/GeoFence.h>
@@ -1497,12 +1498,11 @@ static int64_t tracking_backlog_probe_ms = INT64_MAX;
 struct companion_home_state {
 	bool save_active;
 	bool nav_active;
-	bool gps_was_enabled;
+	bool save_keep_gps; /* GPS was on for manual use when the save leased it */
 	bool travel_has_last;
 	bool link_lost_sent;
 	uint8_t selected; /* 0..9; always 0 after boot */
 	uint8_t save_slot; /* target pinned when the save was requested */
-	uint32_t saved_duty_sec;
 	uint32_t save_started_ms;
 	struct nav_wrongway ww;
 	uint32_t ladder_ms;    /* last wrong-way sample (0 = prime on next fix) */
@@ -1526,25 +1526,30 @@ struct companion_geo_state {
 };
 static struct companion_geo_state companion_geo;
 
-/* A GPS user (tracking, nav, geo, sos) has just left. While one of the
- * higher-rank users remains, the GPS is left alone; while only geo remains,
+/* A GPS user (tracking, nav, geo, sos, save) has just left. While another
+ * holder of the lease remains, the GPS is left alone; while only geo remains,
  * its 500 s pin is re-asserted; with nobody left the GPS powers down and the
  * configured duty (prefs.gps_interval — never written by features) returns. */
 static void companion_gps_user_left(void)
 {
-	if (companion_tracking.enabled || companion_home.nav_active ||
-	    companion_sos.pending) {
-		return;
-	}
-	if (companion_geo.flags & GEO_FLAG_ENABLED) {
+	switch (gps_lease_held_by(companion_tracking.enabled,
+				  companion_home.nav_active,
+				  companion_sos.pending,
+				  companion_home.save_active,
+				  (companion_geo.flags & GEO_FLAG_ENABLED) != 0)) {
+	case GPS_LEASE_GEO:
 		if (!gps_is_enabled()) {
 			gps_enable(true);
 		}
 		gps_set_poll_interval_sec(GEO_DUTY_SEC);
-		return;
+		break;
+	case GPS_LEASE_FREE:
+		gps_set_poll_interval_sec(companion_mesh.prefs.gps_interval);
+		gps_enable(false);
+		break;
+	default:
+		break;
 	}
-	gps_set_poll_interval_sec(companion_mesh.prefs.gps_interval);
-	gps_enable(false);
 }
 
 static uint32_t companion_custom_ms_until_next(void)
@@ -1947,11 +1952,29 @@ extern "C" void companion_tracking_toggle_from_ui(void)
 }
 
 #if ZEPHCORE_HAS_GPS
+/* The save's lease is over (ADR 0011: the pipeline is not a user). A feature
+ * running now owns the GPS and configured it itself; with nobody left the GPS
+ * returns to the manual session it had before the lease, or powers down —
+ * whatever a feature churn during the save left underneath. */
 static void companion_home_restore_gps(void)
 {
-	gps_set_poll_interval_sec(companion_home.saved_duty_sec);
-	if (!companion_home.gps_was_enabled) {
-		gps_enable(false);
+	switch (gps_lease_held_by(companion_tracking.enabled,
+				  companion_home.nav_active,
+				  companion_sos.pending,
+				  false,
+				  (companion_geo.flags & GEO_FLAG_ENABLED) != 0)) {
+	case GPS_LEASE_GEO:
+		if (!gps_is_enabled()) {
+			gps_enable(true);
+		}
+		gps_set_poll_interval_sec(GEO_DUTY_SEC);
+		break;
+	case GPS_LEASE_FREE:
+		gps_set_poll_interval_sec(companion_mesh.prefs.gps_interval);
+		gps_enable(companion_home.save_keep_gps);
+		break;
+	default:
+		break;
 	}
 }
 
@@ -1960,8 +1983,14 @@ static void companion_home_start_save(bool geo_point)
 	if (companion_home.save_active) {
 		return;
 	}
-	companion_home.gps_was_enabled = gps_is_enabled();
-	companion_home.saved_duty_sec = gps_get_poll_interval_sec();
+	/* Remember a manual GPS session (nobody held the lease) so the save can
+	 * hand it back; a feature's receiver state is that feature's business. */
+	companion_home.save_keep_gps = gps_is_enabled() &&
+		gps_lease_held_by(companion_tracking.enabled,
+				 companion_home.nav_active,
+				 companion_sos.pending,
+				 false,
+				 (companion_geo.flags & GEO_FLAG_ENABLED) != 0) == GPS_LEASE_FREE;
 	companion_home.save_active = true;
 	companion_home.save_slot = companion_home.selected;
 	companion_home.save_started_ms = (uint32_t)k_uptime_get();
@@ -1971,9 +2000,7 @@ static void companion_home_start_save(bool geo_point)
 		companion_geo.flags &= (uint8_t)~GEO_FLAG_SAVE_IS_GEO;
 	}
 	gps_set_poll_interval_sec(0);
-	if (!companion_home.gps_was_enabled) {
-		gps_enable(true);
-	}
+	gps_enable(true);
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY) && IS_ENABLED(CONFIG_ZEPHCORE_UI_DESIGN_BUTTON)
 	if (!geo_point) {
 		ui_pages_set_home_status(HOME_STATUS_WAITING);
@@ -2115,6 +2142,10 @@ static void companion_nav_set_enabled(bool enabled, char *reply, bool announce =
 			strcpy(reply, "ERROR: GPS unavailable");
 			return;
 		}
+		if (companion_home.save_active) {
+			strcpy(reply, "ERROR: saving home point");
+			return;
+		}
 		companion_home.nav_active = true;
 		nav_wrongway_reset(&companion_home.ww);
 		companion_home.travel_m = 0;
@@ -2215,6 +2246,11 @@ static void companion_nav_set_enabled(bool enabled, char *reply, bool announce =
 extern "C" void companion_home_save_from_ui(void)
 {
 #if ZEPHCORE_HAS_GPS
+	/* The CLI refuses wp save while navigating; the UI button follows it —
+	 * the save would write the current position into the nav target. */
+	if (companion_home.nav_active) {
+		return;
+	}
 	companion_home_start_save(false);
 #endif
 }
@@ -2545,10 +2581,16 @@ static void companion_nav_link_check(void)
 
 #endif
 
+/* Manual GPS control (UI toggle, `gps off`, `set gps duty`) is legal only
+ * while the lease is free — every feature, save included, needs the receiver. */
 extern "C" bool companion_tracking_gps_control_allowed(void)
 {
 #if ZEPHCORE_HAS_GPS
-	return !companion_tracking.enabled;
+	return gps_lease_held_by(companion_tracking.enabled,
+				companion_home.nav_active,
+				companion_sos.pending,
+				companion_home.save_active,
+				(companion_geo.flags & GEO_FLAG_ENABLED) != 0) == GPS_LEASE_FREE;
 #else
 	return false;
 #endif
@@ -2982,12 +3024,6 @@ static bool handle_fall_cli(const char *line, char *reply)
 #if ZEPHCORE_HAS_GPS
 static bool handle_tracking_cli(const char *line, char *reply, bool silent)
 {
-	if (companion_tracking.enabled &&
-		(strcmp(line, "gps off") == 0 ||
-		 strncmp(line, "set gps duty ", 13) == 0)) {
-		strcpy(reply, "ERROR: tracking is active; use tracking off");
-		return true;
-	}
 	if (strcmp(line, "wp") == 0 || strncmp(line, "wp ", 3) == 0) {
 		if (strcmp(line, "wp clear") == 0) {
 			/* Point 1 (GPS HOME) is never renamed or reset. */
@@ -3354,12 +3390,6 @@ static bool handle_geo_cli(const char *line, char *reply)
 {
 	bool geo_on = (companion_geo.flags & GEO_FLAG_ENABLED) != 0;
 
-	if (geo_on &&
-	    (strcmp(line, "gps off") == 0 ||
-	     strncmp(line, "set gps duty ", 13) == 0)) {
-		strcpy(reply, "ERROR: geo is on; use geo off");
-		return true;
-	}
 	if (strcmp(line, "geo") == 0 || strcmp(line, "geo on") == 0 ||
 	    strcmp(line, "geo off") == 0) {
 		if (strcmp(line, "geo") != 0) {
@@ -3599,6 +3629,37 @@ static bool handle_pin_cli(const char *line, char *reply)
 static_assert(COMPANION_CLI_REPLY_SIZE == CLI_REPLY_SIZE,
 	      "companion CLI reply buffer must match CommonCLI reply size");
 
+#if ZEPHCORE_HAS_GPS
+/* `gps off` / `set gps duty` answer to the GPS lease holder; the refusal names
+ * it so the user knows what to turn off first. */
+static bool companion_gps_control_refused(char *reply)
+{
+	switch (gps_lease_held_by(companion_tracking.enabled,
+				  companion_home.nav_active,
+				  companion_sos.pending,
+				  companion_home.save_active,
+				  (companion_geo.flags & GEO_FLAG_ENABLED) != 0)) {
+	case GPS_LEASE_TRACKING:
+		strcpy(reply, "ERROR: tracking is active; use tracking off");
+		return true;
+	case GPS_LEASE_NAV:
+		strcpy(reply, "ERROR: navigation is on; use nav stop");
+		return true;
+	case GPS_LEASE_SOS:
+		strcpy(reply, "ERROR: sos is pending");
+		return true;
+	case GPS_LEASE_SAVE:
+		strcpy(reply, "ERROR: saving point");
+		return true;
+	case GPS_LEASE_GEO:
+		strcpy(reply, "ERROR: geo is on; use geo off");
+		return true;
+	default:
+		return false;
+	}
+}
+#endif
+
 static void companion_cli_notify(const char *line, const char *reply)
 {
 	const char *notice = nullptr;
@@ -3648,6 +3709,13 @@ static void companion_cli_exec(const char *line, uint32_t sender_timestamp,
 		strcpy(reply, "To confirm use shutdown y");
 		return;
 	}
+#if ZEPHCORE_HAS_GPS
+	if ((strcmp(line, "gps off") == 0 ||
+	     strncmp(line, "set gps duty ", 13) == 0) &&
+	    companion_gps_control_refused(reply)) {
+		return;
+	}
+#endif
 	if (strcmp(line, "shutdown y") == 0) line = "poweroff";
 	if (handle_uptime_cli(line, reply) || handle_tz_cli(line, reply) ||
 	    handle_send_heard_cli(line, reply)) return;

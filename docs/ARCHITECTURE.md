@@ -914,8 +914,13 @@ active, nothing is touched; when only geo remains, its 500 s pin is re-asserted;
 GPS powers down and the live duty returns to `prefs.gps_interval` (`companion_gps_user_left` in
 main_companion.cpp). Tracking, nav and sos outrank geo. After a reboot
 tracking and nav are gone (runtime state) and the configured duty returns; geo persists (`prefs.geo_on`).
-The `wp save`/`geo save` pipeline is not a user: it force-leases the GPS for one fix and restores the
-exact prior state (ADR 0011). The target slot is pinned when the save is requested — re-selecting
+The `wp save`/`geo save` pipeline is not a user: it force-leases the GPS for one fix and hands the
+receiver back to whoever holds the lease now (`helpers/GpsLease.h` — tracking, nav, sos, save, geo;
+UNIT-GPSLEASE-001). A feature that started while the save waited owns the GPS and configures it
+itself; with nobody left the GPS returns to the manual session it had before the lease (or powers
+down). `gps off`/`set gps duty` and the UI GPS toggle are legal only while the lease is free, and
+nav and the save pipeline are mutually exclusive (each refuses the other). The target slot is pinned
+when the save is requested — The target slot is pinned when the save is requested — re-selecting
 points while the fix is pending (`wp <n>`, double-tap cycle) does not redirect the save, and a set
 name is never overwritten (only an unnamed `FREE` slot becomes `SAVED`).
 
