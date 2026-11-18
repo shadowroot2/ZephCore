@@ -2155,6 +2155,21 @@ static void companion_nav_set_enabled(bool enabled, char *reply, bool announce =
 			}
 			companion_mesh.vcontactNotify(msg);
 		}
+		if (companion_mesh.prefs.nav_telemetry_enabled) {
+			char lora[MAX_TEXT_LEN + 1];
+			size_t name_prefix = strlen(companion_mesh.prefs.node_name) + 2;
+			size_t budget = ((size_t)MAX_TEXT_LEN > name_prefix ?
+					 MAX_TEXT_LEN - name_prefix : 0) + 1;
+			ChannelDetails tracks_channel;
+
+			companion_nav_format_notice(lora, budget,
+					"🚀 Начало навигации к точке");
+			if (companion_get_public_channel(
+				    companion_mesh.prefs.tracking_group_name,
+				    tracks_channel)) {
+				(void)companion_send_visible_group_message(tracks_channel, lora);
+			}
+		}
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
 		buzzer_play(MELODY_NAV_ON);
 #endif

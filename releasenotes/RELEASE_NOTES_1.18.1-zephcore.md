@@ -35,6 +35,10 @@ becomes 5).
   first seconds after the send. `0` means nobody repeated it yet, `-1` means the timestamp is
   unknown or the measurement already expired. One-shot — the stored send is consumed — and best
   queried a few seconds after sending.
+- **`nav start` now announces itself over LoRa too.** With `nav telemetry on`, the start notice
+  (`🚀 Начало навигации к точке` with the point line and, on a fresh fix, the distance line and a
+  maps link) goes to the tracking group like the stop notice already did. Before, the first LoRa
+  news of a trip was the periodic report.
 - **A tracking point that got through is no longer sent again.** The deferred re-send asked "did
   any neighbour repeat this flood?" 5 s after the send, but a repeat can land up to 10 s later:
   the answer was then "no" even though the receiver had the point, and the re-send arrived as a
