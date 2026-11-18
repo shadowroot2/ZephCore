@@ -76,7 +76,7 @@ struct NodePrefs {
 	/* ADR 0011 geofence fields sit in existing struct padding on purpose:
 	 * NodePrefs rides in the static mesh object and companion DRAM is full,
 	 * so it must not grow. Keep them in the holes if you touch this layout. */
-	uint32_t geo_lon_e7;
+	int32_t geo_lon_e7;
 	double node_lat, node_lon;
 	char password[16];
 	float freq;
@@ -216,7 +216,7 @@ struct NodePrefs {
 	uint16_t nav_telemetry_interval_min;
 	uint8_t fall_sensitivity;
 	uint8_t fall_enabled;
-	uint32_t geo_lat_e7; /* ADR 0011, padding hole — see geo_lon_e7 */
+	int32_t geo_lat_e7; /* ADR 0011, padding hole — see geo_lon_e7 */
 	/* GPS HOME waypoint list: slot 0 is always named GPS HOME and is the
 	 * default selection; names of slots 1..9 are theirs to keep or change. */
 	double home_lat[10];

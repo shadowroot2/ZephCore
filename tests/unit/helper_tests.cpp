@@ -376,6 +376,33 @@ TEST(geofence_fsm, "UNIT-GEO-001", "Exit fires on the first fix beyond, return a
 	/* Re-armed: the next beyond fix fires a second exit. */
 	CHECK(geofence_update(&g, 3100.0, 3000.0) == GEO_EVENT_EXIT);
 }
+TEST(geofence_small_radius, "UNIT-GEO-006",
+     "A minimum-radius zone keeps a return band and NaN points are refused") {
+	struct geofence_state g;
+	double lat, lon;
+
+	/* At GEO_RADIUS_M_MIN the 50 m hysteresis clamps to half the radius:
+	 * the return line sits at 25 m, not below zero. */
+	geofence_reset(&g);
+	CHECK(geofence_update(&g, 60.0, 50.0) == GEO_EVENT_EXIT);
+	CHECK(geofence_update(&g, 30.0, 50.0) == GEO_EVENT_NONE);
+	CHECK(geofence_update(&g, 25.0, 50.0) == GEO_EVENT_NONE);
+	CHECK(geofence_update(&g, 24.0, 50.0) == GEO_EVENT_REENTER);
+	/* Above twice the hysteresis the classic 50 m band stands. */
+	geofence_reset(&g);
+	CHECK(geofence_update(&g, 3100.0, 3000.0) == GEO_EVENT_EXIT);
+	CHECK(geofence_update(&g, 2960.0, 3000.0) == GEO_EVENT_NONE);
+	CHECK(geofence_update(&g, 2940.0, 3000.0) == GEO_EVENT_REENTER);
+	/* NaN/inf must not pass as coordinates. */
+	CHECK(!geofence_parse_point("nan,nan", &lat, &lon));
+	CHECK(!geofence_parse_point("-nan,76.9", &lat, &lon));
+	CHECK(!geofence_parse_point("43.2,nan", &lat, &lon));
+	CHECK(!geofence_parse_point("inf,76.9", &lat, &lon));
+	CHECK(!geofence_parse_point("43.2,-inf", &lat, &lon));
+	CHECK(geofence_parse_point("-33.87,151.21", &lat, &lon));
+	CHECK(lat < -33.8699 && lat > -33.8701);
+	CHECK(lon > 151.2099 && lon < 151.2101);
+}
 TEST(geofence_boot, "UNIT-GEO-005", "After boot the first fix reports the zone state exactly once") {
 	struct geofence_state g;
 	geofence_boot_arm(&g);

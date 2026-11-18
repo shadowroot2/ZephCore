@@ -967,7 +967,8 @@ point save is running. The toggle persists (`prefs.geo_on`): a stored `on` re-pi
 the first fix reports the zone state once (`geofence_boot_arm`). `geo save` is the `wp save` pipeline
 with a geo target. Evaluation is per fresh fix (age ≤ 30 s)
 on the main-thread fix event (`helpers/GeoFence.h`, host-tested): exit fires on the first fix
-beyond the radius, return on dropping below radius − 50 m, and each event fires once per state change.
+beyond the radius, return on dropping below radius − 50 m (hysteresis clamped to radius/2 under
+100 m, so a minimum-radius zone keeps a return band), and each event fires once per state change.
 Both alerts go to the tracking group as hidden LoRa messages (`sendGroupMessage` without the local
 queue — never in the sender's own group feed, no vContact path), formatted by `geofence_format_msg`.
 The geo prefs sit in NodePrefs padding holes on purpose — companion DRAM is full and the struct must

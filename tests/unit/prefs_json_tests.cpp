@@ -72,6 +72,9 @@ TEST(pjson_companion_roundtrip, "UNIT-PJSON-001", "Companion prefs survive prefs
     NodePrefs p = sample();
     MemStream s;
     CHECK(companionPrefsToJson(p, s));
+    // The geo point is signed: a west/south coordinate must not serialize wrapped.
+    CHECK(s.data.find("-192500000") != std::string::npos);
+    CHECK(s.data.find("4102467296") == std::string::npos);
     NodePrefs q = defaults();
     CHECK(companionPrefsFromJson(q, s));
     // Every field of the binary layout, as a legacy file migrated to JSON.

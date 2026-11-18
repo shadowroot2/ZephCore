@@ -42,6 +42,12 @@ becomes 5).
   `nav start` is refused while a save is running, the screen's save button does nothing while
   navigating (as `wp save` already refused), and `gps off`/`set gps duty` are refused — naming the
   user — while any of tracking, navigation, sos, a save or geo needs the receiver.
+- **The geofence works below the equator, on small radii and with garbage input.** The saved point
+  was stored unsigned, so a southern or western coordinate wrapped (a Sydney fence came out as
+  `395.62793`); the fields are signed now and old wrapped values read back correctly. At the 50 m
+  minimum radius the fixed 50 m return hysteresis left no return band at all — `✅ Вернулся в
+  геозону` could never fire — so the hysteresis now clamps to half the radius. `set geo.point
+  nan,nan` used to be accepted and corrupt the point; non-finite values are refused.
 - **`nav start` now announces itself over LoRa too.** With `nav telemetry on`, the start notice
   (`🚀 Начало навигации к точке` with the point line and, on a fresh fix, the distance line and a
   maps link) goes to the tracking group like the stop notice already did. Before, the first LoRa
