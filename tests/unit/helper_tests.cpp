@@ -247,6 +247,22 @@ TEST(companion_sos_cancel, "UNIT-SOS-001", "Only a pending manual SOS is button-
 	CHECK(!companion_sos_button_cancelable(true, true));
 	CHECK(std::strcmp(COMPANION_SOS_CANCELED_TEXT, "❌ SOS отменён") == 0);
 }
+TEST(companion_sos_final_and_fall_off, "UNIT-SOS-002",
+     "A refused final send retries on the waiting cadence and fall off reaches a ringing alarm") {
+	/* First final send goes out at once; after a refusal only the waiting
+	 * cadence allows another. */
+	CHECK(companion_sos_final_send_due(false, false));
+	CHECK(companion_sos_final_send_due(false, true));
+	CHECK(!companion_sos_final_send_due(true, false));
+	CHECK(companion_sos_final_send_due(true, true));
+	/* The alarm outlives the sos state (the final send clears it), so fall
+	 * off must see a ringing alarm even with no pending sos; a live pending
+	 * fall counts too, a replaced or finished sos does not. */
+	CHECK(companion_fall_off_live(true, false, false));
+	CHECK(companion_fall_off_live(false, true, true));
+	CHECK(!companion_fall_off_live(false, true, false));
+	CHECK(!companion_fall_off_live(false, false, false));
+}
 TEST(tracking_report_format, "UNIT-TRACK-001", "Tracking report carries speed and course only while moving") {
 	char buf[160];
 	tracking_format_report(buf, sizeof(buf), 55.75580, 37.61730, 3333, 45000);

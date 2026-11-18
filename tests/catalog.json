@@ -43,6 +43,11 @@
       "source": "tests/unit/helper_tests.cpp"
     },
     {
+      "id": "UNIT-SOS-002",
+      "name": "A refused final send retries on the waiting cadence and fall off reaches a ringing alarm",
+      "source": "tests/unit/helper_tests.cpp"
+    },
+    {
       "id": "UNIT-UI-001",
       "name": "A physical GPS switch overrides the saved startup state",
       "source": "tests/unit/helper_tests.cpp"

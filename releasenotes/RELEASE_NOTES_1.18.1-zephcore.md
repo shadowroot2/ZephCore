@@ -48,6 +48,12 @@ becomes 5).
   minimum radius the fixed 50 m return hysteresis left no return band at all — `✅ Вернулся в
   геозону` could never fire — so the hysteresis now clamps to half the radius. `set geo.point
   nan,nan` used to be accepted and corrupt the point; non-finite values are refused.
+- **A fall alarm can be stopped and its emergency message is never dropped.** `fall off` could not
+  stop a delivered fall's alarm (the guard looked at the sos state, which the final send already
+  cleared), so `MELODY_SOS` rang every 30 s forever; it now stops the alarm unconditionally and
+  cancels a live fall with `❌ Падение отменено` and a sound, like the button does. And when the
+  radio queue refused the final emergency message (pool empty, `#sos` missing) the state was wiped
+  and the coordinates lost — the send now retries every 30 s until it lands.
 - **`nav start` now announces itself over LoRa too.** With `nav telemetry on`, the start notice
   (`🚀 Начало навигации к точке` with the point line and, on a fresh fix, the distance line and a
   maps link) goes to the tracking group like the stop notice already did. Before, the first LoRa

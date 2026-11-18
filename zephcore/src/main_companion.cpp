@@ -896,6 +896,7 @@ enum companion_emergency_type {
 struct companion_sos_state {
 	bool pending;
 	bool silent;
+	bool final_failed; /* the last final send was refused; retry it */
 	enum companion_emergency_type type;
 	uint32_t started_ms;
 	uint32_t next_waiting_message_ms;
@@ -1276,6 +1277,15 @@ static bool companion_sos_finish(bool fresh_fix)
 {
 	bool success = companion_sos_send_now(fresh_fix);
 
+	if (!success) {
+		/* The emergency message is the point of the sequence: keep the
+		 * state and retry on the waiting cadence instead of dropping the
+		 * coordinates on the floor. */
+		companion_sos.final_failed = true;
+		companion_sos.next_waiting_message_ms = k_uptime_get_32() +
+			SOS_WAITING_REPEAT_MS;
+		return false;
+	}
 	/* SOS temporarily forces continuous acquisition; the last GPS user out
 	 * powers the GPS down (ADR 0011). */
 	memset(&companion_sos, 0, sizeof(companion_sos));
@@ -1429,7 +1439,13 @@ static void companion_sos_process(void)
 		pos.timestamp_ms > companion_sos.started_ms;
 	uint32_t elapsed_ms = k_uptime_get_32() - companion_sos.started_ms;
 	if (fresh_fix || elapsed_ms >= SOS_FIX_TIMEOUT_MS) {
-		companion_sos_finish(fresh_fix);
+		bool waiting_due = (int32_t)(now_ms -
+					    companion_sos.next_waiting_message_ms) >= 0;
+
+		if (companion_sos_final_send_due(companion_sos.final_failed,
+						waiting_due)) {
+			companion_sos_finish(fresh_fix);
+		}
 		return;
 	}
 
@@ -2984,9 +3000,20 @@ static bool handle_fall_cli(const char *line, char *reply)
 		fall_detector_set_enabled(false);
 		companion_mesh.prefs.fall_enabled = 0;
 		k_event_post(&mesh_events, MESH_EVENT_PREFS_DIRTY);
-		if (companion_sos.type == COMPANION_EMERGENCY_FALL) {
-			companion_fall_alarm_stop();
-			companion_fall_cancel_pending();
+		/* The alarm rings until acknowledged and outlives the sos state,
+		 * so fall off stops it unconditionally and speaks to whatever
+		 * fall emergency is still live. */
+		bool fall_live = companion_fall_off_live(
+			companion_fall_alarm_state.active, companion_sos.pending,
+			companion_sos.type == COMPANION_EMERGENCY_FALL);
+
+		companion_fall_alarm_stop();
+		companion_fall_cancel_pending();
+		if (fall_live) {
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
+			buzzer_play_force(MELODY_FALL_CANCELED);
+#endif
+			companion_send_fall_canceled_message();
 		}
 		strcpy(reply, "OK - fall off");
 		return true;
