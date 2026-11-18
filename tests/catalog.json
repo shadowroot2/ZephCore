@@ -728,6 +728,11 @@
       "source": "tests/unit/sensor_manager_tests.cpp"
     },
     {
+      "id": "UNIT-SENDIDX-001",
+      "name": "Send feedback index pops by timestamp and evicts oldest",
+      "source": "tests/unit/helper_tests.cpp"
+    },
+    {
       "id": "UNIT-TRACKBUF-001",
       "name": "Deferred points carry their time and a whole map link",
       "source": "tests/unit/tracking_backlog_tests.cpp"

@@ -27,6 +27,7 @@
 #include <CompanionCLIAudio.h>
 #include <CompanionSOSPolicy.h>
 #include <GpsSwitchPolicy.h>
+#include <SendFeedbackIndex.h>
 #include <TrackingMessage.h>
 #include <GeoFence.h>
 #include <RepeaterCLIHelp.h>
@@ -486,4 +487,28 @@ TEST(battery_curve, "UNIT-BATTERY-001", "Battery endpoints interpolation multice
         auto percent = battery_curve_lookup(&battery_curve_default, mv);
         CHECK(percent >= previous && percent <= 100); previous = percent;
     }
+}
+TEST(send_feedback_index, "UNIT-SENDIDX-001", "Send feedback index pops by timestamp and evicts oldest") {
+    SendFeedbackIndex idx;
+    uint32_t h = 999;
+    CHECK(!idx.pop(1, h));
+    idx.add(1, 111);
+    idx.add(2, 222);
+    idx.add(1, 333);
+    CHECK(idx.pop(1, h) && h == 111);
+    CHECK(idx.pop(1, h) && h == 333);
+    CHECK(!idx.pop(1, h));
+    CHECK(idx.pop(2, h) && h == 222);
+    CHECK(!idx.pop(2, h));
+    idx.add(10, 1000);
+    idx.add(11, 1001);
+    idx.add(12, 1002);
+    idx.add(13, 1003);
+    idx.add(14, 1004);
+    CHECK(!idx.pop(10, h));
+    CHECK(idx.pop(11, h) && h == 1001);
+    CHECK(idx.pop(12, h) && h == 1002);
+    CHECK(idx.pop(13, h) && h == 1003);
+    CHECK(idx.pop(14, h) && h == 1004);
+    CHECK(!idx.pop(11, h));
 }

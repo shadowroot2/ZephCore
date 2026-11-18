@@ -2056,7 +2056,9 @@ bool CompanionMesh::handleCmdSendChannelTxtMsg(const uint8_t *data, size_t len)
 		} else {
 			ChannelDetails ch;
 			if (getChannel(ch_idx, ch)) {
-				if (sendGroupMessage(msg_timestamp, ch.channel, prefs.node_name, text, text_len)) {
+				uint32_t hash;
+				if (sendGroupMessage(msg_timestamp, ch.channel, prefs.node_name, text, text_len, &hash)) {
+					_send_feedback.add(msg_timestamp, hash);
 					writeOKFrame();
 				} else {
 					writeErrFrame(ERR_BAD_STATE);
@@ -2067,6 +2069,29 @@ bool CompanionMesh::handleCmdSendChannelTxtMsg(const uint8_t *data, size_t len)
 		}
 		return true;
 	}
+}
+
+int CompanionMesh::queryChannelSendHeard(uint32_t ts)
+{
+	int total = 0;
+	bool found = false;
+	bool measured = false;
+	uint32_t hash;
+	while (_send_feedback.pop(ts, hash)) {
+		found = true;
+		int n = getContentionTracker().extractDupeCount(hash);
+		if (n < 0) {
+			continue;
+		}
+		measured = true;
+		if (n > 0) {
+			total += n;
+		}
+	}
+	if (!found || !measured) {
+		return -1;
+	}
+	return total;
 }
 
 bool CompanionMesh::handleCmdSendChannelData(const uint8_t *data, size_t len)

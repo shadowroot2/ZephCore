@@ -8,6 +8,7 @@
 #include <helpers/BaseChatMesh.h>
 #include <helpers/BaseSerialInterface.h>
 #include <helpers/MeshTimeSync.h>
+#include <helpers/SendFeedbackIndex.h>
 #include <helpers/TransportKeyStore.h>
 #include <ZephyrDataStore.h>
 #include <NodePrefs.h>
@@ -120,6 +121,13 @@ public:
 	void setCLICallback(CompanionCLICallback cb) { _cli_exec_cb = cb; }
 	void setCLIHelpCallback(CompanionCLIHelpCallback cb) { _cli_help_cb = cb; }
 	void setRemoteCLIHelpCallback(CompanionCLIHelpCallback cb) { _remote_cli_help_cb = cb; }
+
+	/* Heard-count for a channel send made from this companion (CLI
+	 * `send.heard <ts>`): sums the retransmit dupes ContentionTracker
+	 * recorded for the matching send, or -1 when the timestamp is unknown
+	 * or the measurement already expired. One-shot: the entries and the
+	 * dupe counts are consumed. */
+	int queryChannelSendHeard(uint32_t ts);
 
 	/* The companion CLI (upstream MyMesh::handleCommand). Front-ends: the app's
 	 * CMD_RUN_CLI_COMMAND and USB text console (local, sender_timestamp 0),
@@ -327,6 +335,8 @@ private:
 		bool active;
 	};
 	AckEntry _ack_table[ACK_TABLE_SIZE];
+
+	SendFeedbackIndex _send_feedback;
 
 	AdvertPath _advert_paths[ADVERT_PATH_TABLE_SIZE];
 

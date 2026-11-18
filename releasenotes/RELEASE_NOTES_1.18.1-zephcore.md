@@ -29,6 +29,12 @@ becomes 5).
   was up could write the coordinates into another slot and name that slot `SAVED`. The target is
   now pinned when the save starts. A name you set (say `2-HOME`) is never overwritten — only an
   unnamed `FREE` slot becomes `SAVED`.
+- **`send.heard <ts>` on a companion answers how many neighbours repeated a channel send.**
+  Send a channel message from a companion app, then ask `send.heard <ts>` with the message
+  timestamp the app sent: the reply `> <n>` is how many nodes retransmitted that flood in the
+  first seconds after the send. `0` means nobody repeated it yet, `-1` means the timestamp is
+  unknown or the measurement already expired. One-shot — the stored send is consumed — and best
+  queried a few seconds after sending.
 - **WiFi companions no longer freeze when the app stops reading.** If an app connected over WiFi
   stopped reading (for example in the middle of a contact sync), the node could stop answering on
   USB, Bluetooth and WiFi, and stay stuck as long as that connection stayed open. The node now

@@ -159,6 +159,7 @@ Regions control which flood packets the repeater forwards. The region tree is hi
 | Command | Description |
 |---------|-------------|
 | `clear stats` | Reset all statistics counters. Local-only on companion |
+| `send.heard <ts>` | *(ZephCore only, companion)* One-shot heard-count for a channel send with that message timestamp: `> <n>` is how many neighbours repeated the flood, `0` — nobody did yet, `-1` — unknown timestamp or the measurement already expired. Query a few seconds after the send (5 is a good window); the stored send and its count are consumed. Also `get send.heard <ts>`. Local-only |
 | `stats-core` | *(USB only)* Display core mesh statistics |
 | `stats-radio` | *(USB only)* Display radio statistics |
 | `stats-packets` | *(USB only)* Display packet statistics |
