@@ -62,9 +62,13 @@ public:
 	void setBackoffMultiplier(float m) { _backoff_multiplier = m; }
 	float getBackoffMultiplier() const { return _backoff_multiplier; }
 
+	/* Dupe observation window; covers SF12 2-hop. Public: a heard-verdict
+	 * (TrackingBacklog.h) may only ask once the window has closed, or a
+	 * repeat landing inside it is lost to extractDupeCount(). */
+	static constexpr uint32_t WINDOW_MS = 10000;
+
 private:
 	static constexpr int RING_SIZE = 24;              /* max concurrent tracked retransmits */
-	static constexpr uint32_t WINDOW_MS = 10000;      /* dupe observation window; covers SF12 2-hop */
 	static constexpr int EMA_SHIFT = 3;               /* alpha = 1/8 */
 	static constexpr int WARMUP_PACKETS = 4;          /* min samples before EMA is trusted */
 	static constexpr float MIN_FLOOD_FACTOR = 0.40f;  /* sparse mesh baseline */

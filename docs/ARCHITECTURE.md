@@ -928,7 +928,7 @@ Live reports keep their format while the ring is empty. The head is probed 2.5 m
 report — the whole ring drains before the report is due, so the scheduled point goes out live as
 always. A fresh point joins the tail only while older points wait, so a later report never overtakes
 an earlier one. A send's verdict is the ContentionTracker dupe
-count asked 5 s after the send (`extractDupeCount > 0` = heard, the joystick's criterion): heard drops
+count asked after the whole 10 s dupe window (`extractDupeCount > 0` = heard, the joystick's criterion): heard drops
 the points the message carried and the ring then flushes one message per 10 s; not heard keeps them
 and the head is probed again in the next report window (every 60 s while `tracking off`, so an ended
 session still flushes). The ring evicts the oldest of its 16 points (~80 min at the 5-minute minimum

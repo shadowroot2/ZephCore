@@ -22,7 +22,11 @@
 #include <TrackingMessage.h>
 
 #define TRACKING_BACKLOG_SLOTS 16
-#define TRACKING_BACKLOG_VERDICT_MS 5000
+/* The verdict must cover ContentionTracker's whole dupe window: it asks
+ * once (extractDupeCount finalizes the entry), so a deadline inside the
+ * window throws away repeats still to come — the point is then re-sent to
+ * a receiver that already got it. */
+#define TRACKING_BACKLOG_VERDICT_MS 10000
 #define TRACKING_BACKLOG_DRAIN_INTERVAL_MS 10000
 /* 2.5 min before the report: the whole ring drains in less, so the report
  * is due only once the backlog is out and goes live as always. */

@@ -746,6 +746,11 @@
       "id": "UNIT-TRACKBUF-003",
       "name": "The flush schedule: verdict after a send, probe and drain deadlines",
       "source": "tests/unit/tracking_backlog_tests.cpp"
+    },
+    {
+      "id": "UNIT-TRACKBUF-004",
+      "name": "The heard verdict waits out the whole dupe window",
+      "source": "tests/unit/tracking_backlog_tests.cpp"
     }
   ]
 }
