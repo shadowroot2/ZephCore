@@ -120,6 +120,14 @@ source "$(ZEPHYR_BASE)/subsys/logging/Kconfig.template.log_config"
 
 menu "ZephCore"
 
+config ZEPHCORE_NO_GPS
+	bool "Build without GPS features"
+	default n
+	help
+	  Kill switch for everything GPS: the gps/lat/lon CLI family, nav, geo,
+	  tracking and the GPS screens disappear from the build (companion and
+	  server roles alike). Use for nodes that go out without a GNSS module.
+
 config ZEPHCORE_QSPI_RDID_PROBE
 	bool "QSPI flash bring-up probe"
 	help
@@ -380,6 +388,21 @@ config ZEPHCORE_MAX_CONTACTS
 	help
 	  Maximum number of contacts that can be stored.
 
+config ZEPHCORE_REMOTE_POINT_SAVE_CLI
+	bool "Remote CLI accepts wp save and geo save"
+	default n
+	help
+	  Let a remote CLI contact run the point saves (wp save, geo save).
+	  They stay local-only everywhere else; the M3-MAMA profile opts in.
+
+config ZEPHCORE_POWER_ANNOUNCE
+	bool "Announce power on and power off on the tracking group"
+	default n
+	help
+	  Send a short notice to the tracking group when the node powers on
+	  (right after the boot advert) and just before it powers off. The
+	  M3-MAMA profile opts in.
+
 config ZEPHCORE_MAX_CHANNELS
 	int "Maximum number of channels"
 	default 40
@@ -388,10 +411,12 @@ config ZEPHCORE_MAX_CHANNELS
 
 config ZEPHCORE_OFFLINE_QUEUE_SIZE
 	int "Offline message queue size"
-	default 256
+	default 128
 	help
-	  Size of the offline message queue for incoming messages.
-	  Arduino MeshCore uses 256 for both T1000-E and Wio Tracker.
+	  Size of the offline message queue for messages waiting for the app.
+	  173 bytes of DRAM per slot. Arduino MeshCore uses 256; 128 is still
+	  more undelivered messages than a reconnect drains comfortably and
+	  frees 22 KB on DRAM-bound companions. Boards may override.
 
 config ZEPHCORE_ACK_TABLE_SIZE
 	int "ACK tracking table size"
@@ -1295,6 +1320,16 @@ config ZEPHCORE_UI_DISPLAY_AUTO_OFF_MS
 	help
 	  Time in milliseconds before the display turns off
 	  after the last user interaction. Set to 0 to disable.
+
+config ZEPHCORE_NAV_HOLD_BACKLIGHT
+	bool "Keep the display backlight on while navigating"
+	default y
+	depends on ZEPHCORE_UI_DISPLAY
+	help
+	  Pin the display (and its backlight) on for the whole navigation
+	  session: the auto-off timer stays disarmed until nav off or the
+	  arrival auto-STOP. A board that wants its frontlight to follow
+	  the usual auto-off during nav (T-Echo, battery) sets this to n.
 
 config ZEPHCORE_UI_TIME_SOURCE_FRESH_HOURS
 	int "Clock source tag freshness window (hours)"

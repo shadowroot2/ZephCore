@@ -14,9 +14,13 @@
 #else
 #define REPEATER_HELP_HAS_DISPLAY_ROTATE 0
 #endif
+#ifdef CONFIG_ZEPHCORE_NO_GPS
+#define REPEATER_HELP_HAS_GNSS 0
+#else
 #define REPEATER_HELP_HAS_GNSS (DT_HAS_COMPAT_STATUS_OKAY(gnss_nmea_generic) || \
 	DT_HAS_COMPAT_STATUS_OKAY(quectel_lc76g) || \
 	DT_HAS_COMPAT_STATUS_OKAY(luatos_air530z))
+#endif
 #define REPEATER_HELP_HAS_ADC (DT_NODE_EXISTS(DT_PATH(zephyr_user)) && \
 	DT_NODE_HAS_PROP(DT_PATH(zephyr_user), io_channels))
 #define REPEATER_HELP_HAS_FEM DT_NODE_HAS_PROP(DT_ALIAS(lora0), lna_bypass_gpios)

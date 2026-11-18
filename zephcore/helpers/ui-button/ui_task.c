@@ -176,6 +176,139 @@ static struct k_work_delayable render_work;
 static struct k_work_delayable splash_work;
 /* Deferred zero-hop advert — waits for possible double-press upgrade to flood */
 static struct k_work_delayable advert_defer_work;
+/* ZEPHCORE: GPS HOME press timing and the 5 s navigation repaint. */
+#define HOME_HOLD_MS 1000U
+/* Save confirm window runs from the hold trigger while the finger is still
+ * down, so the double-press window is too tight for hold → release → tap. */
+#define HOME_SAVE_CONFIRM_MS 3000U
+#define HOME_DOUBLE_MS 500U
+#define HOME_NAV_REFRESH_MS 5000U
+/* One action button (ENTER_FROM_HOLD in ui_pages.h): its NAV map is tap =
+ * page, 2 taps = waypoint, hold = GO!, hold of HOME_SAVE_HOLD_MS = save.
+ * The ENTER press arrives after long_delay_ms, which the hold work subtracts
+ * to keep the physical threshold. */
+#define HOME_SAVE_HOLD_MS 5000U
+#define LONGPRESS_DELAY_MS \
+	DT_PROP_OR(DT_COMPAT_GET_ANY_STATUS_OKAY(zephyr_input_longpress), long_delay_ms, 1000U)
+#define HOME_HOLD_DELAY_MS ((ENTER_FROM_HOLD) ? \
+	(HOME_SAVE_HOLD_MS - LONGPRESS_DELAY_MS) : HOME_HOLD_MS)
+/* T1000-E style SOS: tap arms a window, hold in the window starts SOS. */
+#define SOS_ARM_WINDOW_MS 3000U
+static uint32_t sos_arm_until;
+static uint32_t sos_confirm_until; /* one-button SOS: second hold inside it sends */
+static uint32_t enter_press_at;
+static bool enter_captured;
+static bool home_press_active;
+static bool nav_refresh_on;
+static struct k_work_delayable nav_refresh_work;
+#if !ENTER_FROM_HOLD
+static struct k_work_delayable home_defer_work;
+#endif
+
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
+static struct k_work_delayable home_hold_work;
+
+static void home_hold_handler(struct k_work *work)
+{
+	ARG_UNUSED(work);
+	/* Still holding at the threshold. A point being walked to cannot be
+	 * overwritten. One-button boards save right away — the hold is the
+	 * confirmation; boards with a short ENTER arm the Confirm SAVE step. */
+	struct ui_state *st = get_state();
+
+	/* The first page reuses the threshold as the SOS launch arm: the
+	 * short press after the hold sends (the Confirm SAVE shape). */
+	if (ui_pages_current() == UI_PAGE_MESSAGES) {
+		sos_arm_until = k_uptime_get_32() + SOS_ARM_WINDOW_MS;
+		return;
+	}
+	if (st->nav_active) {
+		return;
+	}
+	if (ENTER_FROM_HOLD) {
+		mesh_home_save_request();
+	} else {
+		st->home_save_confirm = k_uptime_get_32();
+	}
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
+	buzzer_play(MELODY_ACK);
+#endif
+	ui_request_render_now();
+}
+
+#if !ENTER_FROM_HOLD
+static void home_defer_handler(struct k_work *work)
+{
+	ARG_UNUSED(work);
+	/* Single-press timeout on the GPS HOME page: toggle navigation. */
+	mesh_nav_toggle();
+	ui_request_render_now();
+}
+#endif
+#endif
+
+static void nav_refresh_work_handler(struct k_work *work)
+{
+	ARG_UNUSED(work);
+	if (!nav_refresh_on) {
+		return;
+	}
+	/* Repaint only while the NAV page is up — with or without navigation.
+	 * Off-screen the data still refreshes on return. */
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
+	if (ui_pages_current() == UI_PAGE_GPS_HOME) {
+		ui_request_render();
+	}
+#endif
+	k_work_reschedule(&nav_refresh_work, K_MSEC(HOME_NAV_REFRESH_MS));
+}
+
+void ui_home_refresh_set(bool on)
+{
+	nav_refresh_on = on;
+	if (on) {
+		k_work_reschedule(&nav_refresh_work, K_NO_WAIT);
+	} else {
+		k_work_cancel_delayable(&nav_refresh_work);
+	}
+}
+
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
+/* Display-less boards (T1000-E, M3) keep their gesture map: none of the
+ * GPS HOME press handling below is compiled for them. */
+static void action_home_key_short(void)
+{
+#if ENTER_FROM_HOLD
+	/* No double press exists: a short hold toggles navigation. */
+	mesh_nav_toggle();
+	ui_request_render_now();
+#else
+	struct ui_state *st = get_state();
+	uint32_t now = k_uptime_get_32();
+
+	if (st->home_save_confirm != 0 &&
+	    (int32_t)(now - st->home_save_confirm) <= HOME_SAVE_CONFIRM_MS) {
+		/* One short press confirms the save started by the hold. */
+		st->home_save_confirm = 0;
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
+		buzzer_play(MELODY_ACK);
+#endif
+		mesh_home_save_request();
+		ui_request_render_now();
+		return;
+	}
+	st->home_save_confirm = 0;
+	if (k_work_delayable_is_pending(&home_defer_work)) {
+		/* Double press: cycle the waypoints instead. */
+		k_work_cancel_delayable(&home_defer_work);
+		mesh_wp_cycle();
+	} else {
+		k_work_reschedule(&home_defer_work, K_MSEC(HOME_DOUBLE_MS));
+	}
+	ui_request_render_now();
+#endif
+}
+#endif /* CONFIG_ZEPHCORE_UI_DISPLAY */
 
 static void action_flood_advert(unsigned int feedback_beeps);
 
@@ -295,6 +428,15 @@ void ui_request_render(void)
 {
 	if (ui_initialized) {
 		schedule_render();
+	}
+}
+
+void ui_request_render_now(void)
+{
+	/* No debounce: gesture feedback on E-Paper must not wait behind
+	 * the coalescing delay. */
+	if (ui_initialized) {
+		k_work_reschedule(&render_work, K_NO_WAIT);
 	}
 }
 
@@ -526,6 +668,10 @@ static void action_sos(void)
 		schedule_render();
 		return;
 	}
+	if (ENTER_FROM_HOLD) {
+		/* One action button: SOS sends from the first page only. */
+		return;
+	}
 
 	LOG_INF("SOS requested");
 	mesh_send_sos();
@@ -616,6 +762,17 @@ static void action_wifi_toggle(void)
 }
 #endif
 
+static void play_dfu_enter_melody(void)
+{
+#ifdef CONFIG_ZEPHCORE_UI_BUZZER
+	buzzer_play(MELODY_DFU_ENTER);
+	while (buzzer_is_playing()) {
+		k_sleep(K_MSEC(50));
+	}
+	buzzer_stop();
+#endif
+}
+
 #ifdef CONFIG_ZEPHCORE_UI_DISPLAY
 static void action_ble_toggle(void)
 {
@@ -632,13 +789,7 @@ static void action_enter_dfu(void)
 {
 	LOG_INF("update action: %s", UI_DFU_ACTION_LABEL);
 
-#ifdef CONFIG_ZEPHCORE_UI_BUZZER
-	buzzer_play(MELODY_SHUTDOWN);
-	while (buzzer_is_playing()) {
-		k_sleep(K_MSEC(50));
-	}
-	buzzer_stop();
-#endif
+	play_dfu_enter_melody();
 
 #if UI_UPDATE_DFU
 	mesh_reboot_to_dfu();
@@ -793,6 +944,39 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 
 	/* Only handle key press events (value=1), not releases (value=0) */
 	if (!evt->value) {
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
+		/* ZEPHCORE: GPS HOME measures the press — short toggles
+		 * navigation, a hold of HOME_HOLD_MS arms the save confirm.
+		 * The first page reuses the measure for the SOS launch: the
+		 * hold arms (home_hold_handler), the short press sends. */
+		if (code == INPUT_KEY_ENTER && home_press_active &&
+		    (ui_pages_current() == UI_PAGE_GPS_HOME ||
+		     ui_pages_current() == UI_PAGE_MESSAGES)) {
+			home_press_active = false;
+			if (!k_work_delayable_is_pending(&home_hold_work)) {
+				/* Hold already fired; the release ends it. */
+				return;
+			}
+			k_work_cancel_delayable(&home_hold_work);
+			if (ui_pages_current() == UI_PAGE_MESSAGES) {
+				if ((int32_t)(sos_arm_until - k_uptime_get_32()) > 0) {
+					sos_arm_until = 0;
+					mesh_send_sos();
+				} else if (!mesh_sos_cancel_if_active()) {
+					action_page_enter();
+				}
+			} else {
+				action_home_key_short();
+			}
+		}
+		if (code == INPUT_KEY_ENTER && enter_captured) {
+			enter_captured = false;
+			uint32_t held = k_uptime_get_32() - enter_press_at;
+			if (held < HOME_HOLD_MS && !mesh_sos_cancel_if_active()) {
+				action_page_enter();
+			}
+		}
+#endif
 		return;
 	}
 
@@ -908,6 +1092,13 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 		}
 #endif
 #endif
+#if defined(CONFIG_ZEPHCORE_CLI_DFU)
+		if (ui_external_power_present()) {
+			play_dfu_enter_melody();
+			zephcore_reboot_to_bootloader();
+			break;
+		}
+#endif
 		ui_shutdown();
 		break;
 
@@ -917,10 +1108,65 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 		break;
 
 	case INPUT_KEY_LEFT:
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
+		/* 2 taps of the one button: cycle the waypoints on the NAV page. */
+		if (ENTER_FROM_HOLD && ui_pages_current() == UI_PAGE_GPS_HOME) {
+			mesh_wp_cycle();
+			break;
+		}
+#endif
 		action_page_prev();
 		break;
 
 	case INPUT_KEY_ENTER:
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
+		if (ui_pages_current() == UI_PAGE_GPS_HOME) {
+			/* The hold threshold fires while the key is still down. */
+			home_press_active = true;
+			k_work_reschedule(&home_hold_work, K_MSEC(HOME_HOLD_DELAY_MS));
+			break;
+		}
+		if (ENTER_FROM_HOLD) {
+			/* One action button: no tap-then-hold window to shadow the
+			 * DFU/offgrid confirmations. SOS sends from the first
+			 * page only — one hold arms, the next hold inside the
+			 * confirm window sends. */
+			if (companion_sos_cancel_available()) {
+				enter_press_at = k_uptime_get_32();
+				enter_captured = true;
+				break;
+			}
+			if (ui_pages_current() == UI_PAGE_MESSAGES) {
+				if ((int32_t)(k_uptime_get_32() - sos_confirm_until) < 0) {
+					sos_confirm_until = 0;
+					LOG_INF("SOS requested");
+					mesh_send_sos();
+				} else {
+					sos_confirm_until = k_uptime_get_32() +
+						CONFIG_ZEPHCORE_UI_CONFIRM_WINDOW_MS;
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
+					buzzer_play(MELODY_ACK);
+#endif
+				}
+				break;
+			}
+			action_page_enter();
+			break;
+		}
+		/* ZEPHCORE: the first page measures the action press too — a
+		 * hold of HOME_HOLD_MS arms the SOS launch (home_hold_handler),
+		 * the short press after it sends. */
+		if (ui_pages_current() == UI_PAGE_MESSAGES) {
+			home_press_active = true;
+			k_work_reschedule(&home_hold_work, K_MSEC(HOME_HOLD_DELAY_MS));
+			break;
+		}
+		if (companion_sos_cancel_available()) {
+			enter_press_at = k_uptime_get_32();
+			enter_captured = true;
+			break;
+		}
+#endif
 		action_page_enter();
 		break;
 
@@ -946,6 +1192,15 @@ int ui_init(void)
 	k_work_init_delayable(&render_work, render_work_handler);
 	k_work_init_delayable(&splash_work, splash_work_handler);
 	k_work_init_delayable(&advert_defer_work, advert_defer_handler);
+	k_work_init_delayable(&nav_refresh_work, nav_refresh_work_handler);
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
+#if !ENTER_FROM_HOLD
+	k_work_init_delayable(&home_defer_work, home_defer_handler);
+#endif
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
+	k_work_init_delayable(&home_hold_work, home_hold_handler);
+#endif
+#endif
 #ifdef ZEPHCORE_HEADLESS_ADVERT_GESTURE
 	k_work_init_delayable(&headless_single_action_work, headless_single_action_handler);
 #endif
@@ -1078,6 +1333,11 @@ void ui_notify(enum ui_event event)
 
 	if (is_msg_event && !get_state()->app_connected) {
 		ui_led_flash_msg();
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY) && !IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
+		/* No buzzer to announce a message (e-paper T-Echo): flash the
+		 * backlight twice so it is noticeable without a phone. */
+		mc_display_backlight_blink(2);
+#endif
 	}
 
 	/* Wake display on non-message notifications (app connect/disconnect etc).

@@ -436,15 +436,26 @@ static void retry_in_flight_tx()
 	k_spin_unlock(&s_tx_lock, key);
 }
 
+static void remember_le_conn(struct bt_conn *conn, void *user_data)
+{
+	struct bt_conn **out = static_cast<struct bt_conn **>(user_data);
+	if (*out) return;
+	*out = bt_conn_ref(conn);
+}
+
+/* BT_MAX_CONN=1: the one LE conn object is the bridge peer whatever address
+ * form it used to connect.  An identity lookup misses an unresolved RPA. */
+static struct bt_conn *peer_conn_lookup()
+{
+	struct bt_conn *conn = link_conn_ref(false, false, nullptr, nullptr);
+	if (conn) return conn;
+	bt_conn_foreach(BT_CONN_TYPE_LE, remember_le_conn, &conn);
+	return conn;
+}
+
 static void cancel_pending_connection()
 {
-	bt_addr_le_t peer;
-	k_spinlock_key_t key = k_spin_lock(&s_prefs_lock);
-	peer.type = s_prefs.peer_addr_type;
-	memcpy(peer.a.val, s_prefs.peer_mac, sizeof(peer.a.val));
-	k_spin_unlock(&s_prefs_lock, key);
-	struct bt_conn *conn = link_conn_ref(false, false, nullptr, nullptr);
-	if (!conn) conn = bt_conn_lookup_addr_le(BT_ID_DEFAULT, &peer);
+	struct bt_conn *conn = peer_conn_lookup();
 	if (conn) {
 		/* bt_conn_disconnect also cancels a pending LE create operation. */
 		(void)bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
@@ -454,12 +465,7 @@ static void cancel_pending_connection()
 
 static bool peer_acl_present()
 {
-	bt_addr_le_t peer;
-	k_spinlock_key_t key = k_spin_lock(&s_prefs_lock);
-	peer.type = s_prefs.peer_addr_type;
-	memcpy(peer.a.val, s_prefs.peer_mac, sizeof(peer.a.val));
-	k_spin_unlock(&s_prefs_lock, key);
-	struct bt_conn *conn = bt_conn_lookup_addr_le(BT_ID_DEFAULT, &peer);
+	struct bt_conn *conn = peer_conn_lookup();
 	if (!conn) return false;
 	bt_conn_unref(conn);
 	return true;
@@ -1259,13 +1265,22 @@ static void connected(struct bt_conn *conn, uint8_t err)
 		return;
 	}
 	if (!connection_is_peer(conn)) {
-		bridge_log(BRIDGE_LOG_FOREIGN, bt_conn_get_dst(conn) ? bt_conn_get_dst(conn)->type : -1);
-		/* Connectable advertising stops as soon as any central connects.  Do
-		 * not let a Configurator or scanner permanently hide the peripheral. */
-		if (!atomic_get(&s_is_central)) atomic_set(&s_adv_running, 0);
-		atomic_set(&s_last_fault, BRIDGE_FAULT_PEER);
-		bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
-		return;
+		/* A privacy-enabled peer (ESP32 bridge central) connects with an RPA
+		 * that only resolves once its IRK is in our bond.  Before the first
+		 * SMP exchange there is no IRK here, so accept an RPA contact on
+		 * probation: pairing_complete() checks it against the configured peer
+		 * once SMP has distributed the identity.  A non-RPA address that is
+		 * not the configured peer is foreign. */
+		const bt_addr_le_t *unknown = bt_conn_get_dst(conn);
+		if (!unknown || !bt_addr_le_is_rpa(unknown)) {
+			bridge_log(BRIDGE_LOG_FOREIGN, unknown ? unknown->type : -1);
+			/* Connectable advertising stops as soon as any central connects.  Do
+			 * not let a Configurator or scanner permanently hide the peripheral. */
+			if (!atomic_get(&s_is_central)) atomic_set(&s_adv_running, 0);
+			atomic_set(&s_last_fault, BRIDGE_FAULT_PEER);
+			bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+			return;
+		}
 	}
 	const bt_addr_le_t *dst = bt_conn_get_dst(conn);
 	const bool had_bond = dst && bridge_bonds(*dst).peer_match;
@@ -1410,9 +1425,26 @@ static void pairing_complete(struct bt_conn *conn, bool bonded)
 		bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
 		return;
 	}
+	/* The bond this pairing just wrote outranks a recovery queued for an
+	 * earlier failed SMP attempt; clearing the flag keeps it alive.  The
+	 * cooldown gate re-arms so a verification failure below can still
+	 * request a fresh recovery. */
+	atomic_set(&s_bond_recovery_pending, 0);
 	k_spinlock_key_t key = k_spin_lock(&s_state_lock);
+	atomic_set(&s_bond_recovery_attempted, 0);
+	s_bond_recovery_retry_at_ms = 0;
 	s_pairing_complete = true;
 	k_spin_unlock(&s_state_lock, key);
+	/* Pairing distributed the peer identity, so an RPA contact has either
+	 * become the configured peer or must be dropped together with the bond
+	 * it created: CONFIG_BT_MAX_PAIRED=1 keeps the real peer out otherwise. */
+	if (!connection_is_peer(conn)) {
+		bridge_log(BRIDGE_LOG_FOREIGN, bt_conn_get_dst(conn) ? bt_conn_get_dst(conn)->type : -1);
+		atomic_set(&s_last_fault, BRIDGE_FAULT_PEER);
+		queue_peer_bond_recovery(BT_SECURITY_ERR_AUTH_FAIL);
+		reset_link(conn);
+		return;
+	}
 	if (s_dispatcher) s_dispatcher->notifyWake();
 }
 

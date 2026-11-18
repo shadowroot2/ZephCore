@@ -8,10 +8,17 @@
 	chosen {
 		zephyr,console = &cdc_acm_uart;
 		zephyr,shell-uart = &cdc_acm_uart;
+		zephyr,entropy = &rng;
 	};
 
 	aliases {
 		lora0 = &lora;
+	};
+
+	/* RP2040 has no TRNG: pico_rand (ROSC bits + timer + RAM-hash seed) is
+	 * the board's entropy source, via drivers/entropy/entropy_rpi_pico.c. */
+	rng: rng {
+		compatible = "raspberrypi,pico-rng";
 	};
 
 	zephyr,user {
@@ -54,7 +61,6 @@
 		busy-gpios = <&gpio0 2 GPIO_ACTIVE_HIGH>;
 		dio1-gpios = <&gpio0 20 (GPIO_PULL_DOWN | GPIO_ACTIVE_HIGH)>;
 
-		startup-delay-ms = <10>;
 		dio2-tx-enable;
 		dio3-tcxo-voltage = <SX126X_DIO3_TCXO_1V8>;
 		tcxo-power-startup-delay-ms = <10>;
@@ -98,6 +104,7 @@
 &flash0 {
 	partitions {
 		lfs_partition: partition@180000 {
+			compatible = "zephyr,mapped-partition";
 			label = "lfs";
 			reg = <0x00180000 0x00080000>;
 		};

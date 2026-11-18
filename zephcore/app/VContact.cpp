@@ -282,8 +282,8 @@ bool CompanionMesh::vcontactHandleFrame(const uint8_t *data, size_t len)
 
 			if (!dup) {
 				LOG_INF("vcontact inbound text ignored: '%s'", line);
-				vcontactQueueText("Please use the Command Line in Settings. "
-						  "This chat is for notifications only.");
+				vcontactQueueText("Этот чат только для уведомлений! "
+						  "Используйте командную строку в настройках.");
 			} else {
 				LOG_DBG("vcontact text: dup ts=%u, re-ack only", msg_timestamp);
 			}

@@ -9,6 +9,7 @@
 #pragma once
 
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 #include "LoRaConfig.h"
 
@@ -19,6 +20,9 @@
 
 /* TZ_OFFSET_MIN / TZ_OFFSET_MAX and the quarter-hour helpers for tz_offset. */
 #include "tz_offset.h"
+
+/* GEO_RADIUS_M_* bounds and the geofence defaults (ADR 0011). */
+#include "GeoFence.h"
 
 /* ── Accepted radio parameter ranges ──
  * One definition for everything that accepts or validates a radio preset
@@ -69,6 +73,10 @@ struct NodePrefs {
 	/* ---- Common fields (both roles) ---- */
 	float airtime_factor;
 	char node_name[32];
+	/* ADR 0011 geofence fields sit in existing struct padding on purpose:
+	 * NodePrefs rides in the static mesh object and companion DRAM is full,
+	 * so it must not grow. Keep them in the holes if you touch this layout. */
+	uint32_t geo_lon_e7;
 	double node_lat, node_lon;
 	char password[16];
 	float freq;
@@ -203,8 +211,33 @@ struct NodePrefs {
 	uint8_t auto_shutdown_emergency;
 	uint16_t tracking_interval_minutes;
 	char tracking_group_name[32];
+	uint16_t nav_report_interval_min;  /* ZEPHCORE: NAV vContact report cadence */
+	uint8_t nav_telemetry_enabled;     /* ZEPHCORE: NAV LoRa reports to the tracking group */
+	uint16_t nav_telemetry_interval_min;
 	uint8_t fall_sensitivity;
 	uint8_t fall_enabled;
+	uint32_t geo_lat_e7; /* ADR 0011, padding hole — see geo_lon_e7 */
+	/* GPS HOME waypoint list: slot 0 is always named GPS HOME and is the
+	 * default selection; names of slots 1..9 are theirs to keep or change. */
+	double home_lat[10];
+	double home_lon[10];
+	uint8_t home_saved[10];
+	char home_name[10][12];
+	/* ADR 0011, tail padding — see geo_lon_e7. geo_radius_m is meters,
+	 * 0 on flash means "unset" (defaulted); geo_on persists the toggle. The
+	 * last-in/out stamps (unix seconds, 0 = none) live after the tail pad —
+	 * the struct grew by 8 B once the offline-queue cut freed the DRAM. */
+	uint16_t geo_radius_m;
+	uint8_t geo_saved;
+	uint8_t geo_on;
+	uint32_t geo_last_in_utc;
+	uint32_t geo_last_out_utc;
+	/* geo log day stats: UTC day number (epoch/86400), seconds outside the
+	 * zone that day, and the in/out event counters. */
+	uint32_t geo_stat_day;
+	uint32_t geo_out_sec;
+	uint16_t geo_stat_in;
+	uint16_t geo_stat_out;
 };
 
 /* Range guards for prefs that came off flash: a blob can be intact and
@@ -296,6 +329,26 @@ static inline void sanitizeNodePrefs(NodePrefs* p) {
 	p->backoff_multiplier = sanePrefFloat(p->backoff_multiplier, 0.0f, 2.0f, 0.2f);
 	p->node_lat = sanePrefFloat(p->node_lat, -90.0, 90.0, 0.0);
 	p->node_lon = sanePrefFloat(p->node_lon, -180.0, 180.0, 0.0);
+	for (int i = 0; i < 10; i++) {
+		p->home_lat[i] = sanePrefFloat(p->home_lat[i], -90.0, 90.0, 0.0);
+		p->home_lon[i] = sanePrefFloat(p->home_lon[i], -180.0, 180.0, 0.0);
+		p->home_saved[i] = p->home_saved[i] ? 1 : 0;
+		p->home_name[i][sizeof(p->home_name[i]) - 1] = '\0';
+	}
+	strcpy(p->home_name[0], "GPS HOME");
+	p->geo_lat_e7 = clampPref<int32_t>(p->geo_lat_e7, -900000000, 900000000);
+	p->geo_lon_e7 = clampPref<int32_t>(p->geo_lon_e7, -1800000000, 1800000000);
+	p->geo_saved = p->geo_saved ? 1 : 0;
+	p->geo_on = p->geo_on ? 1 : 0;
+	/* 0 means "unset", so it falls back to the default zone rather than to
+	 * the clamp floor. */
+	if (p->geo_radius_m == 0) {
+		p->geo_radius_m = GEO_RADIUS_M_DEFAULT;
+	} else {
+		p->geo_radius_m = clampPref<uint16_t>(p->geo_radius_m,
+						     GEO_RADIUS_M_MIN,
+						     GEO_RADIUS_M_MAX);
+	}
 
 	p->cr           = clampPref<uint8_t>(p->cr, 5, 8);
 	p->tx_power_dbm = clampPref<int8_t>(p->tx_power_dbm, -9, 30);
@@ -374,6 +427,11 @@ static inline void sanitizeNodePrefs(NodePrefs* p) {
 #endif
 	}
 	if (p->tracking_interval_minutes < 5) p->tracking_interval_minutes = 10;
+	/* 0 = off: no vContact nav notices at all. */
+	if (p->nav_report_interval_min > 1440) {
+		p->nav_report_interval_min = 1;
+	}
+	if (p->nav_telemetry_interval_min < 5) p->nav_telemetry_interval_min = 10;
 	if (p->fall_sensitivity < 1 || p->fall_sensitivity > 5) p->fall_sensitivity = 3;
 	if (p->tracking_group_name[0] != '#' ||
 	    strchr(p->tracking_group_name, '\r') != nullptr ||
@@ -480,9 +538,24 @@ static inline void initNodePrefs(NodePrefs* prefs) {
 #endif
 	prefs->auto_shutdown_emergency = 1;
 	prefs->tracking_interval_minutes = 10;
+	prefs->nav_report_interval_min = 1;
+	prefs->nav_telemetry_enabled = 0;
+	prefs->nav_telemetry_interval_min = 10;
 	strcpy(prefs->tracking_group_name, "#tracks");
 	prefs->fall_sensitivity = 3;
 	prefs->fall_enabled = 1;
+	/* Every slot starts at the Abay × Baitursynov intersection, Almaty. */
+	for (int i = 0; i < 10; i++) {
+		prefs->home_lat[i] = ZC_POINT_DEFAULT_LAT_E7 / 1e7;
+		prefs->home_lon[i] = ZC_POINT_DEFAULT_LON_E7 / 1e7;
+		prefs->home_saved[i] = 0;
+		strcpy(prefs->home_name[i], (i == 0) ? "GPS HOME" : "FREE");
+	}
+	prefs->geo_lat_e7 = GEO_LAT7_DEFAULT;
+	prefs->geo_lon_e7 = GEO_LON7_DEFAULT;
+	prefs->geo_saved = 0;
+	prefs->geo_on = 0;
+	prefs->geo_radius_m = GEO_RADIUS_M_DEFAULT;
 	/* Companion-only default, set here so every caller of initNodePrefs() sees
 	 * it. 0 means disabled and is a legal stored value. */
 #ifdef CONFIG_ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS

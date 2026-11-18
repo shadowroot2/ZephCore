@@ -91,7 +91,7 @@ bool zephcore_boot_reset_cause(uint32_t *out)
 /*
  * One row per RESET_* bit in <zephyr/drivers/hwinfo.h>. A bit with no row is
  * rendered as nothing and is invisible to zephcore_boot_reset_cause_labelled().
- * hint is the plain-English suffix for the user-facing notice, NULL where
+ * hint is the plain suffix for the user-facing notice, NULL where
  * the label already says it or no honest one fits. SOFTWARE has none: it is
  * a reboot command, a firmware update and a fatal-error reboot alike.
  */
@@ -100,21 +100,21 @@ static const struct {
 	const char *label;
 	const char *hint;
 } s_labels[] = {
-	{ RESET_PIN,            "PIN",         "(reset button)" },
+	{ RESET_PIN,            "PIN",         "(кнопка сброса)" },
 	{ RESET_SOFTWARE,       "SOFTWARE" },
-	{ RESET_BROWNOUT,       "BROWNOUT",    "(low voltage)" },
-	{ RESET_POR,            "POR",         "(power-on)" },
-	{ RESET_WATCHDOG,       "WATCHDOG",    "(hang)" },
-	{ RESET_DEBUG,          "DEBUG",       "(debugger)" },
+	{ RESET_BROWNOUT,       "BROWNOUT",    "(просадка питания)" },
+	{ RESET_POR,            "POR",         "(включение питания)" },
+	{ RESET_WATCHDOG,       "WATCHDOG",    "(зависание)" },
+	{ RESET_DEBUG,          "DEBUG",       "(отладчик)" },
 	{ RESET_SECURITY,       "SECURITY" },
-	{ RESET_LOW_POWER_WAKE, "LOWPOWER",    "(wake from off)" },
-	{ RESET_CPU_LOCKUP,     "LOCKUP",      "(crash)" },
-	{ RESET_PARITY,         "PARITY",      "(memory error)" },
-	{ RESET_PLL,            "PLL",         "(clock fault)" },
+	{ RESET_LOW_POWER_WAKE, "LOWPOWER",    "(пробуждение из off)" },
+	{ RESET_CPU_LOCKUP,     "LOCKUP",      "(крах)" },
+	{ RESET_PARITY,         "PARITY",      "(ошибка памяти)" },
+	{ RESET_PLL,            "PLL",         "(сбой часов)" },
 	{ RESET_CLOCK,          "CLOCK" },
 	{ RESET_HARDWARE,       "HARDWARE" },
 	{ RESET_USER,           "USER" },
-	{ RESET_TEMPERATURE,    "TEMPERATURE", "(overheat)" },
+	{ RESET_TEMPERATURE,    "TEMPERATURE", "(перегрев)" },
 	{ RESET_BOOTLOADER,     "BOOTLOADER" },
 	{ RESET_FLASH,          "FLASH" },
 };

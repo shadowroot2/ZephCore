@@ -86,6 +86,8 @@ void ui_led_heartbeat_init(void);
 void ui_notify(enum ui_event event);
 
 void ui_request_render(void); /* ZEPHCORE: explicit event-driven repaint */
+void ui_request_render_now(void); /* ZEPHCORE: skip the repaint debounce */
+void ui_home_refresh_set(bool on); /* ZEPHCORE: 5 s repaint while navigating */
 void ui_show_dfu_mode(void);
 
 /**
@@ -272,6 +274,12 @@ void ui_set_battery_provider(uint16_t (*mv)(void), uint8_t (*pct)(void));
  * Register the external-power provider used by charging indicators.
  */
 void ui_set_power_source_provider(bool (*provider)(void));
+
+/**
+ * True while USB/charger power is present: the charge-usb-detect GPIO when
+ * the board has one, the registered external-power provider otherwise.
+ */
+bool ui_external_power_present(void);
 
 /**
  * Lazy battery refresh: re-read the ADC only if cached value is stale.

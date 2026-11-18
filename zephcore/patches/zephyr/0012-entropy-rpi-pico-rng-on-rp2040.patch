@@ -1,0 +1,25 @@
+--- a/drivers/entropy/Kconfig.rpi_pico
++++ b/drivers/entropy/Kconfig.rpi_pico
+@@ -7,7 +7,6 @@
+ 	bool "Raspberry Pi Pico entropy number generator driver"
+ 	default y
+ 	depends on DT_HAS_RASPBERRYPI_PICO_RNG_ENABLED
+-	depends on SOC_SERIES_RP2350
+ 	select ENTROPY_HAS_DRIVER
+ 	select PICOSDK_USE_CLAIM
+ 	select PICOSDK_USE_RAND
+--- a/modules/hal_rpi_pico/pico/config_autogen.h
++++ b/modules/hal_rpi_pico/pico/config_autogen.h
+@@ -54,6 +54,12 @@
+ #define __CONCAT CONCAT
+ #endif
+ 
++/* RP2040: skip pico_rand's board-id seed. pico_get_unique_board_id() would
++ * pull hardware_flash's flash_get_unique_id() in beside Zephyr's own flash
++ * driver; the board id is a constant diversifier, not entropy. ROSC, timer
++ * and RAM-hash seeds stay. */
++#define PICO_RAND_SEED_ENTROPY_SRC_BOARD_ID 0
++
+ /* Zephyr performs runtime initialization itself. */
+ #define PICO_RUNTIME_INIT_FUNC(func, priority_string)
+ 

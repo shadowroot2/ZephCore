@@ -304,6 +304,8 @@ static void gnss_data_cb(const struct device *dev, const struct gnss_data *data)
 		current_pos.satellites = data->info.satellites_cnt;
 		current_pos.valid = true;
 		current_pos.timestamp_ms = k_uptime_get();
+		current_pos.speed_mms = data->nav_data.speed;
+		current_pos.bearing_mdeg = data->nav_data.bearing;
 		current_utc = data->utc;
 
 		/* Fix validation during acquisition */

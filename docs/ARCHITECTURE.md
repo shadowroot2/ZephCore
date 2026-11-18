@@ -604,7 +604,7 @@ mesh::Mesh
 ### 6.2 CompanionMesh
 
 Handles the binary BLE protocol with ~50 command opcodes. Key features:
-- **Offline queue**: circular buffer with peek/confirm pattern (survives BLE drops); `CONFIG_ZEPHCORE_OFFLINE_QUEUE_SIZE`, default 256 frames (lowered on RAM-bound boards)
+- **Offline queue**: circular buffer with peek/confirm pattern (survives BLE drops); `CONFIG_ZEPHCORE_OFFLINE_QUEUE_SIZE`, default 128 frames (173 B each; MeshCore's 256 kept on boards that ask for it)
 - **ACK tracking**: 8-slot table, computes expected ACK = SHA256(secret + hash)[0:4]
 - **Contact iteration**: Streaming protocol with `lastmod` filtering for incremental sync. The dump advances only
   while a client is connected and every connected transport has room; it is cancelled when the last client leaves
@@ -905,6 +905,69 @@ Like the standby depth, the choice follows from the duty interval alone, never f
 
 Repeaters and room servers default to `CONFIG_ZEPHCORE_REPEATER_GPS_INTERVAL_SEC` (48 h) for GPS duty — GPS wakes only for a periodic time-sync fix (5-minute acquire window). The interval is now unified with companion via `prefs.gps_interval` and is configurable at runtime via `set gps duty <sec>`; persists across reboots.
 
+**GPS duty users: tracking, nav, geo, sos**
+
+The four features share one GPS. Each on ensures the GPS is powered and sets its own duty (tracking and
+nav 0, geo 500 s); the configured duty lives in `prefs.gps_interval` and no feature writes it, so it
+survives reboots and nested on/off orders. When a user leaves and one of the higher-rank three is still
+active, nothing is touched; when only geo remains, its 500 s pin is re-asserted; with nobody left the
+GPS powers down and the live duty returns to `prefs.gps_interval` (`companion_gps_user_left` in
+main_companion.cpp). Tracking, nav and sos outrank geo. After a reboot
+tracking and nav are gone (runtime state) and the configured duty returns; geo persists (`prefs.geo_on`).
+The `wp save`/`geo save` pipeline is not a user: it force-leases the GPS for one fix and restores the
+exact prior state (ADR 0011). The target slot is pinned when the save is requested — re-selecting
+points while the fix is pending (`wp <n>`, double-tap cycle) does not redirect the save, and a set
+name is never overwritten (only an unnamed `FREE` slot becomes `SAVED`).
+
+**Tracking deferred backlog (companion)**
+
+A tracking report that no neighbour repeated reached nobody. Its point (fix time + coords) waits in a
+16-slot ring (`helpers/TrackingBacklog.h`, host-tested) and is re-sent as `🕓 HH:MM 📍 <link>` lines —
+two points per message, the one place where the fix's wall-clock time is shown (`tz.offset` local).
+Live reports keep their format while the ring is empty. The head is probed 2.5 min before each
+report — the whole ring drains before the report is due, so the scheduled point goes out live as
+always. A fresh point joins the tail only while older points wait, so a later report never overtakes
+an earlier one. A send's verdict is the ContentionTracker dupe
+count asked 5 s after the send (`extractDupeCount > 0` = heard, the joystick's criterion): heard drops
+the points the message carried and the ring then flushes one message per 10 s; not heard keeps them
+and the head is probed again in the next report window (every 60 s while `tracking off`, so an ended
+session still flushes). The ring evicts the oldest of its 16 points (~80 min at the 5-minute minimum
+interval) — the newest positions are the ones a searcher needs.
+
+**Boot advert (all roles)**
+
+Every companion announces itself with a flood advert right after the startup chime
+(`sendSelfAdvert(true)` in main_companion.cpp); the server roles send the same wide hello from their
+deferred initial advert (server_main_common.cpp, flood instead of the old zero-hop). The advert is
+the node's introduction at power-on, before any notice a profile may add after it.
+
+**Power on/off notices (`CONFIG_ZEPHCORE_POWER_ANNOUNCE`)**
+
+A personal-profile flag (default n — `mama.conf` opts in): a short notice to the tracking group at
+power-on (`🚀 Устройство включилось!`) and before a manual power-off (`📴 Устройство выключается!`).
+A low-battery power-off sends the same family channel the statistics notice (`Отключение!` with
+charge, temperature, uptime and the GPS line) instead — a bare "выключается" would leave the family
+guessing why. The boot
+one is sent on a 5 s deadline after the boot advert rather than queued with it — `Mesh::sendFlood`
+de-prioritizes adverts (pri 3 vs text pri 1), so a text queued alongside would jump the advert in the
+TX queue. The power-off one rides the manual-shutdown handler (right after the shutdown melody) and
+the low-battery policy, both keeping their 8 s grace so the notice reaches the air before System OFF.
+
+**Geofence (`geo`, companion)**
+
+One saved point (`prefs.geo_lat_e7/geo_lon_e7`, via `geo save` or `set geo.point`) and one radius in meters
+(`prefs.geo_radius_m`, default 3000, range 50..50000) guard the node itself (ADR 0011). `geo on` pins
+the GPS at 500 s when it is the only user (see the ownership rules above) and is refused only while a
+point save is running. The toggle persists (`prefs.geo_on`): a stored `on` re-pins the duty at boot and
+the first fix reports the zone state once (`geofence_boot_arm`). `geo save` is the `wp save` pipeline
+with a geo target. Evaluation is per fresh fix (age ≤ 30 s)
+on the main-thread fix event (`helpers/GeoFence.h`, host-tested): exit fires on the first fix
+beyond the radius, return on dropping below radius − 50 m, and each event fires once per state change.
+Both alerts go to the tracking group as hidden LoRa messages (`sendGroupMessage` without the local
+queue — never in the sender's own group feed, no vContact path), formatted by `geofence_format_msg`.
+The geo prefs sit in NodePrefs padding holes on purpose — companion DRAM is full and the struct must
+not grow.
+
 ### 7.4 USB (`adapters/usb/`)
 
 - **`ZephyrUSBCDC`** (every role): the USB device and its CDC ACM class, the 1200-baud touch into the bootloader, DTR
@@ -1081,7 +1144,7 @@ hold window. On M3-MAMA its expiry toggles Tracking instead of sending Advert,
 while a two-tap gesture sends Advert. Holding after the first short press still
 starts SOS. Feedback remains action-bound. While a manual SOS is waiting for
 GPS, the single-tap gesture instead queues a main-thread cancel, restores the previous
-GPS state, plays the forced Fall-cancellation tone and sends `❌ SOS Canceled`
+GPS state, plays the forced Fall-cancellation tone and sends `❌ SOS отменён`
 to `#sos`; the gesture is consumed and cannot also run its delayed action. Fall
 acknowledgement remains a separate forced-alarm path.
 

@@ -21,10 +21,15 @@
 #define CONFIG_ZEPHCORE_LOOP_WAKE_STATS 1
 #define CONFIG_ZEPHCORE_COMPANION_WIFI 1
 #define ZEPHCORE_FALL_DETECTOR 1
+/* Host stand-in for the DT GNSS capability check used by the nav group. */
+#define DT_HAS_COMPAT_STATUS_OKAY(x) 1
 #include <CompanionCLIHelp.h>
 #include <CompanionCLIAudio.h>
 #include <CompanionSOSPolicy.h>
 #include <GpsSwitchPolicy.h>
+#include <SendFeedbackIndex.h>
+#include <TrackingMessage.h>
+#include <GeoFence.h>
 #include <RepeaterCLIHelp.h>
 #undef CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE
 #undef CONFIG_LOG
@@ -169,7 +174,7 @@ TEST(repeater_remote_help, "UNIT-CLI-001", "Repeater remote help is categorized 
 TEST(companion_cli_help, "UNIT-CLI-002", "Companion app and remote help are categorized and frame bounded") {
     const char *app_commands[] = {
         "help", "?", "help id", "help rf", "help cad", "help mesh", "help gps",
-        "help wifi", "help extra", "help ui", "help power", "help stat", "help sys"
+        "help wifi", "help nav", "help geo", "help extra", "help ui", "help power", "help stat", "help sys"
     };
     for (const char *command : app_commands) {
         const char *reply = companion_app_cli_help(command);
@@ -190,11 +195,19 @@ TEST(companion_cli_help, "UNIT-CLI-002", "Companion app and remote help are cate
 	CHECK(std::strstr(companion_remote_cli_help("help sys"), "start ota") == nullptr);
 	CHECK(std::strstr(companion_remote_cli_help("help sys"), "start dfu") == nullptr);
 	CHECK(std::strstr(companion_remote_cli_help("help sys"), "erase") == nullptr);
+	CHECK(std::strstr(companion_remote_cli_help("help geo"), "geo save") == nullptr);
+	CHECK(std::strstr(companion_remote_cli_help("help geo"), "43.241117") != nullptr);
 	const char *local_only[] = {
 		"get wifi.pwd", "set wifi.pwd secret", "set wifi.ssid network", "set wifi.clear",
-		"set pin 123456", "set freq 869.525", "set radio 869.525,125,9,5",
+		"set pin 123456", "get pin", "set freq 869.525", "set radio 869.525,125,9,5",
 		"set tx 22", "set adc.multiplier 1.0", "set autoshutdown 3200",
-		"shutdown", "shutdown y", "poweroff", "offgrid on", "offgrid off",
+		"shutdown", "shutdown y", "poweroff", "offgrid on", "offgrid off", "wp clear", "wp 1", "nav start", "nav stop",
+		"wp save", "wp save 2", "wp save 2 Base", "wp name 2 TEST", "wp name TEST",
+		"nav telemetry", "nav telemetry on", "nav telemetry off",
+		"get nav.telemetry.interval", "set nav.telemetry.interval 10",
+		"get nav.interval", "set nav.interval 2",
+		"geo save",
+		"get geo.radius", "set geo.radius 3000",
 		"get wifi.ssid", "clear stats",
 	};
 	for (const char *command : local_only) {
@@ -203,10 +216,24 @@ TEST(companion_cli_help, "UNIT-CLI-002", "Companion app and remote help are cate
 	const char *remote_allowed[] = {
 		"set wifi.enabled 0", "get freq", "get radio", "get tx",
 		"set af 3", "get adc.multiplier", "get autoshutdown", "reboot",
+		"buzz", "leds", "gps", "tracking", "nav", "wp list",
+		"geo", "geo on", "geo off", "geo log", "get geo.point",
+		"set geo.point 43.241117,76.927301",
 	};
 	for (const char *command : remote_allowed) {
 		CHECK(companion_remote_cli_command_allowed(command));
 	}
+}
+TEST(companion_cli_alias, "UNIT-CLI-004", "Bare buzz and leds aliases report status via get") {
+	CHECK(std::strcmp(companion_cli_alias_command("leds on"), "set leds on") == 0);
+	CHECK(std::strcmp(companion_cli_alias_command("leds off"), "set leds off") == 0);
+	CHECK(std::strcmp(companion_cli_alias_command("leds"), "get leds") == 0);
+	CHECK(std::strcmp(companion_cli_alias_command("buzz on"), "set buzzer on") == 0);
+	CHECK(std::strcmp(companion_cli_alias_command("buzz off"), "set buzzer off") == 0);
+	CHECK(std::strcmp(companion_cli_alias_command("buzz"), "get buzzer") == 0);
+	CHECK(companion_cli_alias_command("leds.hb") == nullptr);
+	CHECK(companion_cli_alias_command("buzzer") == nullptr);
+	CHECK(companion_cli_alias_command("buzz on extra") == nullptr);
 }
 TEST(companion_cli_audio, "UNIT-CLI-003", "Remote companion CLI suppresses operation notifications") {
 	CHECK(!companion_cli_silent_notifications(0));
@@ -217,7 +244,228 @@ TEST(companion_sos_cancel, "UNIT-SOS-001", "Only a pending manual SOS is button-
 	CHECK(!companion_sos_button_cancelable(false, false));
 	CHECK(companion_sos_button_cancelable(true, false));
 	CHECK(!companion_sos_button_cancelable(true, true));
-	CHECK(std::strcmp(COMPANION_SOS_CANCELED_TEXT, "❌ SOS Canceled") == 0);
+	CHECK(std::strcmp(COMPANION_SOS_CANCELED_TEXT, "❌ SOS отменён") == 0);
+}
+TEST(tracking_report_format, "UNIT-TRACK-001", "Tracking report carries speed and course only while moving") {
+	char buf[160];
+	tracking_format_report(buf, sizeof(buf), 55.75580, 37.61730, 3333, 45000);
+	CHECK(std::strcmp(buf, "🏃 12 км/ч ↗️ СВ\n📍 https://maps.google.com/?q=55.75580,37.61730") == 0);
+	tracking_format_report(buf, sizeof(buf), 55.75580, 37.61730, 0, 0);
+	CHECK(std::strcmp(buf, "🅿️\n📍 https://maps.google.com/?q=55.75580,37.61730") == 0);
+	tracking_format_report(buf, sizeof(buf), 55.75580, 37.61730, 555, 180000);
+	CHECK(std::strcmp(buf, "🅿️\n📍 https://maps.google.com/?q=55.75580,37.61730") == 0);
+	CHECK(std::strcmp(tracking_report_arrow(0), "⬆️") == 0);
+	CHECK(std::strcmp(tracking_report_sector(0), "С") == 0);
+	CHECK(std::strcmp(tracking_report_sector(22500), "СВ") == 0);
+	CHECK(std::strcmp(tracking_report_sector(112500), "ЮВ") == 0);
+	CHECK(std::strcmp(tracking_report_sector(202500), "ЮЗ") == 0);
+	CHECK(std::strcmp(tracking_report_sector(359999), "С") == 0);
+	CHECK(std::strcmp(tracking_report_sector(360000), "С") == 0);
+}
+TEST(tracking_odometer_stats, "UNIT-TRACK-002", "Odometer counts moving distance, stops and max speed per session") {
+	struct tracking_odometer o;
+	tracking_odometer_reset(&o, 0);
+	tracking_odometer_on_fix(&o, 60000, 55000000000LL, 37000000000LL, 0);
+	CHECK(o.distance_mm == 0 && o.stopped_ms == 60000 && o.stops == 0);
+	tracking_odometer_on_fix(&o, 120000, 55000900000LL, 37000000000LL, 5000);
+	CHECK(o.moving_ms == 60000 && o.stops == 0);
+	CHECK(o.distance_mm > 95000 && o.distance_mm < 105000);
+	CHECK(o.max_speed_mms == 5000);
+	tracking_odometer_on_fix(&o, 180000, 55000900000LL, 37000000000LL, 0);
+	CHECK(o.stops == 1 && o.stopped_ms == 120000);
+	tracking_odometer_finish(&o, 240000);
+	CHECK(o.stops == 1 && o.stopped_ms == 180000 && o.moving_ms == 60000);
+}
+TEST(tracking_summary_format, "UNIT-TRACK-003", "Session summary fits the mesh frame and pins the format") {
+	struct tracking_odometer o;
+	memset(&o, 0, sizeof(o));
+	char buf[160];
+	tracking_format_summary(buf, sizeof(buf), &o, 55751240000LL, 37618420000LL, true);
+	CHECK(std::strcmp(buf, "🏁 0.0км (0.0 / 0 км/ч)\n⏱️ 0м\n🚶 0м\n"
+		"🅿️ 0 мин (0)\n"
+		"📍 https://maps.google.com/?q=55.75124,37.61842") == 0);
+	o.distance_mm = 999900000;
+	o.moving_ms = 45300000;
+	o.stopped_ms = 35700000;
+	o.stops = 99;
+	o.max_speed_mms = 34445;
+	tracking_format_summary(buf, sizeof(buf), &o, -123456780000LL, -89123450000LL, true);
+	CHECK(std::strlen(buf) <= 159);
+	CHECK(std::strstr(buf, "999.9км") != nullptr);
+	CHECK(std::strstr(buf, "🅿️ 9ч55м (99)") != nullptr);
+	CHECK(std::strstr(buf, "км/ч") != nullptr);
+	CHECK(std::strstr(buf, "-123.45678,-89.12345") != nullptr);
+	tracking_format_summary(buf, sizeof(buf), &o, 0, 0, false);
+	CHECK(std::strstr(buf, "maps.google.com") == nullptr);
+	/* Durations grow a day part once they pass 24 h: "1д23ч15м", and the
+	 * text frame forces the 99д23ч59м ceiling. */
+	char dur[16];
+	tracking_duration_str(dur, sizeof(dur), 170100000ULL);
+	CHECK(std::strcmp(dur, "1д23ч15м") == 0);
+	tracking_duration_str(dur, sizeof(dur), 86400000ULL * 100);
+	CHECK(std::strcmp(dur, "99д23ч59м") == 0);
+	tracking_duration_str(dur, sizeof(dur), 35700000ULL);
+	CHECK(std::strcmp(dur, "9ч55м") == 0);
+}
+TEST(nav_format, "UNIT-NAV-001", "Distance, bearing and cardinal labels for navigation") {
+	char buf[24];
+	nav_distance_str(buf, sizeof(buf), 840.4);
+	CHECK(std::strcmp(buf, "840 m") == 0);
+	nav_distance_str(buf, sizeof(buf), 2341.0);
+	CHECK(std::strcmp(buf, "2.34 km") == 0);
+	nav_distance_str(buf, sizeof(buf), 1000.0);
+	CHECK(std::strcmp(buf, "1.00 km") == 0);
+	double north = nav_bearing_deg(43.241117, 76.927301, 43.251117, 76.927301);
+	CHECK(north > 350.0 || north < 10.0);
+	double east = nav_bearing_deg(43.241117, 76.927301, 43.241117, 76.937301);
+	CHECK(east > 80.0 && east < 100.0);
+	CHECK(std::strcmp(nav_cardinal_en(0), "N") == 0);
+	CHECK(std::strcmp(nav_cardinal_en(46), "NE") == 0);
+	CHECK(std::strcmp(nav_cardinal_en(180), "S") == 0);
+	CHECK(std::strcmp(nav_cardinal_en(359), "N") == 0);
+}
+TEST(nav_wrongway, "UNIT-NAV-002", "Wrong-way ladder steps at 30 m and resets on approach") {
+	struct nav_wrongway w;
+	nav_wrongway_reset(&w);
+	CHECK(!nav_wrongway_update(&w, 100.0));
+	CHECK(!nav_wrongway_update(&w, 110.0));
+	CHECK(nav_wrongway_update(&w, 145.0));
+	CHECK(!nav_wrongway_update(&w, 150.0));
+	CHECK(nav_wrongway_update(&w, 185.0));
+	CHECK(!nav_wrongway_update(&w, 180.0));
+	CHECK(!nav_wrongway_update(&w, 200.0));
+	CHECK(nav_wrongway_update(&w, 235.0));
+	nav_wrongway_reset(&w);
+	nav_wrongway_update(&w, 100.0);
+	CHECK(!nav_wrongway_update(&w, 102.0));
+	CHECK(!nav_wrongway_update(&w, 101.0));
+	CHECK(!nav_wrongway_update(&w, 103.0));
+	CHECK(!nav_wrongway_update(&w, 102.0));
+}
+TEST(nav_report, "UNIT-NAV-003", "Periodic vContact report carries distance, sector and arrow") {
+	char buf[32];
+	nav_report_str(buf, sizeof(buf), 2341.0, 46.0);
+	CHECK(std::strcmp(buf, "2.34 км  СВ  ↗️") == 0);
+	nav_report_str(buf, sizeof(buf), 840.4, 0.0);
+	CHECK(std::strcmp(buf, "840 м  С  ⬆️") == 0);
+	CHECK(std::strlen(buf) <= 159);
+}
+TEST(nav_arrival, "UNIT-NAV-004", "Arrival fires on the readout distance, rounding metres up to the radius") {
+	/* The screen rounds to whole metres (25.4 -> "25 m"), so the trigger
+	 * must accept anything that still reads inside the radius. */
+	CHECK(nav_arrival_reached(0.0, 25.0));
+	CHECK(nav_arrival_reached(24.9, 25.0));
+	CHECK(nav_arrival_reached(25.4, 25.0));
+	CHECK(!nav_arrival_reached(25.6, 25.0));
+	CHECK(!nav_arrival_reached(30.0, 25.0));
+	CHECK(nav_arrival_reached(14.4, 14.5));
+	CHECK(!nav_arrival_reached(15.6, 14.5));
+}
+TEST(geofence_fsm, "UNIT-GEO-001", "Exit fires on the first fix beyond, return at hysteresis and re-arms") {
+	struct geofence_state g;
+	geofence_reset(&g);
+	CHECK(geofence_update(&g, 100.0, 3000.0) == GEO_EVENT_NONE);
+	CHECK(geofence_update(&g, 3000.0, 3000.0) == GEO_EVENT_NONE);
+	/* First fix beyond the radius fires the exit, exactly once. */
+	CHECK(geofence_update(&g, 3100.0, 3000.0) == GEO_EVENT_EXIT);
+	CHECK(geofence_update(&g, 3500.0, 3000.0) == GEO_EVENT_NONE);
+	/* Return needs the hysteresis band: 2980 is still out. */
+	CHECK(geofence_update(&g, 2980.0, 3000.0) == GEO_EVENT_NONE);
+	CHECK(geofence_update(&g, 2940.0, 3000.0) == GEO_EVENT_REENTER);
+	/* Re-armed: the next beyond fix fires a second exit. */
+	CHECK(geofence_update(&g, 3100.0, 3000.0) == GEO_EVENT_EXIT);
+}
+TEST(geofence_boot, "UNIT-GEO-005", "After boot the first fix reports the zone state exactly once") {
+	struct geofence_state g;
+	geofence_boot_arm(&g);
+	/* First fix inside: one return message, then quiet. */
+	CHECK(geofence_update(&g, 100.0, 3000.0) == GEO_EVENT_REENTER);
+	CHECK(geofence_update(&g, 100.0, 3000.0) == GEO_EVENT_NONE);
+	/* First fix beyond: one exit message, then quiet. */
+	geofence_boot_arm(&g);
+	CHECK(geofence_update(&g, 3100.0, 3000.0) == GEO_EVENT_EXIT);
+	CHECK(geofence_update(&g, 3100.0, 3000.0) == GEO_EVENT_NONE);
+	/* No boot arm: silent inside. */
+	geofence_reset(&g);
+	CHECK(geofence_update(&g, 100.0, 3000.0) == GEO_EVENT_NONE);
+}
+TEST(geofence_msg, "UNIT-GEO-002", "Exit and return messages pin the template and fit the send budget") {
+	char buf[160];
+	geofence_format_msg(buf, sizeof(buf), true, 3000.0, 3500.0, 43.24112, 76.92730);
+	CHECK(std::strcmp(buf, "🚪 Вышел из геозоны\n📐 3км\n📏 3.5км\n"
+			      "📍 https://maps.google.com/?q=43.24112,76.92730") == 0);
+	/* Worst-case budget: MAX_TEXT_LEN 160 minus a 31-char node name and
+	 * the ": " the send path prefixes; the map link must survive it. */
+	CHECK(std::strlen(buf) <= 127);
+	geofence_format_msg(buf, sizeof(buf), false, 3000.0, 2900.0, 43.24112, 76.92730);
+	CHECK(std::strcmp(buf, "✅ Вернулся в геозону\n📐 3км\n📏 2.9км\n"
+			      "📍 https://maps.google.com/?q=43.24112,76.92730") == 0);
+	CHECK(std::strlen(buf) <= 127);
+	/* Tight budget: the radius line goes first, the link stays whole. */
+	geofence_format_msg(buf, 100, true, 3000.0, 3500.0, 43.24112, 76.92730);
+	CHECK(std::strstr(buf, "📐") == nullptr);
+	CHECK(std::strstr(buf, "https://maps.google.com/?q=43.24112,76.92730") != nullptr);
+	CHECK(std::strlen(buf) + 1 <= 100);
+}
+TEST(geofence_parse, "UNIT-GEO-003", "set geo.point accepts exactly two in-range numbers") {
+	double lat, lon;
+	CHECK(geofence_parse_point("43.24112,76.92730", &lat, &lon));
+	CHECK(lat > 43.241 && lat < 43.242 && lon > 76.927 && lon < 76.928);
+	CHECK(geofence_parse_point("  -45.5  -120.25  ", &lat, &lon));
+	CHECK(lat == -45.5 && lon == -120.25);
+	CHECK(geofence_parse_point("90 180", &lat, &lon));
+	CHECK(!geofence_parse_point("91 0", &lat, &lon));
+	CHECK(!geofence_parse_point("0 181", &lat, &lon));
+	CHECK(!geofence_parse_point("abc def", &lat, &lon));
+	CHECK(!geofence_parse_point("43.2", &lat, &lon));
+	CHECK(!geofence_parse_point("43.2 76.9 1", &lat, &lon));
+	CHECK(!geofence_parse_point("", &lat, &lon));
+}
+TEST(geofence_defaults, "UNIT-GEO-004", "The default point is Almaty 43.241117 76.927301 for home and geo") {
+	CHECK(GEO_LAT7_DEFAULT == 432411170);
+	CHECK(GEO_LON7_DEFAULT == 769273010);
+	CHECK(ZC_POINT_DEFAULT_LAT_E7 / 1e7 == 43.241117);
+	CHECK(ZC_POINT_DEFAULT_LON_E7 / 1e7 == 76.927301);
+}
+TEST(companion_wp_save, "UNIT-CLI-005", "wp save parses slot and name and pins the 10-char limit") {
+	int slot;
+	char name[12];
+	CHECK(companion_wp_save_parse("", 4, &slot, name, sizeof(name)) == NULL);
+	CHECK(slot == 4);
+	CHECK(std::strcmp(name, "") == 0);
+	CHECK(companion_wp_save_parse("  ", 4, &slot, name, sizeof(name)) == NULL);
+	CHECK(slot == 4);
+	CHECK(companion_wp_save_parse("3", 4, &slot, name, sizeof(name)) == NULL);
+	CHECK(slot == 2);
+	CHECK(companion_wp_save_parse("3 My House", 4, &slot, name, sizeof(name)) == NULL);
+	CHECK(slot == 2);
+	CHECK(std::strcmp(name, "My House") == 0);
+	CHECK(companion_wp_save_parse(" 2 Base  ", 4, &slot, name, sizeof(name)) == NULL);
+	CHECK(slot == 1);
+	CHECK(std::strcmp(name, "Base") == 0);
+	CHECK(companion_wp_save_parse("Base", 4, &slot, name, sizeof(name)) == NULL);
+	CHECK(slot == 4);
+	CHECK(std::strcmp(name, "Base") == 0);
+	CHECK(companion_wp_save_parse("10 1234567890", 4, &slot, name, sizeof(name)) == NULL);
+	CHECK(slot == 9);
+	CHECK(std::strcmp(name, "1234567890") == 0);
+	CHECK(std::strcmp(companion_wp_save_parse("0", 4, &slot, name, sizeof(name)),
+			  "Error: wp 1..10") == 0);
+	CHECK(std::strcmp(companion_wp_save_parse("11", 4, &slot, name, sizeof(name)),
+			  "Error: wp 1..10") == 0);
+	CHECK(std::strcmp(companion_wp_save_parse("3.5", 4, &slot, name, sizeof(name)),
+			  "Error: wp 1..10") == 0);
+	CHECK(std::strcmp(companion_wp_save_parse("1 Base", 4, &slot, name, sizeof(name)),
+			  "Error: point 1 stays GPS HOME") == 0);
+	CHECK(std::strcmp(companion_wp_save_parse("3 12345678901", 4, &slot, name, sizeof(name)),
+			  "Error: name max 10 chars") == 0);
+}
+TEST(companion_wp_save_autonames, "UNIT-CLI-006", "A set name survives every save; only FREE becomes SAVED") {
+	CHECK(companion_wp_save_autonames(1, "FREE"));
+	CHECK(!companion_wp_save_autonames(1, "HOME"));
+	CHECK(!companion_wp_save_autonames(1, "SAVED"));
+	CHECK(!companion_wp_save_autonames(0, "FREE"));
+	CHECK(!companion_wp_save_autonames(0, "GPS HOME"));
 }
 TEST(gps_switch_policy, "UNIT-UI-001", "A physical GPS switch overrides the saved startup state") {
 	CHECK(gps_switch_effective_enabled(false, false, true));
@@ -239,4 +487,28 @@ TEST(battery_curve, "UNIT-BATTERY-001", "Battery endpoints interpolation multice
         auto percent = battery_curve_lookup(&battery_curve_default, mv);
         CHECK(percent >= previous && percent <= 100); previous = percent;
     }
+}
+TEST(send_feedback_index, "UNIT-SENDIDX-001", "Send feedback index pops by timestamp and evicts oldest") {
+    SendFeedbackIndex idx;
+    uint32_t h = 999;
+    CHECK(!idx.pop(1, h));
+    idx.add(1, 111);
+    idx.add(2, 222);
+    idx.add(1, 333);
+    CHECK(idx.pop(1, h) && h == 111);
+    CHECK(idx.pop(1, h) && h == 333);
+    CHECK(!idx.pop(1, h));
+    CHECK(idx.pop(2, h) && h == 222);
+    CHECK(!idx.pop(2, h));
+    idx.add(10, 1000);
+    idx.add(11, 1001);
+    idx.add(12, 1002);
+    idx.add(13, 1003);
+    idx.add(14, 1004);
+    CHECK(!idx.pop(10, h));
+    CHECK(idx.pop(11, h) && h == 1001);
+    CHECK(idx.pop(12, h) && h == 1002);
+    CHECK(idx.pop(13, h) && h == 1003);
+    CHECK(idx.pop(14, h) && h == 1004);
+    CHECK(!idx.pop(11, h));
 }

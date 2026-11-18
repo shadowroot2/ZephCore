@@ -56,6 +56,9 @@ uint16_t mc_display_height(void);
  */
 uint8_t mc_display_font_width(void);
 
+/* Switch to the NAV page's larger font for the next draws (and back). */
+void mc_display_font_large(bool on);
+
 /**
  * Get active font height in pixels.
  * Returns 0 if display not initialized.
@@ -73,6 +76,14 @@ void mc_display_on(void);
  */
 void mc_display_off(void);
 void mc_display_backlight_off(void);
+
+/**
+ * Flash the backlight `times` times (2 toggles each, 150 ms step) and leave
+ * it where it was. No-op without a backlight regulator or during a running
+ * blink; an explicit mc_display_on/off cancels it. For boards that announce
+ * messages with the backlight because they have no buzzer.
+ */
+void mc_display_backlight_blink(uint8_t times);
 
 /**
  * @return true if the display is currently on
@@ -306,6 +317,12 @@ void mc_display_reset_auto_off(void);
  * so the Kconfig-driven timer and the UI timer stay in sync.
  */
 void mc_display_set_auto_off_ms(uint32_t ms);
+
+/**
+ * Pin the display (and its backlight) on while held: the auto-off timer
+ * never blanks it. Releasing re-arms the timer from now.
+ */
+void mc_display_set_auto_off_hold(bool hold);
 
 /**
  * EPD-only: force a full panel reset cycle before normal page rendering.

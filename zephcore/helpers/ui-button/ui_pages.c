@@ -20,6 +20,11 @@
 #include "display.h"
 #include <helpers/buzzer_gate.h>
 #include <helpers/ui/ui_timezone.h> /* ZEPHCORE: minute-resolution timezone */
+#include <helpers/TrackingMessage.h>
+
+extern bool companion_home_get_point(double *lat, double *lon, bool *saved,
+				    const char **name, int *index);
+extern bool companion_nav_active(void);
 
 #include <time_sync.h>
 #include <ZephyrGPSManager.h>
@@ -177,6 +182,19 @@ static const enum ui_page active_pages[] = {
 #else
 static const enum ui_page active_pages[] = {
 	UI_PAGE_MESSAGES,
+#if ZEPHCORE_HAS_GPS
+	UI_PAGE_TRACKING, /* ZEPHCORE: safety/tracking pages */
+	UI_PAGE_GPS_HOME,
+	UI_PAGE_SOS,
+	UI_PAGE_GPS,
+#else
+	UI_PAGE_SOS,
+#endif
+#ifdef CONFIG_ZEPHCORE_UI_BUZZER
+	UI_PAGE_BUZZER,
+#endif
+	UI_PAGE_LEDS,
+	UI_PAGE_ADVERT,
 	UI_PAGE_RECENT,
 	UI_PAGE_RADIO,
 	UI_PAGE_TRAFFIC,
@@ -184,20 +202,11 @@ static const enum ui_page active_pages[] = {
 #ifdef CONFIG_ZEPHCORE_COMPANION_WIFI
 	UI_PAGE_WIFI,
 #endif
-	UI_PAGE_ADVERT,
-	UI_PAGE_GPS,
-	UI_PAGE_TRACKING, /* ZEPHCORE: safety/tracking pages */
-	UI_PAGE_SOS,
-#ifdef CONFIG_ZEPHCORE_UI_BUZZER
-	UI_PAGE_BUZZER,
-#endif
-	UI_PAGE_LEDS,
-	UI_PAGE_SENSORS,
 	UI_PAGE_OFFGRID,
+	UI_PAGE_SHUTDOWN,
 #if UI_UPDATE_AVAILABLE
 	UI_PAGE_DFU,
 #endif
-	UI_PAGE_SHUTDOWN,
 };
 #endif
 
@@ -611,9 +620,14 @@ static const char *tiny_page_title(enum ui_page p)
 	case UI_PAGE_BLUETOOTH: return "BLUETOOTH";
 	case UI_PAGE_WIFI:      return "WIFI";
 	case UI_PAGE_ADVERT:    return "ADVERT";
+#if ZEPHCORE_HAS_GPS
 	case UI_PAGE_GPS:       return "GPS";
 	case UI_PAGE_TRACKING:  return "TRACKING";
+#endif
 	case UI_PAGE_SOS:       return "SOS";
+#if ZEPHCORE_HAS_GPS
+	case UI_PAGE_GPS_HOME:  return "NAV";
+#endif
 	case UI_PAGE_BUZZER:    return "BUZZER";
 	case UI_PAGE_LEDS:      return "LEDS";
 	case UI_PAGE_SENSORS:   return "SENSORS";
@@ -1301,6 +1315,7 @@ static void render_sos(void)
 	render_sos_mono();
 }
 
+#if ZEPHCORE_HAS_GPS
 static void render_tracking_mono(void)
 {
 	char buf[32];
@@ -1523,6 +1538,8 @@ static void render_gps(void)
 	}
 }
 
+#endif
+
 static void render_buzzer(void)
 {
 	char buf[24];
@@ -1683,6 +1700,126 @@ static void render_bridge_info(void)
 	snprintf(buf, sizeof(buf), "Skipped: %u", state.bridge_skipped);
 	mc_display_text(0, y, buf, false);
 }
+
+#if ZEPHCORE_HAS_GPS
+static void render_gps_home(void)
+{
+	char buf[24];
+	int y = CONTENT_Y;
+	double home_lat = 0, home_lon = 0;
+	bool saved = false;
+	const char *home_name = "";
+	int home_index = 0;
+
+	if (state.home_status == HOME_STATUS_SAVED &&
+	    (int32_t)(k_uptime_get_32() - state.home_status_until) >= 0) {
+		state.home_status = HOME_STATUS_IDLE;
+	}
+	companion_home_get_point(&home_lat, &home_lon, &saved, &home_name, &home_index);
+	bool have_fix = false;
+	double dist_m = 0, bearing_deg = 0;
+	if (state.home_status != HOME_STATUS_WAITING) {
+		struct gps_position pos = {};
+		if (gps_is_enabled() && gps_get_last_known_position(&pos) && pos.valid &&
+		    (k_uptime_get() - pos.timestamp_ms) <= 30000) {
+			dist_m = tracking_distance_m(pos.latitude_ndeg, pos.longitude_ndeg,
+				(int64_t)(home_lat * 1e9), (int64_t)(home_lon * 1e9));
+			bearing_deg = nav_bearing_deg(pos.latitude_ndeg / 1e9,
+					pos.longitude_ndeg / 1e9, home_lat, home_lon);
+			have_fix = true;
+		}
+	}
+	/* Fix just appeared: wake the backlight the same way a BLE connect
+	 * does — display.c turns it back off on its auto-off timer. */
+	{
+		static bool had_fix;
+		if (have_fix && !had_fix) {
+			mc_display_on();
+		}
+		had_fix = have_fix;
+	}
+	snprintf(buf, sizeof(buf), "%d-%s", home_index + 1, home_name);
+	mc_display_text(0, y, buf, false);
+	{
+		struct gps_state_info gsi = {};
+		char sbuf[8];
+		unsigned sats;
+		int w;
+
+		gps_get_state_info(&gsi);
+		sats = have_fix ? (gsi.satellites > 99 ? 99 : gsi.satellites) : 0;
+		snprintf(sbuf, sizeof(sbuf), "%u%s", sats, have_fix ? "F" : "");
+		w = (int)strlen(sbuf) * (int)mc_display_font_width();
+		mc_display_text((int)DISP_W - w, y, sbuf, false);
+	}
+	y += LINE_H;
+
+	if (!state.nav_active) {
+		/* While navigating the big center readout replaces this row. */
+		if (have_fix) {
+			int w;
+			nav_distance_str(buf, sizeof(buf), dist_m);
+			mc_display_text(0, y, buf, false);
+			w = 2 * (int)mc_display_font_width();
+			mc_display_text((int)DISP_W - w, y, nav_cardinal_en(bearing_deg), false);
+		} else {
+			mc_display_text(0, y, "?? km", false);
+			mc_display_text(DISP_W - 10, y, "?", false);
+		}
+	}
+	if (state.home_status == HOME_STATUS_WAITING) {
+		draw_centered((int)DISP_H / 2 - LINE_H / 2, "Waiting GPS FIX...");
+	} else if (state.home_status == HOME_STATUS_SAVED) {
+		/* Keep the backlight alive for the whole SAVED moment. */
+		mc_display_on();
+		draw_centered((int)DISP_H / 2 - LINE_H / 2, "SAVED!");
+	} else if (state.home_wrong_way_until != 0 &&
+		   (int32_t)(k_uptime_get_32() - state.home_wrong_way_until) < 0) {
+		mc_display_on();
+		draw_centered((int)DISP_H / 2 - LINE_H / 2, "Wrong WAY!");
+	} else if (state.nav_active) {
+		/* Navigating: the center is the readout — distance over
+		 * direction, one font size up. The default font is restored
+		 * right away; the rest of the page keeps it. */
+		int bh;
+
+		mc_display_font_large(true);
+		bh = (int)mc_display_font_height();
+		if (have_fix) {
+			nav_distance_str(buf, sizeof(buf), dist_m);
+		} else {
+			strcpy(buf, "?? km");
+		}
+		draw_centered((int)DISP_H / 2 - bh, buf);
+		draw_centered((int)DISP_H / 2,
+			      have_fix ? nav_cardinal_en(bearing_deg) : "?");
+		mc_display_font_large(false);
+	} else {
+		char buf2[24];
+
+		snprintf(buf, sizeof(buf), "%.4f", home_lat);
+		snprintf(buf2, sizeof(buf2), "%.4f", home_lon);
+		draw_centered((int)DISP_H / 2 - LINE_H, buf);
+		draw_centered((int)DISP_H / 2, buf2);
+	}
+	const char *hint = ENTER_FROM_HOLD ? "Hold 5+ sec SAVE" : "Hold to SAVE";
+	if (state.home_status == HOME_STATUS_SAVED) {
+		hint = "Saved";
+	} else if (state.home_status == HOME_STATUS_NOFIX) {
+		hint = "No FIX";
+	} else if (state.home_save_confirm != 0) {
+		hint = "Confirm SAVE";
+	}
+	if (state.home_status != HOME_STATUS_WAITING) {
+		draw_centered((int)DISP_H - 2 * LINE_H,
+			      state.nav_active ? "STOP" : "GO!");
+		if (!state.nav_active) {
+			draw_centered((int)DISP_H - LINE_H, hint);
+		}
+	}
+}
+
+#endif
 
 static void render_sensors(void)
 {
@@ -2017,9 +2154,14 @@ static const page_render_fn renderers[] = {
 	[UI_PAGE_WIFI]      = render_wifi,
 #endif
 	[UI_PAGE_ADVERT]    = render_advert,
+#if ZEPHCORE_HAS_GPS
 	[UI_PAGE_GPS]       = render_gps,
 	[UI_PAGE_TRACKING]  = render_tracking,
+#endif
 	[UI_PAGE_SOS]       = render_sos,
+#if ZEPHCORE_HAS_GPS
+	[UI_PAGE_GPS_HOME]  = render_gps_home,
+#endif
 	[UI_PAGE_BUZZER]    = render_buzzer,
 	[UI_PAGE_LEDS]      = render_leds,
 	[UI_PAGE_SENSORS]   = render_sensors,
@@ -2125,6 +2267,10 @@ void ui_pages_next(void)
 		current_page_idx = 0;
 	}
 	state.current_page = active_pages[current_page_idx];
+	if (state.current_page != UI_PAGE_GPS_HOME) {
+		state.home_save_confirm = 0;
+	}
+	ui_home_refresh_set(state.current_page == UI_PAGE_GPS_HOME || state.nav_active);
 }
 
 void ui_pages_prev(void)
@@ -2136,6 +2282,10 @@ void ui_pages_prev(void)
 		current_page_idx = ACTIVE_PAGE_COUNT - 1;
 	}
 	state.current_page = active_pages[current_page_idx];
+	if (state.current_page != UI_PAGE_GPS_HOME) {
+		state.home_save_confirm = 0;
+	}
+	ui_home_refresh_set(state.current_page == UI_PAGE_GPS_HOME || state.nav_active);
 }
 
 void ui_pages_set(enum ui_page page)
@@ -2146,6 +2296,10 @@ void ui_pages_set(enum ui_page page)
 		if (active_pages[i] == page) {
 			current_page_idx = i;
 			state.current_page = page;
+			if (page != UI_PAGE_GPS_HOME) {
+				state.home_save_confirm = 0;
+			}
+			ui_home_refresh_set(page == UI_PAGE_GPS_HOME || state.nav_active);
 			return;
 		}
 	}
@@ -2198,4 +2352,28 @@ void ui_pages_set_tracking(bool enabled, uint16_t interval_minutes)
 {
 	state.tracking_enabled = enabled;
 	state.tracking_interval_minutes = interval_minutes;
+}
+
+void ui_pages_set_home_status(int status)
+{
+	state.home_status = status;
+	/* SAVED! shows for five seconds, then the coordinates return. */
+	state.home_status_until = status == HOME_STATUS_SAVED ?
+		k_uptime_get_32() + 5000U : 0;
+	ui_request_render();
+}
+
+void ui_pages_set_nav_active(bool active)
+{
+	state.nav_active = active;
+	ui_home_refresh_set(active || state.current_page == UI_PAGE_GPS_HOME);
+	ui_request_render();
+}
+
+/* The 3 s "Wrong WAY!" window is display timing; the trigger lives in the
+ * common navigation tick. */
+void ui_pages_set_home_wrong_way(bool active)
+{
+	state.home_wrong_way_until = active ? k_uptime_get_32() + 3000U : 0;
+	ui_request_render();
 }

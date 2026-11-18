@@ -35,6 +35,10 @@ const char *zephcore_shutdown_reason_str(uint8_t reason);
  * released last, then System OFF. Does not return. */
 FUNC_NORETURN void zephcore_power_off(void);
 
+/* Jump to the chip's firmware-update bootloader (nRF52 UF2, ESP32-S3 ROM
+ * download, RP2040 ROM). Does not return. */
+FUNC_NORETURN void zephcore_reboot_to_bootloader(void);
+
 /* The UI's part (heartbeat LED, display), run first. Weak no-op here; the UI
  * builds provide it. */
 void ui_before_power_off(void);

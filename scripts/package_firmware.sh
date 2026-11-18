@@ -41,9 +41,8 @@ case $format in
 			--output "${out}-merged.bin" \
 			--flash-mode "$flash_mode" --flash-freq "$flash_freq" --flash-size "$flash_size" \
 			0x00000 "$boot" "$app_offset" "$app"
-		cp "$app" "${out}-update.bin"
+		# -update.bin не собираем: для прошивки нужен только merged (offset 0x0).
 		echo "${out}-merged.bin"
-		echo "${out}-update.bin"
 		;;
 	*)
 		echo "unknown format: $format" >&2

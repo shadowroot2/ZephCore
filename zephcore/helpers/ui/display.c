@@ -71,6 +71,8 @@ static uint16_t disp_width;
 static uint16_t disp_height;
 static uint8_t  font_w;
 static uint8_t  font_h;
+static int small_font_idx;
+static int large_font_idx;
 static bool     is_epd;       /* true for e-paper displays */
 
 #if MC_DISPLAY_COLOR_PANEL
@@ -183,6 +185,33 @@ static inline void backlight_set(bool on)
 		}
 		backlight_on = on;
 	}
+}
+
+/* Backlight blink (message notice on boards without a buzzer): an even
+ * number of toggles per blink, so the backlight ends where it started. */
+static struct k_work_delayable backlight_blink_work;
+static uint8_t backlight_blink_toggles_left;
+
+static void backlight_blink_handler(struct k_work *work)
+{
+	ARG_UNUSED(work);
+	if (backlight_blink_toggles_left == 0) {
+		return;
+	}
+	backlight_blink_toggles_left--;
+	backlight_set(!backlight_on);
+	if (backlight_blink_toggles_left > 0) {
+		k_work_reschedule(&backlight_blink_work, K_MSEC(150));
+	}
+}
+
+void mc_display_backlight_blink(uint8_t times)
+{
+	if (!disp_initialized || backlight_blink_toggles_left > 0) {
+		return;
+	}
+	backlight_blink_toggles_left = (uint8_t)(times * 2U);
+	k_work_reschedule(&backlight_blink_work, K_MSEC(150));
 }
 
 static inline void panel_vdd_enable(void)
@@ -377,12 +406,14 @@ static void color_flush_ops(void)
 
 /* Auto-off work */
 static struct k_work_delayable auto_off_work;
+static bool auto_off_hold;
 
 static void auto_off_handler(struct k_work *work)
 {
 	ARG_UNUSED(work);
-	/* Don't blank display while Doom easter egg is playing */
-	if (doom_game_is_running()) {
+	/* Don't blank display while Doom easter egg is playing or while a
+	 * hold pins the backlight on (navigation). */
+	if (doom_game_is_running() || auto_off_hold) {
 		return;
 	}
 	/* E-paper content persists without power — blanking wastes a full
@@ -531,9 +562,31 @@ int mc_display_init(void)
 		}
 	}
 
+	/* NAV page font: the largest one that fits a distance line ("99.99 km",
+	 * 8 chars) across the panel width. */
+	int large_idx = -1;
+	{
+		uint8_t large_w = 0;
+
+		for (int i = 0; i < num_fonts; i++) {
+			uint8_t fw = 0, fh = 0;
+
+			cfb_get_font_size(disp_dev, i, &fw, &fh);
+			if ((int)fw * 8 <= (int)mc_display_width() && fw > large_w) {
+				large_w = fw;
+				large_idx = i;
+			}
+		}
+	}
+	if (large_idx < 0) {
+		large_idx = best_idx;
+	}
+	small_font_idx = best_idx;
+	large_font_idx = large_idx;
 	cfb_framebuffer_set_font(disp_dev, best_idx);
 	cfb_get_font_size(disp_dev, best_idx, &font_w, &font_h);
-	LOG_INF("display: selected font[%d] (%ux%u)", best_idx, font_w, font_h);
+	LOG_INF("display: selected font[%d] (%ux%u), NAV font[%d]",
+		best_idx, font_w, font_h, large_idx);
 
 	/* CFB inversion no longer needed — Zephyr commit 2374ef62f97 fixed
 	 * the MONO10/MONO01 polarity logic in cfb_framebuffer_finalize().
@@ -567,6 +620,7 @@ int mc_display_init(void)
 
 	/* Set up auto-off timer and schedule initial timeout */
 	k_work_init_delayable(&auto_off_work, auto_off_handler);
+	k_work_init_delayable(&backlight_blink_work, backlight_blink_handler);
 	mc_display_reset_auto_off();
 
 	LOG_INF("display initialized (%ux%u, font %ux%u)",
@@ -615,6 +669,7 @@ void mc_display_on(void)
 	if (!disp_initialized) {
 		return;
 	}
+	k_work_cancel_delayable(&backlight_blink_work);
 
 	if (!disp_on) {
 		/* EPD: content persists (bistable) — no need to unblank,
@@ -641,6 +696,7 @@ void mc_display_off(void)
 	if (!disp_initialized) {
 		return;
 	}
+	k_work_cancel_delayable(&backlight_blink_work);
 
 	if (disp_on) {
 		display_blanking_on(disp_dev);
@@ -915,6 +971,14 @@ void mc_display_reset_auto_off(void)
 #endif
 }
 
+void mc_display_set_auto_off_hold(bool hold)
+{
+	auto_off_hold = hold;
+	if (!hold) {
+		mc_display_reset_auto_off();
+	}
+}
+
 void mc_display_epd_full_reset(void)
 {
 	if (!disp_initialized || !is_epd) {
@@ -1081,4 +1145,15 @@ void utf8_to_latin1(char *dst, const char *src, size_t dst_size)
 	if (start > 0) {
 		memmove(dst, dst + start, strlen(dst + start) + 1);
 	}
+}
+
+void mc_display_font_large(bool on)
+{
+	if (!disp_initialized) {
+		return;
+	}
+	int idx = on ? large_font_idx : small_font_idx;
+
+	cfb_framebuffer_set_font(disp_dev, idx);
+	cfb_get_font_size(disp_dev, idx, &font_w, &font_h);
 }

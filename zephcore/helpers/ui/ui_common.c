@@ -1091,6 +1091,28 @@ void ui_set_power_source_provider(bool (*provider)(void))
 	s_power_source_provider = provider;
 }
 
+#if DT_NODE_HAS_PROP(DT_ALIAS(charge_usb_detect), gpios)
+static const struct gpio_dt_spec s_ext_power_detect =
+	GPIO_DT_SPEC_GET(DT_ALIAS(charge_usb_detect), gpios);
+#endif
+
+bool ui_external_power_present(void)
+{
+#if DT_NODE_HAS_PROP(DT_ALIAS(charge_usb_detect), gpios)
+	/* The GPIO is authoritative where the board has one: T1000-E's nRF
+	 * VBUS pin is not wired, so the provider would answer for a phantom
+	 * USB. An unreadable pin reports absent, never the provider. */
+	int level = gpio_pin_get_dt(&s_ext_power_detect);
+
+	if (level < 0) {
+		return false;
+	}
+	return (s_ext_power_detect.dt_flags & GPIO_ACTIVE_LOW) ? level == 0 : level != 0;
+#else
+	return s_power_source_provider && s_power_source_provider();
+#endif
+}
+
 void ui_refresh_battery(void)
 {
 	if (!s_batt_provider) {

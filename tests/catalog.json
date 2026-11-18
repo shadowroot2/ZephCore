@@ -33,6 +33,11 @@
       "source": "tests/unit/helper_tests.cpp"
     },
     {
+      "id": "UNIT-CLI-004",
+      "name": "Bare buzz and leds aliases report status via get",
+      "source": "tests/unit/helper_tests.cpp"
+    },
+    {
       "id": "UNIT-SOS-001",
       "name": "Only a pending manual SOS is button-cancelable",
       "source": "tests/unit/helper_tests.cpp"
@@ -46,6 +51,76 @@
       "id": "UNIT-UI-002",
       "name": "Display timezone labels fit E-Paper rows and local epochs stay bounded",
       "source": "tests/unit/timezone_tests.cpp"
+    },
+    {
+      "id": "UNIT-TRACK-001",
+      "name": "Tracking report carries speed and course only while moving",
+      "source": "tests/unit/helper_tests.cpp"
+    },
+    {
+      "id": "UNIT-TRACK-002",
+      "name": "Odometer counts moving distance, stops and max speed per session",
+      "source": "tests/unit/helper_tests.cpp"
+    },
+    {
+      "id": "UNIT-TRACK-003",
+      "name": "Session summary fits the mesh frame and pins the format",
+      "source": "tests/unit/helper_tests.cpp"
+    },
+    {
+      "id": "UNIT-NAV-001",
+      "name": "Distance, bearing and cardinal labels for navigation",
+      "source": "tests/unit/helper_tests.cpp"
+    },
+    {
+      "id": "UNIT-NAV-002",
+      "name": "Wrong-way ladder steps at 30 m and resets on approach",
+      "source": "tests/unit/helper_tests.cpp"
+    },
+    {
+      "id": "UNIT-NAV-003",
+      "name": "Periodic vContact report carries distance, sector and arrow",
+      "source": "tests/unit/helper_tests.cpp"
+    },
+    {
+      "id": "UNIT-NAV-004",
+      "name": "Arrival fires on the readout distance, rounding metres up to the radius",
+      "source": "tests/unit/helper_tests.cpp"
+    },
+    {
+      "id": "UNIT-GEO-001",
+      "name": "Exit fires on the first fix beyond, return at hysteresis and re-arms",
+      "source": "tests/unit/helper_tests.cpp"
+    },
+    {
+      "id": "UNIT-GEO-002",
+      "name": "Exit and return messages pin the template and fit the send budget",
+      "source": "tests/unit/helper_tests.cpp"
+    },
+    {
+      "id": "UNIT-GEO-003",
+      "name": "set geo.point accepts exactly two in-range numbers",
+      "source": "tests/unit/helper_tests.cpp"
+    },
+    {
+      "id": "UNIT-GEO-004",
+      "name": "The default point is Almaty 43.241117 76.927301 for home and geo",
+      "source": "tests/unit/helper_tests.cpp"
+    },
+    {
+      "id": "UNIT-GEO-005",
+      "name": "After boot the first fix reports the zone state exactly once",
+      "source": "tests/unit/helper_tests.cpp"
+    },
+    {
+      "id": "UNIT-CLI-005",
+      "name": "wp save parses slot and name and pins the 10-char limit",
+      "source": "tests/unit/helper_tests.cpp"
+    },
+    {
+      "id": "UNIT-CLI-006",
+      "name": "A set name survives every save; only FREE becomes SAVED",
+      "source": "tests/unit/helper_tests.cpp"
     },
     {
       "id": "UNIT-CAD-001",
@@ -348,6 +423,16 @@
       "source": "tests/unit/prefs_json_tests.cpp"
     },
     {
+      "id": "UNIT-PJSON-011",
+      "name": "geo.radius 0 on flash means unset and out-of-range clamps",
+      "source": "tests/unit/prefs_json_tests.cpp"
+    },
+    {
+      "id": "UNIT-PJSON-012",
+      "name": "initNodePrefs puts the Almaty default point in home slots and geo",
+      "source": "tests/unit/prefs_json_tests.cpp"
+    },
+    {
       "id": "UNIT-LPP-001",
       "name": "Values round to the nearest step (3850 mV is 3.85 V, not the library's 3.84)",
       "source": "tests/unit/lpp_tests.cpp"
@@ -641,6 +726,26 @@
       "id": "UNIT-SENSOR-005",
       "name": "Solar charge telemetry reports nominal 6W while charging and 0W otherwise",
       "source": "tests/unit/sensor_manager_tests.cpp"
+    },
+    {
+      "id": "UNIT-SENDIDX-001",
+      "name": "Send feedback index pops by timestamp and evicts oldest",
+      "source": "tests/unit/helper_tests.cpp"
+    },
+    {
+      "id": "UNIT-TRACKBUF-001",
+      "name": "Deferred points carry their time and a whole map link",
+      "source": "tests/unit/tracking_backlog_tests.cpp"
+    },
+    {
+      "id": "UNIT-TRACKBUF-002",
+      "name": "The backlog keeps point order and the verdict moves points in and out",
+      "source": "tests/unit/tracking_backlog_tests.cpp"
+    },
+    {
+      "id": "UNIT-TRACKBUF-003",
+      "name": "The flush schedule: verdict after a send, probe and drain deadlines",
+      "source": "tests/unit/tracking_backlog_tests.cpp"
     }
   ]
 }

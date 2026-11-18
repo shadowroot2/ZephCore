@@ -11,6 +11,21 @@
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
 
+/* NO_GPS: the build carries no GPS features at all (CONFIG_ZEPHCORE_NO_GPS).
+ * The phrase "без GPS" in a build request means this switch. */
+#ifdef CONFIG_ZEPHCORE_NO_GPS
+#define NO_GPS 1
+#else
+#define NO_GPS 0
+#endif
+
+/* Capability: a GNSS receiver is declared in the devicetree and the build
+ * did not switch GPS off. GPS features — the gps/lat/lon CLI family, nav,
+ * geo, tracking and the GPS screens — compile only then. */
+#define ZEPHCORE_HAS_GPS (!NO_GPS && (DT_HAS_COMPAT_STATUS_OKAY(gnss_nmea_generic) || \
+	DT_HAS_COMPAT_STATUS_OKAY(quectel_lc76g) || \
+	DT_HAS_COMPAT_STATUS_OKAY(luatos_air530z)))
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -23,6 +38,8 @@ struct gps_position {
 	uint16_t satellites;     /* Number of satellites */
 	bool valid;              /* True if fix is valid */
 	int64_t timestamp_ms;    /* Timestamp when fix was acquired */
+	uint32_t speed_mms;      /* Speed over ground in mm/s (RMC) */
+	uint32_t bearing_mdeg;   /* Course over ground in millidegrees (RMC) */
 };
 
 /* gps_state_info.state */

@@ -149,8 +149,32 @@ protected:
 		def("track_int", _p->tracking_interval_minutes);
 		def("track_group", _p->tracking_group_name,
 		    sizeof(_p->tracking_group_name));
+		def("nav_int", _p->nav_report_interval_min);
+		def("navt_en", _p->nav_telemetry_enabled);
+		def("navt_int", _p->nav_telemetry_interval_min);
 		def("fall_sens", _p->fall_sensitivity);
 		def("fall_en", _p->fall_enabled);
+#define HOME_POINT_DEFS(n) \
+		def("home" #n "_lat", _p->home_lat[n]); \
+		def("home" #n "_lon", _p->home_lon[n]); \
+		def("home" #n "_saved", _p->home_saved[n]); \
+		def("home" #n "_name", _p->home_name[n], sizeof(_p->home_name[n]))
+		HOME_POINT_DEFS(0); HOME_POINT_DEFS(1); HOME_POINT_DEFS(2);
+		HOME_POINT_DEFS(3); HOME_POINT_DEFS(4); HOME_POINT_DEFS(5);
+		HOME_POINT_DEFS(6); HOME_POINT_DEFS(7); HOME_POINT_DEFS(8);
+		HOME_POINT_DEFS(9);
+#undef HOME_POINT_DEFS
+		def("geo_lat_e7", _p->geo_lat_e7);
+		def("geo_lon_e7", _p->geo_lon_e7);
+		def("geo_saved", _p->geo_saved);
+		def("geo_on", _p->geo_on);
+		def("geo_in_ts", _p->geo_last_in_utc);
+		def("geo_out_ts", _p->geo_last_out_utc);
+		def("geo_stat_day", _p->geo_stat_day);
+		def("geo_out_sec", _p->geo_out_sec);
+		def("geo_stat_in", _p->geo_stat_in);
+		def("geo_stat_out", _p->geo_stat_out);
+		def("geo_radius", _p->geo_radius_m);
 		def("adc_mult", _p->adc_multiplier);
 		def("pwr_sav_en", _p->powersaving_enabled);
 		def("og_home", _p->offgrid_home_freq);

@@ -5,7 +5,7 @@
 
 | Раздел | Содержимое |
 |---|---|
-| [Функции](features/functions.md) | SOS, Fall, Tracking, vContact, repeater-bridge, батарейные уведомления |
+| [Функции](features/functions.md) | SOS, Fall, Tracking, NAV, геозона, vContact, repeater-bridge, батарейные уведомления |
 | [Экраны и управление](features/ui.md) | button/joystick UI, LED, кнопки, buzzer |
 | [Аппаратные особенности](features/hardware.md) | GPS, питание, батарея и адаптации плат |
 | [CLI и хранение](features/cli-storage.md) | CLI, радиопрофили, prefs и обновление базы |

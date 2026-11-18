@@ -55,6 +55,9 @@ LOG_MODULE_REGISTER(zephcore_ui_actions, CONFIG_ZEPHCORE_UI_ACTIONS_LOG_LEVEL);
 #define UI_ACTION_FALL_ACK          BIT(17)
 #define UI_ACTION_WIFI_RESTART      BIT(18)
 #define UI_ACTION_SOS_CANCEL        BIT(19)
+#define UI_ACTION_HOME_SAVE         BIT(20) /* ZEPHCORE: GPS HOME */
+#define UI_ACTION_NAV_TOGGLE        BIT(21)
+#define UI_ACTION_WP_CYCLE           BIT(22)
 
 extern "C" void companion_sos_request_from_ui(void);
 extern "C" bool companion_sos_cancel_available(void);
@@ -62,6 +65,9 @@ extern "C" void companion_sos_cancel_from_ui(void);
 extern "C" void companion_fall_alarm_acknowledge_from_ui(void);
 extern "C" void companion_tracking_toggle_from_ui(void);
 extern "C" bool companion_tracking_gps_control_allowed(void);
+extern "C" void companion_home_save_from_ui(void);
+extern "C" void companion_nav_toggle_from_ui(void);
+extern "C" void companion_wp_cycle_from_ui(void);
 
 /* Module-local pointers, set by init */
 static CompanionMesh *s_mesh;
@@ -151,6 +157,24 @@ extern "C" void mesh_fall_alarm_acknowledge(void)
 extern "C" void mesh_tracking_toggle(void)
 {
 	atomic_or(&pending_ui_actions, UI_ACTION_TRACKING_TOGGLE);
+	k_event_post(s_mesh_events, s_mesh_event_ui_action);
+}
+
+extern "C" void mesh_home_save_request(void)
+{
+	atomic_or(&pending_ui_actions, UI_ACTION_HOME_SAVE);
+	k_event_post(s_mesh_events, s_mesh_event_ui_action);
+}
+
+extern "C" void mesh_nav_toggle(void)
+{
+	atomic_or(&pending_ui_actions, UI_ACTION_NAV_TOGGLE);
+	k_event_post(s_mesh_events, s_mesh_event_ui_action);
+}
+
+extern "C" void mesh_wp_cycle(void)
+{
+	atomic_or(&pending_ui_actions, UI_ACTION_WP_CYCLE);
 	k_event_post(s_mesh_events, s_mesh_event_ui_action);
 }
 
@@ -321,6 +345,15 @@ extern "C" void mesh_handle_ui_actions(void)
 	if (actions & UI_ACTION_TRACKING_TOGGLE) {
 		companion_tracking_toggle_from_ui();
 	}
+	if (actions & UI_ACTION_HOME_SAVE) {
+		companion_home_save_from_ui();
+	}
+	if (actions & UI_ACTION_NAV_TOGGLE) {
+		companion_nav_toggle_from_ui();
+	}
+	if (actions & UI_ACTION_WP_CYCLE) {
+		companion_wp_cycle_from_ui();
+	}
 
 	/* Save prefs if any toggle action changed them */
 	bool need_save = false;
@@ -329,7 +362,7 @@ extern "C" void mesh_handle_ui_actions(void)
 		bool gps_en = atomic_get(&pending_gps_enabled) != 0;
 		gps_enable(gps_en);
 		s_mesh->prefs.gps_enabled = gps_en ? 1 : 0;
-		s_mesh->vcontactNotify(gps_en ? "GPS: on" : "GPS: off");
+		s_mesh->vcontactNotify(gps_en ? "GPS: вкл" : "GPS: выкл");
 		LOG_INF("GPS %s (button)", gps_en ? "on" : "off");
 		need_save = true;
 	}
@@ -337,9 +370,9 @@ extern "C" void mesh_handle_ui_actions(void)
 	if (actions & UI_ACTION_BUZZER_TOGGLE) {
 		uint8_t mode = (uint8_t)atomic_get(&pending_buzzer_mode);
 		s_mesh->prefs.buzzer_quiet = zephcore_buzzer_prefs_from_mode(mode);
-		const char *notice = mode == ZEPHCORE_BUZZER_OFF ? "Buzzer: off" :
-			mode == ZEPHCORE_BUZZER_VIBRATE ? "Buzzer: vibrate" :
-			mode == ZEPHCORE_BUZZER_SOUND ? "Buzzer: sound" : "Buzzer: on";
+		const char *notice = mode == ZEPHCORE_BUZZER_OFF ? "Буззер: выкл" :
+			mode == ZEPHCORE_BUZZER_VIBRATE ? "Буззер: вибро" :
+			mode == ZEPHCORE_BUZZER_SOUND ? "Буззер: звук" : "Буззер: вкл";
 		s_mesh->vcontactNotify(notice);
 		LOG_INF("buzzer mode=%u (button)", mode);
 		need_save = true;
@@ -356,7 +389,7 @@ extern "C" void mesh_handle_ui_actions(void)
 	if (actions & UI_ACTION_LEDS_TOGGLE) {
 		bool ld = atomic_get(&pending_leds_disabled) != 0;
 		s_mesh->prefs.leds_disabled = ld ? 1 : 0;
-		s_mesh->vcontactNotify(ld ? "LEDs: off" : "LEDs: on");
+		s_mesh->vcontactNotify(ld ? "LEDs: выкл" : "LEDs: вкл");
 		LOG_INF("leds_disabled=%d (button)", ld);
 		need_save = true;
 	}

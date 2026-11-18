@@ -13,10 +13,17 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include <zephyr/devicetree.h>
+#include <zephyr/dt-bindings/input/input-event-codes.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* ZEPHCORE: one action button — KEY_ENTER is the zephyr,input-longpress
+ * long-code, so a short ENTER is already a hold and no double press exists. */
+#define ENTER_IS_A_HOLD(node) || (DT_PROP_BY_IDX(node, long_codes, 0) == INPUT_KEY_ENTER)
+#define ENTER_FROM_HOLD (0 DT_FOREACH_STATUS_OKAY(zephyr_input_longpress, ENTER_IS_A_HOLD))
 
 /* ========== Page Definitions ========== */
 enum ui_page {
@@ -35,6 +42,7 @@ enum ui_page {
 	UI_PAGE_DFU,            /* BLE DFU bootloader entry */
 	UI_PAGE_TRACKING,       /* Periodic #tracks location reporting */
 	UI_PAGE_SOS,            /* Send SOS group message */
+	UI_PAGE_GPS_HOME,       /* ZEPHCORE: saved point + navigation */
 	UI_PAGE_BRIDGE,         /* Repeater bridge backhaul toggle */
 	UI_PAGE_BRIDGE_INFO,    /* Repeater bridge priority and forwarding stats */
 	UI_PAGE_SHUTDOWN,       /* Hibernate / power off */
@@ -143,6 +151,11 @@ struct ui_state {
 	uint32_t offgrid_confirm_time; /* uptime ms when offgrid toggle confirm started (0=idle) */
 	uint32_t dfu_confirm_time;   /* uptime ms when DFU confirm started (0=idle) */
 	uint32_t shutdown_confirm_time; /* uptime ms when shutdown confirm started (0=idle) */
+	int home_status;             /* HOME_STATUS_* */
+	uint32_t home_status_until;  /* HOME_STATUS_SAVED expiry (0 = none) */
+	uint32_t home_save_confirm;  /* uptime ms when save confirm started (0=idle) */
+	bool nav_active;
+	uint32_t home_wrong_way_until; /* "Wrong WAY!" while uptime < this (0=idle) */
 };
 
 /**
@@ -156,6 +169,15 @@ void ui_pages_sos_waiting(void);
 void ui_pages_sos_sent(bool success);
 void ui_pages_sos_clear(void);
 void ui_pages_set_tracking(bool enabled, uint16_t interval_minutes);
+
+/* GPS HOME page state (ZEPHCORE). */
+#define HOME_STATUS_IDLE    0
+#define HOME_STATUS_WAITING 1
+#define HOME_STATUS_SAVED   2
+#define HOME_STATUS_NOFIX   3
+void ui_pages_set_home_status(int status);
+void ui_pages_set_nav_active(bool active);
+void ui_pages_set_home_wrong_way(bool active);
 
 /**
  * Get the global UI state for updating from main app.

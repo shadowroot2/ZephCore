@@ -31,6 +31,7 @@
 #include <ZephyrMQTTPublisher.h>
 #endif
 #include <helpers/PacketLog.h>
+#include <helpers/TrackingMessage.h>
 
 static constexpr uint32_t BATTERY_CHECK_MS = 30000;
 
@@ -1652,19 +1653,6 @@ void RepeaterMesh::batteryAlertTick() {
 
     const uint8_t percent = battery_curve_lookup(&battery_curve_default, mv);
 
-    double lat = _prefs.node_lat, lon = _prefs.node_lon;
-    struct gps_position pos = {};
-    if (gps_is_available() && gps_get_last_known_position(&pos) &&
-        (pos.latitude_ndeg != 0 || pos.longitude_ndeg != 0) &&
-        pos.latitude_ndeg >= -90000000000LL && pos.latitude_ndeg <= 90000000000LL &&
-        pos.longitude_ndeg >= -180000000000LL && pos.longitude_ndeg <= 180000000000LL) {
-        lat = pos.latitude_ndeg / 1e9;
-        lon = pos.longitude_ndeg / 1e9;
-    }
-    const bool has_location = isfinite(lat) && isfinite(lon) &&
-        lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180 &&
-        (lat != 0 || lon != 0);
-
     /* Same public-channel PSK/hash and plaintext envelope as BaseChatMesh.
      * 160 text bytes includes the sender prefix; no channel table is needed. */
     mesh::GroupChannel channel = {};
@@ -1675,11 +1663,16 @@ void RepeaterMesh::batteryAlertTick() {
     uint32_t timestamp = getRTCClock()->getCurrentTimeUnique();
     memcpy(data, &timestamp, sizeof(timestamp));
     char* text = (char*)&data[5];
-    int len = snprintf(text, 161, "%.31s: Repeater battery low: %u%% (%u.%02uV). Please recharge.",
-                       _prefs.node_name, percent, mv / 1000U, (mv % 1000U) / 10U);
-    if (has_location && len > 0 && len < 160) {
-        snprintf(text + len, 161 - len, " https://maps.google.com/?q=%.5f,%.5f", lat, lon);
+    char temperature[10] = "n/a";
+    float t = _board.getMCUTemperature();
+    if (isfinite(t)) {
+        snprintf(temperature, sizeof(temperature), "%.1f°C", (double)t);
     }
+    char uptime[16];
+    tracking_duration_str(uptime, sizeof(uptime), (uint64_t)now);
+    snprintf(text, 161, "%.31s: Низкий заряд!\n🪫 %u%% %u.%02uV\n🌡️ %s\n⏱️ %s",
+             _prefs.node_name, percent, mv / 1000U, (mv % 1000U) / 10U,
+             temperature, uptime);
     mesh::Packet* pkt = createGroupDatagram(PAYLOAD_TYPE_GRP_TXT, channel,
                                            data, 5 + strlen(text));
     if (!pkt) {

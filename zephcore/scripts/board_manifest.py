@@ -52,7 +52,7 @@ APP_DIR = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__
 BOARDS_DIR = os.path.join(APP_DIR, "boards")
 
 PLATFORM_DIRS = {"nrf52840": "nrf52", "nrf54l": "nrf54l", "esp32": "esp32",
-                 "mg24": "mg24", "stm32wl": "stm32wl"}
+                 "mg24": "mg24", "stm32wl": "stm32wl", "rp2040": "rp2040"}
 ROLES = ("companion", "repeater", "room_server", "observer")
 KEYS = {"target", "capabilities", "release", "catalog", "linux"}
 CAPS = {"light_sleep", "light_sleep_companion", "wifi"}
@@ -198,11 +198,12 @@ def matrix(boards, group, role_filter=None):
 
 
 DOCS_GROUPS = [("nrf52", "nRF52840"), ("esp32", "ESP32"), ("stm32wl", "STM32WL"),
-               ("mg24", "MG24"), ("nrf54l", "nRF54L")]
+               ("mg24", "MG24"), ("nrf54l", "nRF54L"), ("rp2040", "RP2040")]
 
 
 SUMMARY_GROUPS = [("nrf52", "nRF52840"), ("esp32", "Семейство ESP32"), ("nrf54l", "nRF54L"),
-                  ("mg24", "EFR32MG24"), ("stm32wl", "STM32WL"), ("linux", "Native Linux (пресеты)")]
+                  ("mg24", "EFR32MG24"), ("stm32wl", "STM32WL"), ("rp2040", "RP2040"),
+                  ("linux", "Native Linux (пресеты)")]
 
 
 def summary(boards):
