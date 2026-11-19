@@ -1390,26 +1390,44 @@ static void ui_feed_add(const char *chat_name, bool is_group, const char *text,
 {
 #ifdef CONFIG_ZEPHCORE_UI_DISPLAY
 	struct ui_state *s = get_state();
+	struct ui_chat *sel = NULL;
+	bool in_feed = ui_pages_current() == UI_PAGE_PUBLIC && s->chat_open;
 	struct ui_chat *c;
 
+	if (in_feed) {
+		sel = ui_chat_nth(&s->chats, s->chat_sel);
+	}
 	c = ui_chat_push(&s->chats, chat_name, is_group, ts, text);
 	if (c == NULL) {
 		return;
 	}
-	/* Only a message in the conversation on screen can make the text
-	 * jump: hold the redraw when the viewer is down its pages. */
-	if (ui_pages_current() == UI_PAGE_PUBLIC && s->chat_open &&
-	    c == ui_chat_nth(&s->chats, s->chat_sel) &&
-	    (s->chat_view.entry != 0 || s->chat_view.row != 0)) {
-		s->feed_deferred = true;
-		k_work_reschedule(&render_work, K_MSEC(UI_FEED_DEFER_MS));
+	if (c == sel) {
+		/* It landed in the conversation on screen: it is being read,
+		 * so it does not count as unread. */
+		c->unread = 0;
+		/* Reading older pages: hold the redraw so the text does not
+		 * jump out from under the eye. */
+		if (s->chat_view.entry != 0 || s->chat_view.row != 0) {
+			s->feed_deferred = true;
+			k_work_reschedule(&render_work,
+					  K_MSEC(UI_FEED_DEFER_MS));
+			return;
+		}
+		s->feed_deferred = false;
+		mc_display_on_for(5000);
+		ui_request_render();
 		return;
 	}
+	if (in_feed) {
+		/* Another conversation while one is on screen: the feed is a
+		 * filter.  Only the counter moves; the list shows it when the
+		 * viewer walks back out. */
+		return;
+	}
+	/* On the list every message is worth a look: light the panel and let
+	 * the counter be seen.  Anywhere else the buzzer and LED carry it. */
 	s->feed_deferred = false;
-	/* On the feed itself a new message is the event the user is waiting
-	 * for: light the panel for a moment so it is seen without a press.
-	 * Anywhere else the buzzer and LED already announce it. */
-	if (ui_pages_current() == UI_PAGE_PUBLIC) {
+	if (ui_pages_current() == UI_PAGE_MESSAGES) {
 		mc_display_on_for(5000);
 	}
 	ui_request_render();
