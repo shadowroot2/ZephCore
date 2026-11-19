@@ -111,12 +111,14 @@ static inline enum ui_feed_redraw ui_feed_push(struct ui_feed *f,
 
 /* ---- time ---- */
 
-/* Local day number of a unix timestamp at the given offset. */
+/* Local day number of a unix timestamp at the given offset.  Floor, not
+ * C truncation: an epoch-second clock plus a negative offset lands below
+ * zero, and truncation would file that day under day 0. */
 static inline int32_t ui_feed_local_day(uint32_t ts, int16_t tz_minutes)
 {
 	int64_t local = (int64_t)ts + (int64_t)tz_minutes * 60;
 
-	return (int32_t)(local / 86400); /* local is non-negative for wall time */
+	return (int32_t)((local - (local < 0 ? 86399 : 0)) / 86400);
 }
 
 /* "HH:MM" today, "DD.MM HH:MM" once the message is from an earlier local
@@ -141,21 +143,18 @@ static inline void ui_feed_format_time(char *buf, size_t n, uint32_t ts,
 			 (day_sec % 3600U) / 60U);
 	} else {
 		/* Day-of-month and month of the local date. */
-		int32_t days = (int32_t)(local / 86400);
+		int32_t days = ui_feed_local_day(ts, tz_minutes);
 		int32_t z = days + 719468; /* days from 0000-03-01 */
 		int32_t era = (z >= 0 ? z : z - 146096) / 146097;
 		uint32_t doe = (uint32_t)(z - era * 146097);
 		uint32_t yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-		int32_t y = (int32_t)yoe + era * 400;
 		uint32_t doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
 		uint32_t mp = (5 * doy + 2) / 153;
 		uint32_t d = doy - (153 * mp + 2) / 5 + 1;
 		uint32_t m = mp + (mp < 10 ? 3 : -9);
 
-		y += (m <= 2);
 		snprintf(buf, n, "%02u.%02u %02u:%02u", d, m,
 			 day_sec / 3600U, (day_sec % 3600U) / 60U);
-		(void)y;
 	}
 }
 
@@ -220,10 +219,14 @@ static const struct ui_feed_emoji ui_feed_emoji_table[] = {
 #define UI_FEED_VS_EMOJI "\xEF\xB8\x8F"
 #define UI_FEED_VS_TEXT  "\xEF\xB8\x8E"
 
-/* Length of one UTF-8 sequence starting at s (1..4), 0 when s is empty. */
+/* Length of the complete UTF-8 sequence starting at s (1..4), 0 when s is
+ * empty. A truncated sequence (a lead byte whose continuations are missing
+ * or cut short by the terminator) counts as one byte, so no caller walks
+ * past the NUL chasing a length the string does not have. */
 static inline size_t ui_feed_utf8_len(const char *s)
 {
 	unsigned char c = (unsigned char)s[0];
+	size_t want;
 
 	if (c == 0) {
 		return 0;
@@ -232,15 +235,20 @@ static inline size_t ui_feed_utf8_len(const char *s)
 		return 1;
 	}
 	if ((c & 0xE0) == 0xC0) {
-		return 2;
+		want = 2;
+	} else if ((c & 0xF0) == 0xE0) {
+		want = 3;
+	} else if ((c & 0xF8) == 0xF0) {
+		want = 4;
+	} else {
+		return 1; /* a stray continuation byte: pass it through */
 	}
-	if ((c & 0xF0) == 0xE0) {
-		return 3;
+	for (size_t k = 1; k < want; k++) {
+		if (s[k] == '\0' || ((unsigned char)s[k] & 0xC0) != 0x80) {
+			return 1; /* truncated or malformed: take the lead only */
+		}
 	}
-	if ((c & 0xF8) == 0xF0) {
-		return 4;
-	}
-	return 1; /* a stray continuation byte: pass it through untouched */
+	return want;
 }
 
 /* Copy text into dst, substituting emoji the display fonts cannot draw. An
@@ -323,17 +331,10 @@ static inline int ui_feed_wrap_row(char *dst, size_t dst_n, const char **src,
 		return 0;
 	}
 	while (*s != '\0' && ncols < cols && (size_t)nbytes + 1 < dst_n) {
-		size_t adv = 1;
-		unsigned char c = (unsigned char)*s;
+		size_t adv = ui_feed_utf8_len(s);
 
-		if (c >= 0x80) {
-			if ((c & 0xE0) == 0xC0) {
-				adv = 2;
-			} else if ((c & 0xF0) == 0xE0) {
-				adv = 3;
-			} else if ((c & 0xF8) == 0xF0) {
-				adv = 4;
-			}
+		if (adv == 0) {
+			break;
 		}
 		if ((size_t)nbytes + adv >= dst_n) {
 			break;
@@ -347,9 +348,14 @@ static inline int ui_feed_wrap_row(char *dst, size_t dst_n, const char **src,
 		s += adv;
 		ncols++;
 	}
-	if (*s != '\0' && last_space_bytes > 0) {
+	if (*s != '\0' && last_space_bytes >= 0) {
 		nbytes = last_space_bytes;
 		s = *src + nbytes + 1;
+		if (nbytes == 0) {
+			/* A break at offset 0 means the row is only spaces:
+			 * drop one so the cursor always advances. */
+			s = *src + 1;
+		}
 	}
 	dst[nbytes] = '\0';
 	while (*s == ' ') {

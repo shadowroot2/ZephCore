@@ -236,3 +236,62 @@ TEST(feed_wrap_rows, "UNIT-FEED-006",
 	CHECK(n == 4 + 2);	/* "abcd" + one Cyrillic letter */
 	CHECK((unsigned char)row[4] == 0xD0);
 }
+
+TEST(feed_time_epoch_edge, "UNIT-FEED-007",
+     "An epoch-second clock with a negative offset stays on its own day")
+{
+	char buf[32];
+
+	/* ts=1000 at UTC-12 is 1969-12-31 12:16 local: day -1, not day 0.
+	 * A truncating division would call it "today" next to a day-0 message. */
+	CHECK(ui_feed_local_day(1000, -720) == -1);
+	CHECK(ui_feed_local_day(50000, -720) == 0);
+	CHECK(ui_feed_local_day(1000, -720) != ui_feed_local_day(50000, -720));
+
+	/* And the date it prints is 31.12, not a rolled-over 01.01. */
+	ui_feed_format_time(buf, sizeof(buf), 1000, 50000, -720);
+	CHECK(std::string(buf) == "31.12 12:16");
+}
+
+TEST(feed_wrap_leading_spaces, "UNIT-FEED-008",
+     "A row of only spaces still makes progress")
+{
+	char row[64];
+	const char *p = "     tail";
+	int n;
+
+	n = ui_feed_wrap_row(row, sizeof(row), &p, 3);
+	CHECK(n <= 3);
+	CHECK(*p != '\0');	/* the cursor moved */
+	/* The rest is reachable in one more call. */
+	n = ui_feed_wrap_row(row, sizeof(row), &p, 16);
+	CHECK(std::string(row) == "tail");
+	CHECK(*p == '\0');
+}
+
+TEST(feed_utf8_truncated, "UNIT-FEED-009",
+     "A lead byte cut off by the terminator never walks past it")
+{
+	char buf[32];
+
+	/* A lone lead byte is one byte, not two. */
+	CHECK(ui_feed_utf8_len("\xD0") == 1);
+	CHECK(ui_feed_utf8_len("") == 0);
+	CHECK(ui_feed_utf8_len("\xD0\x9F") == 2);	/* complete */
+	CHECK(ui_feed_utf8_len("\xD0X") == 1);		/* bad continuation */
+
+	/* Substitution copies what is there and stops. */
+	ui_feed_emoji_text(buf, sizeof(buf), "a\xD0");
+	CHECK(std::string(buf) == "a\xD0");
+
+	/* Wrapping does not step over the terminator either. */
+	{
+		char row[8];
+		const char *p = "ab\xD0";
+
+		(void)ui_feed_wrap_row(row, sizeof(row), &p, 8);
+		CHECK(*p == '\0');
+		CHECK(std::string(row) == "ab\xD0");
+	}
+}
+

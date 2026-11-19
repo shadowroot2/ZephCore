@@ -836,6 +836,21 @@
       "id": "UNIT-FEED-006",
       "name": "Rows break at a space and never split a UTF-8 sequence",
       "source": "tests/unit/feed_tests.cpp"
+    },
+    {
+      "id": "UNIT-FEED-007",
+      "name": "An epoch-second clock with a negative offset stays on its own day",
+      "source": "tests/unit/feed_tests.cpp"
+    },
+    {
+      "id": "UNIT-FEED-008",
+      "name": "A row of only spaces still makes progress",
+      "source": "tests/unit/feed_tests.cpp"
+    },
+    {
+      "id": "UNIT-FEED-009",
+      "name": "A lead byte cut off by the terminator never walks past it",
+      "source": "tests/unit/feed_tests.cpp"
     }
   ]
 }
