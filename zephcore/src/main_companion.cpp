@@ -1521,6 +1521,7 @@ struct companion_home_state {
 	bool link_lost_sent;
 	uint8_t selected; /* 0..9; always 0 after boot */
 	uint8_t save_slot; /* target pinned when the save was requested */
+	uint8_t nav_slot;  /* target pinned when navigation was requested */
 	uint32_t save_started_ms;
 	struct nav_wrongway ww;
 	uint32_t ladder_ms;    /* last wrong-way sample (0 = prime on next fix) */
@@ -2109,8 +2110,8 @@ static void companion_home_save_process(void)
 static bool companion_nav_format_notice(char *buf, size_t cap, const char *head)
 {
 	struct gps_position pos = {};
-	double home_lat = companion_mesh.prefs.home_lat[companion_home.selected];
-	double home_lon = companion_mesh.prefs.home_lon[companion_home.selected];
+	double home_lat = companion_mesh.prefs.home_lat[companion_home.nav_slot];
+	double home_lon = companion_mesh.prefs.home_lon[companion_home.nav_slot];
 	/* Freshness alone says the coordinates are real: the stop notice forms
 	 * after the GPS is already released (the last user out powers it down),
 	 * and a ≤30 s fix survives the power-off. */
@@ -2131,15 +2132,15 @@ static bool companion_nav_format_notice(char *buf, size_t cap, const char *head)
 		tracking_maps_url(url, sizeof(url),
 				  pos.latitude_ndeg / 1e9, pos.longitude_ndeg / 1e9);
 		n = snprintf(buf, cap, "%s\n📍 %d-%s\n📏 %s\n%s", head,
-			     companion_home.selected + 1,
-			     companion_mesh.prefs.home_name[companion_home.selected],
+			     companion_home.nav_slot + 1,
+			     companion_mesh.prefs.home_name[companion_home.nav_slot],
 			     rep, url);
 		if (n > 0 && (size_t)n < cap) {
 			return true;
 		}
 		n = snprintf(buf, cap, "%s\n📍 %d-%s\n%s", head,
-			     companion_home.selected + 1,
-			     companion_mesh.prefs.home_name[companion_home.selected],
+			     companion_home.nav_slot + 1,
+			     companion_mesh.prefs.home_name[companion_home.nav_slot],
 			     url);
 		if (n > 0 && (size_t)n < cap) {
 			return false;
@@ -2147,8 +2148,8 @@ static bool companion_nav_format_notice(char *buf, size_t cap, const char *head)
 		/* Even the short form overflows: no link beats a cut one. */
 	}
 	snprintf(buf, cap, "%s\n📍 %d-%s", head,
-		 companion_home.selected + 1,
-		 companion_mesh.prefs.home_name[companion_home.selected]);
+		 companion_home.nav_slot + 1,
+		 companion_mesh.prefs.home_name[companion_home.nav_slot]);
 	return false;
 }
 
@@ -2168,6 +2169,7 @@ static void companion_nav_set_enabled(bool enabled, char *reply, bool announce =
 			return;
 		}
 		companion_home.nav_active = true;
+		companion_home.nav_slot = companion_home.selected;
 		nav_wrongway_reset(&companion_home.ww);
 		companion_home.travel_m = 0;
 		companion_home.travel_has_last = false;
@@ -2192,10 +2194,10 @@ static void companion_nav_set_enabled(bool enabled, char *reply, bool announce =
 		}
 #endif
 		snprintf(reply, CLI_REPLY_SIZE, "OK - Navigation to %d-%s  %.5f,%.5f",
-			 companion_home.selected + 1,
-			 companion_mesh.prefs.home_name[companion_home.selected],
-			 companion_mesh.prefs.home_lat[companion_home.selected],
-			 companion_mesh.prefs.home_lon[companion_home.selected]);
+			 companion_home.nav_slot + 1,
+			 companion_mesh.prefs.home_name[companion_home.nav_slot],
+			 companion_mesh.prefs.home_lat[companion_home.nav_slot],
+			 companion_mesh.prefs.home_lon[companion_home.nav_slot]);
 		if (companion_mesh.prefs.nav_report_interval_min != 0) {
 			char msg[192];
 
@@ -2296,7 +2298,10 @@ extern "C" bool companion_home_get_point(double *lat, double *lon, bool *saved,
 					const char **name, int *index)
 {
 #if ZEPHCORE_HAS_GPS
-	int i = companion_home.selected;
+	/* A running route owns the point on display: the selection may move
+	 * (wp <n>, double-tap cycle) without redirecting the navigation. */
+	int i = companion_home.nav_active ? companion_home.nav_slot
+					  : companion_home.selected;
 	*lat = companion_mesh.prefs.home_lat[i];
 	*lon = companion_mesh.prefs.home_lon[i];
 	*saved = companion_mesh.prefs.home_saved[i] != 0;

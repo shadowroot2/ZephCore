@@ -60,6 +60,9 @@ becomes 5).
 - **`nav stop` keeps its distance line and maps link.** The stop notice formed after the GPS was
   already released, so its distance line and link were dropped even with a fresh fix while the start
   notice had them.
+- **The navigation target is pinned at start.** Re-selecting a point (`wp <n>`, double-tap cycle)
+  during a route silently re-targeted it — wrong-way, reports and the arrival all followed the new
+  point. The route keeps the point chosen at `nav start`, like a save keeps its slot.
 - **`nav start` now announces itself over LoRa too.** With `nav telemetry on`, the start notice
   (`🚀 Начало навигации к точке` with the point line and, on a fresh fix, the distance line and a
   maps link) goes to the tracking group like the stop notice already did. Before, the first LoRa

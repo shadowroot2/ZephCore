@@ -920,9 +920,10 @@ UNIT-GPSLEASE-001). A feature that started while the save waited owns the GPS an
 itself; with nobody left the GPS returns to the manual session it had before the lease (or powers
 down). `gps off`/`set gps duty` and the UI GPS toggle are legal only while the lease is free, and
 nav and the save pipeline are mutually exclusive (each refuses the other). The target slot is pinned
-when the save is requested — The target slot is pinned when the save is requested — re-selecting
-points while the fix is pending (`wp <n>`, double-tap cycle) does not redirect the save, and a set
-name is never overwritten (only an unnamed `FREE` slot becomes `SAVED`).
+when the save is requested — The target slot is pinned when the save is requested — re-selecting points while the fix is pending (`wp <n>`, double-tap
+cycle) does not redirect the save, and a set name is never overwritten (only an unnamed `FREE` slot
+becomes `SAVED`). Navigation pins its target the same way (`nav_slot` at `nav start`): a re-selection
+does not redirect a running route.
 
 **Tracking deferred backlog (companion)**
 
