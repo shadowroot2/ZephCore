@@ -18,10 +18,11 @@
 #include <string.h>
 
 #include <helpers/tz_offset.h>
-#include <mesh/MeshCore.h>
 
-/* Same bound as BaseChatMesh's MAX_TEXT_LEN (10*CIPHER_BLOCK_SIZE): a feed
- * entry never truncates what the mesh accepted. */
+/* Same bound as BaseChatMesh's MAX_TEXT_LEN (10*CIPHER_BLOCK_SIZE = 160):
+ * a feed entry never truncates what the mesh accepted.  Spelled out rather
+ * than pulled from mesh/MeshCore.h, which is C++-only and this header is
+ * included from C. */
 #define UI_FEED_TEXT_LEN 160
 /* ContactInfo::name is 32 bytes; the feed keeps the sender whole. */
 #define UI_FEED_NAME_LEN 32
