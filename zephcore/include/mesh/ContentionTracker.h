@@ -93,6 +93,7 @@ private:
 		uint8_t dupe_count;
 		uint16_t reactive_added_ms;
 		bool active;
+		bool folded; /* sample folded into the EMA; the count stays answerable */
 	};
 
 	Entry _ring[RING_SIZE];

@@ -203,6 +203,11 @@
       "source": "tests/unit/contention_tests.cpp"
     },
     {
+      "id": "UNIT-CONTENTION-005",
+      "name": "A folded entry still answers the extract query exactly once",
+      "source": "tests/unit/contention_tests.cpp"
+    },
+    {
       "id": "UNIT-DISPATCH-001",
       "name": "Immediate wake delayed dispatch and exactly-once completion",
       "source": "tests/unit/dispatcher_tests.cpp"

@@ -79,7 +79,9 @@ becomes 5).
 - **A tracking point that got through is no longer sent again.** The deferred re-send asked "did
   any neighbour repeat this flood?" 5 s after the send, but a repeat can land up to 10 s later:
   the answer was then "no" even though the receiver had the point, and the re-send arrived as a
-  second message with the same coordinates. The verdict now waits the full 10 s repeat window.
+  second message with the same coordinates. The verdict now waits the full 10 s repeat window, and
+  the repeat count survives the internal fold, so a verdict never calls a delivered point unheard
+  because the measurement got lost.
 - **WiFi companions no longer freeze when the app stops reading.** If an app connected over WiFi
   stopped reading (for example in the middle of a contact sync), the node could stop answering on
   USB, Bluetooth and WiFi, and stay stuck as long as that connection stayed open. The node now

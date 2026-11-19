@@ -61,6 +61,10 @@ void ContentionTracker::finalizeEntry(int idx)
 
 	_finalized_count++;
 	_ring[idx].active = false;
+	/* ZEPHCORE: the sample is folded but the count stays answerable — the
+	 * heard-verdict asks for it once and must not lose it to a tick or a
+	 * late dupe folding the entry first. */
+	_ring[idx].folded = true;
 }
 
 void ContentionTracker::trackRetransmit(uint32_t hash32, uint32_t now_ms)
@@ -78,6 +82,7 @@ void ContentionTracker::trackRetransmit(uint32_t hash32, uint32_t now_ms)
 	e.dupe_count = 0;
 	e.reactive_added_ms = 0;
 	e.active = true;
+	e.folded = false;
 
 	_next_idx = (_next_idx + 1) % RING_SIZE;
 }
@@ -102,11 +107,21 @@ bool ContentionTracker::recordDupeIfTracked(uint32_t hash32, uint32_t now_ms)
 
 int ContentionTracker::extractDupeCount(uint32_t hash32)
 {
-	int idx = findEntry(hash32);
-	if (idx < 0) return -1;
-	int count = (int)_ring[idx].dupe_count;
-	finalizeEntry(idx);  /* folds into EMA, marks inactive */
-	return count;
+	for (int i = 0; i < RING_SIZE; i++) {
+		Entry &e = _ring[i];
+		if ((e.active || e.folded) && e.hash32 == hash32) {
+			int count = (int)e.dupe_count;
+			if (e.active) {
+				finalizeEntry(i);  /* folds into EMA once */
+			}
+			/* Consumed: the answer is given exactly once. */
+			e.folded = false;
+			e.hash32 = 0;
+			e.dupe_count = 0;
+			return count;
+		}
+	}
+	return -1;
 }
 
 uint16_t ContentionTracker::getReactiveHeadroom(uint32_t hash32, uint32_t airtime_ms) const
