@@ -1285,6 +1285,7 @@ int ui_init(void)
 static void ui_feed_add(const char *name, const char *text, uint32_t ts,
 			uint8_t flags, const char *channel_name)
 {
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
 	struct ui_state *s = get_state();
 	struct ui_feed_entry e;
 	enum ui_feed_redraw how;
@@ -1309,6 +1310,9 @@ static void ui_feed_add(const char *name, const char *text, uint32_t ts,
 	}
 	s->feed_deferred = false;
 	ui_request_render();
+#else
+	(void)name; (void)text; (void)ts; (void)flags; (void)channel_name;
+#endif
 }
 
 void ui_notify_contact_msg(uint8_t path_len, const char *from_name,

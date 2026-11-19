@@ -76,12 +76,15 @@ struct ui_state {
 	} recent[4];
 	uint8_t  recent_count;
 
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
 	/* PUBLIC feed: last incoming messages, newest first. Written from the
 	 * mesh thread, read by the UI task; see ui_feed_push() for the
-	 * publication order that makes that safe. */
+	 * publication order that makes that safe. A headless board has no
+	 * screen to show it and no RAM to spare for it. */
 	struct ui_feed feed;
 	uint8_t  feed_view_pos;   /* entry at the top of the window, 0 = newest */
 	bool     feed_deferred;   /* a push is holding the redraw */
+#endif
 
 	/* Radio page */
 	uint32_t lora_freq_hz;
