@@ -127,6 +127,7 @@ extern "C" void bt_ctlr_assert_handle(char *file, uint32_t line)
 static void save_prefs_to_flash(void);
 static void power_policy_tick(void);
 static void companion_sos_process(void);
+static void companion_sos_flush_on_shutdown(void);
 static void companion_sos_tx_done(void);
 static void companion_tracking_odometer_fix(void);
 static void companion_home_save_process(void);
@@ -479,6 +480,7 @@ static void mesh_event_loop(void)
 		}
 		if (events & MESH_EVENT_MANUAL_SHUTDOWN) {
 			bool queued = false;
+			companion_sos_flush_on_shutdown();
 #if IS_ENABLED(CONFIG_ZEPHCORE_POWER_ANNOUNCE)
 			/* The power-off notice goes out right after the shutdown
 			 * melody the UI played. The boot notice is superseded —
@@ -1326,13 +1328,24 @@ static void companion_sos_hold_for_retry(void)
 static bool companion_emergency_request(enum companion_emergency_type type,
 						char *reply, bool play_confirm, bool silent)
 {
-	/* A deliberate SOS takes over completely from a fall alarm without
-	 * emitting a cancel notice; it is a new emergency, not an acknowledgement. */
-	if (type == COMPANION_EMERGENCY_SOS && companion_fall_alarm_state.active) {
+	/* A deliberate local SOS takes over completely from a fall alarm
+	 * without emitting a cancel notice; it is a new emergency, not an
+	 * acknowledgement. A remote silent SOS must not mute the alarm. */
+	if (type == COMPANION_EMERGENCY_SOS && !silent &&
+	    companion_fall_alarm_state.active) {
 		companion_fall_alarm_stop();
 	}
 
 	if (companion_sos.pending) {
+		if (companion_sos.type == type) {
+			/* The same emergency re-triggered (a fall re-detect):
+			 * keep the sequence — restarting it resets the GPS
+			 * window, postpones the final coordinates and spams the
+			 * channel with waiting notices. */
+			snprintf(reply, CLI_REPLY_SIZE, "%s: already in progress",
+				 type == COMPANION_EMERGENCY_FALL ? "Fall" : "SOS");
+			return true;
+		}
 		/* A new emergency replaces the active one while retaining the original
 		 * GPS state, so only an explicit Fall cancellation restores it. */
 		companion_sos.type = type;
@@ -1392,9 +1405,10 @@ static bool companion_emergency_request(enum companion_emergency_type type,
 		return true;
 	}
 
-	/* A recent validated coordinate is safe to send right now. */
+	/* A recent validated coordinate is safe to send right now — fresh is
+	 * fresh, whatever the receiver power state. */
 	bool gps_was_enabled = gps_is_enabled();
-	if (gps_was_enabled && companion_sos_has_fresh_fix()) {
+	if (companion_sos_has_fresh_fix()) {
 		if (companion_sos_send_now(true)) {
 			strcpy(reply, "OK - emergency sent with GPS");
 		} else {
@@ -1561,6 +1575,7 @@ struct companion_home_state {
 	bool save_keep_gps; /* GPS was on for manual use when the save leased it */
 	bool travel_has_last;
 	bool link_lost_sent;
+	uint8_t arrival_hits; /* consecutive in-radius fixes (2 = arrived) */
 	uint8_t selected; /* 0..9; always 0 after boot */
 	uint8_t save_slot; /* target pinned when the save was requested */
 	uint8_t nav_slot;  /* target pinned when navigation was requested */
@@ -1606,7 +1621,13 @@ static void companion_gps_user_left(void)
 		break;
 	case GPS_LEASE_FREE:
 		gps_set_poll_interval_sec(companion_mesh.prefs.gps_interval);
-		gps_enable(false);
+		if (companion_home.save_keep_gps) {
+			/* A manual session was on before the lease took over:
+			 * hand it back instead of killing it. */
+			gps_enable(true);
+		} else {
+			gps_enable(false);
+		}
 		break;
 	default:
 		break;
@@ -1660,7 +1681,7 @@ static uint32_t companion_custom_ms_until_next(void)
 		else if ((uint64_t)remaining < next) next = (uint32_t)remaining;
 	}
 #endif
-	if (companion_home.nav_active) {
+	if (companion_home.nav_active && companion_mesh.prefs.nav_telemetry_enabled) {
 		include(now + NAV_LINK_CHECK_MS);
 	}
 	if (companion_home.save_active) {
@@ -1701,7 +1722,15 @@ static bool companion_tracking_moved_min_distance(const struct gps_position &pos
 	double distance_sq = (6371000.0 * x) * (6371000.0 * x) +
 		(6371000.0 * y) * (6371000.0 * y);
 
-	return distance_sq >= TRACKING_MOVEMENT_METERS * TRACKING_MOVEMENT_METERS;
+	/* At standstill a multipath jump can walk the fix past the plain
+	 * threshold and fake a shifted report: demand twice the movement
+	 * without speed, while a real stop after a walk lands well past it. */
+	double need_m = TRACKING_MOVEMENT_METERS;
+	if ((unsigned)((pos.speed_mms * 36U + 5000U) / 10000U) <=
+	    TRACKING_REPORT_STANDSTILL_KMH) {
+		need_m = 2.0 * TRACKING_MOVEMENT_METERS;
+	}
+	return distance_sq >= need_m * need_m;
 }
 
 static bool companion_send_tracking_message(const struct gps_position &pos,
@@ -1794,17 +1823,24 @@ static void companion_tracking_backlog_process(void)
 		tracking_backlog_verdict(b, heard);
 		LOG_INF("tracking: deferred send %s (%d repeats, %d pending)",
 			heard ? "heard" : "not heard", dupes, b->count);
+		/* An unheard send must probe again on the retry cadence — waiting
+		 * for the next report window starves the ring for a whole
+		 * interval and evicts its points. */
+		if (!heard && tracking_backlog_probe_ms == INT64_MAX) {
+			tracking_backlog_probe_ms = now + TRACKING_BACKLOG_PROBE_RETRY_MS;
+		}
 		break;
 	}
 	case TRACKING_BACKLOG_SEND: {
 		bool probe = !b->draining;
 
 		if (!companion_send_tracking_deferred()) {
-			/* Queue full or no channel: try the head again in
-			 * 10 s, not on the next loop pass. */
+			/* Queue full or no channel: try the head again on the
+			 * retry cadence, not on the next loop pass — 10 s would
+			 * spin forever on a missing channel. */
 			if (probe) {
 				tracking_backlog_probe_ms =
-					now + TRACKING_BACKLOG_DRAIN_INTERVAL_MS;
+					now + TRACKING_BACKLOG_PROBE_RETRY_MS;
 			} else {
 				b->next_send_ms =
 					now + TRACKING_BACKLOG_DRAIN_INTERVAL_MS;
@@ -2277,6 +2313,10 @@ static void companion_nav_set_enabled(bool enabled, char *reply, bool announce =
 				    companion_mesh.prefs.tracking_group_name,
 				    tracks_channel)) {
 				(void)companion_send_visible_group_message(tracks_channel, lora);
+				/* The start notice is the first LoRa report. */
+				companion_home.telemetry_ms = (uint32_t)k_uptime_get() +
+					(uint32_t)companion_mesh.prefs.nav_telemetry_interval_min * 60000U;
+				companion_home.report_last_dist_m = -1.0f;
 			}
 		}
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
@@ -2298,20 +2338,29 @@ static void companion_nav_set_enabled(bool enabled, char *reply, bool announce =
 					 MAX_TEXT_LEN - name_prefix : 0) + 1;
 			ChannelDetails tracks_channel;
 
-			companion_nav_format_notice(msg, sizeof(msg),
-					"🛑 Навигация остановлена");
-			companion_mesh.vcontactNotify(msg);
-			companion_nav_format_notice(lora, budget,
-					"🛑 Навигация остановлена");
-			if (companion_get_public_channel(
-				    companion_mesh.prefs.tracking_group_name,
-				    tracks_channel)) {
-				(void)companion_send_visible_group_message(tracks_channel, lora);
+			/* The stop notice respects the start-side gates: a family
+			 * that never saw the start must not see the stop. */
+			if (companion_mesh.prefs.nav_report_interval_min != 0) {
+				companion_nav_format_notice(msg, sizeof(msg),
+						"🛑 Навигация остановлена");
+				companion_mesh.vcontactNotify(msg);
+			}
+			if (companion_mesh.prefs.nav_telemetry_enabled) {
+				companion_nav_format_notice(lora, budget,
+						"🛑 Навигация остановлена");
+				if (companion_get_public_channel(
+					    companion_mesh.prefs.tracking_group_name,
+					    tracks_channel)) {
+					(void)companion_send_visible_group_message(tracks_channel, lora);
+				}
 			}
 		}
 		strcpy(reply, "OK - nav stop");
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
-		buzzer_play(MELODY_NAV_OFF);
+		if (announce) {
+			/* An auto-stop already played the arrival melody. */
+			buzzer_play(MELODY_NAV_OFF);
+		}
 #endif
 	}
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY) && IS_ENABLED(CONFIG_ZEPHCORE_UI_DESIGN_BUTTON)
@@ -2482,8 +2531,14 @@ static void companion_nav_fix_process(void)
 		}
 	}
 
-	/* Arrived while walking to the point: success melody, then STOP. */
-	if (nav_arrival_reached(dist_m, HOME_ARRIVAL_M)) {
+	/* Arrived while walking to the point: success melody, then STOP. One
+	 * in-radius fix is not a walk into the point — an urban-canyon glitch
+	 * would auto-stop the route — so it takes a second consecutive one. */
+	bool arrived = nav_arrival_reached(dist_m, HOME_ARRIVAL_M);
+	if (!arrived) {
+		companion_home.arrival_hits = 0;
+	}
+	if (arrived && ++companion_home.arrival_hits >= 2) {
 		char dur[16], dist[12], url[48], msg[MAX_TEXT_LEN + 1];
 		size_t name_prefix = strlen(companion_mesh.prefs.node_name) + 2;
 
@@ -2825,6 +2880,7 @@ static void radio_reconfigure(bool preset_changed)
 static bool power_notify_shutdown(uint16_t battery_mv)
 {
 	bool queued = false;
+	companion_sos_flush_on_shutdown();
 #if IS_ENABLED(CONFIG_ZEPHCORE_POWER_ANNOUNCE)
 	/* The boot notice is superseded — it must never land after this one. */
 	power_announce_at_ms = 0;
@@ -3155,7 +3211,9 @@ static bool handle_tracking_cli(const char *line, char *reply, bool silent)
 			int n = 0;
 			for (int i = 0; i < 10; i++) {
 				n += snprintf(reply + n, CLI_REPLY_SIZE - n, "%c%d:%s",
-					      i == companion_home.selected ? '*' : ' ',
+					      i == (companion_home.nav_active ?
+							    companion_home.nav_slot :
+							    companion_home.selected) ? '*' : ' ',
 					      i + 1, companion_mesh.prefs.home_name[i]);
 				if (n >= CLI_REPLY_SIZE - 1) break;
 			}
@@ -3572,11 +3630,15 @@ static bool handle_geo_cli(const char *line, char *reply)
 				       companion_mesh.prefs.geo_last_out_utc);
 		}
 		outside_sec = companion_mesh.prefs.geo_out_sec;
-		/* The running tail of an ongoing exit counts toward today too. */
-		if (gps_is_enabled() && gps_get_last_known_position(&pos) &&
+		/* The running tail of an ongoing exit counts toward today too —
+		 * only an open episode of the live feature, not a stale stamp. */
+		if ((companion_geo.flags & GEO_FLAG_ENABLED) != 0 &&
+		    gps_is_enabled() && gps_get_last_known_position(&pos) &&
 		    pos.valid &&
 		    (k_uptime_get() - pos.timestamp_ms) <= GEO_FIX_MAX_AGE_MS &&
-		    companion_mesh.prefs.geo_last_out_utc != 0) {
+		    companion_mesh.prefs.geo_last_out_utc != 0 &&
+		    companion_mesh.prefs.geo_last_out_utc >
+			    companion_mesh.prefs.geo_last_in_utc) {
 			double dist_m = tracking_distance_m(
 				pos.latitude_ndeg, pos.longitude_ndeg,
 				(int64_t)companion_mesh.prefs.geo_lat_e7 * 100,
@@ -3782,6 +3844,31 @@ static bool companion_gps_control_refused(char *reply)
 }
 #endif
 
+/* Power is going down (button, low battery or a CLI poweroff/reboot): an
+ * emergency still owing its final message gets one last send — the family
+ * must not be left on the waiting notice. */
+static void companion_sos_flush_on_shutdown(void)
+{
+	if (!companion_sos.pending) {
+		return;
+	}
+	(void)companion_sos_send_now(companion_sos_has_fresh_fix());
+	memset(&companion_sos, 0, sizeof(companion_sos));
+	atomic_set(&companion_manual_sos_pending, 0);
+}
+
+/* The CLI shutdown paths (poweroff/shutdown y/reboot) never pass the
+ * manual-shutdown event: give the family the same off notice and drop the
+ * boot notice before silence. */
+static void companion_shutdown_prepare(void)
+{
+	companion_sos_flush_on_shutdown();
+#if IS_ENABLED(CONFIG_ZEPHCORE_POWER_ANNOUNCE)
+	power_announce_at_ms = 0;
+	(void)companion_power_announce(false);
+#endif
+}
+
 static void companion_cli_notify(const char *line, const char *reply)
 {
 	const char *notice = nullptr;
@@ -3839,6 +3926,9 @@ static void companion_cli_exec(const char *line, uint32_t sender_timestamp,
 	}
 #endif
 	if (strcmp(line, "shutdown y") == 0) line = "poweroff";
+	if (strcmp(line, "poweroff") == 0 || strcmp(line, "reboot") == 0) {
+		companion_shutdown_prepare();
+	}
 	if (handle_uptime_cli(line, reply) || handle_tz_cli(line, reply) ||
 	    handle_send_heard_cli(line, reply)) return;
 	if (handle_sos_cli(line, reply, silent_notifications)) {

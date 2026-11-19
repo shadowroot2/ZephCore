@@ -95,6 +95,19 @@ becomes 5).
   verdict settles, the `tracking off` summary keeps its maps link whole under a long node name,
   `set tracking.interval` re-arms the backlog probe on the new timeline, and stored intervals clamp
   to the documented minimum (5 min) instead of jumping to the default.
+- **Shutdown and emergency corners.** `poweroff`, `shutdown y` and `reboot` now send the family the
+  power-off notice and drop the boot notice before silence (the button path already did), and an
+  emergency still owing its final message gets one last send on every shutdown path instead of dying
+  on the waiting notice. A remote silent `sos` no longer mutes a ringing fall alarm, a fresh fix is
+  honoured even with the receiver off, a fall re-trigger keeps the running sequence (no waiting-notice
+  spam, no postponed coordinates), and a fall acknowledgement keeps the 60 s re-detect cooldown.
+- **Small fixes.** Arrival needs two consecutive in-radius fixes — one glitch no longer auto-stops a
+  route. The stop notice respects the same gates as the start notice, so a family that never saw the
+  start no longer sees the stop. A manual GPS session survives a feature taking and releasing the
+  receiver. An unheard backlog probe retries on the 60 s cadence instead of starving to the next
+  report window. The movement filter demands twice the threshold at standstill (a multipath jump no
+  longer fakes a shifted point). `geo log`'s running tail counts only an open episode of a live
+  geofence, and the deferred point clock wraps midnight instead of clamping to 00:00.
 - **WiFi companions no longer freeze when the app stops reading.** If an app connected over WiFi
   stopped reading (for example in the middle of a contact sync), the node could stop answering on
   USB, Bluetooth and WiFi, and stay stuck as long as that connection stayed open. The node now

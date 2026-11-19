@@ -114,7 +114,7 @@ static inline void tracking_format_deferred_point(char *buf, size_t len,
 {
 	char url[48];
 	int64_t local = (int64_t)p->time_s + (int64_t)tz_minutes * 60;
-	uint32_t day_sec = (uint32_t)(local < 0 ? 0 : local % 86400);
+	uint32_t day_sec = (uint32_t)(((local % 86400) + 86400) % 86400);
 
 	tracking_maps_url(url, sizeof(url), p->lat_ndeg / 1e9, p->lon_ndeg / 1e9);
 	snprintf(buf, len, "🕓 %02u:%02u 📍 %s",
