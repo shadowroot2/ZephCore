@@ -1,9 +1,10 @@
 /* SPDX-License-Identifier: MIT */
 /*
- * Host tests for the PUBLIC message feed: the newest-first ring, the
- * "HH:MM"/"DD.MM HH:MM" line time at the display offset, the ">>"/Public/
- * "[#channel]" line shapes, the emoji substitution table and the redraw
- * decision of a push while the viewer is down the list.
+ * Host tests for the conversation feed: the per-chat ring and its newest
+ * first order, the "HH:MM"/"DD.MM HH:MM" line time at the display offset,
+ * the ">>"/Public/"[#channel]" line shapes, the emoji substitution table,
+ * the word wrap and the continuous paging that spills a long message onto
+ * the next page.
  */
 
 #include <UiFeed.h>
@@ -22,69 +23,107 @@
 /* 2026-11-19 23:50 UTC = 2026-11-20 02:50 at UTC+3 */
 #define LATE 1795132200U
 
-static struct ui_feed_entry entry(uint32_t ts, uint8_t flags, const char *name,
-				  const char *text)
+static struct ui_chat_list fresh_list(void)
 {
-	struct ui_feed_entry e;
+	struct ui_chat_list l;
 
-	memset(&e, 0, sizeof(e));
-	e.ts = ts;
-	e.flags = flags;
-	strncpy(e.name, name, sizeof(e.name) - 1);
-	strncpy(e.text, text, sizeof(e.text) - 1);
-	return e;
+	ui_chat_list_reset(&l);
+	return l;
 }
 
-static struct ui_feed_entry ch_entry(uint32_t ts, const char *channel,
-				     const char *text)
+TEST(chat_ring_newest_first, "UNIT-FEED-001",
+     "A chat keeps the newest message on top and evicts the oldest")
 {
-	struct ui_feed_entry e = entry(ts, 0, "", text);
+	struct ui_chat_list l = fresh_list();
+	char name[8];
 
-	strncpy(e.channel, channel, sizeof(e.channel) - 1);
-	return e;
-}
+	for (int i = 0; i < UI_CHAT_MSGS; i++) {
+		char text[8];
 
-TEST(feed_ring_newest_first, "UNIT-FEED-001",
-     "The ring keeps the newest on top and evicts the oldest on overflow")
-{
-	struct ui_feed f;
-	struct ui_feed_cursor pos = { 0, 0 };
-
-	ui_feed_reset(&f);
-	CHECK(f.count == 0);
-	CHECK(ui_feed_get(&f, 0) == NULL);
-
-	for (int i = 0; i < UI_FEED_SLOTS; i++) {
-		char name[8];
-
-		snprintf(name, sizeof(name), "n%d", i);
-		struct ui_feed_entry e = entry(NOW + (uint32_t)i, 0, name, "x");
-		CHECK(ui_feed_push(&f, &e, &pos) == UI_FEED_REDRAW_NOW);
-		CHECK(f.count == (uint8_t)(i + 1));
+		snprintf(name, sizeof(name), "c");
+		snprintf(text, sizeof(text), "m%d", i);
+		CHECK(ui_chat_push(&l, name, true, NOW + (uint32_t)i, text)
+		      != NULL);
 	}
-	/* Newest first: n9 on top, n0 at the bottom. */
-	CHECK(std::string(ui_feed_get(&f, 0)->name) == "n9");
-	CHECK(std::string(ui_feed_get(&f, UI_FEED_SLOTS - 1)->name) == "n0");
-	CHECK(ui_feed_get(&f, UI_FEED_SLOTS) == NULL);
+	{
+		struct ui_chat *c = ui_chat_find(&l, name);
 
-	/* Overflow evicts the oldest (n0), never drops the newest. */
-	struct ui_feed_entry e = entry(NOW + 99, 0, "new", "x");
-	CHECK(ui_feed_push(&f, &e, &pos) == UI_FEED_REDRAW_NOW);
-	CHECK(f.count == UI_FEED_SLOTS);
-	CHECK(std::string(ui_feed_get(&f, 0)->name) == "new");
-	CHECK(std::string(ui_feed_get(&f, 1)->name) == "n9");
-	CHECK(std::string(ui_feed_get(&f, UI_FEED_SLOTS - 1)->name) == "n1");
-	for (uint8_t i = 0; i < f.count; i++) {
-		CHECK(std::string(ui_feed_get(&f, i)->name) != "n0");
+		CHECK(c != NULL);
+		CHECK(c->count == UI_CHAT_MSGS);
+		CHECK(c->unread == UI_CHAT_MSGS);
+		/* Newest first: m3 on top, m0 at the bottom. */
+		CHECK(std::string(ui_chat_get(c, 0)->text) == "m3");
+		CHECK(std::string(ui_chat_get(c, UI_CHAT_MSGS - 1)->text) == "m0");
+		CHECK(ui_chat_get(c, UI_CHAT_MSGS) == NULL);
+	}
+	/* Overflow evicts the oldest (m0), never drops the newest. */
+	CHECK(ui_chat_push(&l, name, true, NOW + 99, "new") != NULL);
+	{
+		struct ui_chat *c = ui_chat_find(&l, name);
+
+		CHECK(c->count == UI_CHAT_MSGS);
+		CHECK(std::string(ui_chat_get(c, 0)->text) == "new");
+		CHECK(std::string(ui_chat_get(c, 1)->text) == "m3");
+		CHECK(std::string(ui_chat_get(c, UI_CHAT_MSGS - 1)->text) == "m1");
+		for (uint8_t i = 0; i < c->count; i++) {
+			CHECK(std::string(ui_chat_get(c, i)->text) != "m0");
+		}
 	}
 }
 
-TEST(feed_time_today_and_before, "UNIT-FEED-002",
+TEST(chat_list_order, "UNIT-FEED-002",
+     "The list shows channels first, then direct chats")
+{
+	struct ui_chat_list l = fresh_list();
+
+	CHECK(ui_chat_push(&l, "Mama", false, NOW, "hi") != NULL);
+	CHECK(ui_chat_push(&l, "Public", true, NOW, "hi") != NULL);
+	CHECK(ui_chat_push(&l, "Papa", false, NOW, "hi") != NULL);
+	CHECK(ui_chat_push(&l, "#zephcore", true, NOW, "hi") != NULL);
+
+	CHECK(ui_chat_list_len(&l) == 4);
+	/* Groups first in slot order, then DMs in slot order. */
+	CHECK(std::string(ui_chat_nth(&l, 0)->name) == "Public");
+	CHECK(std::string(ui_chat_nth(&l, 1)->name) == "#zephcore");
+	CHECK(std::string(ui_chat_nth(&l, 2)->name) == "Mama");
+	CHECK(std::string(ui_chat_nth(&l, 3)->name) == "Papa");
+	CHECK(ui_chat_nth(&l, 4) == NULL);
+	CHECK(ui_chat_nth(&l, -1) == NULL);
+	/* Both groups are flagged, both chats are not. */
+	CHECK(ui_chat_nth(&l, 0)->is_group);
+	CHECK(!ui_chat_nth(&l, 2)->is_group);
+}
+
+TEST(chat_unread, "UNIT-FEED-003",
+     "Unread counts an arrival and clears on the visit")
+{
+	struct ui_chat_list l = fresh_list();
+	struct ui_chat *c;
+
+	c = ui_chat_push(&l, "Public", true, NOW, "one");
+	CHECK(c != NULL);
+	CHECK(c->unread == 1);
+	(void)ui_chat_push(&l, "Public", true, NOW, "two");
+	(void)ui_chat_push(&l, "Public", true, NOW, "three");
+	CHECK(c->unread == 3);
+
+	/* Entering the conversation is the reset. */
+	c->unread = 0;
+	CHECK(c->unread == 0);
+	(void)ui_chat_push(&l, "Public", true, NOW, "four");
+	CHECK(c->unread == 1);
+
+	/* The counter saturates rather than wrapping. */
+	c->unread = 0xFFFF;
+	(void)ui_chat_push(&l, "Public", true, NOW, "five");
+	CHECK(c->unread == 0xFFFF);
+}
+
+TEST(feed_time_today_and_before, "UNIT-FEED-004",
      "Line time is HH:MM today and DD.MM HH:MM on an earlier local day")
 {
 	char buf[32];
 
-	/* UTC: same day, and the day before. */
 	ui_feed_format_time(buf, sizeof(buf), EARLIER_TODAY, NOW, 0);
 	CHECK(std::string(buf) == "10:00");
 	ui_feed_format_time(buf, sizeof(buf), NOW, NOW, 0);
@@ -92,127 +131,97 @@ TEST(feed_time_today_and_before, "UNIT-FEED-002",
 	ui_feed_format_time(buf, sizeof(buf), YESTERDAY, NOW, 0);
 	CHECK(std::string(buf) == "18.11 12:34");
 
-	/* The local day, not the UTC day, decides: at UTC+3 both of these
-	 * land on 2026-11-20, so they are "today" together. */
 	ui_feed_format_time(buf, sizeof(buf), LATE, LATE, 180);
 	CHECK(std::string(buf) == "02:50");
-	/* Against a now that is still 2026-11-19 locally, it is yesterday. */
 	ui_feed_format_time(buf, sizeof(buf), LATE, NOW, 180);
 	CHECK(std::string(buf) == "20.11 02:50");
-
-	/* A negative offset moves the day the other way: 23:50 UTC at UTC-3
-	 * is 20:50 the same local day. */
 	ui_feed_format_time(buf, sizeof(buf), LATE, NOW, -180);
 	CHECK(std::string(buf) == "20:50");
 
-	/* No sender timestamp at all. */
 	ui_feed_format_time(buf, sizeof(buf), 0, NOW, 0);
 	CHECK(std::string(buf) == "--:--");
 
-	/* Month and year rollovers still format as DD.MM. */
-	ui_feed_format_time(buf, sizeof(buf), 1772355900U, NOW, 0); /* 2026-03-01 */
+	ui_feed_format_time(buf, sizeof(buf), 1772355900U, NOW, 0);
 	CHECK(std::string(buf) == "01.03 09:05");
-	ui_feed_format_time(buf, sizeof(buf), 1767254400U, NOW, 0); /* 2026-01-01 */
+	ui_feed_format_time(buf, sizeof(buf), 1767254400U, NOW, 0);
 	CHECK(std::string(buf) == "01.01 08:00");
 }
 
-TEST(feed_line_shapes, "UNIT-FEED-003",
+TEST(feed_time_epoch_edge, "UNIT-FEED-005",
+     "An epoch-second clock with a negative offset stays on its own day")
+{
+	char buf[32];
+
+	CHECK(ui_feed_local_day(1000, -720) == -1);
+	CHECK(ui_feed_local_day(50000, -720) == 0);
+	CHECK(ui_feed_local_day(1000, -720) != ui_feed_local_day(50000, -720));
+	ui_feed_format_time(buf, sizeof(buf), 1000, 50000, -720);
+	CHECK(std::string(buf) == "31.12 12:16");
+}
+
+TEST(feed_line_shapes, "UNIT-FEED-006",
      "Direct, public and channel lines carry their own markers")
 {
 	char buf[192];
-	/* A channel message carries its sender in the text already. */
-	struct ui_feed_entry dm = entry(NOW, UI_FEED_F_DM, "Mama", "ты где?");
-	struct ui_feed_entry pub = ch_entry(YESTERDAY, "Public", "Nick: привет, как дела?");
-	struct ui_feed_entry bare = ch_entry(YESTERDAY, "", "Nick: привет, как дела?");
-	struct ui_feed_entry grp = ch_entry(NOW, "#zephcore", "Nick: тру ляля");
+	struct ui_chat_list l = fresh_list();
+	struct ui_chat *dm;
+	struct ui_chat *pub;
+	struct ui_chat *grp;
+	struct ui_chat_msg m;
 
-	ui_feed_format_line(buf, sizeof(buf), &dm, NOW, 0);
+	(void)ui_chat_push(&l, "Mama", false, NOW, "ты где?");
+	(void)ui_chat_push(&l, "Public", true, YESTERDAY, "Nick: привет, как дела?");
+	(void)ui_chat_push(&l, "#zephcore", true, NOW, "Nick: тру ляля");
+	dm = ui_chat_find(&l, "Mama");
+	pub = ui_chat_find(&l, "Public");
+	grp = ui_chat_find(&l, "#zephcore");
+	memset(&m, 0, sizeof(m));
+	m.ts = NOW;
+	strcpy(m.text, "ты где?");
+	ui_chat_format_line(buf, sizeof(buf), dm, &m, NOW, 0);
 	CHECK(std::string(buf) == ">> 12:34 Mama: ты где?");
 
-	/* The public channel is not tagged. */
-	ui_feed_format_line(buf, sizeof(buf), &pub, NOW, 0);
-	CHECK(std::string(buf) == "18.11 12:34 Nick: привет, как дела?");
-	ui_feed_format_line(buf, sizeof(buf), &bare, NOW, 0);
+	m.ts = YESTERDAY;
+	strcpy(m.text, "Nick: привет, как дела?");
+	ui_chat_format_line(buf, sizeof(buf), pub, &m, NOW, 0);
 	CHECK(std::string(buf) == "18.11 12:34 Nick: привет, как дела?");
 
-	/* Any other channel is. */
-	ui_feed_format_line(buf, sizeof(buf), &grp, NOW, 0);
+	m.ts = NOW;
+	strcpy(m.text, "Nick: тру ляля");
+	ui_chat_format_line(buf, sizeof(buf), grp, &m, NOW, 0);
 	CHECK(std::string(buf) == "12:34 [#zephcore] Nick: тру ляля");
-
-	/* A direct message keeps its own name, whatever channel it claims. */
-	strncpy(dm.channel, "#zephcore", sizeof(dm.channel) - 1);
-	ui_feed_format_line(buf, sizeof(buf), &dm, NOW, 0);
-	CHECK(std::string(buf) == ">> 12:34 Mama: ты где?");
 }
 
-TEST(feed_emoji_substitution, "UNIT-FEED-004",
+TEST(feed_emoji_substitution, "UNIT-FEED-007",
      "Emoji become text, unknown pictographs go, other multi-byte text stays")
 {
 	char buf[96];
 
 	ui_feed_emoji_text(buf, sizeof(buf), "\xF0\x9F\x99\x82 hi");
 	CHECK(std::string(buf) == ":) hi");
-
 	ui_feed_emoji_text(buf, sizeof(buf), "SOS \xF0\x9F\x86\x98!");
 	CHECK(std::string(buf) == "SOS SOS!!");
-
-	/* The variation selector is not left dangling behind a substitution. */
 	ui_feed_emoji_text(buf, sizeof(buf), "\xE2\x9D\xA4\xEF\xB8\x8F you");
 	CHECK(std::string(buf) == "<3 you");
-
-	/* Cyrillic is multi-byte and must survive untouched. */
-	ui_feed_emoji_text(buf, sizeof(buf), "\xD0\xBF\xD1\x80\xD0\xB8\xD0\xB2\xD0\xB5\xD1\x82");
-	CHECK(std::string(buf) == "\xD0\xBF\xD1\x80\xD0\xB8\xD0\xB2\xD0\xB5\xD1\x82");
-
-	/* An unknown 4-byte pictograph is dropped whole, never sliced. */
-	ui_feed_emoji_text(buf, sizeof(buf), "a\xF0\x9F\xA6\x84z"); /* 🦄 */
+	ui_feed_emoji_text(buf, sizeof(buf),
+			    "\xD0\xBF\xD1\x80\xD0\xB8\xD0\xB2\xD0\xB5\xD1\x82");
+	CHECK(std::string(buf) ==
+	      "\xD0\xBF\xD1\x80\xD0\xB8\xD0\xB2\xD0\xB5\xD1\x82");
+	ui_feed_emoji_text(buf, sizeof(buf), "a\xF0\x9F\xA6\x84z");
 	CHECK(std::string(buf) == "az");
-
-	/* The buffer is bounded and always NUL-terminated. */
 	ui_feed_emoji_text(buf, 4, "abcdef");
 	CHECK(std::string(buf) == "abc");
 	ui_feed_emoji_text(buf, 1, "abc");
 	CHECK(std::string(buf) == "");
 }
 
-TEST(feed_push_redraw_decision, "UNIT-FEED-005",
-     "A push redraws at the top and holds the screen while reading older")
-{
-	struct ui_feed f;
-	struct ui_feed_cursor pos = { 0, 0 };
-
-	ui_feed_reset(&f);
-
-	/* At the top: redraw now, nothing moves. */
-	struct ui_feed_entry a = entry(NOW, 0, "a", "1");
-	CHECK(ui_feed_push(&f, &a, &pos) == UI_FEED_REDRAW_NOW);
-	CHECK(pos.entry == 0 && pos.row == 0);
-
-	/* Down the list: the push is deferred and the reading position stays
-	 * on the same message, which is now one entry further from the top. */
-	struct ui_feed_entry b = entry(NOW + 1, 0, "b", "2");
-	CHECK(ui_feed_push(&f, &b, &pos) == UI_FEED_REDRAW_NOW);
-	pos.entry = 1; /* reading "a" */
-	struct ui_feed_entry c = entry(NOW + 2, 0, "c", "3");
-	CHECK(ui_feed_push(&f, &c, &pos) == UI_FEED_REDRAW_DEFER);
-	CHECK(pos.entry == 2);
-	CHECK(std::string(ui_feed_get(&f, pos.entry)->name) == "a");
-	CHECK(std::string(ui_feed_get(&f, 0)->name) == "c");
-
-	/* A NULL view means "nobody is reading": always redraw now. */
-	struct ui_feed_entry d = entry(NOW + 3, 0, "d", "4");
-	CHECK(ui_feed_push(&f, &d, NULL) == UI_FEED_REDRAW_NOW);
-	CHECK(f.count == 4);
-}
-
-TEST(feed_wrap_rows, "UNIT-FEED-006",
+TEST(feed_wrap_rows, "UNIT-FEED-008",
      "Rows break at a space and never split a UTF-8 sequence")
 {
 	char row[64];
 	const char *p;
 	int n;
 
-	/* ASCII wraps at the last space that fits. */
 	p = "hello wide world";
 	n = ui_feed_wrap_row(row, sizeof(row), &p, 11);
 	CHECK(std::string(row) == "hello wide");
@@ -221,39 +230,20 @@ TEST(feed_wrap_rows, "UNIT-FEED-006",
 	CHECK(std::string(row) == "world");
 	CHECK(*p == '\0');
 
-	/* One Cyrillic sequence is one column, not two bytes. */
-	p = "\xD0\xBF\xD1\x80\xD0\xB8\xD0\xB2\xD0\xB5\xD1\x82 \xD0\xBC\xD0\xB8\xD1\x80";	/* привет мир */
+	p = "\xD0\xBF\xD1\x80\xD0\xB8\xD0\xB2\xD0\xB5\xD1\x82 \xD0\xBC\xD0\xB8\xD1\x80";
 	n = ui_feed_wrap_row(row, sizeof(row), &p, 6);
 	CHECK(std::string(row) == "\xD0\xBF\xD1\x80\xD0\xB8\xD0\xB2\xD0\xB5\xD1\x82");
-	CHECK(n == 12);	/* 6 code points, 2 bytes each */
+	CHECK(n == 12);
 	n = ui_feed_wrap_row(row, sizeof(row), &p, 6);
 	CHECK(std::string(row) == "\xD0\xBC\xD0\xB8\xD1\x80");
 
-	/* A long word with no space is cut at the column limit and the
-	 * cut is never inside a sequence. */
 	p = "abcd\xD0\xB0\xD0\xB1\xD0\xB2\xD0\xB3\xD0\xB4\xD0\xB5";
 	n = ui_feed_wrap_row(row, sizeof(row), &p, 5);
-	CHECK(n == 4 + 2);	/* "abcd" + one Cyrillic letter */
+	CHECK(n == 4 + 2);
 	CHECK((unsigned char)row[4] == 0xD0);
 }
 
-TEST(feed_time_epoch_edge, "UNIT-FEED-007",
-     "An epoch-second clock with a negative offset stays on its own day")
-{
-	char buf[32];
-
-	/* ts=1000 at UTC-12 is 1969-12-31 12:16 local: day -1, not day 0.
-	 * A truncating division would call it "today" next to a day-0 message. */
-	CHECK(ui_feed_local_day(1000, -720) == -1);
-	CHECK(ui_feed_local_day(50000, -720) == 0);
-	CHECK(ui_feed_local_day(1000, -720) != ui_feed_local_day(50000, -720));
-
-	/* And the date it prints is 31.12, not a rolled-over 01.01. */
-	ui_feed_format_time(buf, sizeof(buf), 1000, 50000, -720);
-	CHECK(std::string(buf) == "31.12 12:16");
-}
-
-TEST(feed_wrap_leading_spaces, "UNIT-FEED-008",
+TEST(feed_wrap_leading_spaces, "UNIT-FEED-009",
      "A row of only spaces still makes progress")
 {
 	char row[64];
@@ -262,29 +252,25 @@ TEST(feed_wrap_leading_spaces, "UNIT-FEED-008",
 
 	n = ui_feed_wrap_row(row, sizeof(row), &p, 3);
 	CHECK(n <= 3);
-	CHECK(*p != '\0');	/* the cursor moved */
-	/* The rest is reachable in one more call. */
+	CHECK(*p != '\0');
 	n = ui_feed_wrap_row(row, sizeof(row), &p, 16);
 	CHECK(std::string(row) == "tail");
 	CHECK(*p == '\0');
 }
 
-TEST(feed_utf8_truncated, "UNIT-FEED-009",
+TEST(feed_utf8_truncated, "UNIT-FEED-010",
      "A lead byte cut off by the terminator never walks past it")
 {
 	char buf[32];
 
-	/* A lone lead byte is one byte, not two. */
 	CHECK(ui_feed_utf8_len("\xD0") == 1);
 	CHECK(ui_feed_utf8_len("") == 0);
-	CHECK(ui_feed_utf8_len("\xD0\x9F") == 2);	/* complete */
-	CHECK(ui_feed_utf8_len("\xD0X") == 1);		/* bad continuation */
+	CHECK(ui_feed_utf8_len("\xD0\x9F") == 2);
+	CHECK(ui_feed_utf8_len("\xD0X") == 1);
 
-	/* Substitution copies what is there and stops. */
 	ui_feed_emoji_text(buf, sizeof(buf), "a\xD0");
 	CHECK(std::string(buf) == "a\xD0");
 
-	/* Wrapping does not step over the terminator either. */
 	{
 		char row[8];
 		const char *p = "ab\xD0";
@@ -295,48 +281,42 @@ TEST(feed_utf8_truncated, "UNIT-FEED-009",
 	}
 }
 
-TEST(feed_continuous_paging, "UNIT-FEED-010",
+TEST(feed_continuous_paging, "UNIT-FEED-011",
      "A page spills the overflow of a long message onto the next one")
 {
-	struct ui_feed f;
+	struct ui_chat_list l = fresh_list();
+	struct ui_chat *c;
 	char row[64];
-	struct ui_feed_iter it;
+	struct ui_chat_iter it;
 	struct ui_feed_cursor start = { 0, 0 };
 	int n = 0;
 
-	ui_feed_reset(&f);
-	/* Three short messages and one long one at the bottom. */
-	struct ui_feed_entry a = entry(NOW, 0, "a", "one");
-	struct ui_feed_entry b = entry(NOW + 1, 0, "b", "two");
-	struct ui_feed_entry c = entry(NOW + 2, 0, "c", "three");
-	struct ui_feed_entry d = entry(NOW + 3, 0, "d", "aaa bbb ccc");
-	ui_feed_push(&f, &a, NULL);
-	ui_feed_push(&f, &b, NULL);
-	ui_feed_push(&f, &c, NULL);
-	ui_feed_push(&f, &d, NULL);
-	/* Newest first: d, c, b, a. */
+	(void)ui_chat_push(&l, "Public", true, NOW, "one");
+	(void)ui_chat_push(&l, "Public", true, NOW + 1, "two");
+	(void)ui_chat_push(&l, "Public", true, NOW + 2, "three");
+	(void)ui_chat_push(&l, "Public", true, NOW + 3, "aaa bbb ccc");
+	c = ui_chat_find(&l, "Public");
+	CHECK(c != NULL);
 
-	ui_feed_iter_init(&it, &f, start, NOW, 0, 11);
-	while (ui_feed_iter_next(&it, row, sizeof(row))) {
+	ui_chat_iter_init(&it, c, start, NOW, 0, 11);
+	while (ui_chat_iter_next(&it, row, sizeof(row))) {
 		n++;
 	}
 	/* "00:00 aaa bbb ccc" wraps to two rows at 11 columns; the other
-	 * three lines ("00:00 one" .. "00:00 three") take one each. */
+	 * three lines take one each. */
 	CHECK(n == 5);
 
-	/* A page of two rows starting at the top ends inside "d". */
 	start = (struct ui_feed_cursor){ 0, 0 };
-	ui_feed_iter_init(&it, &f, start, NOW, 0, 11);
-	CHECK(ui_feed_iter_next(&it, row, sizeof(row)));
-	CHECK(ui_feed_iter_next(&it, row, sizeof(row)));
-	CHECK(it.cur.entry == 1);	/* spilled over into "c" */
+	ui_chat_iter_init(&it, c, start, NOW, 0, 11);
+	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
+	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
+	CHECK(it.cur.entry == 1);
 	CHECK(it.cur.row == 0);
 
-	/* The page before that is the first one again. */
 	{
 		struct ui_feed_cursor cur = { 1, 0 };
 		struct ui_feed_cursor prev =
-			ui_feed_page_before(&f, cur, NOW, 0, 11, 2);
+			ui_chat_page_before(c, cur, NOW, 0, 11, 2);
 
 		CHECK(prev.entry == 0 && prev.row == 0);
 	}

@@ -46,86 +46,6 @@
  * enough to tag the line. */
 #define UI_FEED_CHANNEL_LEN 16
 
-struct ui_feed_entry {
-	uint32_t ts; /* sender timestamp (unix seconds), 0 = unknown */
-	uint8_t flags;
-	char name[UI_FEED_NAME_LEN];
-	char channel[UI_FEED_CHANNEL_LEN]; /* empty for a direct message */
-	char text[UI_FEED_TEXT_LEN + 1];
-};
-
-struct ui_feed {
-	struct ui_feed_entry e[UI_FEED_SLOTS];
-	uint8_t head;  /* index of the newest entry */
-	uint8_t count; /* valid entries, 0..UI_FEED_SLOTS */
-};
-
-enum ui_feed_redraw {
-	UI_FEED_REDRAW_NOW = 0,   /* the viewer is at the top: show it at once */
-	UI_FEED_REDRAW_DEFER = 1, /* the viewer is reading older: hold the redraw */
-};
-
-/* ---- ring ---- */
-
-static inline void ui_feed_reset(struct ui_feed *f)
-{
-	memset(f, 0, sizeof(*f));
-}
-
-/* Newest first: 0 is the newest, count-1 the oldest. NULL past the end. */
-static inline const struct ui_feed_entry *ui_feed_get(const struct ui_feed *f,
-						      uint8_t i)
-{
-	if (i >= f->count) {
-		return NULL;
-	}
-	return &f->e[(uint8_t)((f->head + UI_FEED_SLOTS - i) % UI_FEED_SLOTS)];
-}
-
-/* A position in the feed's wrapped rows: `entry` is the message (0 = newest)
- * and `row` is the wrapped line within it.  The feed reads as one continuous
- * text, so a message longer than the panel spills onto the next page instead
- * of being cut at the window edge. */
-struct ui_feed_cursor {
-	uint8_t entry;
-	uint16_t row;
-};
-
-static inline bool ui_feed_cursor_before(struct ui_feed_cursor a,
-					 struct ui_feed_cursor b)
-{
-	return a.entry < b.entry ||
-	       (a.entry == b.entry && a.row < b.row);
-}
-
-/* Push a message. `view` is the row at the top of the screen; when the
- * viewer is down the list it is moved along with the entries so the text
- * being read stays under the eye. Returns whether the screen may be
- * redrawn now. */
-static inline enum ui_feed_redraw ui_feed_push(struct ui_feed *f,
-					       const struct ui_feed_entry *e,
-					       struct ui_feed_cursor *view)
-{
-	bool at_top = (view == NULL || (view->entry == 0 && view->row == 0));
-	uint8_t slot = (uint8_t)((f->head + 1) % UI_FEED_SLOTS);
-
-	/* Entry body first, then the indices: the renderer may run in another
-	 * thread, and a half-written entry must never become reachable. */
-	f->e[slot] = *e;
-	f->head = slot;
-	if (f->count < UI_FEED_SLOTS) {
-		f->count++;
-	}
-	if (!at_top && view != NULL) {
-		/* Everything moved one entry towards the old end; keep the
-		 * reading position on the same message and row. */
-		if ((uint16_t)view->entry + 1 < f->count) {
-			view->entry++;
-		}
-	}
-	return at_top ? UI_FEED_REDRAW_NOW : UI_FEED_REDRAW_DEFER;
-}
-
 /* ---- time ---- */
 
 /* Local day number of a unix timestamp at the given offset.  Floor, not
@@ -175,32 +95,6 @@ static inline void ui_feed_format_time(char *buf, size_t n, uint32_t ts,
 	}
 }
 
-/* ---- line ---- */
-
-/* One feed line in full, before any wrapping:
- *   ">> 12:35 Mama: ты где?"              direct: name from the contact
- *   "18.11 12:34 Nick: привет, как дела?" public channel (untagged)
- *   "12:34 [#zephcore] Nick: тру ляля"    any other channel
- * A channel message carries its sender as the "<name>: " prefix the mesh
- * already put in the text (sendGroupMessage), so only a direct message adds
- * a name of its own. `channel_name` is ignored for a direct message. */
-static inline void ui_feed_format_line(char *buf, size_t n,
-				       const struct ui_feed_entry *e,
-				       uint32_t now, int16_t tz_minutes)
-{
-	char time[16];
-
-	ui_feed_format_time(time, sizeof(time), e->ts, now, tz_minutes);
-
-	if (e->flags & UI_FEED_F_DM) {
-		snprintf(buf, n, ">> %s %s: %s", time, e->name, e->text);
-	} else if (e->channel[0] == '\0' ||
-		   strcmp(e->channel, "Public") == 0) {
-		snprintf(buf, n, "%s %s", time, e->text);
-	} else {
-		snprintf(buf, n, "%s [%.12s] %s", time, e->channel, e->text);
-	}
-}
 
 /* ---- emoji ---- */
 
@@ -382,10 +276,194 @@ static inline int ui_feed_wrap_row(char *dst, size_t dst_n, const char **src,
 	return nbytes;
 }
 
+
+/* ---- conversations ---- */
+
+/* One conversation — a channel or a direct chat — with its own small ring.
+ * The list screen shows the names, entering one shows its messages. */
+struct ui_chat_msg {
+	uint32_t ts;			/* sender timestamp (unix seconds), 0 = unknown */
+	char text[UI_FEED_TEXT_LEN + 1];
+};
+
+#ifndef UI_CHAT_MSGS
+#ifdef CONFIG_ZEPHCORE_UI_CHAT_MSGS
+#define UI_CHAT_MSGS CONFIG_ZEPHCORE_UI_CHAT_MSGS
+#else
+#define UI_CHAT_MSGS 4
+#endif
+#endif
+
+#ifndef UI_CHAT_COUNT
+#ifdef CONFIG_ZEPHCORE_UI_CHAT_COUNT
+#define UI_CHAT_COUNT CONFIG_ZEPHCORE_UI_CHAT_COUNT
+#else
+#define UI_CHAT_COUNT 6
+#endif
+#endif
+
+struct ui_chat {
+	char name[UI_FEED_NAME_LEN];
+	bool is_group;			/* a channel, not a direct chat */
+	uint16_t unread;		/* messages since the last visit */
+	uint8_t head;			/* index of the newest message */
+	uint8_t count;			/* messages kept, 0..UI_CHAT_MSGS */
+	struct ui_chat_msg msgs[UI_CHAT_MSGS];
+};
+
+struct ui_chat_list {
+	struct ui_chat chats[UI_CHAT_COUNT];
+	uint8_t count;
+};
+
+/* A position in one chat's wrapped rows: `entry` is the message (0 = newest)
+ * and `row` is the wrapped line within it.  The chat reads as one continuous
+ * text, so a message longer than the panel spills onto the next page. */
+struct ui_feed_cursor {
+	uint8_t entry;
+	uint16_t row;
+};
+
+static inline bool ui_feed_cursor_before(struct ui_feed_cursor a,
+					 struct ui_feed_cursor b)
+{
+	return a.entry < b.entry ||
+	       (a.entry == b.entry && a.row < b.row);
+}
+
+/* Newest first: 0 is the newest, count-1 the oldest. NULL past the end. */
+static inline const struct ui_chat_msg *ui_chat_get(const struct ui_chat *c,
+						    uint8_t i)
+{
+	if (i >= c->count) {
+		return NULL;
+	}
+	return &c->msgs[(uint8_t)((c->head + UI_CHAT_MSGS - i) % UI_CHAT_MSGS)];
+}
+
+static inline void ui_chat_reset(struct ui_chat *c)
+{
+	memset(c, 0, sizeof(*c));
+}
+
+static inline void ui_chat_list_reset(struct ui_chat_list *l)
+{
+	memset(l, 0, sizeof(*l));
+}
+
+/* The chat carrying `name`, or NULL. */
+static inline struct ui_chat *ui_chat_find(struct ui_chat_list *l,
+					   const char *name)
+{
+	for (uint8_t i = 0; i < l->count; i++) {
+		if (strncmp(l->chats[i].name, name, sizeof(l->chats[i].name))
+		    == 0) {
+			return &l->chats[i];
+		}
+	}
+	return NULL;
+}
+
+/* The n-th chat in display order: channels first, then direct chats, each
+ * in slot order.  NULL past the end. */
+static inline struct ui_chat *ui_chat_nth(struct ui_chat_list *l, int n)
+{
+	int seen = 0;
+
+	if (n < 0) {
+		return NULL;
+	}
+	for (uint8_t pass = 0; pass < 2; pass++) {
+		bool want_group = (pass == 0);
+
+		for (uint8_t i = 0; i < l->count; i++) {
+			if (l->chats[i].is_group != want_group) {
+				continue;
+			}
+			if (seen == n) {
+				return &l->chats[i];
+			}
+			seen++;
+		}
+	}
+	return NULL;
+}
+
+/* Number of chats in display order. */
+static inline int ui_chat_list_len(const struct ui_chat_list *l)
+{
+	return (int)l->count;
+}
+
+/* Record one incoming message.  The chat is created if this is its first.
+ * Returns the chat it landed in, or NULL when the list is full and the name
+ * is unknown. */
+static inline struct ui_chat *ui_chat_push(struct ui_chat_list *l,
+					   const char *name, bool is_group,
+					   uint32_t ts, const char *text)
+{
+	struct ui_chat *c = ui_chat_find(l, name);
+
+	if (c == NULL) {
+		if (l->count >= UI_CHAT_COUNT) {
+			return NULL;
+		}
+		c = &l->chats[l->count++];
+		memset(c, 0, sizeof(*c));
+		strncpy(c->name, name, sizeof(c->name) - 1);
+		c->is_group = is_group;
+	}
+	{
+		uint8_t slot = (uint8_t)((c->head + 1) % UI_CHAT_MSGS);
+
+		/* Body first, then the index: the renderer may run in another
+		 * thread, and a half-written message must never become
+		 * reachable. */
+		c->msgs[slot].ts = ts;
+		ui_feed_emoji_text(c->msgs[slot].text,
+				   sizeof(c->msgs[slot].text), text);
+		c->head = slot;
+		if (c->count < UI_CHAT_MSGS) {
+			c->count++;
+		}
+	}
+	if (c->unread < 0xFFFF) {
+		c->unread++;
+	}
+	return c;
+}
+
+/* ---- lines ---- */
+
+/* One chat line in full, before any wrapping:
+ *   ">> 12:35 Mama: ты где?"              direct
+ *   "18.11 12:34 Nick: привет, как дела?" public channel (untagged)
+ *   "12:34 [#zephcore] Nick: тру ляля"    any other channel
+ * A channel message carries its sender as the "<name>: " prefix the mesh
+ * already put in the text (sendGroupMessage), so only a direct chat adds a
+ * name of its own. */
+static inline void ui_chat_format_line(char *buf, size_t n,
+				       const struct ui_chat *c,
+				       const struct ui_chat_msg *m,
+				       uint32_t now, int16_t tz_minutes)
+{
+	char time[16];
+
+	ui_feed_format_time(time, sizeof(time), m->ts, now, tz_minutes);
+
+	if (!c->is_group) {
+		snprintf(buf, n, ">> %s %s: %s", time, c->name, m->text);
+	} else if (c->name[0] == '\0' || strcmp(c->name, "Public") == 0) {
+		snprintf(buf, n, "%s %s", time, m->text);
+	} else {
+		snprintf(buf, n, "%s [%.12s] %s", time, c->name, m->text);
+	}
+}
+
 /* ---- paging ---- */
 
-struct ui_feed_iter {
-	const struct ui_feed *f;
+struct ui_chat_iter {
+	const struct ui_chat *c;
 	struct ui_feed_cursor cur;	/* row the next pull returns */
 	uint32_t now;
 	int16_t tz_minutes;
@@ -395,24 +473,23 @@ struct ui_feed_iter {
 	bool loaded;
 };
 
-static inline void ui_feed_iter_load(struct ui_feed_iter *it)
+static inline void ui_chat_iter_load(struct ui_chat_iter *it)
 {
-	const struct ui_feed_entry *e;
+	const struct ui_chat_msg *m;
 
 	it->line_p = it->line;
 	it->line[0] = '\0';
 	it->loaded = true;
-	if (it->cur.entry >= it->f->count) {
+	if (it->cur.entry >= it->c->count) {
 		return;
 	}
-	e = ui_feed_get(it->f, it->cur.entry);
-	if (e == NULL) {
-		it->cur.entry = it->f->count;
+	m = ui_chat_get(it->c, it->cur.entry);
+	if (m == NULL) {
+		it->cur.entry = it->c->count;
 		return;
 	}
-	ui_feed_format_line(it->line, sizeof(it->line), e, it->now,
+	ui_chat_format_line(it->line, sizeof(it->line), it->c, m, it->now,
 			    it->tz_minutes);
-	/* Skip the rows the cursor is already past. */
 	for (uint16_t i = 0; i < it->cur.row && *it->line_p != '\0'; i++) {
 		char skip[8];
 
@@ -420,12 +497,12 @@ static inline void ui_feed_iter_load(struct ui_feed_iter *it)
 	}
 }
 
-static inline void ui_feed_iter_init(struct ui_feed_iter *it,
-				     const struct ui_feed *f,
+static inline void ui_chat_iter_init(struct ui_chat_iter *it,
+				     const struct ui_chat *c,
 				     struct ui_feed_cursor cur, uint32_t now,
 				     int16_t tz_minutes, int cols)
 {
-	it->f = f;
+	it->c = c;
 	it->cur = cur;
 	it->now = now;
 	it->tz_minutes = tz_minutes;
@@ -433,24 +510,21 @@ static inline void ui_feed_iter_init(struct ui_feed_iter *it,
 	it->loaded = false;
 }
 
-/* Pull the next wrapped row.  False at the end of the feed. */
-static inline bool ui_feed_iter_next(struct ui_feed_iter *it, char *out,
+/* Pull the next wrapped row.  False at the end of the chat. */
+static inline bool ui_chat_iter_next(struct ui_chat_iter *it, char *out,
 				     size_t out_n)
 {
 	if (!it->loaded) {
-		ui_feed_iter_load(it);
+		ui_chat_iter_load(it);
 	}
-	while (it->cur.entry < it->f->count) {
+	while (it->cur.entry < it->c->count) {
 		if (*it->line_p == '\0') {
-			/* This entry is exhausted: on to the next message. */
 			it->cur.entry++;
 			it->cur.row = 0;
-			ui_feed_iter_load(it);
+			ui_chat_iter_load(it);
 			continue;
 		}
 		{
-			/* Wrap needs a scratch row of its own: out may be
-			 * shorter than a full row. */
 			char row[UI_FEED_TEXT_LEN + 32];
 
 			ui_feed_wrap_row(row, sizeof(row), &it->line_p,
@@ -460,13 +534,10 @@ static inline bool ui_feed_iter_next(struct ui_feed_iter *it, char *out,
 				out[out_n - 1] = '\0';
 			}
 			it->cur.row++;
-			/* Keep the cursor on the next row even when this entry
-			 * is used up, so a caller that stops here can see
-			 * where the feed continues. */
 			if (*it->line_p == '\0') {
 				it->cur.entry++;
 				it->cur.row = 0;
-				ui_feed_iter_load(it);
+				ui_chat_iter_load(it);
 			}
 			return true;
 		}
@@ -474,13 +545,13 @@ static inline bool ui_feed_iter_next(struct ui_feed_iter *it, char *out,
 	return false;
 }
 
-/* The cursor of the page that starts `page_rows` display rows before `cur`.
- * Returns {0,0} when `cur` is already on the first page. */
+/* The cursor of the page that starts `page_rows` display rows before `cur`. */
 static inline struct ui_feed_cursor
-ui_feed_page_before(const struct ui_feed *f, struct ui_feed_cursor cur,
+ui_chat_page_before(const struct ui_chat *c, struct ui_feed_cursor cur,
 		    uint32_t now, int16_t tz_minutes, int cols, int page_rows)
 {
-	struct ui_feed_iter it;
+	struct ui_chat_iter it;
+	struct ui_feed_cursor zero = { 0, 0 };
 	struct ui_feed_cursor best = { 0, 0 };
 	struct ui_feed_cursor page_start = { 0, 0 };
 	int in_page = 0;
@@ -489,13 +560,11 @@ ui_feed_page_before(const struct ui_feed *f, struct ui_feed_cursor cur,
 	if (page_rows < 1) {
 		page_rows = 1;
 	}
-	struct ui_feed_cursor zero = { 0, 0 };
-
-	ui_feed_iter_init(&it, f, zero, now, tz_minutes, cols);
-	while (it.cur.entry < f->count) {
+	ui_chat_iter_init(&it, c, zero, now, tz_minutes, cols);
+	while (it.cur.entry < c->count) {
 		struct ui_feed_cursor row_start = it.cur;
 
-		if (!ui_feed_iter_next(&it, row, sizeof(row))) {
+		if (!ui_chat_iter_next(&it, row, sizeof(row))) {
 			break;
 		}
 		if (in_page == 0) {
