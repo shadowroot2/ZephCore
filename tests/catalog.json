@@ -831,6 +831,11 @@
       "id": "UNIT-CHARSET-002",
       "name": "Latin-1 keeps 194-255, the lost range folds or drops",
       "source": "tests/unit/display_charset_tests.cpp"
+    },
+    {
+      "id": "UNIT-FEED-006",
+      "name": "Rows break at a space and never split a UTF-8 sequence",
+      "source": "tests/unit/feed_tests.cpp"
     }
   ]
 }

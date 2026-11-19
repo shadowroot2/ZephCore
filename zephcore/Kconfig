@@ -1400,6 +1400,16 @@ config ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS
 	  short grace; a server has nobody to tell and stores the reason for the
 	  next boot instead.
 
+config ZEPHCORE_UI_FEED_COUNT
+	int "Messages kept in the PUBLIC feed"
+	default 10
+	range 3 32
+	depends on ZEPHCORE_ROLE_COMPANION && ZEPHCORE_UI_DISPLAY
+	help
+	  How many incoming messages the PUBLIC screen keeps in RAM, newest
+	  first. Each entry costs about 214 bytes, so this is the lever when a
+	  RAM-bound companion needs room.
+
 config ZEPHCORE_UI_CONFIRM_WINDOW_MS
 	int "Double-press confirmation window (ms)"
 	default 500

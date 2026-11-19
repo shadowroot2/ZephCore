@@ -525,6 +525,22 @@ static void action_page_enter(void)
 		action_gps_toggle();
 		break;
 
+	case UI_PAGE_PUBLIC: {
+		/* The action button walks the feed: newer -> older, wrapping to
+		 * the newest at the end so one button is enough to read them
+		 * all. A second press during the confirm window is treated as
+		 * the next step too — the feed is its own paging. */
+		struct ui_state *s = get_state();
+
+		if (s->feed.count > 0) {
+			s->feed_view_pos =
+				(uint8_t)((s->feed_view_pos + 1) % s->feed.count);
+		}
+		s->feed_deferred = false;
+		schedule_render();
+		break;
+	}
+
 	case UI_PAGE_BUZZER:
 		/* Cycle notification mode (same as the KEY_D tap action) */
 		action_buzzer_toggle();
@@ -1284,7 +1300,11 @@ static void ui_feed_add(const char *name, const char *text, uint32_t ts,
 
 	how = ui_feed_push(&s->feed, &e, &s->feed_view_pos);
 	if (how == UI_FEED_REDRAW_DEFER) {
+		/* The viewer is reading older messages: hold the redraw so the
+		 * conversation does not jump, then show it anyway — the entry
+		 * is in the ring either way. */
 		s->feed_deferred = true;
+		k_work_reschedule(&render_work, K_MSEC(UI_FEED_DEFER_MS));
 		return;
 	}
 	s->feed_deferred = false;

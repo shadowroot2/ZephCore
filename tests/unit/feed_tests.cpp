@@ -204,3 +204,35 @@ TEST(feed_push_redraw_decision, "UNIT-FEED-005",
 	CHECK(ui_feed_push(&f, &d, NULL) == UI_FEED_REDRAW_NOW);
 	CHECK(f.count == 4);
 }
+
+TEST(feed_wrap_rows, "UNIT-FEED-006",
+     "Rows break at a space and never split a UTF-8 sequence")
+{
+	char row[64];
+	const char *p;
+	int n;
+
+	/* ASCII wraps at the last space that fits. */
+	p = "hello wide world";
+	n = ui_feed_wrap_row(row, sizeof(row), &p, 11);
+	CHECK(std::string(row) == "hello wide");
+	CHECK(n == 10);
+	n = ui_feed_wrap_row(row, sizeof(row), &p, 11);
+	CHECK(std::string(row) == "world");
+	CHECK(*p == '\0');
+
+	/* One Cyrillic sequence is one column, not two bytes. */
+	p = "\xD0\xBF\xD1\x80\xD0\xB8\xD0\xB2\xD0\xB5\xD1\x82 \xD0\xBC\xD0\xB8\xD1\x80";	/* привет мир */
+	n = ui_feed_wrap_row(row, sizeof(row), &p, 6);
+	CHECK(std::string(row) == "\xD0\xBF\xD1\x80\xD0\xB8\xD0\xB2\xD0\xB5\xD1\x82");
+	CHECK(n == 12);	/* 6 code points, 2 bytes each */
+	n = ui_feed_wrap_row(row, sizeof(row), &p, 6);
+	CHECK(std::string(row) == "\xD0\xBC\xD0\xB8\xD1\x80");
+
+	/* A long word with no space is cut at the column limit and the
+	 * cut is never inside a sequence. */
+	p = "abcd\xD0\xB0\xD0\xB1\xD0\xB2\xD0\xB3\xD0\xB4\xD0\xB5";
+	n = ui_feed_wrap_row(row, sizeof(row), &p, 5);
+	CHECK(n == 4 + 2);	/* "abcd" + one Cyrillic letter */
+	CHECK((unsigned char)row[4] == 0xD0);
+}

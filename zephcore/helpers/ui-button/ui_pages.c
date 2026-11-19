@@ -182,6 +182,7 @@ static const enum ui_page active_pages[] = {
 #else
 static const enum ui_page active_pages[] = {
 	UI_PAGE_MESSAGES,
+	UI_PAGE_PUBLIC,
 #if ZEPHCORE_HAS_GPS
 	UI_PAGE_TRACKING, /* ZEPHCORE: safety/tracking pages */
 	UI_PAGE_GPS_HOME,
@@ -614,6 +615,7 @@ static const char *tiny_page_title(enum ui_page p)
 {
 	switch (p) {
 	case UI_PAGE_MESSAGES:  return "MESSAGES";
+	case UI_PAGE_PUBLIC:    return "PUBLIC";
 	case UI_PAGE_RECENT:    return "RECENT";
 	case UI_PAGE_RADIO:     return "RADIO";
 	case UI_PAGE_TRAFFIC:   return "TRAFFIC";
@@ -798,6 +800,77 @@ static void render_messages(void)
 	}
 #endif
 	render_messages_mono();
+}
+
+/* ========== PUBLIC feed ========== */
+
+static void render_public_rows(int cols, bool color, uint16_t title_color)
+{
+	const struct ui_state *s = &state;
+	char line[UI_FEED_TEXT_LEN + UI_FEED_NAME_LEN + 48];
+	const struct ui_feed_entry *e;
+	const char *p;
+	int rows = (DISP_H - CONTENT_Y) / LINE_H;
+	int y = CONTENT_Y;
+	int shown = 0;
+	/* Keep one row for the position indicator when there is a choice. */
+	int text_rows = rows > 1 ? rows - 1 : rows;
+
+	if (rows <= 0) {
+		return;
+	}
+	if (s->feed.count == 0) {
+		if (color) {
+			draw_centered_color(centered_row(0, 1), "(no messages)",
+					    UI_COLOR_DISABLED);
+		} else {
+			draw_centered(centered_row(0, 1), "(no messages)");
+		}
+		return;
+	}
+	e = ui_feed_get(&s->feed, s->feed_view_pos);
+	if (e == NULL) {
+		return;
+	}
+	ui_feed_format_line(line, sizeof(line), e, s->rtc_epoch, s->tz_offset_min);
+	p = line;
+	while (shown < text_rows && *p != '\0') {
+		char row[UI_FEED_TEXT_LEN + 32];
+		int n = ui_feed_wrap_row(row, sizeof(row), &p, cols);
+
+		if (n <= 0) {
+			break;
+		}
+		if (color) {
+			mc_display_color_text(0, y, row, title_color);
+		} else {
+			mc_display_text(0, y, row, false);
+		}
+		y += LINE_H;
+		shown++;
+	}
+	if (rows > 1) {
+		char pos[16];
+
+		snprintf(pos, sizeof(pos), "%u/%u",
+			 (unsigned)(s->feed_view_pos + 1),
+			 (unsigned)s->feed.count);
+		if (color) {
+			draw_centered_color(y, pos, UI_COLOR_DISABLED);
+		} else {
+			draw_centered(y, pos);
+		}
+	}
+}
+
+static void render_public(void)
+{
+	if (mc_display_has_color()) {
+		render_public_rows(DISP_W / (COLOR_FONT_W ? COLOR_FONT_W : 1), true,
+				   UI_COLOR_VALUE);
+		return;
+	}
+	render_public_rows((int)MAX_CHARS, false, UI_COLOR_VALUE);
 }
 
 static void render_recent(void)
@@ -2152,6 +2225,7 @@ typedef void (*page_render_fn)(void);
 
 static const page_render_fn renderers[] = {
 	[UI_PAGE_MESSAGES]  = render_messages,
+	[UI_PAGE_PUBLIC]    = render_public,
 	[UI_PAGE_RECENT]    = render_recent,
 	[UI_PAGE_RADIO]     = render_radio,
 	[UI_PAGE_TRAFFIC]   = render_traffic,

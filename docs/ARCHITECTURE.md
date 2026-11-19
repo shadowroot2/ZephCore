@@ -1112,12 +1112,24 @@ Color TFT panels (T114, T096, Wireless Tracker) are wrapped as 1bpp displays for
 
 ### 8.2 Pages (Button UI)
 
-**Companion** (up to 16 pages): Messages, Recent, Radio, Traffic, Bluetooth,
-WiFi (WiFi companion builds only), Advert, GPS, Tracking, SOS, Buzzer (if
-buzzer present), LEDs, Sensors, Offgrid, DFU (nRF52: reboot to the BLE DFU
-bootloader; ESP32 BLE OTA builds: open the BLE OTA window; absent elsewhere),
-Shutdown. Manual shutdown renders `Power OFF` before entering the shared
-power-off path; e-paper retains the final frame.
+**Companion** (up to 17 pages): Messages, Public, Recent, Radio, Traffic,
+Bluetooth, WiFi (WiFi companion builds only), Advert, GPS, Tracking, SOS,
+Buzzer (if buzzer present), LEDs, Sensors, Offgrid, DFU (nRF52: reboot to the
+BLE DFU bootloader; ESP32 BLE OTA builds: open the BLE OTA window; absent
+elsewhere), Shutdown. Manual shutdown renders `Power OFF` before entering the
+shared power-off path; e-paper retains the final frame.
+
+The **Public** page is the incoming message feed: the newest message at the
+top, each line carrying local time (`HH:MM` today, `DD.MM HH:MM` older) and
+the sender — a direct message is marked `>>`, the public channel is untagged,
+any other channel is `[#name]`. Ten messages are kept in RAM
+(`CONFIG_ZEPHCORE_UI_FEED_COUNT`); the action button walks the feed, wrapping
+at the oldest. Long lines wrap at the display width without splitting a UTF-8
+sequence; the bitmap font carries the Russian alphabet in slots 128-193 and
+Latin-1 A circumflex..y diaeresis in 194-255, with emoji folded to text
+(`UiFeed.h`, `display_charset.h`). A message arriving while the viewer reads
+older entries enters the ring at once but holds the redraw for 5 s, so the
+screen does not jump (`ui_feed_push`, `UI_FEED_DEFER_MS`).
 
 Connection state on these pages: "an app is connected" (`UI_EVENT_APP_CONNECTED` / `_DISCONNECTED`, any transport) gates the buzzer, the message LED flash and the "Connected" line; which transport it is comes from `ui_set_link_transports()` (`UI_LINK_BLE` / `_USB` / `_TCP`, pushed by `process_link_change()` on every link edge). The Messages badge names the transport; the Bluetooth page says "Connected" only for a BLE client. The WiFi page shows the persisted on/off state, station state, SSID, the endpoint as `IPv4:port`, and whether an app is on the socket; there is no separate port row. ENTER toggles `prefs.wifi_enabled`, saves it on the main thread and cold-reboots because the WiFi stack is a boot-time composition. Runtime state is pushed every housekeeping tick by `companion_wifi_ui_refresh()` through `ui_set_wifi()` (redraws only on a change, e-paper included). The joystick UI exposes the same toggle and details under System > Info > WiFi (`WifiScreen`) on WiFi companion builds (ThinkNode M9); elsewhere its hooks are no-ops. WiFi companion builds expose their WiFi settings as a separate `wifi` help group in both BLE and local USB CLI.
 

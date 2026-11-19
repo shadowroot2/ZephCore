@@ -30,6 +30,7 @@ extern "C" {
 /* ========== Page Definitions ========== */
 enum ui_page {
 	UI_PAGE_MESSAGES = 0,   /* MSG count + connection status */
+	UI_PAGE_PUBLIC,         /* ZEPHCORE: incoming message feed, newest first */
 	UI_PAGE_RECENT,         /* Recently heard contacts */
 	UI_PAGE_RADIO,          /* LoRa params (freq, SF, BW, CR, power, noise) */
 	UI_PAGE_TRAFFIC,        /* TX/RX packet activity graph */

@@ -27,7 +27,11 @@
 #define UI_FEED_NAME_LEN 32
 
 #ifndef UI_FEED_SLOTS
+#ifdef CONFIG_ZEPHCORE_UI_FEED_COUNT
+#define UI_FEED_SLOTS CONFIG_ZEPHCORE_UI_FEED_COUNT
+#else
 #define UI_FEED_SLOTS 10
+#endif
 #endif
 
 /* A single deferred redraw waits this long after an entry landed while the
@@ -299,4 +303,58 @@ static inline void ui_feed_emoji_text(char *dst, size_t n, const char *src)
 		}
 	}
 	dst[out] = '\0';
+}
+
+/* Copy the first display row of `*src` into dst (at most `cols` code
+ * points wide), breaking at a space when there is one, and advance *src
+ * past the row. A multi-byte UTF-8 sequence is never split: one sequence
+ * is one display column, since the font maps code points. Returns the
+ * row length in bytes. */
+static inline int ui_feed_wrap_row(char *dst, size_t dst_n, const char **src,
+				   int cols)
+{
+	const char *s = *src;
+	int nbytes = 0;
+	int ncols = 0;
+	int last_space_bytes = -1;
+
+	if (dst_n == 0) {
+		*src = s + strlen(s);
+		return 0;
+	}
+	while (*s != '\0' && ncols < cols && (size_t)nbytes + 1 < dst_n) {
+		size_t adv = 1;
+		unsigned char c = (unsigned char)*s;
+
+		if (c >= 0x80) {
+			if ((c & 0xE0) == 0xC0) {
+				adv = 2;
+			} else if ((c & 0xF0) == 0xE0) {
+				adv = 3;
+			} else if ((c & 0xF8) == 0xF0) {
+				adv = 4;
+			}
+		}
+		if ((size_t)nbytes + adv >= dst_n) {
+			break;
+		}
+		if (*s == ' ') {
+			last_space_bytes = nbytes;
+		}
+		for (size_t k = 0; k < adv && s[k] != '\0'; k++) {
+			dst[nbytes++] = s[k];
+		}
+		s += adv;
+		ncols++;
+	}
+	if (*s != '\0' && last_space_bytes > 0) {
+		nbytes = last_space_bytes;
+		s = *src + nbytes + 1;
+	}
+	dst[nbytes] = '\0';
+	while (*s == ' ') {
+		s++;
+	}
+	*src = s;
+	return nbytes;
 }
