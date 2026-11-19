@@ -294,4 +294,3 @@ TEST(feed_utf8_truncated, "UNIT-FEED-009",
 		CHECK(std::string(row) == "ab\xD0");
 	}
 }
-
