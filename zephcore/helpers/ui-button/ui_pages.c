@@ -1951,9 +1951,6 @@ static void render_offgrid(void)
 	render_offgrid_mono();
 }
 
-/* ESP32 (BLE OTA): the action opens the upload window instead of rebooting. */
-#define DFU_PAGE_TITLE (IS_ENABLED(CONFIG_ZEPHCORE_BLE_OTA) ? "BLE OTA Update" : "BLE DFU Update")
-
 static void render_dfu_mono(void)
 {
 	draw_centered(centered_row(0, 2), UI_DFU_ACTION_LABEL);
