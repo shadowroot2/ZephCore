@@ -24,6 +24,14 @@ becomes 5).
 
 ## Other changes
 
+- **Repeaters and room servers now protect their cell from over-discharge.** The low-battery
+  auto-shutdown a companion had (`get/set autoshutdown <mV>`) runs on the server roles too: below
+  the threshold (default 3200 mV on nRF52, 0 elsewhere) the node powers off on the third low
+  reading in a row, 30 s apart, and never while externally powered. A companion with an app
+  connected announces the power-off and waits for the notice to be fetched; a server has nobody to
+  tell and stores the reason instead, so `get pwrmgt.bootreason` reports `Low Voltage` on the next
+  boot. The command is answered over USB only: a remote contact could otherwise switch protection
+  off (`0`) or power a field node down (`5000`).
 - **A waypoint save lands on the point it was asked for, and a set name survives it.** The save
   captured its target when the GPS fix arrived, so re-selecting points while `Waiting GPS FIX...`
   was up could write the coordinates into another slot and name that slot `SAVED`. The target is

@@ -724,16 +724,21 @@ restart-reason message partially compensates) and bounded by
   once per discharge cycle; re-arms on external power, recovery above
   threshold + 150 mV, or threshold change.
 
-**Low-battery policy** (`app/PowerPolicy.cpp`, every companion, UI or headless):
-the v-contact alert above and auto-shutdown (`get|set autoshutdown <mV>`, 0 =
-off; default `CONFIG_ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS`, **3200 mV on nRF52**, 0
-elsewhere because ESP32 cannot tell USB power from battery). Both sample every
-30 s on the housekeeping tick, act on the third low reading in a row, skip on
-external power, and treat anything under 2000 mV as "no battery" (a board without
-a cell reads 0). A shutdown with an app connected sends a v-contact notice and
-waits 1 s; otherwise it stores the reason (`Low Voltage`) for the next boot. The
-UI only draws the warning (`ui_show_low_battery()`). A stored 3300 mV (the old
-default) is migrated to 3200 once (`zc.aoff_set`).
+**Low-battery policy** (`app/PowerPolicy.cpp`, companion and the server roles,
+UI or headless): the v-contact alert above (companion only) and auto-shutdown
+(`get|set autoshutdown <mV>`, 0 = off; default
+`CONFIG_ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS`, **3200 mV on nRF52**, 0 elsewhere
+because ESP32 cannot tell USB power from battery). Both sample every 30 s on the
+housekeeping tick, act on the third low reading in a row, skip on external power,
+and treat anything under 2000 mV as "no battery" (a board without a cell reads
+0). A shutdown with an app connected sends a v-contact notice and waits a short
+grace (8 s) for it to be fetched; a server has nobody to tell and stores the
+reason (`Low Voltage`) for the next boot instead. The UI only draws the warning
+(`ui_show_low_battery()`). A stored 3300 mV (the old default) is migrated to
+3200 once (`zc.aoff_set`). The policy is wired into the shared server loop
+(`server_main_common.cpp`), so the threshold is a server CLI command too, and
+`zc.auto_off_mv` / `zc.aoff_set` are common prefs keys rather than
+companion-only ones.
 
 ### 6.3 RepeaterMesh
 
@@ -920,7 +925,7 @@ UNIT-GPSLEASE-001). A feature that started while the save waited owns the GPS an
 itself; with nobody left the GPS returns to the manual session it had before the lease (or powers
 down). `gps off`/`set gps duty` and the UI GPS toggle are legal only while the lease is free, and
 nav and the save pipeline are mutually exclusive (each refuses the other). The target slot is pinned
-when the save is requested — The target slot is pinned when the save is requested — re-selecting points while the fix is pending (`wp <n>`, double-tap
+when the save is requested — re-selecting points while the fix is pending (`wp <n>`, double-tap
 cycle) does not redirect the save, and a set name is never overwritten (only an unnamed `FREE` slot
 becomes `SAVED`). Navigation pins its target the same way (`nav_slot` at `nav start`): a re-selection
 does not redirect a running route.

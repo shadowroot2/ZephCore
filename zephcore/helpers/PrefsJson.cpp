@@ -74,6 +74,10 @@ protected:
 		def("in_rot", _p->input_rotate);
 		def("pwr_sav_set", _p->powersaving_set);
 		def("gps_stby", _p->gps_standby_max);
+		/* Low-battery auto-shutdown: every role that protects a cell, not
+		 * just the companion. */
+		def("auto_off_mv", _p->auto_shutdown_mv);
+		def("aoff_set", _p->auto_shutdown_set);
 	}
 
 public:
@@ -137,8 +141,6 @@ protected:
 		def("bright", _p->display_brightness);
 		def("wake", _p->wake_on_msg);
 		def("scr_off", _p->screen_off_secs);
-		def("auto_off_mv", _p->auto_shutdown_mv);
-		def("aoff_set", _p->auto_shutdown_set);
 		def("vc_en", _p->v_contact_enabled);
 		def("vc_flags", _p->v_contact_flags);
 		def("vbat_mv", _p->v_battery_alert_mv);
