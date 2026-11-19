@@ -82,15 +82,31 @@ static inline const struct ui_feed_entry *ui_feed_get(const struct ui_feed *f,
 	return &f->e[(uint8_t)((f->head + UI_FEED_SLOTS - i) % UI_FEED_SLOTS)];
 }
 
-/* Push a message. `view_pos` is the entry currently at the top of the screen
- * (0 = the newest); when the viewer is down the list it is moved along with
- * the entries so the message being read stays under the eye. Returns whether
- * the screen may be redrawn now. */
+/* A position in the feed's wrapped rows: `entry` is the message (0 = newest)
+ * and `row` is the wrapped line within it.  The feed reads as one continuous
+ * text, so a message longer than the panel spills onto the next page instead
+ * of being cut at the window edge. */
+struct ui_feed_cursor {
+	uint8_t entry;
+	uint16_t row;
+};
+
+static inline bool ui_feed_cursor_before(struct ui_feed_cursor a,
+					 struct ui_feed_cursor b)
+{
+	return a.entry < b.entry ||
+	       (a.entry == b.entry && a.row < b.row);
+}
+
+/* Push a message. `view` is the row at the top of the screen; when the
+ * viewer is down the list it is moved along with the entries so the text
+ * being read stays under the eye. Returns whether the screen may be
+ * redrawn now. */
 static inline enum ui_feed_redraw ui_feed_push(struct ui_feed *f,
 					       const struct ui_feed_entry *e,
-					       uint8_t *view_pos)
+					       struct ui_feed_cursor *view)
 {
-	bool at_top = (view_pos == NULL || *view_pos == 0);
+	bool at_top = (view == NULL || (view->entry == 0 && view->row == 0));
 	uint8_t slot = (uint8_t)((f->head + 1) % UI_FEED_SLOTS);
 
 	/* Entry body first, then the indices: the renderer may run in another
@@ -100,11 +116,11 @@ static inline enum ui_feed_redraw ui_feed_push(struct ui_feed *f,
 	if (f->count < UI_FEED_SLOTS) {
 		f->count++;
 	}
-	if (!at_top && view_pos != NULL) {
-		/* Everything moved one slot towards the old end; keep the
-		 * reading position on the same message. */
-		if (*view_pos + 1 < f->count) {
-			(*view_pos)++;
+	if (!at_top && view != NULL) {
+		/* Everything moved one entry towards the old end; keep the
+		 * reading position on the same message and row. */
+		if ((uint16_t)view->entry + 1 < f->count) {
+			view->entry++;
 		}
 	}
 	return at_top ? UI_FEED_REDRAW_NOW : UI_FEED_REDRAW_DEFER;
@@ -364,4 +380,136 @@ static inline int ui_feed_wrap_row(char *dst, size_t dst_n, const char **src,
 	}
 	*src = s;
 	return nbytes;
+}
+
+/* ---- paging ---- */
+
+struct ui_feed_iter {
+	const struct ui_feed *f;
+	struct ui_feed_cursor cur;	/* row the next pull returns */
+	uint32_t now;
+	int16_t tz_minutes;
+	int cols;
+	char line[UI_FEED_TEXT_LEN + UI_FEED_NAME_LEN + 48];
+	const char *line_p;
+	bool loaded;
+};
+
+static inline void ui_feed_iter_load(struct ui_feed_iter *it)
+{
+	const struct ui_feed_entry *e;
+
+	it->line_p = it->line;
+	it->line[0] = '\0';
+	it->loaded = true;
+	if (it->cur.entry >= it->f->count) {
+		return;
+	}
+	e = ui_feed_get(it->f, it->cur.entry);
+	if (e == NULL) {
+		it->cur.entry = it->f->count;
+		return;
+	}
+	ui_feed_format_line(it->line, sizeof(it->line), e, it->now,
+			    it->tz_minutes);
+	/* Skip the rows the cursor is already past. */
+	for (uint16_t i = 0; i < it->cur.row && *it->line_p != '\0'; i++) {
+		char skip[8];
+
+		ui_feed_wrap_row(skip, sizeof(skip), &it->line_p, it->cols);
+	}
+}
+
+static inline void ui_feed_iter_init(struct ui_feed_iter *it,
+				     const struct ui_feed *f,
+				     struct ui_feed_cursor cur, uint32_t now,
+				     int16_t tz_minutes, int cols)
+{
+	it->f = f;
+	it->cur = cur;
+	it->now = now;
+	it->tz_minutes = tz_minutes;
+	it->cols = cols > 0 ? cols : 1;
+	it->loaded = false;
+}
+
+/* Pull the next wrapped row.  False at the end of the feed. */
+static inline bool ui_feed_iter_next(struct ui_feed_iter *it, char *out,
+				     size_t out_n)
+{
+	if (!it->loaded) {
+		ui_feed_iter_load(it);
+	}
+	while (it->cur.entry < it->f->count) {
+		if (*it->line_p == '\0') {
+			/* This entry is exhausted: on to the next message. */
+			it->cur.entry++;
+			it->cur.row = 0;
+			ui_feed_iter_load(it);
+			continue;
+		}
+		{
+			/* Wrap needs a scratch row of its own: out may be
+			 * shorter than a full row. */
+			char row[UI_FEED_TEXT_LEN + 32];
+
+			ui_feed_wrap_row(row, sizeof(row), &it->line_p,
+					 it->cols);
+			if (out_n > 0) {
+				strncpy(out, row, out_n - 1);
+				out[out_n - 1] = '\0';
+			}
+			it->cur.row++;
+			/* Keep the cursor on the next row even when this entry
+			 * is used up, so a caller that stops here can see
+			 * where the feed continues. */
+			if (*it->line_p == '\0') {
+				it->cur.entry++;
+				it->cur.row = 0;
+				ui_feed_iter_load(it);
+			}
+			return true;
+		}
+	}
+	return false;
+}
+
+/* The cursor of the page that starts `page_rows` display rows before `cur`.
+ * Returns {0,0} when `cur` is already on the first page. */
+static inline struct ui_feed_cursor
+ui_feed_page_before(const struct ui_feed *f, struct ui_feed_cursor cur,
+		    uint32_t now, int16_t tz_minutes, int cols, int page_rows)
+{
+	struct ui_feed_iter it;
+	struct ui_feed_cursor best = { 0, 0 };
+	struct ui_feed_cursor page_start = { 0, 0 };
+	int in_page = 0;
+	char row[UI_FEED_TEXT_LEN + 32];
+
+	if (page_rows < 1) {
+		page_rows = 1;
+	}
+	struct ui_feed_cursor zero = { 0, 0 };
+
+	ui_feed_iter_init(&it, f, zero, now, tz_minutes, cols);
+	while (it.cur.entry < f->count) {
+		struct ui_feed_cursor row_start = it.cur;
+
+		if (!ui_feed_iter_next(&it, row, sizeof(row))) {
+			break;
+		}
+		if (in_page == 0) {
+			page_start = row_start;
+		}
+		in_page++;
+		if (in_page >= page_rows) {
+			if (ui_feed_cursor_before(page_start, cur)) {
+				best = page_start;
+			} else {
+				break;
+			}
+			in_page = 0;
+		}
+	}
+	return best;
 }

@@ -807,15 +807,13 @@ static void render_messages(void)
 static void render_public_rows(int cols, bool color, uint16_t title_color)
 {
 	const struct ui_state *s = &state;
-	char line[UI_FEED_TEXT_LEN + UI_FEED_NAME_LEN + 48];
-	const struct ui_feed_entry *e;
-	const char *p;
 	int rows = (DISP_H - CONTENT_Y) / LINE_H;
 	int y = CONTENT_Y;
 	int shown = 0;
-	/* The position indicator is pinned to the bottom of the panel; the
-	 * text gets every row above it. */
+	/* The N/M counter is pinned to the bottom of the panel. */
 	int text_rows = rows > 1 ? rows - 1 : rows;
+	struct ui_feed_iter it;
+	char row[UI_FEED_TEXT_LEN + 32];
 
 	if (rows <= 0) {
 		return;
@@ -829,19 +827,12 @@ static void render_public_rows(int cols, bool color, uint16_t title_color)
 		}
 		return;
 	}
-	e = ui_feed_get(&s->feed, s->feed_view_pos);
-	if (e == NULL) {
-		return;
-	}
-	ui_feed_format_line(line, sizeof(line), e, s->rtc_epoch, s->tz_offset_min);
-	p = line;
-	while (shown < text_rows && *p != '\0') {
-		char row[UI_FEED_TEXT_LEN + 32];
-		int n = ui_feed_wrap_row(row, sizeof(row), &p, cols);
-
-		if (n <= 0) {
-			break;
-		}
+	/* The feed reads as one continuous text: start at the cursor and let
+	 * rows spill across messages until the window is full. */
+	ui_feed_iter_init(&it, &s->feed, s->feed_view, s->rtc_epoch,
+			  s->tz_offset_min, cols);
+	while (shown < text_rows &&
+	       ui_feed_iter_next(&it, row, sizeof(row))) {
 		if (color) {
 			mc_display_color_text(0, y, row, title_color);
 		} else {
@@ -852,14 +843,13 @@ static void render_public_rows(int cols, bool color, uint16_t title_color)
 	}
 	if (rows > 1) {
 		char pos[16];
-		/* Bottom of the panel, not just under the text. */
 		int bottom_y = (int)DISP_H - LINE_H;
 
 		if (bottom_y < y) {
 			bottom_y = y;
 		}
 		snprintf(pos, sizeof(pos), "%u/%u",
-			 (unsigned)(s->feed_view_pos + 1),
+			 (unsigned)(s->feed_view.entry + 1),
 			 (unsigned)s->feed.count);
 		if (color) {
 			draw_centered_color(bottom_y, pos, UI_COLOR_DISABLED);
@@ -2432,6 +2422,13 @@ void ui_pages_sos_clear(void)
 	state.sos_waiting_fix = false;
 	state.sos_sent_time = 0;
 	state.sos_send_failed = false;
+}
+
+int ui_pages_feed_page_rows(void)
+{
+	int rows = (DISP_H - CONTENT_Y) / LINE_H;
+
+	return rows > 1 ? rows - 1 : (rows > 0 ? rows : 1);
 }
 
 void ui_pages_set_tracking(bool enabled, uint16_t interval_minutes)

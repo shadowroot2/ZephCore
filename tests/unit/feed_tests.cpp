@@ -48,7 +48,7 @@ TEST(feed_ring_newest_first, "UNIT-FEED-001",
      "The ring keeps the newest on top and evicts the oldest on overflow")
 {
 	struct ui_feed f;
-	uint8_t pos = 0;
+	struct ui_feed_cursor pos = { 0, 0 };
 
 	ui_feed_reset(&f);
 	CHECK(f.count == 0);
@@ -179,24 +179,24 @@ TEST(feed_push_redraw_decision, "UNIT-FEED-005",
      "A push redraws at the top and holds the screen while reading older")
 {
 	struct ui_feed f;
-	uint8_t pos = 0;
+	struct ui_feed_cursor pos = { 0, 0 };
 
 	ui_feed_reset(&f);
 
 	/* At the top: redraw now, nothing moves. */
 	struct ui_feed_entry a = entry(NOW, 0, "a", "1");
 	CHECK(ui_feed_push(&f, &a, &pos) == UI_FEED_REDRAW_NOW);
-	CHECK(pos == 0);
+	CHECK(pos.entry == 0 && pos.row == 0);
 
 	/* Down the list: the push is deferred and the reading position stays
-	 * on the same message, which is now one slot further from the top. */
+	 * on the same message, which is now one entry further from the top. */
 	struct ui_feed_entry b = entry(NOW + 1, 0, "b", "2");
 	CHECK(ui_feed_push(&f, &b, &pos) == UI_FEED_REDRAW_NOW);
-	pos = 1; /* reading "a" */
+	pos.entry = 1; /* reading "a" */
 	struct ui_feed_entry c = entry(NOW + 2, 0, "c", "3");
 	CHECK(ui_feed_push(&f, &c, &pos) == UI_FEED_REDRAW_DEFER);
-	CHECK(pos == 2);
-	CHECK(std::string(ui_feed_get(&f, pos)->name) == "a");
+	CHECK(pos.entry == 2);
+	CHECK(std::string(ui_feed_get(&f, pos.entry)->name) == "a");
 	CHECK(std::string(ui_feed_get(&f, 0)->name) == "c");
 
 	/* A NULL view means "nobody is reading": always redraw now. */
@@ -292,5 +292,52 @@ TEST(feed_utf8_truncated, "UNIT-FEED-009",
 		(void)ui_feed_wrap_row(row, sizeof(row), &p, 8);
 		CHECK(*p == '\0');
 		CHECK(std::string(row) == "ab\xD0");
+	}
+}
+
+TEST(feed_continuous_paging, "UNIT-FEED-010",
+     "A page spills the overflow of a long message onto the next one")
+{
+	struct ui_feed f;
+	char row[64];
+	struct ui_feed_iter it;
+	struct ui_feed_cursor start = { 0, 0 };
+	int n = 0;
+
+	ui_feed_reset(&f);
+	/* Three short messages and one long one at the bottom. */
+	struct ui_feed_entry a = entry(NOW, 0, "a", "one");
+	struct ui_feed_entry b = entry(NOW + 1, 0, "b", "two");
+	struct ui_feed_entry c = entry(NOW + 2, 0, "c", "three");
+	struct ui_feed_entry d = entry(NOW + 3, 0, "d", "aaa bbb ccc");
+	ui_feed_push(&f, &a, NULL);
+	ui_feed_push(&f, &b, NULL);
+	ui_feed_push(&f, &c, NULL);
+	ui_feed_push(&f, &d, NULL);
+	/* Newest first: d, c, b, a. */
+
+	ui_feed_iter_init(&it, &f, start, NOW, 0, 11);
+	while (ui_feed_iter_next(&it, row, sizeof(row))) {
+		n++;
+	}
+	/* "00:00 aaa bbb ccc" wraps to two rows at 11 columns; the other
+	 * three lines ("00:00 one" .. "00:00 three") take one each. */
+	CHECK(n == 5);
+
+	/* A page of two rows starting at the top ends inside "d". */
+	start = (struct ui_feed_cursor){ 0, 0 };
+	ui_feed_iter_init(&it, &f, start, NOW, 0, 11);
+	CHECK(ui_feed_iter_next(&it, row, sizeof(row)));
+	CHECK(ui_feed_iter_next(&it, row, sizeof(row)));
+	CHECK(it.cur.entry == 1);	/* spilled over into "c" */
+	CHECK(it.cur.row == 0);
+
+	/* The page before that is the first one again. */
+	{
+		struct ui_feed_cursor cur = { 1, 0 };
+		struct ui_feed_cursor prev =
+			ui_feed_page_before(&f, cur, NOW, 0, 11, 2);
+
+		CHECK(prev.entry == 0 && prev.row == 0);
 	}
 }

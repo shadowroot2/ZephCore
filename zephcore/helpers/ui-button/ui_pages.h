@@ -82,7 +82,7 @@ struct ui_state {
 	 * publication order that makes that safe. A headless board has no
 	 * screen to show it and no RAM to spare for it. */
 	struct ui_feed feed;
-	uint8_t  feed_view_pos;   /* entry at the top of the window, 0 = newest */
+	struct ui_feed_cursor feed_view; /* row at the top of the window */
 	bool     feed_deferred;   /* a push is holding the redraw */
 #endif
 
@@ -182,6 +182,9 @@ void ui_pages_sos_waiting(void);
 void ui_pages_sos_sent(bool success);
 void ui_pages_sos_clear(void);
 void ui_pages_set_tracking(bool enabled, uint16_t interval_minutes);
+/* How many text rows the PUBLIC feed shows per page (the N/M counter takes
+ * the last row).  Used to step the feed cursor by one page. */
+int ui_pages_feed_page_rows(void);
 
 /* GPS HOME page state (ZEPHCORE). */
 #define HOME_STATUS_IDLE    0

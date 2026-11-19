@@ -851,6 +851,11 @@
       "id": "UNIT-FEED-009",
       "name": "A lead byte cut off by the terminator never walks past it",
       "source": "tests/unit/feed_tests.cpp"
+    },
+    {
+      "id": "UNIT-FEED-010",
+      "name": "A page spills the overflow of a long message onto the next one",
+      "source": "tests/unit/feed_tests.cpp"
     }
   ]
 }

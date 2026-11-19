@@ -176,6 +176,9 @@ static struct k_work_delayable render_work;
 static struct k_work_delayable splash_work;
 /* Deferred zero-hop advert — waits for possible double-press upgrade to flood */
 static struct k_work_delayable advert_defer_work;
+/* Deferred feed step — a second press inside the window walks back. */
+static struct k_work_delayable feed_defer_work;
+#define FEED_DOUBLE_MS 500U
 /* ZEPHCORE: GPS HOME press timing and the 5 s navigation repaint. */
 #define HOME_HOLD_MS 1000U
 /* Save confirm window runs from the hold trigger while the finger is still
@@ -477,6 +480,56 @@ static void action_enter_dfu(void);
 static void action_wifi_toggle(void);
 #endif
 
+/* Feed paging: the feed reads as one continuous text, so a page is a
+ * screenful of wrapped rows and a long message spills onto the next one. */
+static void feed_page_next(void)
+{
+	struct ui_state *s = get_state();
+	struct ui_feed_iter it;
+	char row[UI_FEED_TEXT_LEN + 32];
+	int n = ui_pages_feed_page_rows();
+
+	if (s->feed.count == 0) {
+		return;
+	}
+	ui_feed_iter_init(&it, &s->feed, s->feed_view, s->rtc_epoch,
+			  s->tz_offset_min, mc_display_font_width());
+	for (int i = 0; i < n; i++) {
+		if (!ui_feed_iter_next(&it, row, sizeof(row))) {
+			/* End of the feed: wrap to the newest page. */
+			s->feed_view = (struct ui_feed_cursor){ 0, 0 };
+			s->feed_deferred = false;
+			schedule_render();
+			return;
+		}
+	}
+	s->feed_view = it.cur;
+	s->feed_deferred = false;
+	schedule_render();
+}
+
+static void feed_page_prev(void)
+{
+	struct ui_state *s = get_state();
+
+	if (s->feed.count == 0) {
+		return;
+	}
+	s->feed_view = ui_feed_page_before(&s->feed, s->feed_view, s->rtc_epoch,
+					   s->tz_offset_min,
+					   mc_display_font_width(),
+					   ui_pages_feed_page_rows());
+	s->feed_deferred = false;
+	schedule_render();
+}
+
+static void feed_defer_handler(struct k_work *work)
+{
+	ARG_UNUSED(work);
+	/* Single-press timeout on the feed: step forward. */
+	feed_page_next();
+}
+
 static void action_page_enter(void)
 {
 #ifdef CONFIG_ZEPHCORE_UI_DISPLAY
@@ -525,21 +578,18 @@ static void action_page_enter(void)
 		action_gps_toggle();
 		break;
 
-	case UI_PAGE_PUBLIC: {
-		/* The action button walks the feed: newer -> older, wrapping to
-		 * the newest at the end so one button is enough to read them
-		 * all. A second press during the confirm window is treated as
-		 * the next step too — the feed is its own paging. */
-		struct ui_state *s = get_state();
-
-		if (s->feed.count > 0) {
-			s->feed_view_pos =
-				(uint8_t)((s->feed_view_pos + 1) % s->feed.count);
+	case UI_PAGE_PUBLIC:
+		/* One button pages the feed, the same shape as the advert
+		 * page: the first press steps forward after a beat, a second
+		 * press inside the window walks back instead. */
+		if (k_work_delayable_is_pending(&feed_defer_work)) {
+			k_work_cancel_delayable(&feed_defer_work);
+			feed_page_prev();
+		} else {
+			k_work_reschedule(&feed_defer_work,
+					  K_MSEC(FEED_DOUBLE_MS));
 		}
-		s->feed_deferred = false;
-		schedule_render();
 		break;
-	}
 
 	case UI_PAGE_BUZZER:
 		/* Cycle notification mode (same as the KEY_D tap action) */
@@ -1216,6 +1266,7 @@ int ui_init(void)
 	k_work_init_delayable(&render_work, render_work_handler);
 	k_work_init_delayable(&splash_work, splash_work_handler);
 	k_work_init_delayable(&advert_defer_work, advert_defer_handler);
+	k_work_init_delayable(&feed_defer_work, feed_defer_handler);
 	k_work_init_delayable(&nav_refresh_work, nav_refresh_work_handler);
 #ifdef CONFIG_ZEPHCORE_UI_DISPLAY
 #if !ENTER_FROM_HOLD
@@ -1299,7 +1350,7 @@ static void ui_feed_add(const char *name, const char *text, uint32_t ts,
 	}
 	ui_feed_emoji_text(e.text, sizeof(e.text), text);
 
-	how = ui_feed_push(&s->feed, &e, &s->feed_view_pos);
+	how = ui_feed_push(&s->feed, &e, &s->feed_view);
 	if (how == UI_FEED_REDRAW_DEFER) {
 		/* The viewer is reading older messages: hold the redraw so the
 		 * conversation does not jump, then show it anyway — the entry
