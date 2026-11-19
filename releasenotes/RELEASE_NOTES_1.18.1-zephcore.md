@@ -32,6 +32,10 @@ becomes 5).
   tell and stores the reason instead, so `get pwrmgt.bootreason` reports `Low Voltage` on the next
   boot. The command is answered over USB only: a remote contact could otherwise switch protection
   off (`0`) or power a field node down (`5000`).
+- **A ThinkNode M6 no longer reports 0% while 250 mV of battery are left.** Its discharge curve
+  reaches 0% at 3200 mV — the auto-shutdown threshold — instead of 3450 mV, so an empty gauge means
+  the node is about to power off rather than holding reserve the user cannot see. Nothing changes
+  above 3500 mV; between 3450 and 3200 mV the reading is now 4% down to 0% instead of a flat 0%.
 - **A waypoint save lands on the point it was asked for, and a set name survives it.** The save
   captured its target when the GPS fix arrived, so re-selecting points while `Waiting GPS FIX...`
   was up could write the coordinates into another slot and name that slot `SAVED`. The target is
