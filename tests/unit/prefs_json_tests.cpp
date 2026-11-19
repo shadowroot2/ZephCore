@@ -95,6 +95,8 @@ TEST(pjson_server_roundtrip, "UNIT-PJSON-002", "Server prefs survive prefs.json 
     CHECK(serverPrefsFromJson(q, s));
     CHECK(serverBytes(q) == serverBytes(p));
     CHECK(q.led_brightness == 42);
+    // Low-battery auto-shutdown is a server setting too, not companion-only.
+    CHECK(q.auto_shutdown_mv == 3300);
 }
 
 TEST(pjson_upstream_file, "UNIT-PJSON-003", "A companion prefs.json as upstream v1.17 writes it loads") {
@@ -116,6 +118,23 @@ TEST(pjson_upstream_file, "UNIT-PJSON-003", "A companion prefs.json as upstream 
     // No "zc" object: ZephCore's own fields keep their defaults.
     NodePrefs d = defaults();
     CHECK(q.cad_auto == d.cad_auto && q.probe_interval == d.probe_interval && q.wake_on_msg == d.wake_on_msg);
+}
+
+TEST(pjson_legacy_geo_wrap, "UNIT-PJSON-013",
+     "A legacy uint32-wrapped geo point reads back signed and junk saturates") {
+    // The pre-int32 firmware stored southern/western points wrapped; the
+    // value must narrow to the same bits on every host width (strtol
+    // saturates on 32-bit targets, so the reader takes 64-bit strides).
+    MemStream s("{zc:{geo_lat_e7:475000000,geo_lon_e7:4102467296}}");
+    NodePrefs q = defaults();
+    CHECK(companionPrefsFromJson(q, s));
+    CHECK(q.geo_lat_e7 == 475000000 && q.geo_lon_e7 == -192500000);
+    // Overflow past uint32 saturates to the clamp — it must not truncate
+    // into another plausible coordinate.
+    MemStream s2("{zc:{geo_lat_e7:5000000000}}");
+    NodePrefs q2 = defaults();
+    CHECK(companionPrefsFromJson(q2, s2));
+    CHECK(q2.geo_lat_e7 == 900000000);
 }
 
 TEST(pjson_parse_errors, "UNIT-PJSON-004", "A broken prefs.json leaves prefs untouched, an empty object changes nothing") {

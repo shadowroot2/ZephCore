@@ -58,6 +58,11 @@
       "source": "tests/unit/helper_tests.cpp"
     },
     {
+      "id": "UNIT-PJSON-013",
+      "name": "A legacy uint32-wrapped geo point reads back signed and junk saturates",
+      "source": "tests/unit/prefs_json_tests.cpp"
+    },
+    {
       "id": "UNIT-UI-002",
       "name": "Display timezone labels fit E-Paper rows and local epochs stay bounded",
       "source": "tests/unit/timezone_tests.cpp"

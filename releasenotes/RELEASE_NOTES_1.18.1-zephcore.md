@@ -63,6 +63,14 @@ becomes 5).
 - **The navigation target is pinned at start.** Re-selecting a point (`wp <n>`, double-tap cycle)
   during a route silently re-targeted it — wrong-way, reports and the arrival all followed the new
   point. The route keeps the point chosen at `nav start`, like a save keeps its slot.
+- **An app cannot switch the GPS behind a feature's back.** The binary companion command that sets
+  `gps` and `gps_interval` had no lease check — a connected app could power the receiver off in the
+  middle of navigation, tracking or a point save, or overwrite the running duty. It now answers with
+  the same error as the CLI and the on-screen toggle while any of them holds the receiver.
+- **A legacy wrapped geofence point migrates on device.** Before the point fields were signed, a
+  southern or western coordinate was stored wrapped (e.g. `4102467296` for −19.25°). The reader
+  saturated such a value to +180° on 32-bit boards — the fence landed in the wrong hemisphere after
+  the upgrade; it now reads back the wrapped value as the signed point it was.
 - **`nav start` now announces itself over LoRa too.** With `nav telemetry on`, the start notice
   (`🚀 Начало навигации к точке` with the point line and, on a fresh fix, the distance line and a
   maps link) goes to the tracking group like the stop notice already did. Before, the first LoRa

@@ -1,5 +1,6 @@
 #include "ConfigSerializer.h"
 #include <stdlib.h>   // atoi/atol/atof (Arduino.h pulls this in on-device, native builds do not)
+#include <stdint.h>   // ZEPHCORE: INT32_MIN/MAX, UINT32_MAX for the int32 reader
 
 bool ConfigSerializer::saveSerial(Stream& s) {
   Context context(&s, OP::WRITE);
@@ -199,7 +200,22 @@ void ConfigSerializer::def(const char* key, int32_t& value) {
     _context->file()->print(value);
   } else {
     if (_context->keyMatch(_depth, key)) {
-      value = atol(_context->getToken());
+      // ZEPHCORE: a legacy uint32 hole (geo_lat_e7/geo_lon_e7) wrote its
+      // wrapped bit pattern, and atol/strtol saturate at LONG_MAX on 32-bit
+      // targets — a wrapped point would read back pinned at the clamp.
+      // Narrow from 64 bits, reinterpret the uint32 wrap, saturate real
+      // overflow.
+      long long v = strtoll(_context->getToken(), NULL, 10);
+      if (v > INT32_MAX && v <= (long long)UINT32_MAX) {
+        v -= (long long)UINT32_MAX + 1;
+      }
+      if (v > INT32_MAX) {
+        value = INT32_MAX;
+      } else if (v < INT32_MIN) {
+        value = INT32_MIN;
+      } else {
+        value = (int32_t)v;
+      }
     }
   }
 }
