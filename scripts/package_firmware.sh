@@ -41,8 +41,10 @@ case $format in
 			--output "${out}-merged.bin" \
 			--flash-mode "$flash_mode" --flash-freq "$flash_freq" --flash-size "$flash_size" \
 			0x00000 "$boot" "$app_offset" "$app"
-		# -update.bin не собираем: для прошивки нужен только merged (offset 0x0).
+		# -update.bin: signed app as the BLE/WiFi OTA payload (ADR 0011).
+		cp "$app" "${out}-update.bin"
 		echo "${out}-merged.bin"
+		echo "${out}-update.bin"
 		;;
 	*)
 		echo "unknown format: $format" >&2
