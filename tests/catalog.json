@@ -856,6 +856,11 @@
       "id": "UNIT-FEED-010",
       "name": "A page spills the overflow of a long message onto the next one",
       "source": "tests/unit/feed_tests.cpp"
+    },
+    {
+      "id": "UNIT-CHARSET-003",
+      "name": "A Russian letter drawn like a Latin one borrows its glyph",
+      "source": "tests/unit/display_charset_tests.cpp"
     }
   ]
 }
