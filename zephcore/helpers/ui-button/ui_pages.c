@@ -813,7 +813,8 @@ static void render_public_rows(int cols, bool color, uint16_t title_color)
 	int rows = (DISP_H - CONTENT_Y) / LINE_H;
 	int y = CONTENT_Y;
 	int shown = 0;
-	/* Keep one row for the position indicator when there is a choice. */
+	/* The position indicator is pinned to the bottom of the panel; the
+	 * text gets every row above it. */
 	int text_rows = rows > 1 ? rows - 1 : rows;
 
 	if (rows <= 0) {
@@ -851,14 +852,19 @@ static void render_public_rows(int cols, bool color, uint16_t title_color)
 	}
 	if (rows > 1) {
 		char pos[16];
+		/* Bottom of the panel, not just under the text. */
+		int bottom_y = (int)DISP_H - LINE_H;
 
+		if (bottom_y < y) {
+			bottom_y = y;
+		}
 		snprintf(pos, sizeof(pos), "%u/%u",
 			 (unsigned)(s->feed_view_pos + 1),
 			 (unsigned)s->feed.count);
 		if (color) {
-			draw_centered_color(y, pos, UI_COLOR_DISABLED);
+			draw_centered_color(bottom_y, pos, UI_COLOR_DISABLED);
 		} else {
-			draw_centered(y, pos);
+			draw_centered(bottom_y, pos);
 		}
 	}
 }

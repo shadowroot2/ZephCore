@@ -310,6 +310,9 @@ void mc_display_finalize(void);
  * Reset the auto-off timer (called on user interaction).
  */
 void mc_display_reset_auto_off(void);
+/* Light the display for `ms` and then let the auto-off timer take it: a
+ * one-shot wake that does not touch the user's screen-off setting. */
+void mc_display_on_for(uint32_t ms);
 
 /**
  * Override the auto-off timeout (0 = revert to Kconfig default).

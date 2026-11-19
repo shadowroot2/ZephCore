@@ -1309,6 +1309,12 @@ static void ui_feed_add(const char *name, const char *text, uint32_t ts,
 		return;
 	}
 	s->feed_deferred = false;
+	/* On the feed itself a new message is the event the user is waiting
+	 * for: light the panel for a moment so it is seen without a press.
+	 * Anywhere else the buzzer and LED already announce it. */
+	if (ui_pages_current() == UI_PAGE_PUBLIC) {
+		mc_display_on_for(5000);
+	}
 	ui_request_render();
 #else
 	(void)name; (void)text; (void)ts; (void)flags; (void)channel_name;

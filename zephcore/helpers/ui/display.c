@@ -16,6 +16,7 @@
 
 #include "display.h"
 #include "display_charset.h"
+#include <zephyr/sys/iterable_sections.h>
 #include "doom_game.h"
 #include "pm_sleep_guard.h"
 
@@ -773,8 +774,42 @@ void mc_display_clear(void)
 	cfb_framebuffer_clear(disp_dev, false);
 }
 
+/* One already-sanitized display slot drawn from whichever font carries it.
+ * Zephyr's panel fonts stop at ASCII; slots 128-255 (Cyrillic, Latin-1) come
+ * from the ZephCore extension font at the same pitch, so a run of either
+ * script sits on one grid.  Returns the advance in pixels. */
+static int draw_slot(int x, int y, uint8_t slot)
+{
+	int idx = 0;
+	int w = font_w ? font_w : 1;
+
+	STRUCT_SECTION_FOREACH(cfb_font, f) {
+		if (slot >= f->first_char && slot <= f->last_char) {
+			char one[2] = { (char)slot, '\0' };
+			uint8_t fw = 0, fh = 0;
+
+			if (cfb_get_font_size(disp_dev, (uint8_t)idx, &fw,
+					      &fh) == 0) {
+				w = fw;
+			}
+			cfb_framebuffer_set_font(disp_dev, (uint8_t)idx);
+			cfb_print(disp_dev, one, (int16_t)(x + DISP_INSET),
+				  (int16_t)(y + DISP_INSET));
+			cfb_framebuffer_set_font(disp_dev,
+						(uint8_t)small_font_idx);
+			return w;
+		}
+		idx++;
+	}
+	return w;
+}
+
 void mc_display_text(int x, int y, const char *text, bool invert)
 {
+	char slots[96];
+	bool all_ascii = true;
+	int i;
+
 	if (!disp_initialized || !text) {
 		return;
 	}
@@ -789,7 +824,35 @@ void mc_display_text(int x, int y, const char *text, bool invert)
 		epd_hash_u32(invert ? 1u : 0u);
 		epd_hash_bytes(text, strlen(text));
 	}
-	cfb_print(disp_dev, text, x + DISP_INSET, y + DISP_INSET);
+
+	/* Unicode -> 8-bit display slots.  Raw UTF-8 would be looked up byte
+	 * by byte and land on tofu in every panel font. */
+	utf8_to_display(slots, text, sizeof(slots));
+
+	for (i = 0; slots[i] != '\0'; i++) {
+		if ((uint8_t)slots[i] >= 128) {
+			all_ascii = false;
+			break;
+		}
+	}
+	if (all_ascii) {
+		/* Common case: one call, the panel's own font, its own wrap. */
+		cfb_print(disp_dev, slots, (int16_t)(x + DISP_INSET),
+			  (int16_t)(y + DISP_INSET));
+	} else {
+		for (i = 0; slots[i] != '\0'; i++) {
+			uint8_t slot = (uint8_t)slots[i];
+
+			if (slot < 128) {
+				cfb_print(disp_dev, &slots[i],
+					  (int16_t)(x + DISP_INSET),
+					  (int16_t)(y + DISP_INSET));
+				x += font_w ? font_w : 1;
+			} else {
+				x += draw_slot(x, y, slot);
+			}
+		}
+	}
 
 	if (invert) {
 		cfb_framebuffer_invert(disp_dev);
@@ -799,11 +862,16 @@ void mc_display_text(int x, int y, const char *text, bool invert)
 #if MC_DISPLAY_COLOR_PANEL
 void mc_display_color_text(int x, int y, const char *text, uint16_t color)
 {
+	char slots[96];
+
 	if (!disp_initialized || !text) {
 		return;
 	}
+	/* The colour path draws bytes through the 6x8 glyph table, so it
+	 * wants display slots, not UTF-8. */
+	utf8_to_display(slots, text, sizeof(slots));
 
-	if (!color_queue(COLOR_OP_TEXT, x, y, 0, 0, text, color)) {
+	if (!color_queue(COLOR_OP_TEXT, x, y, 0, 0, slots, color)) {
 		mc_display_text(x, y, text, false);
 	}
 }
@@ -970,6 +1038,19 @@ void mc_display_reset_auto_off(void)
 		k_work_reschedule(&auto_off_work, K_MSEC(timeout));
 	}
 #endif
+}
+
+void mc_display_on_for(uint32_t ms)
+{
+	if (!disp_initialized) {
+		return;
+	}
+	mc_display_on();
+	if (ms > 0) {
+		/* mc_display_on() armed the normal timeout; replace it with
+		 * the one-shot the caller asked for. */
+		k_work_reschedule(&auto_off_work, K_MSEC(ms));
+	}
 }
 
 void mc_display_set_auto_off_hold(bool hold)

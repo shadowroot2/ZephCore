@@ -805,6 +805,7 @@ if(CONFIG_ZEPHCORE_UI_DISPLAY)
   target_sources(app PRIVATE
     helpers/ui/display.c
     helpers/ui/cfb_font_0608.c
+    helpers/ui/cfb_font_1016_ext.c
   )
 endif()
 
