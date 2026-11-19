@@ -426,12 +426,12 @@ static inline void sanitizeNodePrefs(NodePrefs* p) {
 		p->ui_timezone_offset_minutes = 300;
 #endif
 	}
-	if (p->tracking_interval_minutes < 5) p->tracking_interval_minutes = 10;
+	if (p->tracking_interval_minutes < 5) p->tracking_interval_minutes = 5;
 	/* 0 = off: no vContact nav notices at all. */
 	if (p->nav_report_interval_min > 1440) {
 		p->nav_report_interval_min = 1;
 	}
-	if (p->nav_telemetry_interval_min < 5) p->nav_telemetry_interval_min = 10;
+	if (p->nav_telemetry_interval_min < 5) p->nav_telemetry_interval_min = 5;
 	if (p->fall_sensitivity < 1 || p->fall_sensitivity > 5) p->fall_sensitivity = 3;
 	if (p->tracking_group_name[0] != '#' ||
 	    strchr(p->tracking_group_name, '\r') != nullptr ||

@@ -294,6 +294,16 @@ TEST(pjson_geo_radius_guard, "UNIT-PJSON-011", "geo.radius 0 on flash means unse
     CHECK(p.geo_radius_m == 50000);
 }
 
+TEST(pjson_interval_clamp, "UNIT-PJSON-014",
+     "Interval clamps land on the documented minimum, not the default") {
+    NodePrefs p = defaults();
+    p.tracking_interval_minutes = 3;
+    p.nav_telemetry_interval_min = 1;
+    sanitizeNodePrefs(&p);
+    CHECK(p.tracking_interval_minutes == 5);
+    CHECK(p.nav_telemetry_interval_min == 5);
+}
+
 TEST(pjson_geo_defaults, "UNIT-PJSON-012", "initNodePrefs puts the Almaty default point in home slots and geo") {
     NodePrefs p = defaults();
     CHECK(p.home_lat[0] == 43.241117 && p.home_lon[0] == 76.927301);

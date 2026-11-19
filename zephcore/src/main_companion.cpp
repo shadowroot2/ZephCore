@@ -1840,8 +1840,15 @@ static void companion_send_tracking_summary(void)
 	struct gps_position pos;
 	bool has_fix = gps_get_last_known_position(&pos);
 	char text[160], vtext[176];
+	/* The group copy goes out under the "name: " prefix: reserve it or the
+	 * maps link gets cut mid-URL. */
+	size_t name_prefix = strlen(companion_mesh.prefs.node_name) + 2;
+	size_t budget = ((size_t)MAX_TEXT_LEN > name_prefix ?
+			 (size_t)MAX_TEXT_LEN - name_prefix : 0) + 1;
 
-	tracking_format_summary(text, sizeof(text), &tracking_odo,
+	tracking_format_summary(text,
+				budget < sizeof(text) ? budget : sizeof(text),
+				&tracking_odo,
 				has_fix ? pos.latitude_ndeg : 0,
 				has_fix ? pos.longitude_ndeg : 0, has_fix);
 	snprintf(vtext, sizeof(vtext), "Трекинг завершён\n%s", text);
@@ -3446,6 +3453,11 @@ static bool handle_tracking_cli(const char *line, char *reply, bool silent)
 		if (companion_tracking.enabled) {
 			companion_tracking.next_report_ms = k_uptime_get() +
 				companion_tracking_interval_ms();
+			/* The probe window belongs to the same timeline as the
+			 * report it anchors to. */
+			tracking_backlog_probe_ms =
+				companion_tracking.next_report_ms -
+				TRACKING_BACKLOG_PROBE_LEAD_MS;
 		}
 		k_event_post(&mesh_events, MESH_EVENT_PREFS_DIRTY);
 		companion_tracking_ui_update();

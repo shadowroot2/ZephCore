@@ -91,6 +91,10 @@ becomes 5).
   second message with the same coordinates. The verdict now waits the full 10 s repeat window, and
   the repeat count survives the internal fold, so a verdict never calls a delivered point unheard
   because the measurement got lost.
+- **Small tracking fixes.** A full backlog ring no longer double-charges a dropped point when the
+  verdict settles, the `tracking off` summary keeps its maps link whole under a long node name,
+  `set tracking.interval` re-arms the backlog probe on the new timeline, and stored intervals clamp
+  to the documented minimum (5 min) instead of jumping to the default.
 - **WiFi companions no longer freeze when the app stops reading.** If an app connected over WiFi
   stopped reading (for example in the middle of a contact sync), the node could stop answering on
   USB, Bluetooth and WiFi, and stay stuck as long as that connection stayed open. The node now

@@ -63,6 +63,11 @@
       "source": "tests/unit/prefs_json_tests.cpp"
     },
     {
+      "id": "UNIT-PJSON-014",
+      "name": "Interval clamps land on the documented minimum, not the default",
+      "source": "tests/unit/prefs_json_tests.cpp"
+    },
+    {
       "id": "UNIT-UI-002",
       "name": "Display timezone labels fit E-Paper rows and local epochs stay bounded",
       "source": "tests/unit/timezone_tests.cpp"
@@ -775,6 +780,11 @@
     {
       "id": "UNIT-TRACKBUF-004",
       "name": "The heard verdict waits out the whole dupe window",
+      "source": "tests/unit/tracking_backlog_tests.cpp"
+    },
+    {
+      "id": "UNIT-TRACKBUF-005",
+      "name": "A full-ring drop keeps the verdict's accounting honest",
       "source": "tests/unit/tracking_backlog_tests.cpp"
     }
   ]

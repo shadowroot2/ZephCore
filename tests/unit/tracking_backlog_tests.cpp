@@ -131,6 +131,27 @@ TEST(tracking_backlog_schedule, "UNIT-TRACKBUF-003",
 	CHECK(tracking_backlog_next(&b, 8000 + TRACKING_BACKLOG_DRAIN_INTERVAL_MS, 0) ==
 	      TRACKING_BACKLOG_SEND);
 }
+TEST(tracking_backlog_full_ring, "UNIT-TRACKBUF-005",
+     "A full-ring drop keeps the verdict's accounting honest") {
+	struct tracking_backlog b;
+	int i;
+
+	tracking_backlog_reset(&b);
+	for (i = 0; i < TRACKING_BACKLOG_SLOTS; i++) {
+		tracking_backlog_push(&b, 1000U + (uint32_t)i, LAT, LON);
+	}
+	/* The inflight message carries the first two points. */
+	tracking_backlog_begin(&b, 1, 5000, 2);
+	/* Full ring: the oldest — an inflight point — drops. */
+	tracking_backlog_push(&b, 2000U, LAT, LON);
+	CHECK(b.count == TRACKING_BACKLOG_SLOTS);
+	/* The verdict drops only the carried point still in the ring (1001);
+	 * 1002 never went out and must survive. */
+	tracking_backlog_verdict(&b, true);
+	CHECK(b.count == TRACKING_BACKLOG_SLOTS - 1);
+	CHECK(b.pts[0].time_s == 1002U);
+	CHECK(b.pts[TRACKING_BACKLOG_SLOTS - 2].time_s == 2000U);
+}
 
 TEST(tracking_backlog_verdict_window, "UNIT-TRACKBUF-004",
      "The heard verdict waits out the whole dupe window") {

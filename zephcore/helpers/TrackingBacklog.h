@@ -75,6 +75,13 @@ static inline void tracking_backlog_push(struct tracking_backlog *b, uint32_t ti
 			b->pts[i - 1] = b->pts[i];
 		}
 		b->count--;
+		/* The dropped head may be a point an inflight message carries:
+		 * it is gone from the ring, so the verdict must not drop one
+		 * more on its behalf. A live report's point is not in the ring
+		 * and keeps its own accounting. */
+		if (b->inflight && !b->inflight_live && b->inflight_points > 0) {
+			b->inflight_points--;
+		}
 	}
 	b->pts[b->count].time_s = time_s;
 	b->pts[b->count].lat_ndeg = lat_ndeg;
