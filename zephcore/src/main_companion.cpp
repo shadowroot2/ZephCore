@@ -899,6 +899,7 @@ struct companion_sos_state {
 	bool pending;
 	bool silent;
 	bool final_failed; /* the last final send was refused; retry it */
+	uint8_t final_retries; /* refused final sends so far */
 	enum companion_emergency_type type;
 	uint32_t started_ms;
 	uint32_t next_waiting_message_ms;
@@ -1280,10 +1281,21 @@ static bool companion_sos_finish(bool fresh_fix)
 	bool success = companion_sos_send_now(fresh_fix);
 
 	if (!success) {
+		if (companion_sos_give_up(companion_sos.final_retries)) {
+			/* The queue is missing or wedged: stop owing the message,
+			 * release the GPS lease and let the user re-trigger. */
+			LOG_WRN("SOS: giving up on the final message after %u attempts",
+				(unsigned)companion_sos.final_retries);
+			memset(&companion_sos, 0, sizeof(companion_sos));
+			atomic_set(&companion_manual_sos_pending, 0);
+			companion_gps_user_left();
+			return false;
+		}
 		/* The emergency message is the point of the sequence: keep the
 		 * state and retry on the waiting cadence instead of dropping the
 		 * coordinates on the floor. */
 		companion_sos.final_failed = true;
+		companion_sos.final_retries++;
 		companion_sos.next_waiting_message_ms = k_uptime_get_32() +
 			SOS_WAITING_REPEAT_MS;
 		return false;
@@ -1294,6 +1306,21 @@ static bool companion_sos_finish(bool fresh_fix)
 	atomic_set(&companion_manual_sos_pending, 0);
 	companion_gps_user_left();
 	return success;
+}
+
+/* The final send was refused on a path that would otherwise just report the
+ * failure and forget the emergency: hold the state so the retry machinery
+ * owes the message (no waiting notices — the final one is what's pending). */
+static void companion_sos_hold_for_retry(void)
+{
+	companion_sos.pending = true;
+	companion_sos.final_failed = true;
+	companion_sos.final_retries = 1;
+	companion_sos.next_waiting_message_ms = k_uptime_get_32() +
+		SOS_WAITING_REPEAT_MS;
+	atomic_set(&companion_manual_sos_pending,
+		companion_sos_button_cancelable(true,
+			companion_sos.type == COMPANION_EMERGENCY_FALL));
 }
 
 static bool companion_emergency_request(enum companion_emergency_type type,
@@ -1310,6 +1337,9 @@ static bool companion_emergency_request(enum companion_emergency_type type,
 		 * GPS state, so only an explicit Fall cancellation restores it. */
 		companion_sos.type = type;
 		companion_sos.silent = silent;
+		/* The new emergency owes its own final message at once. */
+		companion_sos.final_failed = false;
+		companion_sos.final_retries = 0;
 		atomic_set(&companion_manual_sos_pending,
 			companion_sos_button_cancelable(true,
 				type == COMPANION_EMERGENCY_FALL));
@@ -1353,16 +1383,24 @@ static bool companion_emergency_request(enum companion_emergency_type type,
 		companion_fall_alarm_start();
 	}
 	if (!gps_is_available()) {
-		strcpy(reply, companion_sos_send_now(false) ?
-		       "OK - emergency sent" : "ERROR: emergency send failed");
+		if (companion_sos_send_now(false)) {
+			strcpy(reply, "OK - emergency sent");
+		} else {
+			companion_sos_hold_for_retry();
+			strcpy(reply, "ERROR: emergency send failed");
+		}
 		return true;
 	}
 
 	/* A recent validated coordinate is safe to send right now. */
 	bool gps_was_enabled = gps_is_enabled();
 	if (gps_was_enabled && companion_sos_has_fresh_fix()) {
-		strcpy(reply, companion_sos_send_now(true) ?
-		       "OK - emergency sent with GPS" : "ERROR: emergency send failed");
+		if (companion_sos_send_now(true)) {
+			strcpy(reply, "OK - emergency sent with GPS");
+		} else {
+			companion_sos_hold_for_retry();
+			strcpy(reply, "ERROR: emergency send failed");
+		}
 		return true;
 	}
 
@@ -1440,7 +1478,11 @@ static void companion_sos_process(void)
 		pos.latitude_ndeg != 0 && pos.longitude_ndeg != 0 &&
 		pos.timestamp_ms > companion_sos.started_ms;
 	uint32_t elapsed_ms = k_uptime_get_32() - companion_sos.started_ms;
-	if (fresh_fix || elapsed_ms >= SOS_FIX_TIMEOUT_MS) {
+	if (fresh_fix || elapsed_ms >= SOS_FIX_TIMEOUT_MS ||
+	    companion_sos.final_failed) {
+		/* The final message is what's owed: while one is refused, the
+		 * waiting cadence owns the attempts and no waiting notices go
+		 * out. */
 		bool waiting_due = (int32_t)(now_ms -
 					    companion_sos.next_waiting_message_ms) >= 0;
 

@@ -53,7 +53,8 @@ becomes 5).
   cleared), so `MELODY_SOS` rang every 30 s forever; it now stops the alarm unconditionally and
   cancels a live fall with `❌ Падение отменено` and a sound, like the button does. And when the
   radio queue refused the final emergency message (pool empty, `#sos` missing) the state was wiped
-  and the coordinates lost — the send now retries every 30 s until it lands.
+  and the coordinates lost — the retry now covers the immediate send paths too (no GPS hardware, or
+  a fix already in hand) and stands down after 10 attempts instead of holding the receiver forever.
 - **The power-on notice no longer arrives after the power-off notice.** A shutdown in the first
   seconds after boot left the boot notice armed, so the family saw the node switching off and then
   switching on; the boot notice is cancelled when a shutdown starts.

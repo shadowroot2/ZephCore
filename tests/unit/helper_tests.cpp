@@ -255,6 +255,10 @@ TEST(companion_sos_final_and_fall_off, "UNIT-SOS-002",
 	CHECK(companion_sos_final_send_due(false, true));
 	CHECK(!companion_sos_final_send_due(true, false));
 	CHECK(companion_sos_final_send_due(true, true));
+	/* The retry gives up after its bound instead of holding the GPS lease
+	 * and the log forever on a missing channel. */
+	CHECK(!companion_sos_give_up(SOS_FINAL_RETRY_MAX - 1));
+	CHECK(companion_sos_give_up(SOS_FINAL_RETRY_MAX));
 	/* The alarm outlives the sos state (the final send clears it), so fall
 	 * off must see a ringing alarm even with no pending sos; a live pending
 	 * fall counts too, a replaced or finished sos does not. */
