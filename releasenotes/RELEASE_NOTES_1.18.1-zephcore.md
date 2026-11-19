@@ -64,7 +64,9 @@ becomes 5).
 - **The navigation target is pinned at start.** Re-selecting a point (`wp <n>`, double-tap cycle)
   during a route silently re-targeted it — wrong-way, reports and the arrival all followed the new
   point. The route keeps the point chosen at `nav start`, like a save keeps its slot; `wp clear` is
-  now refused while navigating, since it would empty the slots the route targets.
+  now refused while navigating, since it would empty the slots the route targets. `nav start` on an
+  unsaved point is refused too (`ERROR: point not saved`) instead of silently walking to the default
+  Almaty intersection.
 - **An app cannot switch the GPS behind a feature's back.** The binary companion command that sets
   `gps` and `gps_interval` had no lease check — a connected app could power the receiver off in the
   middle of navigation, tracking or a point save, or overwrite the running duty. It now answers with

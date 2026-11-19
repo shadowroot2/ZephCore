@@ -2210,6 +2210,12 @@ static void companion_nav_set_enabled(bool enabled, char *reply, bool announce =
 			strcpy(reply, "ERROR: saving home point");
 			return;
 		}
+		if (!companion_mesh.prefs.home_saved[companion_home.selected]) {
+			/* An unsaved slot still holds the default intersection —
+			 * navigating there is never what the user meant. */
+			strcpy(reply, "ERROR: point not saved");
+			return;
+		}
 		companion_home.nav_active = true;
 		companion_home.nav_slot = companion_home.selected;
 		nav_wrongway_reset(&companion_home.ww);
