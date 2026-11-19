@@ -22,6 +22,11 @@
 
 #include <zephyr/device.h>
 #include <zephyr/display/cfb.h>
+
+/* The CFB font table lives in an iterable section; declaring its bounds lets
+ * this file index it the way cfb.c does (fb->fonts = TYPE_SECTION_START). */
+TYPE_SECTION_START_EXTERN(struct cfb_font, cfb_font);
+TYPE_SECTION_END_EXTERN(struct cfb_font, cfb_font);
 #include <zephyr/drivers/display.h>
 #include <zephyr/drivers/regulator.h>
 #include <zephyr/kernel.h>
@@ -75,6 +80,7 @@ static uint8_t  font_w;
 static uint8_t  font_h;
 static int small_font_idx;
 static int large_font_idx;
+static int active_font_idx;
 static bool     is_epd;       /* true for e-paper displays */
 
 #if MC_DISPLAY_COLOR_PANEL
@@ -523,7 +529,9 @@ int mc_display_init(void)
 	}
 
 	/* Font selection: the smallest height by default; with LARGE_FONT the
-	 * smallest font at least 16 high, falling back to the smallest overall. */
+	 * smallest font at least 16 high, falling back to the smallest overall.
+	 * A font that does not start at ASCII (the 10x16 extension holds only
+	 * slots 128-255) is never the panel font — it would tofu every label. */
 	const bool want_large = IS_ENABLED(CONFIG_ZEPHCORE_DISPLAY_LARGE_FONT);
 	int num_fonts = cfb_get_numof_fonts(disp_dev);
 
@@ -537,6 +545,13 @@ int mc_display_init(void)
 
 		cfb_get_font_size(disp_dev, i, &fw, &fh);
 		LOG_DBG("  font[%d]: %ux%u", i, fw, fh);
+		{
+			const struct cfb_font *f = &TYPE_SECTION_START(cfb_font)[i];
+
+			if (f->first_char > ' ') {
+				continue;
+			}
+		}
 		if (want_large) {
 			if (fh >= 16 && fh < best_h) {
 				best_h = fh;
@@ -553,10 +568,19 @@ int mc_display_init(void)
 		/* No font satisfied the LARGE_FONT threshold — fall back to
 		 * the smallest so we still render something. */
 		best_idx = 0;
+		best_h = 255;
 		for (int i = 0; i < num_fonts; i++) {
 			uint8_t fw = 0, fh = 0;
 
 			cfb_get_font_size(disp_dev, i, &fw, &fh);
+			{
+				const struct cfb_font *f =
+					&TYPE_SECTION_START(cfb_font)[i];
+
+				if (f->first_char > ' ') {
+					continue;
+				}
+			}
 			if (fh < best_h) {
 				best_h = fh;
 				best_idx = i;
@@ -574,6 +598,14 @@ int mc_display_init(void)
 			uint8_t fw = 0, fh = 0;
 
 			cfb_get_font_size(disp_dev, i, &fw, &fh);
+			{
+				const struct cfb_font *f =
+					&TYPE_SECTION_START(cfb_font)[i];
+
+				if (f->first_char > ' ') {
+					continue;
+				}
+			}
 			if ((int)fw * 8 <= (int)mc_display_width() && fw > large_w) {
 				large_w = fw;
 				large_idx = i;
@@ -585,6 +617,7 @@ int mc_display_init(void)
 	}
 	small_font_idx = best_idx;
 	large_font_idx = large_idx;
+	active_font_idx = best_idx;
 	cfb_framebuffer_set_font(disp_dev, best_idx);
 	cfb_get_font_size(disp_dev, best_idx, &font_w, &font_h);
 	LOG_INF("display: selected font[%d] (%ux%u), NAV font[%d]",
@@ -781,25 +814,40 @@ void mc_display_clear(void)
 static int draw_slot(int x, int y, uint8_t slot)
 {
 	int idx = 0;
+	int best = -1;
+	int best_score = -1;
 	int w = font_w ? font_w : 1;
 
+	/* Several fonts may carry the slot (the 6x8 master covers 32-255):
+	 * prefer the one at the active font's pitch so a mixed string stays
+	 * on one grid. */
 	STRUCT_SECTION_FOREACH(cfb_font, f) {
 		if (slot >= f->first_char && slot <= f->last_char) {
-			char one[2] = { (char)slot, '\0' };
-			uint8_t fw = 0, fh = 0;
+			int score = (f->width == font_w && f->height == font_h)
+					? 2
+					: 1;
 
-			if (cfb_get_font_size(disp_dev, (uint8_t)idx, &fw,
-					      &fh) == 0) {
-				w = fw;
+			if (score > best_score) {
+				best_score = score;
+				best = idx;
 			}
-			cfb_framebuffer_set_font(disp_dev, (uint8_t)idx);
-			cfb_print(disp_dev, one, (int16_t)(x + DISP_INSET),
-				  (int16_t)(y + DISP_INSET));
-			cfb_framebuffer_set_font(disp_dev,
-						(uint8_t)small_font_idx);
-			return w;
 		}
 		idx++;
+	}
+	if (best < 0) {
+		return w;
+	}
+	{
+		char one[2] = { (char)slot, '\0' };
+		uint8_t fw = 0, fh = 0;
+
+		if (cfb_get_font_size(disp_dev, (uint8_t)best, &fw, &fh) == 0) {
+			w = fw;
+		}
+		cfb_framebuffer_set_font(disp_dev, (uint8_t)best);
+		cfb_print(disp_dev, one, (int16_t)(x + DISP_INSET),
+			  (int16_t)(y + DISP_INSET));
+		cfb_framebuffer_set_font(disp_dev, (uint8_t)active_font_idx);
 	}
 	return w;
 }
@@ -1185,6 +1233,7 @@ void mc_display_font_large(bool on)
 	}
 	int idx = on ? large_font_idx : small_font_idx;
 
+	active_font_idx = idx;
 	cfb_framebuffer_set_font(disp_dev, idx);
 	cfb_get_font_size(disp_dev, idx, &font_w, &font_h);
 }
