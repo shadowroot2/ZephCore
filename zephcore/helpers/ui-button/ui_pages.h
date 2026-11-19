@@ -78,12 +78,14 @@ struct ui_state {
 
 #ifdef CONFIG_ZEPHCORE_UI_DISPLAY
 	/* PUBLIC feed: last incoming messages, newest first. Written from the
-	 * mesh thread, read by the UI task; see ui_feed_push() for the
+	 * mesh thread, read by the UI task; see ui_chat_push() for the
 	 * publication order that makes that safe. A headless board has no
 	 * screen to show it and no RAM to spare for it. */
-	struct ui_feed feed;
-	struct ui_feed_cursor feed_view; /* row at the top of the window */
-	bool     feed_deferred;   /* a push is holding the redraw */
+	struct ui_chat_list chats;	/* channels first, then direct chats */
+	uint8_t  chat_sel;		/* list index in display order */
+	bool     chat_open;		/* inside the selected conversation */
+	struct ui_feed_cursor chat_view; /* row at the top of its feed */
+	bool     feed_deferred;		/* a push is holding the redraw */
 #endif
 
 	/* Radio page */

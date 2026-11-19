@@ -211,6 +211,35 @@ static struct k_work_delayable home_defer_work;
 #ifdef CONFIG_ZEPHCORE_UI_DISPLAY
 static struct k_work_delayable home_hold_work;
 
+/* Enter the highlighted conversation: the feed shows only its messages
+ * and the unread count clears on the visit. */
+static void chat_open_selected(void)
+{
+	struct ui_state *s = get_state();
+	struct ui_chat *c = ui_chat_nth(&s->chats, s->chat_sel);
+	struct ui_feed_cursor zero = { 0, 0 };
+
+	if (c == NULL) {
+		return;
+	}
+	c->unread = 0;
+	s->chat_open = true;
+	s->chat_view = zero;
+	s->feed_deferred = false;
+	ui_pages_set(UI_PAGE_PUBLIC);
+	schedule_render();
+}
+
+static void chat_close(void)
+{
+	struct ui_state *s = get_state();
+
+	s->chat_open = false;
+	s->feed_deferred = false;
+	ui_pages_set(UI_PAGE_MESSAGES);
+	schedule_render();
+}
+
 static void home_hold_handler(struct k_work *work)
 {
 	ARG_UNUSED(work);
@@ -219,10 +248,14 @@ static void home_hold_handler(struct k_work *work)
 	 * confirmation; boards with a short ENTER arm the Confirm SAVE step. */
 	struct ui_state *st = get_state();
 
-	/* The first page reuses the threshold as the SOS launch arm: the
-	 * short press after the hold sends (the Confirm SAVE shape). */
+	/* The list: a hold is the choice of the highlighted conversation.
+	 * Inside one, the same hold is the way back out. */
 	if (ui_pages_current() == UI_PAGE_MESSAGES) {
-		sos_arm_until = k_uptime_get_32() + SOS_ARM_WINDOW_MS;
+		chat_open_selected();
+		return;
+	}
+	if (ui_pages_current() == UI_PAGE_PUBLIC) {
+		chat_close();
 		return;
 	}
 	if (st->nav_active) {
@@ -480,30 +513,46 @@ static void action_enter_dfu(void);
 static void action_wifi_toggle(void);
 #endif
 
-/* Feed paging: the feed reads as one continuous text, so a page is a
+/* Walk the conversation list, round and round. */
+static void chat_list_next(void)
+{
+	struct ui_state *s = get_state();
+	int n = ui_chat_list_len(&s->chats);
+
+	if (n == 0) {
+		return;
+	}
+	s->chat_sel = (uint8_t)((s->chat_sel + 1) % n);
+	s->feed_deferred = false;
+	schedule_render();
+}
+
+/* Chat paging: a conversation reads as one continuous text, so a page is a
  * screenful of wrapped rows and a long message spills onto the next one. */
 static void feed_page_next(void)
 {
 	struct ui_state *s = get_state();
-	struct ui_feed_iter it;
+	const struct ui_chat *c = ui_chat_nth(&s->chats, s->chat_sel);
+	struct ui_chat_iter it;
+	struct ui_feed_cursor zero = { 0, 0 };
 	char row[UI_FEED_TEXT_LEN + 32];
 	int n = ui_pages_feed_page_rows();
 
-	if (s->feed.count == 0) {
+	if (c == NULL || c->count == 0) {
 		return;
 	}
-	ui_feed_iter_init(&it, &s->feed, s->feed_view, s->rtc_epoch,
+	ui_chat_iter_init(&it, c, s->chat_view, s->rtc_epoch,
 			  s->tz_offset_min, mc_display_font_width());
 	for (int i = 0; i < n; i++) {
-		if (!ui_feed_iter_next(&it, row, sizeof(row))) {
-			/* End of the feed: wrap to the newest page. */
-			s->feed_view = (struct ui_feed_cursor){ 0, 0 };
+		if (!ui_chat_iter_next(&it, row, sizeof(row))) {
+			/* End of the chat: wrap to the newest page. */
+			s->chat_view = zero;
 			s->feed_deferred = false;
 			schedule_render();
 			return;
 		}
 	}
-	s->feed_view = it.cur;
+	s->chat_view = it.cur;
 	s->feed_deferred = false;
 	schedule_render();
 }
@@ -511,11 +560,12 @@ static void feed_page_next(void)
 static void feed_page_prev(void)
 {
 	struct ui_state *s = get_state();
+	const struct ui_chat *c = ui_chat_nth(&s->chats, s->chat_sel);
 
-	if (s->feed.count == 0) {
+	if (c == NULL || c->count == 0) {
 		return;
 	}
-	s->feed_view = ui_feed_page_before(&s->feed, s->feed_view, s->rtc_epoch,
+	s->chat_view = ui_chat_page_before(c, s->chat_view, s->rtc_epoch,
 					   s->tz_offset_min,
 					   mc_display_font_width(),
 					   ui_pages_feed_page_rows());
@@ -578,8 +628,13 @@ static void action_page_enter(void)
 		action_gps_toggle();
 		break;
 
+	case UI_PAGE_MESSAGES:
+		/* One press walks the conversation list, round and round. */
+		chat_list_next();
+		break;
+
 	case UI_PAGE_PUBLIC:
-		/* One button pages the feed, the same shape as the advert
+		/* One button pages the chat, the same shape as the advert
 		 * page: the first press steps forward after a beat, a second
 		 * press inside the window walks back instead. */
 		if (k_work_delayable_is_pending(&feed_defer_work)) {
@@ -1033,12 +1088,9 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 			}
 			k_work_cancel_delayable(&home_hold_work);
 			if (ui_pages_current() == UI_PAGE_MESSAGES) {
-				if ((int32_t)(sos_arm_until - k_uptime_get_32()) > 0) {
-					sos_arm_until = 0;
-					mesh_send_sos();
-				} else if (!mesh_sos_cancel_if_active()) {
-					action_page_enter();
-				}
+				/* Short press on the list walks it; the hold
+				 * above is what picks an entry. */
+				action_page_enter();
 			} else {
 				action_home_key_short();
 			}
@@ -1330,31 +1382,25 @@ int ui_init(void)
 	return 0;
 }
 
-/* One incoming message into the PUBLIC feed. The entry body is written
- * before the ring indices move (ui_feed_push), so the renderer may read
+/* One incoming message into its conversation.  The message body is written
+ * before the ring indices move (ui_chat_push), so the renderer may read
  * from the UI task while this runs on the mesh thread. */
-static void ui_feed_add(const char *name, const char *text, uint32_t ts,
-			uint8_t flags, const char *channel_name)
+static void ui_feed_add(const char *chat_name, bool is_group, const char *text,
+			uint32_t ts)
 {
 #ifdef CONFIG_ZEPHCORE_UI_DISPLAY
 	struct ui_state *s = get_state();
-	struct ui_feed_entry e;
-	enum ui_feed_redraw how;
+	struct ui_chat *c;
 
-	memset(&e, 0, sizeof(e));
-	e.ts = ts;
-	e.flags = flags;
-	strncpy(e.name, name, sizeof(e.name) - 1);
-	if (channel_name != NULL) {
-		strncpy(e.channel, channel_name, sizeof(e.channel) - 1);
+	c = ui_chat_push(&s->chats, chat_name, is_group, ts, text);
+	if (c == NULL) {
+		return;
 	}
-	ui_feed_emoji_text(e.text, sizeof(e.text), text);
-
-	how = ui_feed_push(&s->feed, &e, &s->feed_view);
-	if (how == UI_FEED_REDRAW_DEFER) {
-		/* The viewer is reading older messages: hold the redraw so the
-		 * conversation does not jump, then show it anyway — the entry
-		 * is in the ring either way. */
+	/* Only a message in the conversation on screen can make the text
+	 * jump: hold the redraw when the viewer is down its pages. */
+	if (ui_pages_current() == UI_PAGE_PUBLIC && s->chat_open &&
+	    c == ui_chat_nth(&s->chats, s->chat_sel) &&
+	    (s->chat_view.entry != 0 || s->chat_view.row != 0)) {
 		s->feed_deferred = true;
 		k_work_reschedule(&render_work, K_MSEC(UI_FEED_DEFER_MS));
 		return;
@@ -1368,7 +1414,7 @@ static void ui_feed_add(const char *name, const char *text, uint32_t ts,
 	}
 	ui_request_render();
 #else
-	(void)name; (void)text; (void)ts; (void)flags; (void)channel_name;
+	(void)chat_name; (void)is_group; (void)text; (void)ts;
 #endif
 }
 
@@ -1376,7 +1422,7 @@ void ui_notify_contact_msg(uint8_t path_len, const char *from_name,
 			   const char *text, uint32_t ts, uint16_t msg_count)
 {
 	(void)path_len;
-	ui_feed_add(from_name, text, ts, UI_FEED_F_DM, NULL);
+	ui_feed_add(from_name, false, text, ts);
 	ui_set_msg_count(msg_count);
 	ui_notify(UI_EVENT_CONTACT_MSG);
 }
@@ -1386,7 +1432,7 @@ void ui_notify_channel_msg(const char *channel_name, const char *text,
 {
 	(void)path_len;
 	/* The mesh already prefixes the sender: sendGroupMessage(). */
-	ui_feed_add("", text, ts, 0, channel_name);
+	ui_feed_add(channel_name, true, text, ts);
 	ui_set_msg_count(msg_count);
 	ui_notify(UI_EVENT_CHANNEL_MSG);
 }

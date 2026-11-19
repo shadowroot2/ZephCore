@@ -666,128 +666,84 @@ static void render_tiny_title(void)
  */
 static void render_messages_mono(void)
 {
-	/* 3 centered rows: msg count, link status, offgrid status */
-	char buf[24];
+	/* The conversation list: channels first, then direct chats, each
+	 * "Name (unread)" with the unread count dropped when it is zero. */
+	int rows = (DISP_H - CONTENT_Y) / LINE_H;
+	int y = CONTENT_Y;
+	int n = ui_chat_list_len(&state.chats);
+	int shown = 0;
 
-	if (ui_tiny()) {
-		snprintf(buf, sizeof(buf), "MSG:%u", state.msg_count);
-		draw_centered(centered_row(0, 3), buf);
-		if (state.app_connected) {
-			snprintf(buf, sizeof(buf), "%s:conn", link_label());
-		} else {
-			snprintf(buf, sizeof(buf), "BLE:%s",
-				 state.ble_enabled ? "adv" : "off");
-		}
-		draw_centered(centered_row(1, 3), buf);
-
-		uint32_t up_s = (uint32_t)(k_uptime_get() / 1000);
-
-		snprintf(buf, sizeof(buf), "%uh%02um",
-			 (up_s % 86400) / 3600, (up_s % 3600) / 60);
-		draw_centered(centered_row(2, 3), buf);
+	if (rows <= 0) {
 		return;
 	}
-
-	snprintf(buf, sizeof(buf), "MSG: %u", state.msg_count);
-	draw_centered(centered_row(0, 4), buf);
-
-	if (state.app_connected) {
-		snprintf(buf, sizeof(buf), "< Connected: %s >", link_label());
-		draw_centered(centered_row(1, 4), buf);
-	} else {
-		draw_centered(centered_row(1, 4), "Waiting for app...");
+	if (n == 0) {
+		draw_centered(centered_row(0, 1), "(no chats)");
+		return;
 	}
+	/* Keep the selection on screen: page the window around it. */
+	int first = 0;
 
-	snprintf(buf, sizeof(buf), "Offgrid: %s",
-		 state.offgrid_enabled ? "ON" : "OFF");
-	draw_centered(centered_row(2, 4), buf);
+	if (n > rows && state.chat_sel >= rows) {
+		first = state.chat_sel - rows + 1;
+	}
+	for (int i = first; i < n && shown < rows; i++, shown++) {
+		const struct ui_chat *c = ui_chat_nth(&state.chats, i);
+		char buf[40];
 
-	uint32_t up_s = (uint32_t)(k_uptime_get() / 1000);
-	snprintf(buf, sizeof(buf), "Up: %ud %uh %um",
-		 up_s / 86400, (up_s % 86400) / 3600, (up_s % 3600) / 60);
-	draw_centered(centered_row(3, 4), buf);
+		if (c == NULL) {
+			break;
+		}
+		if (c->unread > 0) {
+			snprintf(buf, sizeof(buf), "%s (%u)", c->name,
+				 (unsigned)c->unread);
+		} else {
+			snprintf(buf, sizeof(buf), "%s", c->name);
+		}
+		mc_display_text(0, y, buf, i == state.chat_sel);
+		y += LINE_H;
+	}
 }
 
 #if MC_DISPLAY_COLOR_PANEL
 static void render_messages_color(void)
 {
-	char buf[24];
+	int rows = (DISP_H - CONTENT_Y) / LINE_H;
+	int y = CONTENT_Y;
+	int n = ui_chat_list_len(&state.chats);
+	int shown = 0;
+	int first = 0;
 
-	if (use_compact_color_home()) {
-		int y = CONTENT_Y;
-		char badge[12];
-		const char *link = link_badge(badge, sizeof(badge));
-		const char *radio = radio_state_label();
-		uint16_t radio_color = state.lora_tx_active ? UI_COLOR_TX :
-				       state.lora_in_rx ? UI_COLOR_RX :
-				       state.lora_radio_ready ? UI_COLOR_OK
-							      : UI_COLOR_WARN;
-
-		draw_badge(0, y, link, link_badge_color());
-		draw_badge(DISP_W - color_text_width(radio) - 4, y, radio,
-			   radio_color);
-		y += LINE_H + 2;
-
-		mc_display_color_text(0, y, "COMPANION", UI_COLOR_LABEL);
-		snprintf(buf, sizeof(buf), "MSG %u", state.msg_count);
-		mc_display_color_text(DISP_W - color_text_width(buf), y, buf,
-				      state.msg_count ? UI_COLOR_WARN : UI_COLOR_VALUE);
-		y += LINE_H;
-
-		if (state.app_connected) {
-			draw_centered_color(y, "Connected", UI_COLOR_OK);
-		} else {
-			mc_display_color_text(30, y, "Waiting for app", UI_COLOR_WARN);
-		}
-		y += LINE_H;
-
-		snprintf(buf, sizeof(buf), "Offgrid %s",
-			 state.offgrid_enabled ? "on" : "off");
-		draw_centered_color(y, buf,
-				    state.offgrid_enabled ? UI_COLOR_ACTIVE
-							  : UI_COLOR_DISABLED);
-		y += LINE_H;
-
-		uint32_t up_s = (uint32_t)(k_uptime_get() / 1000);
-		snprintf(buf, sizeof(buf), "Up: %ud %uh %um",
-			 up_s / 86400, (up_s % 86400) / 3600, (up_s % 3600) / 60);
-		draw_centered_color(y, buf, UI_COLOR_LABEL);
+	if (rows <= 0) {
 		return;
 	}
-
-	int y = CONTENT_Y;
-	char badge[12];
-
-	draw_badge(0, y, link_badge(badge, sizeof(badge)), link_badge_color());
-	draw_badge(DISP_W - color_text_width(state.offgrid_enabled ? "GRID" : "LOCAL") - 4,
-		   y, state.offgrid_enabled ? "GRID" : "LOCAL",
-		   state.offgrid_enabled ? UI_COLOR_ACTIVE : UI_COLOR_DISABLED);
-	y += LINE_H + 2;
-
-	mc_display_color_text(0, y, "MESSAGES", UI_COLOR_LABEL);
-	snprintf(buf, sizeof(buf), "%u", state.msg_count);
-	mc_display_color_text(DISP_W - color_text_width(buf), y, buf,
-			      state.msg_count ? UI_COLOR_WARN : UI_COLOR_VALUE);
-	y += LINE_H;
-
-	if (state.app_connected) {
-		draw_centered_color(y, "Connected", UI_COLOR_OK);
-	} else {
-		draw_centered_color(y, "Waiting for app", UI_COLOR_WARN);
+	if (n == 0) {
+		draw_centered_color(centered_row(0, 1), "(no chats)",
+				    UI_COLOR_DISABLED);
+		return;
 	}
-	y += LINE_H;
+	if (n > rows && state.chat_sel >= rows) {
+		first = state.chat_sel - rows + 1;
+	}
+	for (int i = first; i < n && shown < rows; i++, shown++) {
+		const struct ui_chat *c = ui_chat_nth(&state.chats, i);
+		char buf[40];
+		uint16_t col = (i == state.chat_sel) ? UI_COLOR_ACTIVE
+						    : UI_COLOR_VALUE;
 
-	snprintf(buf, sizeof(buf), "Offgrid %s",
-		 state.offgrid_enabled ? "on" : "off");
-	draw_centered_color(y, buf,
-			    state.offgrid_enabled ? UI_COLOR_ACTIVE
-						  : UI_COLOR_DISABLED);
-	y += LINE_H;
-
-	uint32_t up_s = (uint32_t)(k_uptime_get() / 1000);
-	snprintf(buf, sizeof(buf), "Up: %ud %uh %um",
-		 up_s / 86400, (up_s % 86400) / 3600, (up_s % 3600) / 60);
-	draw_centered_color(y, buf, UI_COLOR_LABEL);
+		if (c == NULL) {
+			break;
+		}
+		if (c->unread > 0) {
+			snprintf(buf, sizeof(buf), "%s (%u)", c->name,
+				 (unsigned)c->unread);
+			col = (i == state.chat_sel) ? UI_COLOR_ACTIVE
+						   : UI_COLOR_WARN;
+		} else {
+			snprintf(buf, sizeof(buf), "%s", c->name);
+		}
+		mc_display_color_text(0, y, buf, col);
+		y += LINE_H;
+	}
 }
 #endif /* MC_DISPLAY_COLOR_PANEL */
 
@@ -807,18 +763,19 @@ static void render_messages(void)
 static void render_public_rows(int cols, bool color, uint16_t title_color)
 {
 	const struct ui_state *s = &state;
+	const struct ui_chat *c;
 	int rows = (DISP_H - CONTENT_Y) / LINE_H;
 	int y = CONTENT_Y;
 	int shown = 0;
-	/* The N/M counter is pinned to the bottom of the panel. */
 	int text_rows = rows > 1 ? rows - 1 : rows;
-	struct ui_feed_iter it;
+	struct ui_chat_iter it;
 	char row[UI_FEED_TEXT_LEN + 32];
 
 	if (rows <= 0) {
 		return;
 	}
-	if (s->feed.count == 0) {
+	c = ui_chat_nth(&state.chats, s->chat_sel);
+	if (c == NULL || c->count == 0) {
 		if (color) {
 			draw_centered_color(centered_row(0, 1), "(no messages)",
 					    UI_COLOR_DISABLED);
@@ -827,12 +784,10 @@ static void render_public_rows(int cols, bool color, uint16_t title_color)
 		}
 		return;
 	}
-	/* The feed reads as one continuous text: start at the cursor and let
-	 * rows spill across messages until the window is full. */
-	ui_feed_iter_init(&it, &s->feed, s->feed_view, s->rtc_epoch,
+	ui_chat_iter_init(&it, c, s->chat_view, s->rtc_epoch,
 			  s->tz_offset_min, cols);
 	while (shown < text_rows &&
-	       ui_feed_iter_next(&it, row, sizeof(row))) {
+	       ui_chat_iter_next(&it, row, sizeof(row))) {
 		if (color) {
 			mc_display_color_text(0, y, row, title_color);
 		} else {
@@ -849,8 +804,8 @@ static void render_public_rows(int cols, bool color, uint16_t title_color)
 			bottom_y = y;
 		}
 		snprintf(pos, sizeof(pos), "%u/%u",
-			 (unsigned)(s->feed_view.entry + 1),
-			 (unsigned)s->feed.count);
+			 (unsigned)(s->chat_view.entry + 1),
+			 (unsigned)c->count);
 		if (color) {
 			draw_centered_color(bottom_y, pos, UI_COLOR_DISABLED);
 		} else {
