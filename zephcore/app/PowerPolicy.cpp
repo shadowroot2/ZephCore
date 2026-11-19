@@ -7,6 +7,9 @@
 
 #include <adapters/board/zephyr_poweroff.h>
 #include <helpers/ui/ui_task.h>
+#if IS_ENABLED(CONFIG_ZEPHCORE_BLE_OTA)
+#include "ble_ota.h"
+#endif
 
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
@@ -106,6 +109,14 @@ void PowerPolicy::checkAlert(uint16_t mv, bool on_battery)
 void PowerPolicy::checkShutdown(uint16_t mv, bool on_battery)
 {
 #if HAS_AUTO_SHUTDOWN
+#if IS_ENABLED(CONFIG_ZEPHCORE_BLE_OTA)
+	/* An open OTA window owns the battery decision until it closes: the
+	 * upload's current draw is not a reason to cut the node mid-update. */
+	if (ble_ota_is_active()) {
+		_shutdown_low = 0;
+		return;
+	}
+#endif
 	uint16_t cutoff = _prefs->auto_shutdown_mv;
 
 	if (cutoff == 0 || mv >= cutoff) {

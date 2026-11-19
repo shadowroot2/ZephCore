@@ -33,6 +33,7 @@ LOG_MODULE_REGISTER(ble_ota, LOG_LEVEL_INF);
 
 static atomic_t ota_active;
 static K_MUTEX_DEFINE(ota_lock);
+static void (*ota_listener)(bool active);
 static uint8_t last_pct_logged;
 
 static void ota_close_work_fn(struct k_work *work);
@@ -165,6 +166,9 @@ int ble_ota_start(void)
 		LOG_ERR("SMP service register failed: %d", err);
 	}
 	k_mutex_unlock(&ota_lock);
+	if (err == 0 && ota_listener) {
+		ota_listener(true);
+	}
 	return err;
 }
 
@@ -184,6 +188,9 @@ int ble_ota_stop(void)
 	}
 	LOG_INF("BLE OTA window closed");
 	k_mutex_unlock(&ota_lock);
+	if (ota_listener) {
+		ota_listener(false);
+	}
 	return 0;
 }
 
@@ -199,4 +206,9 @@ uint32_t ble_ota_remaining_s(void)
 	}
 	return (uint32_t)(k_ticks_to_ms_floor64(
 		k_work_delayable_remaining_get(&ota_close_work)) / 1000U);
+}
+
+void ble_ota_set_listener(void (*listener)(bool active))
+{
+	ota_listener = listener;
 }

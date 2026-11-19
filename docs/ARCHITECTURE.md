@@ -1066,6 +1066,8 @@ driver. Persisted in `prefs.json` as `zc.leds_brightness`; it is not part of the
   window is open (`start ota` or the UI's DFU entry, 600 s, held open while an upload runs; `stop ota` closes it), so the boot
   GATT table is unchanged; it needs a passkey-bonded link. Payload: `<board>-update.bin` via nRF Connect Device Manager;
   MCUboot copies it on the client's reset. 1 KB x 4 SMP buffers, progressive erase. ~7.5 KB DRAM. ([ADR 0011](adr/0011-esp32-companion-ble-ota.md))
+  While the window is open the companion parks SOS (a live one is cancelled), Fall, Tracking, Nav and GPS on the mesh
+  thread (`MESH_EVENT_BLE_OTA`), and the low-battery auto-shutdown holds off; a closed window restores Fall and GPS.
 
 Companion transports, as upstream's `companion_radio`: each is a `BaseSerialInterface`
 (`adapters/transport/CompanionInterfaces.h`) registered in one `MultiSerialInterface`, so

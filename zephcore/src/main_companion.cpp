@@ -146,6 +146,10 @@ static bool companion_power_announce(bool on);
 static uint32_t companion_custom_ms_until_next(void);
 static void companion_fall_detected(void);
 static void companion_fall_prealert(void);
+#if IS_ENABLED(CONFIG_ZEPHCORE_BLE_OTA)
+static void companion_ota_park(void);
+static void companion_ota_unpark(void);
+#endif
 #endif
 
 #define MESH_EVENT_BASE          (MESH_EVENT_LORA_RX | MESH_EVENT_LORA_TX_DONE | \
@@ -153,7 +157,8 @@ static void companion_fall_prealert(void);
 	MESH_EVENT_GPS_ACTION | MESH_EVENT_TX_DRAIN | MESH_EVENT_PREFS_DIRTY | \
 	MESH_EVENT_CONTACT_ITER | MESH_EVENT_LINK | MESH_EVENT_PERSIST | \
 	MESH_EVENT_CUSTOM_TIMER | MESH_EVENT_FALL_DETECTED | \
-	MESH_EVENT_FALL_PREALERT | MESH_EVENT_GPS_FIX | MESH_EVENT_MANUAL_SHUTDOWN)
+	MESH_EVENT_FALL_PREALERT | MESH_EVENT_GPS_FIX | MESH_EVENT_MANUAL_SHUTDOWN | \
+	MESH_EVENT_BLE_OTA)
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_DESIGN_JOYSTICK)
 #define MESH_EVENT_ALL           (MESH_EVENT_BASE | MESH_EVENT_JOYSTICK_LOOP)
 #else
@@ -536,6 +541,17 @@ static void mesh_event_loop(void)
 			companion_geo_fix_process();
 #endif
 		}
+#if IS_ENABLED(CONFIG_ZEPHCORE_BLE_OTA)
+		if (events & MESH_EVENT_BLE_OTA) {
+			/* The window may open or close off the main thread (timeout
+			 * work); re-read the state rather than trusting the edge. */
+			if (ble_ota_is_active()) {
+				companion_ota_park();
+			} else {
+				companion_ota_unpark();
+			}
+		}
+#endif
 		if (events & MESH_EVENT_LORA_TX_DONE) companion_sos_tx_done();
 
 		/* Inbound frames and CLI lines, before loop() drains what they
@@ -2372,6 +2388,87 @@ static void companion_nav_set_enabled(bool enabled, char *reply, bool announce =
 }
 
 #endif
+
+#if IS_ENABLED(CONFIG_ZEPHCORE_BLE_OTA)
+/* An open OTA window owns the radio, the power budget and the DRAM headroom:
+ * park every emergency and GPS-consuming feature, and give back on close what
+ * was running (a cancelled SOS stays cancelled). */
+static bool ota_parked;
+static bool ota_park_fall;
+static bool ota_park_gps;
+
+static void companion_ota_park(void)
+{
+	char reply[CLI_REPLY_SIZE];
+
+	if (ota_parked) {
+		return;
+	}
+	ota_parked = true;
+
+	if (companion_sos.pending) {
+		/* A live emergency is cancelled, not paused: the user is updating
+		 * the firmware, not asking for help. */
+		memset(&companion_sos, 0, sizeof(companion_sos));
+		atomic_set(&companion_manual_sos_pending, 0);
+		companion_sos_tone.pending = false;
+		companion_sos_ui_clear();
+		companion_send_sos_canceled_message();
+		LOG_INF("BLE OTA: live SOS cancelled");
+	}
+
+#if defined(ZEPHCORE_FALL_DETECTOR)
+	ota_park_fall = fall_detector_is_enabled();
+	if (ota_park_fall) {
+		fall_detector_set_enabled(false);
+		companion_mesh.prefs.fall_enabled = 0;
+	}
+#endif
+	companion_fall_alarm_stop();
+	companion_fall_cancel_pending();
+
+#if ZEPHCORE_HAS_GPS
+	if (companion_tracking.enabled) {
+		(void)companion_tracking_set_enabled(false, reply, true);
+	}
+	if (companion_home.nav_active) {
+		companion_nav_set_enabled(false, reply, false);
+	}
+	ota_park_gps = gps_is_enabled();
+	if (ota_park_gps) {
+		gps_enable(false);
+	}
+#endif
+	LOG_INF("BLE OTA: parked sos/fall/tracking/nav/gps");
+}
+
+static void companion_ota_unpark(void)
+{
+	if (!ota_parked) {
+		return;
+	}
+	ota_parked = false;
+
+#if defined(ZEPHCORE_FALL_DETECTOR)
+	if (ota_park_fall) {
+		fall_detector_set_enabled(true);
+		companion_mesh.prefs.fall_enabled = 1;
+		k_event_post(&mesh_events, MESH_EVENT_PREFS_DIRTY);
+		ota_park_fall = false;
+	}
+#endif
+
+#if ZEPHCORE_HAS_GPS
+	if (ota_park_gps) {
+		gps_enable(true);
+		ota_park_gps = false;
+	}
+	/* Tracking and nav are deliberate sessions the user started; an
+	 * aborted update does not silently restart them. */
+#endif
+	LOG_INF("BLE OTA: unparked (fall/gps restored)");
+}
+#endif /* CONFIG_ZEPHCORE_BLE_OTA */
 
 extern "C" void companion_home_save_from_ui(void)
 {
@@ -4445,6 +4542,11 @@ int main(void)
 	companion_wifi_start(companion_mesh.prefs);
 #endif
 #if IS_ENABLED(CONFIG_ZEPHCORE_BLE_OTA)
+	/* Window open/close may run in the system work queue (the timeout
+	 * handler); hand the park/unpark to the mesh thread. */
+	ble_ota_set_listener([](bool) {
+		k_event_post(&mesh_events, MESH_EVENT_BLE_OTA);
+	});
 	ble_ota_init();  /* before bt_enable(): SMP service out of the boot GATT table */
 #endif
 #if IS_ENABLED(CONFIG_BT)

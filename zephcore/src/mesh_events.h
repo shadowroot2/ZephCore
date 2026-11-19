@@ -25,6 +25,7 @@
 
 #define MESH_EVENT_GPS_ACTION    BIT(4)  /* GPS state change or fix (must run on the main thread) */
 #define MESH_EVENT_TX_DRAIN      BIT(5)  /* outbound packet delay expired, run checkSend */
-/* BIT(6) free: was MESH_EVENT_RTC_SAVE, until ZephyrRTCClock wrote the hardware RTC itself */
+#define MESH_EVENT_BLE_OTA       BIT(6)  /* BLE OTA window opened or closed: park/unpark features */
+/* BIT(6) was MESH_EVENT_RTC_SAVE, until ZephyrRTCClock wrote the hardware RTC itself */
 
 #define MESH_EVENT_ROLE_BASE     7       /* first role-only bit */

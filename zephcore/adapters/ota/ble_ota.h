@@ -32,6 +32,11 @@ bool ble_ota_is_active(void);
 /* Seconds left in the open window (0 when closed). */
 uint32_t ble_ota_remaining_s(void);
 
+/* Called on every window open/close (including the timeout), from whichever
+ * context drove the change. The listener must not touch mesh state; it only
+ * hands off (k_event) to the main thread. */
+void ble_ota_set_listener(void (*listener)(bool active));
+
 #ifdef __cplusplus
 }
 #endif
