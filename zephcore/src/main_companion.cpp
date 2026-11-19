@@ -3107,6 +3107,12 @@ static bool handle_tracking_cli(const char *line, char *reply, bool silent)
 {
 	if (strcmp(line, "wp") == 0 || strncmp(line, "wp ", 3) == 0) {
 		if (strcmp(line, "wp clear") == 0) {
+			if (companion_home.nav_active) {
+				/* The route's target lives in these slots — clearing
+				 * them would re-target it at the default point. */
+				strcpy(reply, "ERROR: navigation is on");
+				return true;
+			}
 			/* Point 1 (GPS HOME) is never renamed or reset. */
 			for (int i = 1; i < 10; i++) {
 				companion_mesh.prefs.home_lat[i] = ZC_POINT_DEFAULT_LAT_E7 / 1e7;
