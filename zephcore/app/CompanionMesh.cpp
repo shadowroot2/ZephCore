@@ -34,10 +34,12 @@ LOG_MODULE_REGISTER(zephcore_companion, CONFIG_ZEPHCORE_MAIN_LOG_LEVEL);
 /* UI notification helper => path_len extraction + uniform call through ui_task.h */
 #if ZEPHCORE_HAS_UI_TASK
 static void notify_contact_msg_ui(
-	const ContactInfo &contact, mesh::Packet *pkt, const char *text, int queue_count
+	const ContactInfo &contact, mesh::Packet *pkt, const char *text,
+	uint32_t sender_timestamp, int queue_count
 ){
 	uint8_t path_len = (pkt && pkt->isRouteFlood()) ? pkt->path_len : OUT_PATH_UNKNOWN;
-	ui_notify_contact_msg(path_len, contact.name, text, (uint16_t)queue_count);
+	ui_notify_contact_msg(path_len, contact.name, text, sender_timestamp,
+			      (uint16_t)queue_count);
 }
 #endif
 
@@ -807,7 +809,7 @@ void CompanionMesh::onMessageRecv(const ContactInfo &contact, mesh::Packet *pkt,
 	queueMessage(contact, TXT_TYPE_PLAIN, pkt, sender_timestamp, nullptr, 0, text);
 	pushMsgWaiting();
 #if ZEPHCORE_HAS_UI_TASK
-	notify_contact_msg_ui(contact, pkt, text, _offline_queue_count);
+	notify_contact_msg_ui(contact, pkt, text, sender_timestamp, _offline_queue_count);
 #endif
 }
 
@@ -1068,7 +1070,7 @@ void CompanionMesh::onSignedMessageRecv(const ContactInfo &contact, mesh::Packet
 	queueMessage(contact, TXT_TYPE_SIGNED_PLAIN, pkt, sender_timestamp, sender_prefix, 4, text);
 	pushMsgWaiting();
 #if ZEPHCORE_HAS_UI_TASK
-	notify_contact_msg_ui(contact, pkt, text, _offline_queue_count);
+	notify_contact_msg_ui(contact, pkt, text, sender_timestamp, _offline_queue_count);
 #endif
 }
 

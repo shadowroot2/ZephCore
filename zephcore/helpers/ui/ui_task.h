@@ -321,10 +321,11 @@ void ui_invalidate_battery_cache(void);
  * @param path_len   Hop count (OUT_PATH_UNKNOWN = direct/unknown)
  * @param from_name  Sender display name
  * @param text       Message text
+ * @param ts         Sender timestamp (unix seconds, 0 = unknown)
  * @param msg_count  Updated offline queue message count
  */
 void ui_notify_contact_msg(uint8_t path_len, const char *from_name,
-			   const char *text, uint16_t msg_count);
+			   const char *text, uint32_t ts, uint16_t msg_count);
 
 /**
  * Notify UI of a received channel message.

@@ -149,8 +149,9 @@ extern "C" void ui_request_render(void)
 }
 
 extern "C" void ui_notify_contact_msg(uint8_t path_len, const char *from_name,
-	const char *text, uint16_t msg_count)
+	const char *text, uint32_t ts, uint16_t msg_count)
 {
+	(void)ts;  /* the joystick feed comes in stage 2 */
 	if (s_task) {
 	#if defined(CONFIG_BOARD_T1000_E)
 		if (!s_task->isBLEConnected()) {

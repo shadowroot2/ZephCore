@@ -209,10 +209,11 @@ WEAK void ui_refresh_battery(void) { }
 WEAK void ui_invalidate_battery_cache(void) { }
 
 WEAK void ui_notify_contact_msg(uint8_t path_len, const char *from_name,
-				 const char *text, uint16_t msg_count)
+				 const char *text, uint32_t ts,
+				 uint16_t msg_count)
 {
 	ARG_UNUSED(path_len); ARG_UNUSED(from_name);
-	ARG_UNUSED(text); ARG_UNUSED(msg_count);
+	ARG_UNUSED(text); ARG_UNUSED(ts); ARG_UNUSED(msg_count);
 }
 
 WEAK void ui_notify_channel_msg(const char *channel_name, const char *text,

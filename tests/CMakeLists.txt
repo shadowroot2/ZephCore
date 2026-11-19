@@ -26,6 +26,7 @@ add_executable(zephcore_unit
   unit/kiss_modem_tests.cpp
   unit/chat_contacts_tests.cpp
   unit/feed_tests.cpp
+  unit/display_charset_tests.cpp
   support/hash_capture.cpp
   support/identity_utils_boundary.cpp
   ${PRODUCTION}/src/Dispatcher.cpp

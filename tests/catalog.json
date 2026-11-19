@@ -821,6 +821,16 @@
       "id": "UNIT-FEED-005",
       "name": "A push redraws at the top and holds the screen while reading older",
       "source": "tests/unit/feed_tests.cpp"
+    },
+    {
+      "id": "UNIT-CHARSET-001",
+      "name": "Cyrillic lands in 128-193 with yo in the slot after e",
+      "source": "tests/unit/display_charset_tests.cpp"
+    },
+    {
+      "id": "UNIT-CHARSET-002",
+      "name": "Latin-1 keeps 194-255, the lost range folds or drops",
+      "source": "tests/unit/display_charset_tests.cpp"
     }
   ]
 }

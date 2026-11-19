@@ -37,10 +37,15 @@
 
 #define UI_FEED_F_DM 0x01u /* direct message: rendered with ">>" */
 
+/* Channel names are short in practice ("Public", "#zephcore"); the feed keeps
+ * enough to tag the line. */
+#define UI_FEED_CHANNEL_LEN 16
+
 struct ui_feed_entry {
 	uint32_t ts; /* sender timestamp (unix seconds), 0 = unknown */
 	uint8_t flags;
 	char name[UI_FEED_NAME_LEN];
+	char channel[UI_FEED_CHANNEL_LEN]; /* empty for a direct message */
 	char text[UI_FEED_TEXT_LEN + 1];
 };
 
@@ -81,9 +86,12 @@ static inline enum ui_feed_redraw ui_feed_push(struct ui_feed *f,
 					       uint8_t *view_pos)
 {
 	bool at_top = (view_pos == NULL || *view_pos == 0);
+	uint8_t slot = (uint8_t)((f->head + 1) % UI_FEED_SLOTS);
 
-	f->head = (uint8_t)((f->head + 1) % UI_FEED_SLOTS);
-	f->e[f->head] = *e;
+	/* Entry body first, then the indices: the renderer may run in another
+	 * thread, and a half-written entry must never become reachable. */
+	f->e[slot] = *e;
+	f->head = slot;
 	if (f->count < UI_FEED_SLOTS) {
 		f->count++;
 	}
@@ -150,14 +158,15 @@ static inline void ui_feed_format_time(char *buf, size_t n, uint32_t ts,
 /* ---- line ---- */
 
 /* One feed line in full, before any wrapping:
- *   ">> 12:35 Mama: ты где?"              direct
+ *   ">> 12:35 Mama: ты где?"              direct: name from the contact
  *   "18.11 12:34 Nick: привет, как дела?" public channel (untagged)
  *   "12:34 [#zephcore] Nick: тру ляля"    any other channel
- * `channel_name` is ignored for a direct message. */
+ * A channel message carries its sender as the "<name>: " prefix the mesh
+ * already put in the text (sendGroupMessage), so only a direct message adds
+ * a name of its own. `channel_name` is ignored for a direct message. */
 static inline void ui_feed_format_line(char *buf, size_t n,
 				       const struct ui_feed_entry *e,
-				       uint32_t now, int16_t tz_minutes,
-				       const char *channel_name)
+				       uint32_t now, int16_t tz_minutes)
 {
 	char time[16];
 
@@ -165,12 +174,11 @@ static inline void ui_feed_format_line(char *buf, size_t n,
 
 	if (e->flags & UI_FEED_F_DM) {
 		snprintf(buf, n, ">> %s %s: %s", time, e->name, e->text);
-	} else if (channel_name == NULL || channel_name[0] == '\0' ||
-		   strcmp(channel_name, "Public") == 0) {
-		snprintf(buf, n, "%s %s: %s", time, e->name, e->text);
+	} else if (e->channel[0] == '\0' ||
+		   strcmp(e->channel, "Public") == 0) {
+		snprintf(buf, n, "%s %s", time, e->text);
 	} else {
-		snprintf(buf, n, "%s [%.12s] %s: %s", time, channel_name, e->name,
-			 e->text);
+		snprintf(buf, n, "%s [%.12s] %s", time, e->channel, e->text);
 	}
 }
 

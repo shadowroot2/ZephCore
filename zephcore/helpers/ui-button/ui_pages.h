@@ -13,6 +13,8 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
+
+#include <helpers/ui/UiFeed.h>
 #include <zephyr/devicetree.h>
 #include <zephyr/dt-bindings/input/input-event-codes.h>
 
@@ -72,6 +74,13 @@ struct ui_state {
 		uint32_t age_s;       /* seconds since heard (recomputed each refresh) */
 	} recent[4];
 	uint8_t  recent_count;
+
+	/* PUBLIC feed: last incoming messages, newest first. Written from the
+	 * mesh thread, read by the UI task; see ui_feed_push() for the
+	 * publication order that makes that safe. */
+	struct ui_feed feed;
+	uint8_t  feed_view_pos;   /* entry at the top of the window, 0 = newest */
+	bool     feed_deferred;   /* a push is holding the redraw */
 
 	/* Radio page */
 	uint32_t lora_freq_hz;

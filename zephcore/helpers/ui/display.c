@@ -15,6 +15,7 @@
  */
 
 #include "display.h"
+#include "display_charset.h"
 #include "doom_game.h"
 #include "pm_sleep_guard.h"
 
@@ -1018,61 +1019,10 @@ const struct device *mc_display_get_device(void)
 /* ========== UTF-8 to display-charset sanitizer ==========
  *
  * The 6x8 font covers Latin-1 at its native code points (0xA0-0xFF) and
- * hosts 32 Latin Extended-A letters (Hungarian, Czech, Slovak, Polish, ...)
- * in the otherwise-unused C1 range 128-159 (see cfb_font_0608.c). */
+ * hosts the Russian alphabet in 128-193 and Latin-1 A circumflex..
+ * y diaeresis in 194-255 (see cfb_font_0608.c).  Latin Extended-A folds
+ * to its base letters; there is no room for a glyph per accent. */
 
-/* Latin Extended-A code points with a real glyph -> font slot 128-159 */
-static const struct {
-	uint16_t cp;
-	uint8_t slot;
-} latin2_slots[] = {
-	{ 0x0104, 132 }, { 0x0105, 133 },	/* A/a ogonek */
-	{ 0x0106, 134 }, { 0x0107, 135 },	/* C/c acute */
-	{ 0x010C, 136 }, { 0x010D, 137 },	/* C/c caron */
-	{ 0x0118, 140 }, { 0x0119, 141 },	/* E/e ogonek */
-	{ 0x011A, 138 }, { 0x011B, 139 },	/* E/e caron */
-	{ 0x0141, 142 }, { 0x0142, 143 },	/* L/l stroke */
-	{ 0x0143, 144 }, { 0x0144, 145 },	/* N/n acute */
-	{ 0x0150, 128 }, { 0x0151, 129 },	/* O/o double acute */
-	{ 0x0158, 146 }, { 0x0159, 147 },	/* R/r caron */
-	{ 0x015A, 148 }, { 0x015B, 149 },	/* S/s acute */
-	{ 0x0160, 150 }, { 0x0161, 151 },	/* S/s caron */
-	{ 0x016E, 152 }, { 0x016F, 153 },	/* U/u ring */
-	{ 0x0170, 130 }, { 0x0171, 131 },	/* U/u double acute */
-	{ 0x0179, 154 }, { 0x017A, 155 },	/* Z/z acute */
-	{ 0x017B, 156 }, { 0x017C, 157 },	/* Z/z dot above */
-	{ 0x017D, 158 }, { 0x017E, 159 },	/* Z/z caron */
-};
-
-/* Base-letter fold for all of Latin Extended-A (U+0100..U+017F), indexed by
- * cp - 0x100. Used for code points without a glyph slot above. */
-static const char latin_ext_a_fold[] =
-	"AaAaAa" "CcCcCcCc" "DdDd" "EeEeEeEeEe" "GgGgGgGg" "HhHh"
-	"IiIiIiIiIi" "Ii" "Jj" "Kkk" "LlLlLlLlLl" "NnNnNnnNn"
-	"OoOoOoOo" "RrRrRr" "SsSsSsSs" "TtTtTt" "UuUuUuUuUuUu"
-	"Ww" "YyY" "ZzZzZz" "s";
-
-static uint8_t display_charset_map(uint32_t cp)
-{
-	if (cp >= 0xA0 && cp <= 0xFF) {
-		return (uint8_t)cp;	/* native Latin-1 glyph */
-	}
-	if (cp >= 0x100 && cp <= 0x17F) {
-		for (size_t i = 0; i < ARRAY_SIZE(latin2_slots); i++) {
-			if (latin2_slots[i].cp == cp) {
-				return latin2_slots[i].slot;
-			}
-		}
-		return (uint8_t)latin_ext_a_fold[cp - 0x100];
-	}
-	switch (cp) {	/* Romanian uses comma-below variants */
-	case 0x218: return 'S';
-	case 0x219: return 's';
-	case 0x21A: return 'T';
-	case 0x21B: return 't';
-	default:    return 0;	/* drop: emoji, other scripts, ... */
-	}
-}
 
 void utf8_to_display(char *dst, const char *src, size_t dst_size)
 {

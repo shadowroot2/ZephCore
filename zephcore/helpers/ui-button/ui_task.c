@@ -1263,10 +1263,39 @@ int ui_init(void)
 	return 0;
 }
 
-void ui_notify_contact_msg(uint8_t path_len, const char *from_name,
-			   const char *text, uint16_t msg_count)
+/* One incoming message into the PUBLIC feed. The entry body is written
+ * before the ring indices move (ui_feed_push), so the renderer may read
+ * from the UI task while this runs on the mesh thread. */
+static void ui_feed_add(const char *name, const char *text, uint32_t ts,
+			uint8_t flags, const char *channel_name)
 {
-	(void)path_len; (void)from_name; (void)text;
+	struct ui_state *s = get_state();
+	struct ui_feed_entry e;
+	enum ui_feed_redraw how;
+
+	memset(&e, 0, sizeof(e));
+	e.ts = ts;
+	e.flags = flags;
+	strncpy(e.name, name, sizeof(e.name) - 1);
+	if (channel_name != NULL) {
+		strncpy(e.channel, channel_name, sizeof(e.channel) - 1);
+	}
+	ui_feed_emoji_text(e.text, sizeof(e.text), text);
+
+	how = ui_feed_push(&s->feed, &e, &s->feed_view_pos);
+	if (how == UI_FEED_REDRAW_DEFER) {
+		s->feed_deferred = true;
+		return;
+	}
+	s->feed_deferred = false;
+	ui_request_render();
+}
+
+void ui_notify_contact_msg(uint8_t path_len, const char *from_name,
+			   const char *text, uint32_t ts, uint16_t msg_count)
+{
+	(void)path_len;
+	ui_feed_add(from_name, text, ts, UI_FEED_F_DM, NULL);
 	ui_set_msg_count(msg_count);
 	ui_notify(UI_EVENT_CONTACT_MSG);
 }
@@ -1274,7 +1303,9 @@ void ui_notify_contact_msg(uint8_t path_len, const char *from_name,
 void ui_notify_channel_msg(const char *channel_name, const char *text,
 			   uint32_t ts, uint8_t path_len, uint16_t msg_count)
 {
-	(void)channel_name; (void)text; (void)ts; (void)path_len;
+	(void)path_len;
+	/* The mesh already prefixes the sender: sendGroupMessage(). */
+	ui_feed_add("", text, ts, 0, channel_name);
 	ui_set_msg_count(msg_count);
 	ui_notify(UI_EVENT_CHANNEL_MSG);
 }

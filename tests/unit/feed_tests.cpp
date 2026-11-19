@@ -35,6 +35,15 @@ static struct ui_feed_entry entry(uint32_t ts, uint8_t flags, const char *name,
 	return e;
 }
 
+static struct ui_feed_entry ch_entry(uint32_t ts, const char *channel,
+				     const char *text)
+{
+	struct ui_feed_entry e = entry(ts, 0, "", text);
+
+	strncpy(e.channel, channel, sizeof(e.channel) - 1);
+	return e;
+}
+
 TEST(feed_ring_newest_first, "UNIT-FEED-001",
      "The ring keeps the newest on top and evicts the oldest on overflow")
 {
@@ -111,25 +120,28 @@ TEST(feed_line_shapes, "UNIT-FEED-003",
      "Direct, public and channel lines carry their own markers")
 {
 	char buf[192];
+	/* A channel message carries its sender in the text already. */
 	struct ui_feed_entry dm = entry(NOW, UI_FEED_F_DM, "Mama", "ты где?");
-	struct ui_feed_entry pub = entry(YESTERDAY, 0, "Nick", "привет, как дела?");
-	struct ui_feed_entry grp = entry(NOW, 0, "Nick", "тру ляля");
+	struct ui_feed_entry pub = ch_entry(YESTERDAY, "Public", "Nick: привет, как дела?");
+	struct ui_feed_entry bare = ch_entry(YESTERDAY, "", "Nick: привет, как дела?");
+	struct ui_feed_entry grp = ch_entry(NOW, "#zephcore", "Nick: тру ляля");
 
-	ui_feed_format_line(buf, sizeof(buf), &dm, NOW, 0, "whatever");
+	ui_feed_format_line(buf, sizeof(buf), &dm, NOW, 0);
 	CHECK(std::string(buf) == ">> 12:34 Mama: ты где?");
 
 	/* The public channel is not tagged. */
-	ui_feed_format_line(buf, sizeof(buf), &pub, NOW, 0, "Public");
+	ui_feed_format_line(buf, sizeof(buf), &pub, NOW, 0);
 	CHECK(std::string(buf) == "18.11 12:34 Nick: привет, как дела?");
-	ui_feed_format_line(buf, sizeof(buf), &pub, NOW, 0, NULL);
+	ui_feed_format_line(buf, sizeof(buf), &bare, NOW, 0);
 	CHECK(std::string(buf) == "18.11 12:34 Nick: привет, как дела?");
 
 	/* Any other channel is. */
-	ui_feed_format_line(buf, sizeof(buf), &grp, NOW, 0, "#zephcore");
+	ui_feed_format_line(buf, sizeof(buf), &grp, NOW, 0);
 	CHECK(std::string(buf) == "12:34 [#zephcore] Nick: тру ляля");
 
-	/* A direct message ignores the channel entirely. */
-	ui_feed_format_line(buf, sizeof(buf), &dm, NOW, 0, "#zephcore");
+	/* A direct message keeps its own name, whatever channel it claims. */
+	strncpy(dm.channel, "#zephcore", sizeof(dm.channel) - 1);
+	ui_feed_format_line(buf, sizeof(buf), &dm, NOW, 0);
 	CHECK(std::string(buf) == ">> 12:34 Mama: ты где?");
 }
 
