@@ -35,11 +35,6 @@
 #endif
 #endif
 
-/* A single deferred redraw waits this long after an entry landed while the
- * viewer was reading older messages, so a running conversation does not jump
- * the screen out from under them. */
-#define UI_FEED_DEFER_MS 5000
-
 #define UI_FEED_F_DM 0x01u /* direct message: rendered with ">>" */
 
 /* Channel names are short in practice ("Public", "#zephcore"); the feed keeps

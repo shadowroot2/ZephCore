@@ -225,7 +225,6 @@ static void chat_open_selected(void)
 	c->unread = 0;
 	s->chat_open = true;
 	s->chat_view = zero;
-	s->feed_deferred = false;
 	ui_pages_set(UI_PAGE_PUBLIC);
 	schedule_render();
 }
@@ -235,7 +234,6 @@ static void chat_close(void)
 	struct ui_state *s = get_state();
 
 	s->chat_open = false;
-	s->feed_deferred = false;
 	ui_pages_set(UI_PAGE_MESSAGES);
 	schedule_render();
 }
@@ -523,7 +521,6 @@ static void chat_list_next(void)
 		return;
 	}
 	s->chat_sel = (uint8_t)((s->chat_sel + 1) % n);
-	s->feed_deferred = false;
 	schedule_render();
 }
 
@@ -547,13 +544,11 @@ static void feed_page_next(void)
 		if (!ui_chat_iter_next(&it, row, sizeof(row))) {
 			/* End of the chat: wrap to the newest page. */
 			s->chat_view = zero;
-			s->feed_deferred = false;
 			schedule_render();
 			return;
 		}
 	}
 	s->chat_view = it.cur;
-	s->feed_deferred = false;
 	schedule_render();
 }
 
@@ -569,7 +564,6 @@ static void feed_page_prev(void)
 					   s->tz_offset_min,
 					   mc_display_font_width(),
 					   ui_pages_feed_page_rows());
-	s->feed_deferred = false;
 	schedule_render();
 }
 
@@ -1403,17 +1397,13 @@ static void ui_feed_add(const char *chat_name, bool is_group, const char *text,
 	}
 	if (c == sel) {
 		/* It landed in the conversation on screen: it is being read,
-		 * so it does not count as unread. */
+		 * so it does not count as unread.  Jump to the newest — the
+		 * ring is only a few messages deep, and a page being read
+		 * can be evicted before any deferred redraw gets to it. */
+		struct ui_feed_cursor zero = { 0, 0 };
+
 		c->unread = 0;
-		/* Reading older pages: hold the redraw so the text does not
-		 * jump out from under the eye. */
-		if (s->chat_view.entry != 0 || s->chat_view.row != 0) {
-			s->feed_deferred = true;
-			k_work_reschedule(&render_work,
-					  K_MSEC(UI_FEED_DEFER_MS));
-			return;
-		}
-		s->feed_deferred = false;
+		s->chat_view = zero;
 		mc_display_on_for(5000);
 		ui_request_render();
 		return;
@@ -1426,7 +1416,6 @@ static void ui_feed_add(const char *chat_name, bool is_group, const char *text,
 	}
 	/* On the list every message is worth a look: light the panel and let
 	 * the counter be seen.  Anywhere else the buzzer and LED carry it. */
-	s->feed_deferred = false;
 	if (ui_pages_current() == UI_PAGE_MESSAGES) {
 		mc_display_on_for(5000);
 	}

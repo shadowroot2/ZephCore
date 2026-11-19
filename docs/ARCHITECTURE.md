@@ -1137,7 +1137,9 @@ next page; the bitmap font carries the Russian alphabet in slots 128-193,
 borrows the Latin glyph for the twenty-one letters that are drawn like one,
 and keeps Latin-1 A circumflex..y diaeresis in 194-255 (`UiFeed.h`,
 `display_charset.h`). A message arriving while the viewer reads older pages
-enters the ring at once but holds the redraw for 5 s (`UI_FEED_DEFER_MS`).
+lands in the ring and the feed jumps to it at once: the ring is only a
+few messages deep, and a page being read can be evicted before any held
+redraw would reach it.
 
 Connection state on these pages: "an app is connected" (`UI_EVENT_APP_CONNECTED` / `_DISCONNECTED`, any transport) gates the buzzer, the message LED flash and the "Connected" line; which transport it is comes from `ui_set_link_transports()` (`UI_LINK_BLE` / `_USB` / `_TCP`, pushed by `process_link_change()` on every link edge). The Messages badge names the transport; the Bluetooth page says "Connected" only for a BLE client. The WiFi page shows the persisted on/off state, station state, SSID, the endpoint as `IPv4:port`, and whether an app is on the socket; there is no separate port row. ENTER toggles `prefs.wifi_enabled`, saves it on the main thread and cold-reboots because the WiFi stack is a boot-time composition. Runtime state is pushed every housekeeping tick by `companion_wifi_ui_refresh()` through `ui_set_wifi()` (redraws only on a change, e-paper included). The joystick UI exposes the same toggle and details under System > Info > WiFi (`WifiScreen`) on WiFi companion builds (ThinkNode M9); elsewhere its hooks are no-ops. WiFi companion builds expose their WiFi settings as a separate `wifi` help group in both BLE and local USB CLI.
 

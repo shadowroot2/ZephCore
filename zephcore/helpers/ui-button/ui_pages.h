@@ -85,7 +85,6 @@ struct ui_state {
 	uint8_t  chat_sel;		/* list index in display order */
 	bool     chat_open;		/* inside the selected conversation */
 	struct ui_feed_cursor chat_view; /* row at the top of its feed */
-	bool     feed_deferred;		/* a push is holding the redraw */
 #endif
 
 	/* Radio page */
