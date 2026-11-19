@@ -73,6 +73,12 @@ becomes 5).
   southern or western coordinate was stored wrapped (e.g. `4102467296` for −19.25°). The reader
   saturated such a value to +180° on 32-bit boards — the fence landed in the wrong hemisphere after
   the upgrade; it now reads back the wrapped value as the signed point it was.
+- **The geofence does not double-report around a zone change or a reboot.** Changing the radius or
+  the point (and geo off/on) reset the tracker: staying outside re-fired `🚪 Вышел из геозоны`, an
+  out-to-in move swallowed the `✅` return and lost the excursion seconds, and a boot report either
+  dropped them or re-stamped the exit. The tracker now survives the change and resolves the next
+  fix honestly — no repeat exit, no swallowed return — books the excursion it finds open at boot,
+  and refuses `set geo.point` while a save is pending.
 - **`nav start` now announces itself over LoRa too.** With `nav telemetry on`, the start notice
   (`🚀 Начало навигации к точке` with the point line and, on a fresh fix, the distance line and a
   maps link) goes to the tracking group like the stop notice already did. Before, the first LoRa

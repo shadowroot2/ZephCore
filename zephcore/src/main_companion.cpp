@@ -1977,7 +1977,8 @@ static bool companion_geo_set_enabled(bool enabled, char *reply)
 			return false;
 		}
 		companion_geo.flags |= GEO_FLAG_ENABLED;
-		geofence_reset(&companion_geo.fsm);
+		/* The FSM survives a toggle: the next fix resolves the state
+		 * honestly (no repeat exit, no swallowed return). */
 		if (!companion_tracking.enabled && !companion_home.nav_active &&
 		    !companion_sos.pending) {
 			if (!gps_is_enabled()) {
@@ -1994,7 +1995,6 @@ static bool companion_geo_set_enabled(bool enabled, char *reply)
 		return true;
 	}
 	companion_geo.flags &= (uint8_t)~GEO_FLAG_ENABLED;
-	geofence_reset(&companion_geo.fsm);
 	companion_mesh.prefs.geo_on = 0;
 	save_prefs_to_flash();
 	companion_gps_user_left();
@@ -2585,25 +2585,38 @@ static void companion_geo_fix_process(void)
 
 	companion_geo_stat_rollover(now);
 	if (ev == GEO_EVENT_EXIT) {
-		companion_mesh.prefs.geo_last_out_utc = now;
+		/* A boot report continues an open out-of-zone episode instead of
+		 * re-stamping it — its seconds stay owed. */
+		if (companion_mesh.prefs.geo_last_out_utc == 0 ||
+		    companion_mesh.prefs.geo_last_out_utc <
+			    companion_mesh.prefs.geo_last_in_utc) {
+			companion_mesh.prefs.geo_last_out_utc = now;
+		}
 		if (!boot_report) {
 			companion_mesh.prefs.geo_stat_out++;
 		}
 	} else {
 		companion_mesh.prefs.geo_last_in_utc = now;
-		if (!boot_report) {
-			uint32_t day_start = (uint32_t)(
-				(int64_t)companion_mesh.prefs.geo_stat_day * 86400 -
-				companion_geo_tz_shift());
-			uint32_t from = companion_mesh.prefs.geo_last_out_utc >
-						day_start ?
-				companion_mesh.prefs.geo_last_out_utc : day_start;
+		/* Book the out-of-zone episode even across a reboot: its
+		 * seconds are real whether or not the boot report counts the
+		 * event itself. */
+		uint32_t day_start = (uint32_t)(
+			(int64_t)companion_mesh.prefs.geo_stat_day * 86400 -
+			companion_geo_tz_shift());
+		uint32_t from = companion_mesh.prefs.geo_last_out_utc >
+					day_start ?
+			companion_mesh.prefs.geo_last_out_utc : day_start;
 
+		if (!boot_report) {
 			companion_mesh.prefs.geo_stat_in++;
-			if (companion_mesh.prefs.geo_last_out_utc != 0 &&
-			    now > from) {
-				companion_mesh.prefs.geo_out_sec += now - from;
-			}
+		}
+		/* Only an open episode is owed (the exit is newer than the last
+		 * return): a return book must not re-charge a closed one. */
+		if (companion_mesh.prefs.geo_last_out_utc != 0 &&
+		    companion_mesh.prefs.geo_last_out_utc >
+			    companion_mesh.prefs.geo_last_in_utc &&
+		    now > from) {
+			companion_mesh.prefs.geo_out_sec += now - from;
 		}
 	}
 	save_prefs_to_flash();
@@ -3577,6 +3590,12 @@ static bool handle_geo_cli(const char *line, char *reply)
 		return true;
 	}
 	if (strncmp(line, "set geo.point ", 14) == 0) {
+		if (companion_home.save_active) {
+			/* The save's fix capture would overwrite the point just
+			 * set — order-dependent loss. */
+			strcpy(reply, "ERROR: saving point");
+			return true;
+		}
 		double lat, lon;
 
 		if (!geofence_parse_point(line + 14, &lat, &lon)) {
@@ -3587,9 +3606,8 @@ static bool handle_geo_cli(const char *line, char *reply)
 		companion_mesh.prefs.geo_lon_e7 = (int32_t)llround(lon * 1e7);
 		companion_mesh.prefs.geo_saved = 1;
 		save_prefs_to_flash();
-		if (geo_on) {
-			geofence_reset(&companion_geo.fsm);
-		}
+		/* The FSM survives a zone change: the next fix resolves the
+		 * transition honestly instead of a reset swallowing it. */
 		snprintf(reply, CLI_REPLY_SIZE, "OK - geo.point %.5f,%.5f",
 			 companion_mesh.prefs.geo_lat_e7 / 1e7,
 			 companion_mesh.prefs.geo_lon_e7 / 1e7);
@@ -3615,9 +3633,8 @@ static bool handle_geo_cli(const char *line, char *reply)
 		}
 		companion_mesh.prefs.geo_radius_m = (uint16_t)meters;
 		save_prefs_to_flash();
-		if (geo_on) {
-			geofence_reset(&companion_geo.fsm);
-		}
+		/* The FSM survives a zone change: the next fix resolves the
+		 * transition honestly instead of a reset swallowing it. */
 		snprintf(reply, CLI_REPLY_SIZE, "OK - geo.radius %u m", (unsigned)meters);
 		return true;
 	}
