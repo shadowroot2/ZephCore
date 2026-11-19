@@ -54,6 +54,12 @@ becomes 5).
   cancels a live fall with `❌ Падение отменено` and a sound, like the button does. And when the
   radio queue refused the final emergency message (pool empty, `#sos` missing) the state was wiped
   and the coordinates lost — the send now retries every 30 s until it lands.
+- **The power-on notice no longer arrives after the power-off notice.** A shutdown in the first
+  seconds after boot left the boot notice armed, so the family saw the node switching off and then
+  switching on; the boot notice is cancelled when a shutdown starts.
+- **`nav stop` keeps its distance line and maps link.** The stop notice formed after the GPS was
+  already released, so its distance line and link were dropped even with a fresh fix while the start
+  notice had them.
 - **`nav start` now announces itself over LoRa too.** With `nav telemetry on`, the start notice
   (`🚀 Начало навигации к точке` with the point line and, on a fresh fix, the distance line and a
   maps link) goes to the tracking group like the stop notice already did. Before, the first LoRa

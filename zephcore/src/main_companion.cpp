@@ -481,7 +481,9 @@ static void mesh_event_loop(void)
 			bool queued = false;
 #if IS_ENABLED(CONFIG_ZEPHCORE_POWER_ANNOUNCE)
 			/* The power-off notice goes out right after the shutdown
-			 * melody the UI played. */
+			 * melody the UI played. The boot notice is superseded —
+			 * it must never land after this one. */
+			power_announce_at_ms = 0;
 			queued = companion_power_announce(false);
 #endif
 			if (companion_serial.isConnected() &&
@@ -2109,7 +2111,10 @@ static bool companion_nav_format_notice(char *buf, size_t cap, const char *head)
 	struct gps_position pos = {};
 	double home_lat = companion_mesh.prefs.home_lat[companion_home.selected];
 	double home_lon = companion_mesh.prefs.home_lon[companion_home.selected];
-	bool have_fix = gps_is_enabled() && gps_get_last_known_position(&pos) &&
+	/* Freshness alone says the coordinates are real: the stop notice forms
+	 * after the GPS is already released (the last user out powers it down),
+	 * and a ≤30 s fix survives the power-off. */
+	bool have_fix = gps_get_last_known_position(&pos) &&
 		pos.valid && (k_uptime_get() - pos.timestamp_ms) <= 30000;
 
 	if (have_fix) {
@@ -2748,6 +2753,8 @@ static bool power_notify_shutdown(uint16_t battery_mv)
 {
 	bool queued = false;
 #if IS_ENABLED(CONFIG_ZEPHCORE_POWER_ANNOUNCE)
+	/* The boot notice is superseded — it must never land after this one. */
+	power_announce_at_ms = 0;
 	/* The family channel gets the statistics at an auto power-off, never
 	 * the bare line (that one is the manual power-off's). */
 	queued = companion_power_announce_off_stats(battery_mv,
