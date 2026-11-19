@@ -211,6 +211,9 @@ static struct k_work_delayable home_defer_work;
 #ifdef CONFIG_ZEPHCORE_UI_DISPLAY
 static struct k_work_delayable home_hold_work;
 
+static void schedule_render(void);
+static void schedule_render_auto(void);
+
 /* Enter the highlighted conversation: the feed shows only its messages
  * and the unread count clears on the visit. */
 static void chat_open_selected(void)
@@ -430,8 +433,6 @@ static void splash_work_handler(struct k_work *work)
 #endif
 }
 
-static void schedule_render(void);
-static void schedule_render_auto(void);
 static void set_app_connected(bool connected);
 
 static void advert_defer_handler(struct k_work *work)
@@ -625,6 +626,40 @@ static void action_page_enter(void)
 	case UI_PAGE_MESSAGES:
 		/* One press walks the conversation list, round and round. */
 		chat_list_next();
+#ifdef CONFIG_ZEPHCORE_EASTER_EGG_DOOM
+		/* Doom activation: 3 presses — double-click + single-click. */
+		{
+			uint32_t now_doom = k_uptime_get_32();
+
+			switch (doom_act_state) {
+			case DOOM_ACT_IDLE:
+				doom_act_time = now_doom;
+				doom_act_state = DOOM_ACT_FIRST_PRESS;
+				break;
+			case DOOM_ACT_FIRST_PRESS:
+				if ((now_doom - doom_act_time) <=
+				    DOOM_ACT_TIMEOUT_MS) {
+					doom_act_time = now_doom;
+					doom_act_state = DOOM_ACT_DCLICK_DONE;
+				} else {
+					doom_act_time = now_doom;
+					doom_act_state = DOOM_ACT_FIRST_PRESS;
+				}
+				break;
+			case DOOM_ACT_DCLICK_DONE:
+				if ((now_doom - doom_act_time) <=
+				    DOOM_ACT_TIMEOUT_MS) {
+					doom_act_state = DOOM_ACT_IDLE;
+					LOG_DBG("Doom easter egg activated!");
+					doom_game_start();
+				} else {
+					doom_act_time = now_doom;
+					doom_act_state = DOOM_ACT_FIRST_PRESS;
+				}
+				break;
+			}
+		}
+#endif
 		break;
 
 	case UI_PAGE_PUBLIC:
@@ -710,49 +745,6 @@ static void action_page_enter(void)
 		}
 		break;
 	}
-
-	case UI_PAGE_MESSAGES:
-#ifdef CONFIG_ZEPHCORE_EASTER_EGG_DOOM
-	{
-		/* Doom activation: 3 presses — double-click + single-click.
-		 * Press 1 → FIRST_PRESS
-		 * Press 2 (within 500ms) → DCLICK_DONE
-		 * Press 3 (within 500ms) → activate Doom */
-		uint32_t now_doom = k_uptime_get_32();
-
-		switch (doom_act_state) {
-		case DOOM_ACT_IDLE:
-			doom_act_time = now_doom;
-			doom_act_state = DOOM_ACT_FIRST_PRESS;
-			break;
-		case DOOM_ACT_FIRST_PRESS:
-			if ((now_doom - doom_act_time) <= DOOM_ACT_TIMEOUT_MS) {
-				/* Double-click detected, wait for single */
-				doom_act_time = now_doom;
-				doom_act_state = DOOM_ACT_DCLICK_DONE;
-			} else {
-				/* Timeout — restart as new first press */
-				doom_act_time = now_doom;
-				doom_act_state = DOOM_ACT_FIRST_PRESS;
-			}
-			break;
-		case DOOM_ACT_DCLICK_DONE:
-			if ((now_doom - doom_act_time) <= DOOM_ACT_TIMEOUT_MS) {
-				/* Third press — activate Doom! */
-				doom_act_state = DOOM_ACT_IDLE;
-				LOG_DBG("Doom easter egg activated!");
-				doom_game_start();
-			} else {
-				/* Timeout — restart */
-				doom_act_time = now_doom;
-				doom_act_state = DOOM_ACT_FIRST_PRESS;
-			}
-			break;
-		}
-		break;
-	}
-#endif
-		/* fall through if doom not enabled */
 
 	default:
 		/* Other pages: no action on ENTER */
