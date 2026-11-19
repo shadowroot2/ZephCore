@@ -796,6 +796,31 @@
       "id": "UNIT-TRACKBUF-005",
       "name": "A full-ring drop keeps the verdict's accounting honest",
       "source": "tests/unit/tracking_backlog_tests.cpp"
+    },
+    {
+      "id": "UNIT-FEED-001",
+      "name": "The ring keeps the newest on top and evicts the oldest on overflow",
+      "source": "tests/unit/feed_tests.cpp"
+    },
+    {
+      "id": "UNIT-FEED-002",
+      "name": "Line time is HH:MM today and DD.MM HH:MM on an earlier local day",
+      "source": "tests/unit/feed_tests.cpp"
+    },
+    {
+      "id": "UNIT-FEED-003",
+      "name": "Direct, public and channel lines carry their own markers",
+      "source": "tests/unit/feed_tests.cpp"
+    },
+    {
+      "id": "UNIT-FEED-004",
+      "name": "Emoji become text, unknown pictographs go, other multi-byte text stays",
+      "source": "tests/unit/feed_tests.cpp"
+    },
+    {
+      "id": "UNIT-FEED-005",
+      "name": "A push redraws at the top and holds the screen while reading older",
+      "source": "tests/unit/feed_tests.cpp"
     }
   ]
 }

@@ -25,6 +25,7 @@ add_executable(zephcore_unit
   unit/telemetry_text_tests.cpp
   unit/kiss_modem_tests.cpp
   unit/chat_contacts_tests.cpp
+  unit/feed_tests.cpp
   support/hash_capture.cpp
   support/identity_utils_boundary.cpp
   ${PRODUCTION}/src/Dispatcher.cpp
@@ -56,6 +57,7 @@ target_compile_definitions(zephcore_unit PRIVATE CONFIG_ZEPHCORE_PACKET_LOGGING=
   CONFIG_ZEPHCORE_UI_DESIGN_JOYSTICK=1 CONFIG_ZEPHCORE_UI_DESIGN_BUTTON=0)
 target_include_directories(zephcore_unit PRIVATE
   support unit ${PRODUCTION} ${PRODUCTION}/include ${PRODUCTION}/helpers ${PRODUCTION}/helpers/compat
+  ${PRODUCTION}/helpers/ui
   ${PRODUCTION}/lib/monocypher
   ${PRODUCTION}/adapters/radio
   ${PRODUCTION}/adapters/gps
