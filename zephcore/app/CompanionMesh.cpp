@@ -3227,6 +3227,10 @@ bool CompanionMesh::handleCmdGetCustomVars(const uint8_t *data, size_t len)
 	return true;
 }
 
+/* ZEPHCORE: the GPS lease (helpers/GpsLease.h) gates manual receiver
+ * control — this protocol front-end is one of the holders' guards. */
+extern "C" bool companion_tracking_gps_control_allowed(void);
+
 bool CompanionMesh::handleCmdSetCustomVar(const uint8_t *data, size_t len)
 {
 	// Format: [cmd][key:value]
@@ -3242,6 +3246,14 @@ bool CompanionMesh::handleCmdSetCustomVar(const uint8_t *data, size_t len)
 			char *key = buf;
 			char *val = sep + 1;
 
+			if ((strcmp(key, "gps") == 0 ||
+			     strcmp(key, "gps_interval") == 0) &&
+			    !companion_tracking_gps_control_allowed()) {
+				/* A feature holds the GPS lease: the app must not
+				 * power the receiver or clobber its duty. */
+				writeErrFrame(ERR_BAD_STATE);
+				return true;
+			}
 			if (strcmp(key, "gps") == 0) {
 				bool enable = (val[0] == '1');
 				gps_enable(enable);

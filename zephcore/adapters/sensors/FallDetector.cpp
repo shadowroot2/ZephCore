@@ -555,7 +555,7 @@ extern "C" bool fall_detector_set_sensitivity(uint8_t value)
 		return false;
 	}
 	sensitivity = value;
-	detector_reset();
+	fall_detector_reset();
 	return true;
 }
 
@@ -566,6 +566,16 @@ extern "C" uint8_t fall_detector_get_sensitivity(void)
 
 extern "C" void fall_detector_reset(void)
 {
+	/* The re-detect cooldown survives the reset: erasing it on an
+	 * acknowledgement (or set fall.sens) lets the same jostle fire
+	 * another fall immediately. */
+	bool keep_cooldown = state == DETECTOR_COOLDOWN;
+	uint32_t cooldown_at = state_started_ms;
+
 	detector_reset();
+	if (keep_cooldown) {
+		state = DETECTOR_COOLDOWN;
+		state_started_ms = cooldown_at;
+	}
 	consecutive_read_errors = 0;
 }

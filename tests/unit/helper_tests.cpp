@@ -27,6 +27,7 @@
 #include <CompanionCLIAudio.h>
 #include <CompanionSOSPolicy.h>
 #include <GpsSwitchPolicy.h>
+#include <GpsLease.h>
 #include <SendFeedbackIndex.h>
 #include <TrackingMessage.h>
 #include <GeoFence.h>
@@ -246,6 +247,26 @@ TEST(companion_sos_cancel, "UNIT-SOS-001", "Only a pending manual SOS is button-
 	CHECK(!companion_sos_button_cancelable(true, true));
 	CHECK(std::strcmp(COMPANION_SOS_CANCELED_TEXT, "❌ SOS отменён") == 0);
 }
+TEST(companion_sos_final_and_fall_off, "UNIT-SOS-002",
+     "A refused final send retries on the waiting cadence and fall off reaches a ringing alarm") {
+	/* First final send goes out at once; after a refusal only the waiting
+	 * cadence allows another. */
+	CHECK(companion_sos_final_send_due(false, false));
+	CHECK(companion_sos_final_send_due(false, true));
+	CHECK(!companion_sos_final_send_due(true, false));
+	CHECK(companion_sos_final_send_due(true, true));
+	/* The retry gives up after its bound instead of holding the GPS lease
+	 * and the log forever on a missing channel. */
+	CHECK(!companion_sos_give_up(SOS_FINAL_RETRY_MAX - 1));
+	CHECK(companion_sos_give_up(SOS_FINAL_RETRY_MAX));
+	/* The alarm outlives the sos state (the final send clears it), so fall
+	 * off must see a ringing alarm even with no pending sos; a live pending
+	 * fall counts too, a replaced or finished sos does not. */
+	CHECK(companion_fall_off_live(true, false, false));
+	CHECK(companion_fall_off_live(false, true, true));
+	CHECK(!companion_fall_off_live(false, true, false));
+	CHECK(!companion_fall_off_live(false, false, false));
+}
 TEST(tracking_report_format, "UNIT-TRACK-001", "Tracking report carries speed and course only while moving") {
 	char buf[160];
 	tracking_format_report(buf, sizeof(buf), 55.75580, 37.61730, 3333, 45000);
@@ -375,6 +396,33 @@ TEST(geofence_fsm, "UNIT-GEO-001", "Exit fires on the first fix beyond, return a
 	/* Re-armed: the next beyond fix fires a second exit. */
 	CHECK(geofence_update(&g, 3100.0, 3000.0) == GEO_EVENT_EXIT);
 }
+TEST(geofence_small_radius, "UNIT-GEO-006",
+     "A minimum-radius zone keeps a return band and NaN points are refused") {
+	struct geofence_state g;
+	double lat, lon;
+
+	/* At GEO_RADIUS_M_MIN the 50 m hysteresis clamps to half the radius:
+	 * the return line sits at 25 m, not below zero. */
+	geofence_reset(&g);
+	CHECK(geofence_update(&g, 60.0, 50.0) == GEO_EVENT_EXIT);
+	CHECK(geofence_update(&g, 30.0, 50.0) == GEO_EVENT_NONE);
+	CHECK(geofence_update(&g, 25.0, 50.0) == GEO_EVENT_NONE);
+	CHECK(geofence_update(&g, 24.0, 50.0) == GEO_EVENT_REENTER);
+	/* Above twice the hysteresis the classic 50 m band stands. */
+	geofence_reset(&g);
+	CHECK(geofence_update(&g, 3100.0, 3000.0) == GEO_EVENT_EXIT);
+	CHECK(geofence_update(&g, 2960.0, 3000.0) == GEO_EVENT_NONE);
+	CHECK(geofence_update(&g, 2940.0, 3000.0) == GEO_EVENT_REENTER);
+	/* NaN/inf must not pass as coordinates. */
+	CHECK(!geofence_parse_point("nan,nan", &lat, &lon));
+	CHECK(!geofence_parse_point("-nan,76.9", &lat, &lon));
+	CHECK(!geofence_parse_point("43.2,nan", &lat, &lon));
+	CHECK(!geofence_parse_point("inf,76.9", &lat, &lon));
+	CHECK(!geofence_parse_point("43.2,-inf", &lat, &lon));
+	CHECK(geofence_parse_point("-33.87,151.21", &lat, &lon));
+	CHECK(lat < -33.8699 && lat > -33.8701);
+	CHECK(lon > 151.2099 && lon < 151.2101);
+}
 TEST(geofence_boot, "UNIT-GEO-005", "After boot the first fix reports the zone state exactly once") {
 	struct geofence_state g;
 	geofence_boot_arm(&g);
@@ -472,6 +520,18 @@ TEST(gps_switch_policy, "UNIT-UI-001", "A physical GPS switch overrides the save
 	CHECK(!gps_switch_effective_enabled(false, true, false));
 	CHECK(!gps_switch_effective_enabled(true, false, true));
 	CHECK(gps_switch_effective_enabled(true, true, false));
+}
+TEST(gps_lease_owner, "UNIT-GPSLEASE-001",
+     "The save pipeline holds the GPS lease and one holder answers for the group") {
+	CHECK(gps_lease_held_by(false, false, false, false, false) == GPS_LEASE_FREE);
+	/* The wp/geo save force-lease is a holder like any feature. */
+	CHECK(gps_lease_held_by(false, false, false, true, false) == GPS_LEASE_SAVE);
+	/* Priority order: tracking, nav, sos, save, geo. */
+	CHECK(gps_lease_held_by(true, true, true, true, true) == GPS_LEASE_TRACKING);
+	CHECK(gps_lease_held_by(false, true, true, true, true) == GPS_LEASE_NAV);
+	CHECK(gps_lease_held_by(false, false, true, true, true) == GPS_LEASE_SOS);
+	CHECK(gps_lease_held_by(false, false, false, true, true) == GPS_LEASE_SAVE);
+	CHECK(gps_lease_held_by(false, false, false, false, true) == GPS_LEASE_GEO);
 }
 TEST(battery_curve, "UNIT-BATTERY-001", "Battery endpoints interpolation multicell scaling and monotonicity") {
     CHECK(battery_curve_lookup(&battery_curve_default, 0) == 0);

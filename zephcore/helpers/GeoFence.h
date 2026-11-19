@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <math.h>
 
 #include "TrackingMessage.h"
 
@@ -13,7 +14,9 @@
  * Pure logic — the caller feeds fresh fixes only (age <= GEO_FIX_MAX_AGE_MS)
  * and owns the GPS duty. Exit fires on the GEO_EXIT_CONFIRM_FIXES-th
  * consecutive fix beyond the radius; return fires once at
- * radius - GEO_REENTER_HYST_M and re-arms the exit trigger. */
+ * radius - GEO_REENTER_HYST_M (the hysteresis clamps to half the radius, so
+ * a GEO_RADIUS_M_MIN zone still has a return band) and re-arms the exit
+ * trigger. */
 
 #define GEO_EXIT_CONFIRM_FIXES	1
 #define GEO_REENTER_HYST_M	50.0
@@ -68,7 +71,13 @@ static inline enum geofence_event geofence_update(struct geofence_state *g,
 
 	g->boot_fix = 0;
 	if (g->outside) {
-		if (dist_m < radius_m - GEO_REENTER_HYST_M) {
+		/* The return band must stay open on a small radius: a full
+		 * 50 m hysteresis would put the return line below zero at
+		 * GEO_RADIUS_M_MIN and the zone would never re-enter. */
+		double hyst = radius_m < 2.0 * GEO_REENTER_HYST_M ?
+			      radius_m / 2.0 : GEO_REENTER_HYST_M;
+
+		if (dist_m < radius_m - hyst) {
 			g->outside = 0;
 			g->beyond = 0;
 			return GEO_EVENT_REENTER;
@@ -156,6 +165,7 @@ static inline bool geofence_parse_point(const char *arg, double *lat, double *lo
 		end++;
 	}
 	if (*end != '\0' ||
+	    !isfinite(a) || !isfinite(b) ||
 	    a < -90.0 || a > 90.0 || b < -180.0 || b > 180.0) {
 		return false;
 	}

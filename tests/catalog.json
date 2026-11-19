@@ -43,9 +43,29 @@
       "source": "tests/unit/helper_tests.cpp"
     },
     {
+      "id": "UNIT-SOS-002",
+      "name": "A refused final send retries on the waiting cadence and fall off reaches a ringing alarm",
+      "source": "tests/unit/helper_tests.cpp"
+    },
+    {
       "id": "UNIT-UI-001",
       "name": "A physical GPS switch overrides the saved startup state",
       "source": "tests/unit/helper_tests.cpp"
+    },
+    {
+      "id": "UNIT-GPSLEASE-001",
+      "name": "The save pipeline holds the GPS lease and one holder answers for the group",
+      "source": "tests/unit/helper_tests.cpp"
+    },
+    {
+      "id": "UNIT-PJSON-013",
+      "name": "A legacy uint32-wrapped geo point reads back signed and junk saturates",
+      "source": "tests/unit/prefs_json_tests.cpp"
+    },
+    {
+      "id": "UNIT-PJSON-014",
+      "name": "Interval clamps land on the documented minimum, not the default",
+      "source": "tests/unit/prefs_json_tests.cpp"
     },
     {
       "id": "UNIT-UI-002",
@@ -110,6 +130,11 @@
     {
       "id": "UNIT-GEO-005",
       "name": "After boot the first fix reports the zone state exactly once",
+      "source": "tests/unit/helper_tests.cpp"
+    },
+    {
+      "id": "UNIT-GEO-006",
+      "name": "A minimum-radius zone keeps a return band and NaN points are refused",
       "source": "tests/unit/helper_tests.cpp"
     },
     {
@@ -180,6 +205,11 @@
     {
       "id": "UNIT-CONTENTION-004",
       "name": "Warmup eviction and decay independent of tick frequency",
+      "source": "tests/unit/contention_tests.cpp"
+    },
+    {
+      "id": "UNIT-CONTENTION-005",
+      "name": "A folded entry still answers the extract query exactly once",
       "source": "tests/unit/contention_tests.cpp"
     },
     {
@@ -745,6 +775,16 @@
     {
       "id": "UNIT-TRACKBUF-003",
       "name": "The flush schedule: verdict after a send, probe and drain deadlines",
+      "source": "tests/unit/tracking_backlog_tests.cpp"
+    },
+    {
+      "id": "UNIT-TRACKBUF-004",
+      "name": "The heard verdict waits out the whole dupe window",
+      "source": "tests/unit/tracking_backlog_tests.cpp"
+    },
+    {
+      "id": "UNIT-TRACKBUF-005",
+      "name": "A full-ring drop keeps the verdict's accounting honest",
       "source": "tests/unit/tracking_backlog_tests.cpp"
     }
   ]

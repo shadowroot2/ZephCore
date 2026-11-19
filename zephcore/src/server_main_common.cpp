@@ -57,6 +57,7 @@ extern "C" void bt_ctlr_assert_handle(char *file, uint32_t line)
 #include <ZephyrSensorManager.h>
 #include <adapters/gps/ZephyrGPSManager.h>
 #include <zephyr_poweroff.h>
+#include <app/PowerPolicy.h>
 #if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
 #include <app/RepeaterBridge.h> /* ZEPHCORE: bridge UI */
 #endif
@@ -172,6 +173,35 @@ K_TIMER_DEFINE(maintenance_timer, maintenance_timer_fn, NULL);
 #ifdef ZEPHCORE_LORA
 static const ServerRole *server_role;
 static void refresh_ui_radio_state(void);
+
+/* Low-battery auto-shutdown — the same policy the companion runs
+ * (app/PowerPolicy.cpp), wired into the shared server loop so every
+ * unattended node protects its cell. A server has no app to hand a live
+ * notice to, so the shutdown stores its reason and the next boot reports it.
+ * The v-contact alert has no counterpart here and stays off. */
+static PowerPolicy *power_policy;
+/* File scope, not a function-local static: that would need the thread-safe
+ * init guards the embedded link has no runtime for. Bound in server_main()
+ * once the role's prefs are known. */
+static PowerPolicy policy;
+
+static bool power_notify_shutdown(uint16_t battery_mv)
+{
+	ARG_UNUSED(battery_mv);
+	return false;
+}
+
+static void power_prefs_dirty(void)
+{
+	if (server_role && server_role->callbacks) {
+		server_role->callbacks->savePrefs();
+	}
+}
+
+extern "C" bool ui_shutdown_in_progress(void)
+{
+	return power_policy != nullptr && power_policy->isShuttingDown();
+}
 #endif
 
 /* Print string to USB serial */
@@ -339,7 +369,16 @@ static void process_cli_commands(void)
 			cli_print("\r\n");
 			continue;
 		}
-		server_role->handle_command(c.buf, cli_reply_buf);
+		/* `get/set autoshutdown` belongs to the shared low-battery policy,
+		 * not to the role: answer it here so both server roles get it. */
+		bool handled = false;
+		if (power_policy) {
+			handled = power_policy->handleCommand(c.buf, cli_reply_buf,
+							     sizeof(cli_reply_buf));
+		}
+		if (!handled) {
+			server_role->handle_command(c.buf, cli_reply_buf);
+		}
 		refresh_ui_radio_state();
 #if IS_ENABLED(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
 		refresh_bridge_ui();
@@ -610,6 +649,13 @@ static void server_event_loop(void)
 		if (server_role) {
 			server_role->mesh->maintenanceLoop();
 		}
+
+		/* Low-battery auto-shutdown.  Self-throttled to one battery reading
+		 * per 30 s and three low readings in a row, so calling it here is
+		 * free; the maintenance backstop wakes us often enough either way. */
+		if (power_policy) {
+			power_policy->tick();
+		}
 #endif
 
 		/* A maintenance deadline came due — run the time-based work too. */
@@ -758,6 +804,14 @@ int server_main(const ServerRole &role)
 
 #ifdef ZEPHCORE_LORA
 	server_role = &role;
+
+	/* Low-battery auto-shutdown policy; reads prefs by reference, so it sees
+	 * the values loadPrefs() brings in below.  Bound here rather than
+	 * constructed: the object lives at file scope (see below) so the link
+	 * needs no thread-safe-init guards. */
+	policy.begin(zephyr_board, *role.prefs,
+		     {power_notify_shutdown, nullptr, nullptr, power_prefs_dirty});
+	power_policy = &policy;
 
 	/* Initialize mesh event object BEFORE begin() — radio callbacks post events */
 	k_event_init(&mesh_events);

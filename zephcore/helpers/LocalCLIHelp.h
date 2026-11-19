@@ -202,6 +202,10 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"get pwrmgt.source\r\n"
 		"get pwrmgt.bootreason\r\n"
 		"get pwrmgt.bootmv\r\n"
+#if defined(CONFIG_ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS) && \
+	CONFIG_ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS > 0
+		"get/set autoshutdown\r\n"
+#endif
 		"get pm\r\n"
 #if IS_ENABLED(CONFIG_ZEPHCORE_MEM_STATS)
 		"get mem [<n>]\r\n"
@@ -350,6 +354,10 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"stats-packets\r\nstats-radio\r\nstats-core\r\nclear stats\r\n"
 		"get acl\r\nget public.key\r\nget role\r\n"
 		"get dc.restarts\r\nget cad\r\n"
+#if defined(CONFIG_ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS) && \
+	CONFIG_ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS > 0
+		"get/set autoshutdown\r\n"
+#endif
 		CLI_UI_RADIO_HELP
 		"get/set dutycycle\r\nget/set af\r\nget/set int.thresh\r\n"
 		"get/set multi.acks\r\n"

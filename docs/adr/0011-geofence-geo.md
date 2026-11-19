@@ -61,7 +61,8 @@ was. One save at a time — `wp save` and `geo save` refuse each other.
 `companion_nav_fix_process`; `dist = tracking_distance_m(own, geo point)`. No fix, no evaluation.
 
 - EXIT: the first fix with `dist > radius` -> one message.
-- REENTER: `dist < radius - 50 m` -> one message, and the exit trigger re-arms.
+- REENTER: `dist < radius - 50 m` (the hysteresis clamps to `radius / 2` below 100 m — a
+  `GEO_RADIUS_M_MIN` zone keeps a return band) -> one message, and the exit trigger re-arms.
 
 No repeats while the state does not change.
 

@@ -9,7 +9,10 @@ TEST(contention_window, "UNIT-CONTENTION-001", "Observation window exact boundar
     CHECK(c.msUntilNextTick(0xFFFFFFF0u) == 10001);
     CHECK(c.recordDupeIfTracked(42, uint32_t(0xFFFFFFF0u + 10000u)));
     CHECK(!c.recordDupeIfTracked(42, uint32_t(0xFFFFFFF0u + 10001u)));
-    CHECK(c.extractDupeCount(42) == -1 && c.getContentionEstimate() == 1.0f);
+    /* The expiry fold does not consume the answer: the verdict still reads
+     * the count, and reading it does not fold the sample twice. */
+    CHECK(c.extractDupeCount(42) == 1 && c.getContentionEstimate() == 1.0f);
+    CHECK(c.extractDupeCount(42) == -1);
 }
 TEST(contention_saturation, "UNIT-CONTENTION-002", "Duplicate saturation and exactly-once finalization") {
     ContentionTracker c; c.trackRetransmit(1, 100);
@@ -45,4 +48,24 @@ TEST(contention_decay, "UNIT-CONTENTION-004", "Warmup eviction and decay indepen
     ContentionTracker e;
     for (unsigned i = 0; i < 25; ++i) e.trackRetransmit(i, 100);
     CHECK(e.extractDupeCount(0) == -1 && e.extractDupeCount(1) == 0);
+}
+TEST(contention_extract_survives_fold, "UNIT-CONTENTION-005",
+     "A folded entry still answers the extract query exactly once") {
+    ContentionTracker c;
+    c.trackRetransmit(7, 0);
+    CHECK(c.recordDupeIfTracked(7, 100));
+    CHECK(c.recordDupeIfTracked(7, 200));
+    /* The housekeeping tick folds expired entries into the EMA; the count
+     * must survive that — the heard-verdict asked for it and would other-
+     * wise re-send a point the neighbours already carried. */
+    c.tick(15000);
+    CHECK(c.extractDupeCount(7) == 2);
+    CHECK(c.extractDupeCount(7) == -1);
+    /* A late dupe past the window folds the entry but does not eat the
+     * answer either. */
+    ContentionTracker d;
+    d.trackRetransmit(9, 0);
+    CHECK(d.recordDupeIfTracked(9, 100));
+    CHECK(!d.recordDupeIfTracked(9, 15000));
+    CHECK(d.extractDupeCount(9) == 1);
 }

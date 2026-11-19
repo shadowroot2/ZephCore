@@ -2,11 +2,13 @@
 /*
  * Host tests for the tracking deferred backlog: the "🕓 HH:MM 📍 <link>"
  * message, the ring of points no repeater repeated, and the flush schedule
- * (probe 2.5 min before the report, verdict 5 s after a send, drain 10 s apart).
+ * (probe 2.5 min before the report, verdict after the whole dupe window,
+ * drain 10 s apart).
  */
 
 #include <TrackingBacklog.h>
 #include <TrackingMessage.h>
+#include <mesh/ContentionTracker.h>
 #include "test.h"
 
 #include <cstring>
@@ -128,4 +130,52 @@ TEST(tracking_backlog_schedule, "UNIT-TRACKBUF-003",
 	      TRACKING_BACKLOG_IDLE);
 	CHECK(tracking_backlog_next(&b, 8000 + TRACKING_BACKLOG_DRAIN_INTERVAL_MS, 0) ==
 	      TRACKING_BACKLOG_SEND);
+}
+TEST(tracking_backlog_full_ring, "UNIT-TRACKBUF-005",
+     "A full-ring drop keeps the verdict's accounting honest") {
+	struct tracking_backlog b;
+	int i;
+
+	tracking_backlog_reset(&b);
+	for (i = 0; i < TRACKING_BACKLOG_SLOTS; i++) {
+		tracking_backlog_push(&b, 1000U + (uint32_t)i, LAT, LON);
+	}
+	/* The inflight message carries the first two points. */
+	tracking_backlog_begin(&b, 1, 5000, 2);
+	/* Full ring: the oldest — an inflight point — drops. */
+	tracking_backlog_push(&b, 2000U, LAT, LON);
+	CHECK(b.count == TRACKING_BACKLOG_SLOTS);
+	/* The verdict drops only the carried point still in the ring (1001);
+	 * 1002 never went out and must survive. */
+	tracking_backlog_verdict(&b, true);
+	CHECK(b.count == TRACKING_BACKLOG_SLOTS - 1);
+	CHECK(b.pts[0].time_s == 1002U);
+	CHECK(b.pts[TRACKING_BACKLOG_SLOTS - 2].time_s == 2000U);
+}
+
+TEST(tracking_backlog_verdict_window, "UNIT-TRACKBUF-004",
+     "The heard verdict waits out the whole dupe window") {
+	/* The verdict is ContentionTracker's dupe count, asked once —
+	 * extractDupeCount() finalizes the entry. A repeat landing between the
+	 * verdict deadline and the end of the window would be thrown away, the
+	 * backlog would re-send the point, and a receiver that got both copies
+	 * shows a duplicate. */
+	CHECK(TRACKING_BACKLOG_VERDICT_MS >= mesh::ContentionTracker::WINDOW_MS);
+
+	/* A repeat at 8 s — past a 5 s verdict, inside the window — counts
+	 * when the verdict is asked at its deadline. */
+	mesh::ContentionTracker c;
+
+	c.trackRetransmit(7, 0);
+	CHECK(c.recordDupeIfTracked(7, 8000));
+	CHECK(c.extractDupeCount(7) == 1);
+
+	/* And the backlog never asks before then. */
+	struct tracking_backlog b;
+	tracking_backlog_reset(&b);
+	tracking_backlog_push(&b, PT1234, LAT, LON);
+	tracking_backlog_begin(&b, 7, 0, 1);
+	CHECK(tracking_backlog_next(&b, 8000, 0) == TRACKING_BACKLOG_IDLE);
+	CHECK(tracking_backlog_next(&b, TRACKING_BACKLOG_VERDICT_MS, 0) ==
+	      TRACKING_BACKLOG_VERDICT);
 }

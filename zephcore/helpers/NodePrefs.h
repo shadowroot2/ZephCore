@@ -76,7 +76,7 @@ struct NodePrefs {
 	/* ADR 0011 geofence fields sit in existing struct padding on purpose:
 	 * NodePrefs rides in the static mesh object and companion DRAM is full,
 	 * so it must not grow. Keep them in the holes if you touch this layout. */
-	uint32_t geo_lon_e7;
+	int32_t geo_lon_e7;
 	double node_lat, node_lon;
 	char password[16];
 	float freq;
@@ -216,7 +216,7 @@ struct NodePrefs {
 	uint16_t nav_telemetry_interval_min;
 	uint8_t fall_sensitivity;
 	uint8_t fall_enabled;
-	uint32_t geo_lat_e7; /* ADR 0011, padding hole — see geo_lon_e7 */
+	int32_t geo_lat_e7; /* ADR 0011, padding hole — see geo_lon_e7 */
 	/* GPS HOME waypoint list: slot 0 is always named GPS HOME and is the
 	 * default selection; names of slots 1..9 are theirs to keep or change. */
 	double home_lat[10];
@@ -426,12 +426,12 @@ static inline void sanitizeNodePrefs(NodePrefs* p) {
 		p->ui_timezone_offset_minutes = 300;
 #endif
 	}
-	if (p->tracking_interval_minutes < 5) p->tracking_interval_minutes = 10;
+	if (p->tracking_interval_minutes < 5) p->tracking_interval_minutes = 5;
 	/* 0 = off: no vContact nav notices at all. */
 	if (p->nav_report_interval_min > 1440) {
 		p->nav_report_interval_min = 1;
 	}
-	if (p->nav_telemetry_interval_min < 5) p->nav_telemetry_interval_min = 10;
+	if (p->nav_telemetry_interval_min < 5) p->nav_telemetry_interval_min = 5;
 	if (p->fall_sensitivity < 1 || p->fall_sensitivity > 5) p->fall_sensitivity = 3;
 	if (p->tracking_group_name[0] != '#' ||
 	    strchr(p->tracking_group_name, '\r') != nullptr ||

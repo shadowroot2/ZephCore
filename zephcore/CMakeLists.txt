@@ -591,6 +591,7 @@ if(CONFIG_ZEPHCORE_ROLE_REPEATER_BASE OR CONFIG_ZEPHCORE_ROLE_ROOM_SERVER)
   target_sources(app PRIVATE
     src/server_main_common.cpp
     app/RepeaterDataStore.cpp
+    app/PowerPolicy.cpp
     helpers/ClientACL.cpp
     helpers/RegionMap.cpp
     helpers/TransportKeyStore.cpp

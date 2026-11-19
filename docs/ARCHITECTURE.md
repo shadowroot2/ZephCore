@@ -724,16 +724,21 @@ restart-reason message partially compensates) and bounded by
   once per discharge cycle; re-arms on external power, recovery above
   threshold + 150 mV, or threshold change.
 
-**Low-battery policy** (`app/PowerPolicy.cpp`, every companion, UI or headless):
-the v-contact alert above and auto-shutdown (`get|set autoshutdown <mV>`, 0 =
-off; default `CONFIG_ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS`, **3200 mV on nRF52**, 0
-elsewhere because ESP32 cannot tell USB power from battery). Both sample every
-30 s on the housekeeping tick, act on the third low reading in a row, skip on
-external power, and treat anything under 2000 mV as "no battery" (a board without
-a cell reads 0). A shutdown with an app connected sends a v-contact notice and
-waits 1 s; otherwise it stores the reason (`Low Voltage`) for the next boot. The
-UI only draws the warning (`ui_show_low_battery()`). A stored 3300 mV (the old
-default) is migrated to 3200 once (`zc.aoff_set`).
+**Low-battery policy** (`app/PowerPolicy.cpp`, companion and the server roles,
+UI or headless): the v-contact alert above (companion only) and auto-shutdown
+(`get|set autoshutdown <mV>`, 0 = off; default
+`CONFIG_ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS`, **3200 mV on nRF52**, 0 elsewhere
+because ESP32 cannot tell USB power from battery). Both sample every 30 s on the
+housekeeping tick, act on the third low reading in a row, skip on external power,
+and treat anything under 2000 mV as "no battery" (a board without a cell reads
+0). A shutdown with an app connected sends a v-contact notice and waits a short
+grace (8 s) for it to be fetched; a server has nobody to tell and stores the
+reason (`Low Voltage`) for the next boot instead. The UI only draws the warning
+(`ui_show_low_battery()`). A stored 3300 mV (the old default) is migrated to
+3200 once (`zc.aoff_set`). The policy is wired into the shared server loop
+(`server_main_common.cpp`), so the threshold is a server CLI command too, and
+`zc.auto_off_mv` / `zc.aoff_set` are common prefs keys rather than
+companion-only ones.
 
 ### 6.3 RepeaterMesh
 
@@ -914,10 +919,16 @@ active, nothing is touched; when only geo remains, its 500 s pin is re-asserted;
 GPS powers down and the live duty returns to `prefs.gps_interval` (`companion_gps_user_left` in
 main_companion.cpp). Tracking, nav and sos outrank geo. After a reboot
 tracking and nav are gone (runtime state) and the configured duty returns; geo persists (`prefs.geo_on`).
-The `wp save`/`geo save` pipeline is not a user: it force-leases the GPS for one fix and restores the
-exact prior state (ADR 0011). The target slot is pinned when the save is requested — re-selecting
-points while the fix is pending (`wp <n>`, double-tap cycle) does not redirect the save, and a set
-name is never overwritten (only an unnamed `FREE` slot becomes `SAVED`).
+The `wp save`/`geo save` pipeline is not a user: it force-leases the GPS for one fix and hands the
+receiver back to whoever holds the lease now (`helpers/GpsLease.h` — tracking, nav, sos, save, geo;
+UNIT-GPSLEASE-001). A feature that started while the save waited owns the GPS and configures it
+itself; with nobody left the GPS returns to the manual session it had before the lease (or powers
+down). `gps off`/`set gps duty` and the UI GPS toggle are legal only while the lease is free, and
+nav and the save pipeline are mutually exclusive (each refuses the other). The target slot is pinned
+when the save is requested — re-selecting points while the fix is pending (`wp <n>`, double-tap
+cycle) does not redirect the save, and a set name is never overwritten (only an unnamed `FREE` slot
+becomes `SAVED`). Navigation pins its target the same way (`nav_slot` at `nav start`): a re-selection
+does not redirect a running route.
 
 **Tracking deferred backlog (companion)**
 
@@ -928,7 +939,7 @@ Live reports keep their format while the ring is empty. The head is probed 2.5 m
 report — the whole ring drains before the report is due, so the scheduled point goes out live as
 always. A fresh point joins the tail only while older points wait, so a later report never overtakes
 an earlier one. A send's verdict is the ContentionTracker dupe
-count asked 5 s after the send (`extractDupeCount > 0` = heard, the joystick's criterion): heard drops
+count asked after the whole 10 s dupe window (`extractDupeCount > 0` = heard, the joystick's criterion): heard drops
 the points the message carried and the ring then flushes one message per 10 s; not heard keeps them
 and the head is probed again in the next report window (every 60 s while `tracking off`, so an ended
 session still flushes). The ring evicts the oldest of its 16 points (~80 min at the 5-minute minimum
@@ -962,7 +973,8 @@ point save is running. The toggle persists (`prefs.geo_on`): a stored `on` re-pi
 the first fix reports the zone state once (`geofence_boot_arm`). `geo save` is the `wp save` pipeline
 with a geo target. Evaluation is per fresh fix (age ≤ 30 s)
 on the main-thread fix event (`helpers/GeoFence.h`, host-tested): exit fires on the first fix
-beyond the radius, return on dropping below radius − 50 m, and each event fires once per state change.
+beyond the radius, return on dropping below radius − 50 m (hysteresis clamped to radius/2 under
+100 m, so a minimum-radius zone keeps a return band), and each event fires once per state change.
 Both alerts go to the tracking group as hidden LoRa messages (`sendGroupMessage` without the local
 queue — never in the sender's own group feed, no vContact path), formatted by `geofence_format_msg`.
 The geo prefs sit in NodePrefs padding holes on purpose — companion DRAM is full and the struct must

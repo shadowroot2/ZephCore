@@ -37,8 +37,20 @@ public:
 		void (*prefs_dirty)(void);
 	};
 
+	/* Default-constructed so a server root can own one at file scope and
+	 * bind it when the role (and its prefs) is known; a function-local
+	 * static would need the thread-safe-init guards the embedded link has
+	 * no runtime for. */
+	PowerPolicy() = default;
 	PowerPolicy(mesh::MainBoard &board, NodePrefs &prefs, const Hooks &hooks)
-		: _board(board), _prefs(prefs), _hooks(hooks) {}
+		: _board(&board), _prefs(&prefs), _hooks(hooks) {}
+
+	void begin(mesh::MainBoard &board, NodePrefs &prefs, const Hooks &hooks)
+	{
+		_board = &board;
+		_prefs = &prefs;
+		_hooks = hooks;
+	}
 
 	/* Every housekeeping tick; self-throttled to one reading per 30 s. */
 	void tick();
@@ -62,9 +74,9 @@ private:
 	void checkAlert(uint16_t mv, bool on_battery);
 	void checkShutdown(uint16_t mv, bool on_battery);
 
-	mesh::MainBoard &_board;
-	NodePrefs &_prefs;
-	Hooks _hooks;
+	mesh::MainBoard *_board = nullptr;
+	NodePrefs *_prefs = nullptr;
+	Hooks _hooks = {};
 	uint32_t _next_check_ms = 0;
 	bool _checked = false;
 	uint8_t _alert_low = 0;
