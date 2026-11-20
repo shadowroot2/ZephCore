@@ -541,11 +541,14 @@ static inline void renderT9Keypad(JoystickDisplay &display, const char * const *
 	}
 }
 
+#include <helpers/ui/UiFeed.h>
+
 /* ===== buildChannelReplyPrefix ===== */
 /* Builds "@[SenderName] " from a "SenderName: text" channel message.
+ * The name keeps no pictograph and no gap one leaves: a sender called
+ * "\xF0\x9F\x99\x82 Nickname" quotes as "@[Nickname]", not "@[ Nickname]".
  * Returns false for outbound messages (any OUT_PATH_SENT* marker) or if
- * no ": " separator is found. out_buf must be at least (name_len + 5)
- * bytes; 38 is always safe. */
+ * no ": " separator is found. */
 static inline bool buildChannelReplyPrefix(
 	const char *msg, uint8_t path_len,
 	char *out_buf, size_t out_size
@@ -555,15 +558,24 @@ static inline bool buildChannelReplyPrefix(
 		path_len == OUT_PATH_SENT_UNHEARD) return false;
 	const char *sep = strstr(msg, ": ");
 	if (!sep || sep == msg) return false;
-	size_t nlen = (size_t)(sep - msg);
-	if (nlen > 32) nlen = 32;
-	if (out_size < nlen + 5) return false; /* '@' '[' name ']' ' ' '\0' */
-	out_buf[0] = '@';
-	out_buf[1] = '[';
-	memcpy(out_buf + 2, msg, nlen);
-	out_buf[2 + nlen] = ']';
-	out_buf[3 + nlen] = ' ';
-	out_buf[4 + nlen] = '\0';
+	{
+		char raw[33];
+		char name[33];
+		size_t nlen = (size_t)(sep - msg);
+
+		if (nlen > 32) nlen = 32;
+		memcpy(raw, msg, nlen);
+		raw[nlen] = '\0';
+		ui_feed_strip_pictographs(name, sizeof(name), raw);
+		nlen = strlen(name);
+		if (out_size < nlen + 5) return false; /* '@' '[' name ']' ' ' '\0' */
+		out_buf[0] = '@';
+		out_buf[1] = '[';
+		memcpy(out_buf + 2, name, nlen);
+		out_buf[2 + nlen] = ']';
+		out_buf[3 + nlen] = ' ';
+		out_buf[4 + nlen] = '\0';
+	}
 	return true;
 }
 
