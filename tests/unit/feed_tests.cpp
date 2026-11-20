@@ -183,7 +183,7 @@ TEST(feed_line_shapes, "UNIT-FEED-006",
 }
 
 TEST(feed_text_cleanup, "UNIT-FEED-012",
-     "A nickname keeps no smiley and a map link keeps only its coordinates")
+     "A nickname keeps no smiley")
 {
 	char buf[192];
 
@@ -193,17 +193,12 @@ TEST(feed_text_cleanup, "UNIT-FEED-012",
 			   "\xF0\x9F\x99\x82Mama: привет");
 	CHECK(std::string(buf) == "Mama: привет");
 
-	ui_chat_clean_text(buf, sizeof(buf),
-			   "Nick: тут https://maps.google.com/?q=55.75580,37.61730");
-	CHECK(std::string(buf) == "Nick: тут 55.75580,37.61730");
-
-	ui_chat_clean_text(buf, sizeof(buf),
-			   "Nick: тут https://maps.google.com/maps?q=1.5,2.5 конец");
-	CHECK(std::string(buf) == "Nick: тут 1.5,2.5 конец");
-
 	/* A plain message is left alone. */
 	ui_chat_clean_text(buf, sizeof(buf), "просто текст");
 	CHECK(std::string(buf) == "просто текст");
+
+	ui_chat_clean_text(buf, sizeof(buf), "Nick: два слова");
+	CHECK(std::string(buf) == "Nick: два слова");
 }
 
 TEST(feed_emoji_substitution, "UNIT-FEED-007",
@@ -375,4 +370,44 @@ TEST(feed_seek_inside_message, "UNIT-FEED-014",
 	ui_chat_iter_init(&it, c, cur, NOW, 0, 11);
 	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
 	CHECK(std::string(row) == "ccc ddd");
+}
+
+TEST(feed_coords_only, "UNIT-FEED-015",
+     "A message with map links keeps only the coordinates, one per row")
+{
+	char buf[192];
+
+	/* One link: the message becomes just the pair. */
+	ui_chat_clean_text(buf, sizeof(buf),
+			   "тут https://maps.google.com/?q=55.75580,37.61730 конец");
+	CHECK(std::string(buf) == "55.75580,37.61730");
+
+	/* Two links: two rows, split at a newline. */
+	ui_chat_clean_text(buf, sizeof(buf),
+			   "https://maps.google.com/?q=55.7,37.6 и "
+			   "https://maps.google.com/?q=55.8,37.7");
+	CHECK(std::string(buf) == "55.7,37.6\n55.8,37.7");
+
+	/* The deferred tracking form carries its own link. */
+	ui_chat_clean_text(buf, sizeof(buf),
+			   "\xF0\x95\x95\x93 12:34 \xF0\x9F\x93\x8D "
+			   "https://maps.google.com/?q=1.25000,2.50000");
+	CHECK(std::string(buf) == "1.25000,2.50000");
+
+	/* A message without a link is untouched. */
+	ui_chat_clean_text(buf, sizeof(buf), "просто текст");
+	CHECK(std::string(buf) == "просто текст");
+}
+
+TEST(feed_row_breaks_at_newline, "UNIT-FEED-016",
+     "Two coordinates in one message stay on separate rows")
+{
+	char row[64];
+	const char *p = "55.7,37.6\n55.8,37.7";
+
+	CHECK(ui_feed_wrap_row(row, sizeof(row), &p, 21) > 0);
+	CHECK(std::string(row) == "55.7,37.6");
+	CHECK(ui_feed_wrap_row(row, sizeof(row), &p, 21) > 0);
+	CHECK(std::string(row) == "55.8,37.7");
+	CHECK(*p == '\0');
 }

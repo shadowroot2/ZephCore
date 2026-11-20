@@ -869,7 +869,7 @@
     },
     {
       "id": "UNIT-FEED-012",
-      "name": "A nickname keeps no smiley and a map link keeps only its coordinates",
+      "name": "A nickname keeps no smiley",
       "source": "tests/unit/feed_tests.cpp"
     },
     {
@@ -880,6 +880,16 @@
     {
       "id": "UNIT-FEED-014",
       "name": "Opening a chat at a row past the first never spins",
+      "source": "tests/unit/feed_tests.cpp"
+    },
+    {
+      "id": "UNIT-FEED-015",
+      "name": "A message with map links keeps only the coordinates, one per row",
+      "source": "tests/unit/feed_tests.cpp"
+    },
+    {
+      "id": "UNIT-FEED-016",
+      "name": "Two coordinates in one message stay on separate rows",
       "source": "tests/unit/feed_tests.cpp"
     }
   ]

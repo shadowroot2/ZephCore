@@ -237,8 +237,15 @@ static inline int ui_feed_wrap_row(char *dst, size_t dst_n, const char **src,
 		return 0;
 	}
 	while (*s != '\0' && ncols < cols && (size_t)nbytes + 1 < dst_n) {
-		size_t adv = ui_feed_utf8_len(s);
+		size_t adv;
 
+		if (*s == '\n') {
+			/* A hard break: two coordinates in one message stay
+			 * on separate rows. */
+			s++;
+			break;
+		}
+		adv = ui_feed_utf8_len(s);
 		if (adv == 0) {
 			break;
 		}
@@ -437,6 +444,43 @@ static inline void ui_feed_strip_pictographs(char *dst, size_t n, const char *sr
 	dst[out] = '\0';
 }
 
+/* A message that carries map links is only coordinates to a reader on a
+ * panel: pull every "q=" pair out and put each on its own line.  Two links
+ * in one message become two rows. */
+static inline void ui_feed_extract_coords(char *dst, size_t n, const char *src)
+{
+	static const char host[] = "maps.google.com";
+	size_t out = 0;
+	int found = 0;
+
+	if (n == 0) {
+		return;
+	}
+	while (*src != '\0' && out + 1 < n) {
+		const char *m = strstr(src, host);
+		const char *q;
+
+		if (m == NULL) {
+			break;
+		}
+		q = strstr(m, "q=");
+		if (q == NULL) {
+			src = m + sizeof(host) - 1;
+			continue;
+		}
+		q += 2;
+		if (found > 0) {
+			dst[out++] = '\n';
+		}
+		found++;
+		while (*q != '\0' && *q != ' ' && *q != '\n' && out + 1 < n) {
+			dst[out++] = *q++;
+		}
+		src = q;
+	}
+	dst[out] = '\0';
+}
+
 /* "https://maps.google.com/?q=55.75580,37.61730" -> "55.75580,37.61730":
  * the link is a courtesy in the app, on a panel only the numbers fit. */
 static inline void ui_feed_shorten_map_url(char *dst, size_t n, const char *src)
@@ -465,8 +509,13 @@ static inline void ui_feed_shorten_map_url(char *dst, size_t n, const char *src)
  * of pictographs and shorten any map link in what follows. */
 static inline void ui_chat_clean_text(char *dst, size_t n, const char *src)
 {
-	const char *sep = strstr(src, ": ");
+	const char *sep;
 
+	if (strstr(src, "maps.google.com") != NULL) {
+		ui_feed_extract_coords(dst, n, src);
+		return;
+	}
+	sep = strstr(src, ": ");
 	if (sep == NULL) {
 		ui_feed_shorten_map_url(dst, n, src);
 		return;
