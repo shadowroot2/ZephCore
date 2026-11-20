@@ -1119,14 +1119,38 @@ BLE DFU bootloader; ESP32 BLE OTA builds: open the BLE OTA window; absent
 elsewhere), Shutdown. Manual shutdown renders `Power OFF` before entering the
 shared power-off path; e-paper retains the final frame.
 
-The **Messages** page is the conversation list: channels first, then direct
-chats, each drawn as `Name (unread)` with the count dropped at zero. One
-press walks the list round and round and the selected row is highlighted; a
-hold takes that conversation and clears its unread. The feed under it shows
-only that conversation — the newest message at the top, local time (`HH:MM`
-today, `DD.MM HH:MM` older), a direct message marked `>>`, the public channel
-untagged, any other channel `[#name]` — and the same hold walks back out to
-the list.
+The **Messages** page is the status it has always been — message count,
+link state, offgrid and uptime. The **Public** page holds the conversation
+list and the feed under it: the list until a hold opens a conversation,
+then that conversation's messages, and the same hold walks back out.
+
+The list runs `Public`, then the `#` channels, then the private channels,
+then the direct chats — and only nodes that can answer (`ADV_TYPE_CHAT` and
+`ADV_TYPE_ROOM`); repeaters and sensors advertise into the list otherwise.
+Each row is `Name (unread)` with the count dropped at zero and the selected
+row a solid band. The bottom row reads `Long press ENTER`.
+
+Gestures on that page:
+
+| | list | chat | any other page |
+|---|---|---|---|
+| page key, one press | next screen | next screen | next screen |
+| page key, two presses | previous screen | previous screen | previous screen |
+| action, one press | next conversation | next messages | the page's action |
+| action, second press | previous conversation | previous messages | — |
+| action, hold | open the conversation | back to the list | the page's hold |
+
+The page keys never touch the list: they are the screen flip and taking
+them over for the list made the pages unreachable.
+
+A channel message reads as its head line and the text below it —
+`18.11 13:02 Nick:` banded like a list row, then the message. A direct
+chat keeps the time and the text on one line. Both are cut to the panel
+width rather than wrapped onto each other. A message that carries map
+links keeps only the coordinates, one pair per line. A nickname keeps no
+pictograph; the bitmap font carries the Russian alphabet in slots 128-193
+and borrows the Latin glyph for the twenty-one letters drawn like one
+(`UiFeed.h`, `display_charset.h`).
 
 Each conversation keeps its own four-message ring (`CONFIG_ZEPHCORE_UI_CHAT_MSGS`,
 six conversations, `CONFIG_ZEPHCORE_UI_CHAT_COUNT`), so a busy channel cannot
