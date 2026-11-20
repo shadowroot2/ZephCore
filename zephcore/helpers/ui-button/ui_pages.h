@@ -14,7 +14,11 @@
 #include <stddef.h>
 #include <stdbool.h>
 
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
+/* The conversation list, its feed and the emoji map are display-only: a
+ * headless board has no screen to draw them and no RAM to carry them. */
 #include <helpers/ui/UiFeed.h>
+#endif
 #include <zephyr/devicetree.h>
 #include <zephyr/dt-bindings/input/input-event-codes.h>
 
