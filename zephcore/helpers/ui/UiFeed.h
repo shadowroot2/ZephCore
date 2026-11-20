@@ -571,6 +571,7 @@ struct ui_chat_iter {
 	char line[UI_FEED_TEXT_LEN + 32];	/* what the rows carry */
 	const char *line_p;
 	int phase;			/* 0 = head, 1 = text, 2 = blank */
+	bool row_is_head;		/* the last row pulled was the head */
 	bool loaded;
 };
 
@@ -595,6 +596,7 @@ static inline void ui_chat_iter_begin(struct ui_chat_iter *it)
 	}
 	ui_feed_format_time(time, sizeof(time), m->ts, it->now, it->tz_minutes);
 
+	it->row_is_head = false;
 	if (!it->c->is_group) {
 		snprintf(it->line, sizeof(it->line), "%s %s", time, m->text);
 		it->phase = 1;	/* no head: the text carries the time */
@@ -692,6 +694,7 @@ static inline bool ui_chat_iter_next(struct ui_chat_iter *it, char *out,
 				strncpy(out, it->head, out_n - 1);
 				out[out_n - 1] = '\0';
 			}
+			it->row_is_head = true;
 			it->phase = 1;
 			it->cur.row++;
 			return true;
@@ -710,6 +713,7 @@ static inline bool ui_chat_iter_next(struct ui_chat_iter *it, char *out,
 					strncpy(out, row, out_n - 1);
 					out[out_n - 1] = '\0';
 				}
+				it->row_is_head = false;
 				it->cur.row++;
 				return true;
 			}
@@ -718,6 +722,7 @@ static inline bool ui_chat_iter_next(struct ui_chat_iter *it, char *out,
 		if (out_n > 0) {
 			out[0] = '\0';
 		}
+		it->row_is_head = false;
 		it->cur.entry++;
 		it->cur.row = 0;
 		ui_chat_iter_begin(it);

@@ -851,10 +851,18 @@ static void render_public_rows(int cols, bool color, uint16_t title_color)
 			  s->tz_offset_min, cols);
 	while (shown < text_rows &&
 	       ui_chat_iter_next(&it, row, sizeof(row))) {
+		/* A channel message leads with its sender on the time's line:
+		 * band it the way a list row is banded, so the message starts
+		 * where the band starts. */
 		if (color) {
-			mc_display_color_text(0, y, row, title_color);
+			mc_display_color_text(0, y, row,
+					      it.row_is_head ? UI_COLOR_TITLE
+							     : title_color);
 		} else {
 			mc_display_text(0, y, row, false);
+		}
+		if (it.row_is_head) {
+			mc_display_invert_rect(0, y, (int)DISP_W, LINE_H);
 		}
 		y += LINE_H;
 		shown++;
