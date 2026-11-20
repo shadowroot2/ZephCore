@@ -78,6 +78,7 @@ LOG_MODULE_REGISTER(zephcore_main, CONFIG_ZEPHCORE_MAIN_LOG_LEVEL);
 #include <helpers/CompanionCLIAudio.h>
 #include <helpers/CompanionSOSPolicy.h>
 #include <helpers/GpsSwitchPolicy.h>
+#include <helpers/AdvertDataHelpers.h>
 #include <helpers/GpsLease.h>
 #include <helpers/TrackingMessage.h>
 #include <helpers/TrackingBacklog.h>
@@ -4379,9 +4380,10 @@ int main(void)
 
 	ui_set_node_name(companion_mesh.prefs.node_name);
 	ui_push_radio_state(lora_radio);
-	/* The list is the node's own address book: channels first, then the
-	 * contacts it already has, so the first screen is not empty until a
-	 * message happens to arrive. */
+	/* The list is the node's own address book: the channels it has and
+	 * the contacts it can actually talk to.  Repeaters and sensors
+	 * advertise too and would otherwise fill the list with names that
+	 * never answer. */
 	{
 		int i;
 		int n = companion_mesh.getNumChannels();
@@ -4397,10 +4399,14 @@ int main(void)
 		for (i = 0; i < n; i++) {
 			ContactInfo c;
 
-			if (companion_mesh.getContactByIdx((uint32_t)i, c) &&
-			    !c.isEmptySlot() && c.name[0] != '\0') {
-				ui_seed_chat(c.name, false);
+			if (!companion_mesh.getContactByIdx((uint32_t)i, c) ||
+			    c.isEmptySlot() || c.name[0] == '\0') {
+				continue;
 			}
+			if (c.type != ADV_TYPE_CHAT && c.type != ADV_TYPE_ROOM) {
+				continue;
+			}
+			ui_seed_chat(c.name, false);
 		}
 	}
 	ui_set_battery(zephyr_board.getBattMilliVolts(), zephyr_board.getBattPercent());

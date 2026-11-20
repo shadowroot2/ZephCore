@@ -359,8 +359,23 @@ static inline struct ui_chat *ui_chat_find(struct ui_chat_list *l,
 	return NULL;
 }
 
-/* The n-th chat in display order: channels first, then direct chats, each
- * in slot order.  NULL past the end. */
+/* A conversation's place in the list: Public first, then the public "#"
+ * channels, then the private channels, then the direct chats. */
+static inline int ui_chat_tier(const struct ui_chat *c)
+{
+	if (!c->is_group) {
+		return 3;
+	}
+	if (strcmp(c->name, "Public") == 0) {
+		return 0;
+	}
+	if (c->name[0] == '#') {
+		return 1;
+	}
+	return 2;
+}
+
+/* The n-th chat in display order.  NULL past the end. */
 static inline struct ui_chat *ui_chat_nth(struct ui_chat_list *l, int n)
 {
 	int seen = 0;
@@ -368,11 +383,9 @@ static inline struct ui_chat *ui_chat_nth(struct ui_chat_list *l, int n)
 	if (n < 0) {
 		return NULL;
 	}
-	for (uint8_t pass = 0; pass < 2; pass++) {
-		bool want_group = (pass == 0);
-
+	for (uint8_t tier = 0; tier < 4; tier++) {
 		for (uint8_t i = 0; i < l->count; i++) {
-			if (l->chats[i].is_group != want_group) {
+			if ((uint8_t)ui_chat_tier(&l->chats[i]) != tier) {
 				continue;
 			}
 			if (seen == n) {
@@ -388,6 +401,91 @@ static inline struct ui_chat *ui_chat_nth(struct ui_chat_list *l, int n)
 static inline int ui_chat_list_len(const struct ui_chat_list *l)
 {
 	return (int)l->count;
+}
+
+/* Drop display-invisible pictographs from a name: a smiley in a nickname
+ * is noise on a bitmap panel.  Everything else, Cyrillic included, stays. */
+static inline void ui_feed_strip_pictographs(char *dst, size_t n, const char *src)
+{
+	size_t out = 0;
+
+	if (n == 0) {
+		return;
+	}
+	while (*src != '\0' && out + 1 < n) {
+		size_t m = ui_feed_utf8_len(src);
+
+		if (m == 0) {
+			break;
+		}
+		if (m == 4) {
+			src += m;
+			continue;
+		}
+		if (m == 3 && (strncmp(src, UI_FEED_VS_EMOJI, 3) == 0 ||
+			       strncmp(src, UI_FEED_VS_TEXT, 3) == 0)) {
+			src += 3;
+			continue;
+		}
+		if (out + m + 1 > n) {
+			break;
+		}
+		memcpy(dst + out, src, m);
+		out += m;
+		src += m;
+	}
+	dst[out] = '\0';
+}
+
+/* "https://maps.google.com/?q=55.75580,37.61730" -> "55.75580,37.61730":
+ * the link is a courtesy in the app, on a panel only the numbers fit. */
+static inline void ui_feed_shorten_map_url(char *dst, size_t n, const char *src)
+{
+	static const char prefix[] = "https://maps.google.com/";
+	size_t out = 0;
+
+	if (n == 0) {
+		return;
+	}
+	while (*src != '\0' && out + 1 < n) {
+		if (strncmp(src, prefix, sizeof(prefix) - 1) == 0) {
+			const char *q = strstr(src, "q=");
+
+			if (q != NULL) {
+				src = q + 2;
+				continue;
+			}
+		}
+		dst[out++] = *src++;
+	}
+	dst[out] = '\0';
+}
+
+/* The "<name>: " prefix the mesh puts on a channel message: clean the name
+ * of pictographs and shorten any map link in what follows. */
+static inline void ui_chat_clean_text(char *dst, size_t n, const char *src)
+{
+	const char *sep = strstr(src, ": ");
+
+	if (sep == NULL) {
+		ui_feed_shorten_map_url(dst, n, src);
+		return;
+	}
+	{
+		char name[UI_FEED_NAME_LEN + 1];
+		char clean_name[UI_FEED_NAME_LEN + 1];
+		char tail[UI_FEED_TEXT_LEN + 1];
+		size_t name_len = (size_t)(sep - src);
+
+		if (name_len >= sizeof(name)) {
+			name_len = sizeof(name) - 1;
+		}
+		memcpy(name, src, name_len);
+		name[name_len] = '\0';
+		ui_feed_strip_pictographs(clean_name, sizeof(clean_name), name);
+		ui_feed_shorten_map_url(tail, sizeof(tail), sep);
+		snprintf(dst, n, "%s%s", clean_name, tail);
+	}
 }
 
 /* The conversation carrying `name`, created if this is its first.  No
@@ -406,7 +504,7 @@ static inline struct ui_chat *ui_chat_ensure(struct ui_chat_list *l,
 	}
 	c = &l->chats[l->count++];
 	memset(c, 0, sizeof(*c));
-	strncpy(c->name, name, sizeof(c->name) - 1);
+	ui_feed_strip_pictographs(c->name, sizeof(c->name), name);
 	c->is_group = is_group;
 	return c;
 }
@@ -430,8 +528,13 @@ static inline struct ui_chat *ui_chat_push(struct ui_chat_list *l,
 		 * thread, and a half-written message must never become
 		 * reachable. */
 		c->msgs[slot].ts = ts;
-		ui_feed_emoji_text(c->msgs[slot].text,
-				   sizeof(c->msgs[slot].text), text);
+		{
+			char cleaned[UI_FEED_TEXT_LEN + 1];
+
+			ui_chat_clean_text(cleaned, sizeof(cleaned), text);
+			ui_feed_emoji_text(c->msgs[slot].text,
+					   sizeof(c->msgs[slot].text), cleaned);
+		}
 		c->head = slot;
 		if (c->count < UI_CHAT_MSGS) {
 			c->count++;
@@ -445,20 +548,15 @@ static inline struct ui_chat *ui_chat_push(struct ui_chat_list *l,
 
 /* ---- lines ---- */
 
-/* One chat line in full, before any wrapping: just the time and the text.
- * The conversation itself is the header of the page, and a channel message
- * already carries its sender as the "<name>: " prefix the mesh put in the
- * text (sendGroupMessage), so neither is repeated here. */
+/* A message reads as three kinds of row: the time, the text below it, and a
+ * blank line before the next message.  This is the first of them. */
 static inline void ui_chat_format_line(char *buf, size_t n,
 				       const struct ui_chat *c,
 				       const struct ui_chat_msg *m,
 				       uint32_t now, int16_t tz_minutes)
 {
-	char time[16];
-
 	(void)c;
-	ui_feed_format_time(time, sizeof(time), m->ts, now, tz_minutes);
-	snprintf(buf, n, "%s %s", time, m->text);
+	ui_feed_format_time(buf, n, m->ts, now, tz_minutes);
 }
 
 /* ---- paging ---- */
@@ -469,32 +567,65 @@ struct ui_chat_iter {
 	uint32_t now;
 	int16_t tz_minutes;
 	int cols;
-	char line[UI_FEED_TEXT_LEN + UI_FEED_NAME_LEN + 48];
+	char line[UI_FEED_TEXT_LEN + 32];	/* the message text */
 	const char *line_p;
+	int phase;			/* 0 = time, 1 = text, 2 = blank */
 	bool loaded;
 };
 
-static inline void ui_chat_iter_load(struct ui_chat_iter *it)
+/* Rows of one message, in order: the time, the text, then the blank line
+ * that separates it from the next. */
+static inline void ui_chat_iter_begin(struct ui_chat_iter *it)
 {
-	const struct ui_chat_msg *m;
+	const struct ui_chat_msg *m = ui_chat_get(it->c, it->cur.entry);
 
-	it->line_p = it->line;
 	it->line[0] = '\0';
-	it->loaded = true;
-	if (it->cur.entry >= it->c->count) {
-		return;
-	}
-	m = ui_chat_get(it->c, it->cur.entry);
+	it->line_p = it->line;
+	it->phase = 0;
 	if (m == NULL) {
 		it->cur.entry = it->c->count;
 		return;
 	}
-	ui_chat_format_line(it->line, sizeof(it->line), it->c, m, it->now,
-			    it->tz_minutes);
-	for (uint16_t i = 0; i < it->cur.row && *it->line_p != '\0'; i++) {
-		char skip[8];
+	strncpy(it->line, m->text, sizeof(it->line) - 1);
+	it->line[sizeof(it->line) - 1] = '\0';
+}
 
-		ui_feed_wrap_row(skip, sizeof(skip), &it->line_p, it->cols);
+/* Step over one row without emitting it.  False when the chat is used up. */
+static inline bool ui_chat_iter_skip_one(struct ui_chat_iter *it)
+{
+	if (it->cur.entry >= it->c->count) {
+		return false;
+	}
+	if (it->phase == 0) {
+		it->phase = 1;
+	} else if (it->phase == 1) {
+		if (*it->line_p == '\0') {
+			it->phase = 2;
+		} else {
+			char skip[8];
+
+			ui_feed_wrap_row(skip, sizeof(skip), &it->line_p,
+					 it->cols);
+		}
+	} else {
+		/* The blank ends the message. */
+		return false;
+	}
+	it->cur.row++;
+	return true;
+}
+
+static inline void ui_chat_iter_load(struct ui_chat_iter *it)
+{
+	it->loaded = true;
+	if (it->cur.entry >= it->c->count) {
+		return;
+	}
+	ui_chat_iter_begin(it);
+	for (uint16_t i = 0; i < it->cur.row; i++) {
+		if (!ui_chat_iter_skip_one(it)) {
+			break;
+		}
 	}
 }
 
@@ -511,7 +642,8 @@ static inline void ui_chat_iter_init(struct ui_chat_iter *it,
 	it->loaded = false;
 }
 
-/* Pull the next wrapped row.  False at the end of the chat. */
+/* Pull the next row: a time, a line of text, or the blank between
+ * messages.  False at the end of the chat. */
 static inline bool ui_chat_iter_next(struct ui_chat_iter *it, char *out,
 				     size_t out_n)
 {
@@ -519,29 +651,53 @@ static inline bool ui_chat_iter_next(struct ui_chat_iter *it, char *out,
 		ui_chat_iter_load(it);
 	}
 	while (it->cur.entry < it->c->count) {
-		if (*it->line_p == '\0') {
-			it->cur.entry++;
-			it->cur.row = 0;
-			ui_chat_iter_load(it);
-			continue;
-		}
-		{
-			char row[UI_FEED_TEXT_LEN + 32];
+		if (it->phase == 0) {
+			const struct ui_chat_msg *m =
+				ui_chat_get(it->c, it->cur.entry);
+			char time[16];
 
-			ui_feed_wrap_row(row, sizeof(row), &it->line_p,
-					 it->cols);
-			if (out_n > 0) {
-				strncpy(out, row, out_n - 1);
-				out[out_n - 1] = '\0';
-			}
-			it->cur.row++;
-			if (*it->line_p == '\0') {
+			if (m == NULL) {
 				it->cur.entry++;
 				it->cur.row = 0;
-				ui_chat_iter_load(it);
+				ui_chat_iter_begin(it);
+				continue;
 			}
+			ui_feed_format_time(time, sizeof(time), m->ts, it->now,
+					    it->tz_minutes);
+			if (out_n > 0) {
+				strncpy(out, time, out_n - 1);
+				out[out_n - 1] = '\0';
+			}
+			it->phase = 1;
+			it->cur.row++;
 			return true;
 		}
+		if (it->phase == 1) {
+			if (*it->line_p == '\0') {
+				it->phase = 2;
+				continue;
+			}
+			{
+				char row[UI_FEED_TEXT_LEN + 32];
+
+				ui_feed_wrap_row(row, sizeof(row), &it->line_p,
+						 it->cols);
+				if (out_n > 0) {
+					strncpy(out, row, out_n - 1);
+					out[out_n - 1] = '\0';
+				}
+				it->cur.row++;
+				return true;
+			}
+		}
+		/* The blank line: the last row of the message. */
+		if (out_n > 0) {
+			out[0] = '\0';
+		}
+		it->cur.entry++;
+		it->cur.row = 0;
+		ui_chat_iter_begin(it);
+		return true;
 	}
 	return false;
 }

@@ -160,38 +160,50 @@ TEST(feed_time_epoch_edge, "UNIT-FEED-005",
 }
 
 TEST(feed_line_shapes, "UNIT-FEED-006",
-     "A line is just the time and the text: the conversation is the header")
+     "A message reads as time, then text, then a blank line")
 {
 	char buf[192];
 	struct ui_chat_list l = fresh_list();
 	struct ui_chat *dm;
-	struct ui_chat *grp;
 	struct ui_chat_msg m;
 
 	(void)ui_chat_push(&l, "Mama", false, NOW, "ты где?");
-	(void)ui_chat_push(&l, "Public", true, YESTERDAY, "Nick: привет, как дела?");
-	(void)ui_chat_push(&l, "#zephcore", true, NOW, "Nick: тру ляля");
 	dm = ui_chat_find(&l, "Mama");
-	grp = ui_chat_find(&l, "#zephcore");
 	memset(&m, 0, sizeof(m));
 
-	/* A direct chat: no marker, no contact name - it is the header. */
+	/* The row is just the time; the text is its own rows below it. */
 	m.ts = NOW;
 	strcpy(m.text, "ты где?");
 	ui_chat_format_line(buf, sizeof(buf), dm, &m, NOW, 0);
-	CHECK(std::string(buf) == "12:34 ты где?");
+	CHECK(std::string(buf) == "12:34");
 
-	/* A channel message keeps the sender the mesh prefixed; the channel
-	 * itself is the header and is not repeated. */
 	m.ts = YESTERDAY;
-	strcpy(m.text, "Nick: привет, как дела?");
-	ui_chat_format_line(buf, sizeof(buf), grp, &m, NOW, 0);
-	CHECK(std::string(buf) == "18.11 12:34 Nick: привет, как дела?");
+	ui_chat_format_line(buf, sizeof(buf), dm, &m, NOW, 0);
+	CHECK(std::string(buf) == "18.11 12:34");
+}
 
-	m.ts = NOW;
-	strcpy(m.text, "Nick: тру ляля");
-	ui_chat_format_line(buf, sizeof(buf), grp, &m, NOW, 0);
-	CHECK(std::string(buf) == "12:34 Nick: тру ляля");
+TEST(feed_text_cleanup, "UNIT-FEED-012",
+     "A nickname keeps no smiley and a map link keeps only its coordinates")
+{
+	char buf[192];
+
+	/* The "<name>: " prefix the mesh puts on a channel message loses its
+	 * pictographs; the map link loses its host. */
+	ui_chat_clean_text(buf, sizeof(buf),
+			   "\xF0\x9F\x99\x82Mama: привет");
+	CHECK(std::string(buf) == "Mama: привет");
+
+	ui_chat_clean_text(buf, sizeof(buf),
+			   "Nick: тут https://maps.google.com/?q=55.75580,37.61730");
+	CHECK(std::string(buf) == "Nick: тут 55.75580,37.61730");
+
+	ui_chat_clean_text(buf, sizeof(buf),
+			   "Nick: тут https://maps.google.com/maps?q=1.5,2.5 конец");
+	CHECK(std::string(buf) == "Nick: тут 1.5,2.5 конец");
+
+	/* A plain message is left alone. */
+	ui_chat_clean_text(buf, sizeof(buf), "просто текст");
+	CHECK(std::string(buf) == "просто текст");
 }
 
 TEST(feed_emoji_substitution, "UNIT-FEED-007",
@@ -296,7 +308,7 @@ TEST(feed_continuous_paging, "UNIT-FEED-011",
 	(void)ui_chat_push(&l, "Public", true, NOW, "one");
 	(void)ui_chat_push(&l, "Public", true, NOW + 1, "two");
 	(void)ui_chat_push(&l, "Public", true, NOW + 2, "three");
-	(void)ui_chat_push(&l, "Public", true, NOW + 3, "aaa bbb ccc");
+	(void)ui_chat_push(&l, "Public", true, NOW + 3, "aaa bbb ccc ddd");
 	c = ui_chat_find(&l, "Public");
 	CHECK(c != NULL);
 
@@ -304,22 +316,18 @@ TEST(feed_continuous_paging, "UNIT-FEED-011",
 	while (ui_chat_iter_next(&it, row, sizeof(row))) {
 		n++;
 	}
-	/* "00:00 aaa bbb ccc" wraps to two rows at 11 columns; the other
-	 * three lines take one each. */
-	CHECK(n == 5);
+	/* Every message is time, text and blank.  "aaa bbb ccc ddd" wraps to
+	 * two rows at 11 columns, so the newest message is four rows and the
+	 * other three are three each: 13 in all. */
+	CHECK(n == 13);
 
+	/* A page of two rows starting at the top ends inside the newest. */
 	start = (struct ui_feed_cursor){ 0, 0 };
 	ui_chat_iter_init(&it, c, start, NOW, 0, 11);
 	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
+	CHECK(std::string(row) == "12:34");	/* NOW+3 at UTC */
 	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
-	CHECK(it.cur.entry == 1);
-	CHECK(it.cur.row == 0);
-
-	{
-		struct ui_feed_cursor cur = { 1, 0 };
-		struct ui_feed_cursor prev =
-			ui_chat_page_before(c, cur, NOW, 0, 11, 2);
-
-		CHECK(prev.entry == 0 && prev.row == 0);
-	}
+	CHECK(std::string(row) == "aaa bbb");
+	CHECK(it.cur.entry == 0);
+	CHECK(it.cur.row == 2);
 }
