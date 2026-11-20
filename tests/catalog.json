@@ -844,7 +844,7 @@
     },
     {
       "id": "UNIT-FEED-007",
-      "name": "Emoji become text, unknown pictographs go, other multi-byte text stays",
+      "name": "Emoji become text, unknown pictographs leave a mark, other text stays",
       "source": "tests/unit/feed_tests.cpp"
     },
     {

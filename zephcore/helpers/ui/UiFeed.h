@@ -101,21 +101,118 @@ struct ui_feed_emoji {
 /* Our own automatic messages lead with these; anything else worth keeping
  * can join the table as it is missed. */
 static const struct ui_feed_emoji ui_feed_emoji_table[] = {
-	{ "\xF0\x9F\x99\x82", ":)" },    /* 🙂 */
-	{ "\xF0\x9F\x98\x84", ":D" },    /* 😄 */
-	{ "\xF0\x9F\x98\xA2", ":(" },    /* 😢 */
-	{ "\xE2\x9D\xA4", "<3" },        /* ❤ */
-	{ "\xF0\x9F\x91\x8D", "+1" },    /* 👍 */
-	{ "\xF0\x9F\x91\x8E", "-1" },    /* 👎 */
-	{ "\xF0\x9F\x86\x98", "SOS!" },  /* 🆘 */
-	{ "\xF0\x9F\x93\x8D", "[map]" }, /* 📍 */
-	{ "\xF0\x9F\x9B\xB0", "[sat]" }, /* 🛰 */
-	{ "\xF0\x9F\x94\x8B", "[bat]" }, /* 🔋 */
-	{ "\xF0\x9F\x8C\xA1", "[t]" },   /* 🌡 */
-	{ "\xF0\x9F\x9A\x80", "[go]" },  /* 🚀 */
-	{ "\xF0\x9F\x9B\x91", "[stop]" }, /* 🛑 */
-	{ "\xF0\x95\x95\x93", "[time]" }, /* 🕓 */
-	{ "\xF0\x9F\x8F\x83", "[run]" }, /* 🏃 */
+	{ "\xF0\x9F\x99\x82", ":)" },	/* 🙂 */
+	{ "\xF0\x9F\x99\x83", ":)" },	/* 🙃 */
+	{ "\xF0\x9F\x98\x8A", ":)" },	/* 😊 */
+	{ "\xE2\x98\xBA", ":)" },	/* ☺ */
+	{ "\xF0\x9F\x98\x84", ":D" },	/* 😄 */
+	{ "\xF0\x9F\x98\x80", ":D" },	/* 😀 */
+	{ "\xF0\x9F\x98\x81", ":D" },	/* 😁 */
+	{ "\xF0\x9F\x98\x83", ":D" },	/* 😃 */
+	{ "\xF0\x9F\x98\x82", "xD" },	/* 😂 */
+	{ "\xF0\x9F\xA4\xA3", "xD" },	/* 🤣 */
+	{ "\xF0\x9F\x98\x85", ":S" },	/* 😅 */
+	{ "\xF0\x9F\x98\xAC", ":S" },	/* 😬 */
+	{ "\xF0\x9F\x98\x93", ":S" },	/* 😓 */
+	{ "\xF0\x9F\x98\x89", ";)" },	/* 😉 */
+	{ "\xF0\x9F\x98\x9B", ":P" },	/* 😛 */
+	{ "\xF0\x9F\x98\x9C", ":P" },	/* 😜 */
+	{ "\xF0\x9F\x98\x8B", ":P" },	/* 😋 */
+	{ "\xF0\x9F\x98\x8F", ":P" },	/* 😏 */
+	{ "\xF0\x9F\x98\x98", ":*" },	/* 😘 */
+	{ "\xF0\x9F\x98\x97", ":*" },	/* 😗 */
+	{ "\xF0\x9F\x98\x9A", ":*" },	/* 😚 */
+	{ "\xF0\x9F\x98\x8D", "<3" },	/* 😍 */
+	{ "\xF0\x9F\xA5\xB0", "<3" },	/* 🥰 */
+	{ "\xE2\x9D\xA4", "<3" },	/* ❤ */
+	{ "\xF0\x9F\xA9\xB7", "<3" },	/* 🩷 */
+	{ "\xF0\x9F\x92\x95", "<3" },	/* 💕 */
+	{ "\xF0\x9F\x92\x96", "<3" },	/* 💖 */
+	{ "\xF0\x9F\x92\x97", "<3" },	/* 💗 */
+	{ "\xF0\x9F\x92\x93", "<3" },	/* 💓 */
+	{ "\xF0\x9F\x92\x9E", "<3" },	/* 💞 */
+	{ "\xF0\x9F\x98\xA2", ":(" },	/* 😢 */
+	{ "\xF0\x9F\x98\x9E", ":(" },	/* 😞 */
+	{ "\xF0\x9F\x98\x94", ":(" },	/* 😔 */
+	{ "\xF0\x9F\x99\x81", ":(" },	/* 🙁 */
+	{ "\xE2\x98\xB9", ":(" },	/* ☹ */
+	{ "\xF0\x9F\x98\xAD", ":'(" },	/* 😭 */
+	{ "\xF0\x9F\x98\xA4", ">:(" },	/* 😤 */
+	{ "\xF0\x9F\x98\xA0", ">:(" },	/* 😠 */
+	{ "\xF0\x9F\x98\xA1", ">:(" },	/* 😡 */
+	{ "\xF0\x9F\xA4\xAC", ">:(" },	/* 🤬 */
+	{ "\xF0\x9F\x98\xB1", "D:" },	/* 😱 */
+	{ "\xF0\x9F\x98\xA8", "D:" },	/* 😨 */
+	{ "\xF0\x9F\x98\xB0", "D:" },	/* 😰 */
+	{ "\xF0\x9F\x98\x8E", "B)" },	/* 😎 */
+	{ "\xF0\x9F\x98\x90", ":|" },	/* 😐 */
+	{ "\xF0\x9F\x98\x91", ":|" },	/* 😑 */
+	{ "\xF0\x9F\x98\xB6", ":|" },	/* 😶 */
+	{ "\xF0\x9F\x98\xB4", "zZz" },	/* 😴 */
+	{ "\xF0\x9F\xA4\xA4", "zZz" },	/* 🤤 */
+	{ "\xF0\x9F\x98\xAA", "zZz" },	/* 😪 */
+	{ "\xF0\x9F\x98\xAE", ":O" },	/* 😮 */
+	{ "\xF0\x9F\x98\xAF", ":O" },	/* 😯 */
+	{ "\xF0\x9F\x98\xA7", ":O" },	/* 😧 */
+	{ "\xF0\x9F\x92\x94", "</3" },	/* 💔 */
+	{ "\xF0\x9F\x91\x8D", "+1" },	/* 👍 */
+	{ "\xF0\x9F\x91\x8E", "-1" },	/* 👎 */
+	{ "\xF0\x9F\x92\xAF", "100" },	/* 💯 */
+	{ "\xE2\x9C\x85", "v" },	/* ✅ */
+	{ "\xE2\x9D\x8C", "x" },	/* ❌ */
+	{ "\xE2\x9A\xA0", "!" },	/* ⚠ */
+	{ "\xE2\x9D\x97", "!!" },	/* ❗ */
+	{ "\xE2\x9D\x93", "?" },	/* ❓ */
+	{ "\xE2\xAD\x90", "*" },	/* ⭐ */
+	{ "\xE2\x9C\xA8", "*" },	/* ✨ */
+	{ "\xF0\x9F\x8C\x9F", "*" },	/* 🌟 */
+	{ "\xF0\x9F\x92\xAB", "*" },	/* 💫 */
+	{ "\xF0\x9F\x86\x98", "SOS!" },	/* 🆘 */
+	{ "\xF0\x9F\xA5\xBA", "*pls*" },	/* 🥺 */
+	{ "\xF0\x9F\xA4\xA2", "*sick*" },	/* 🤢 */
+	{ "\xF0\x9F\xA4\xAE", "*sick*" },	/* 🤮 */
+	{ "\xF0\x9F\x98\xB7", "*ill*" },	/* 😷 */
+	{ "\xF0\x9F\xA4\x92", "*ill*" },	/* 🤒 */
+	{ "\xF0\x9F\xA4\x95", "*ill*" },	/* 🤕 */
+	{ "\xF0\x9F\xA5\xB3", "*party*" },	/* 🥳 */
+	{ "\xF0\x9F\x8E\x89", "*party*" },	/* 🎉 */
+	{ "\xF0\x9F\x8E\x8A", "*party*" },	/* 🎊 */
+	{ "\xF0\x9F\xA4\xAF", "*boom*" },	/* 🤯 */
+	{ "\xF0\x9F\xA4\x94", "*think*" },	/* 🤔 */
+	{ "\xF0\x9F\xA7\x90", "*think*" },	/* 🧐 */
+	{ "\xF0\x9F\x99\x8F", "*pray*" },	/* 🙏 */
+	{ "\xF0\x9F\x92\xAA", "*strong*" },	/* 💪 */
+	{ "\xF0\x9F\x91\x8B", "*wave*" },	/* 👋 */
+	{ "\xF0\x9F\x91\x8C", "*ok*" },	/* 👌 */
+	{ "\xE2\x9C\x8A", "*fist*" },	/* ✊ */
+	{ "\xF0\x9F\xA4\x9B", "*fist*" },	/* 🤛 */
+	{ "\xF0\x9F\xA4\x9C", "*fist*" },	/* 🤜 */
+	{ "\xF0\x9F\xA4\x9D", "*deal*" },	/* 🤝 */
+	{ "\xF0\x9F\x8E\xAF", "*aim*" },	/* 🎯 */
+	{ "\xF0\x9F\x8F\x86", "*win*" },	/* 🏆 */
+	{ "\xF0\x9F\xA5\x87", "*win*" },	/* 🥇 */
+	{ "\xF0\x9F\x8E\x81", "*gift*" },	/* 🎁 */
+	{ "\xF0\x9F\x94\xA5", "*fire*" },	/* 🔥 */
+	{ "\xF0\x9F\x92\xA1", "*idea*" },	/* 💡 */
+	{ "\xF0\x9F\x94\x94", "*bell*" },	/* 🔔 */
+	{ "\xF0\x9F\x94\x8B", "*bat*" },	/* 🔋 */
+	{ "\xF0\x9F\x93\x8D", "*map*" },	/* 📍 */
+	{ "\xF0\x9F\x9B\xB0", "*sat*" },	/* 🛰 */
+	{ "\xF0\x9F\x8C\xA1", "*t*" },	/* 🌡 */
+	{ "\xF0\x9F\x9A\x80", "*go*" },	/* 🚀 */
+	{ "\xF0\x9F\x9B\x91", "*stop*" },	/* 🛑 */
+	{ "\xF0\x9F\x8F\x83", "*run*" },	/* 🏃 */
+	{ "\xF0\x9F\x95\x93", "*time*" },	/* 🕓 */
+	{ "\xE2\x8F\xB0", "*time*" },	/* ⏰ */
+	{ "\xE2\x8F\xB1", "*time*" },	/* ⏱ */
+	{ "\xE2\x8C\x9A", "*time*" },	/* ⌚ */
+	{ "\xF0\x9F\x94\x91", "*key*" },	/* 🔑 */
+	{ "\xF0\x9F\x94\x92", "*lock*" },	/* 🔒 */
+	{ "\xF0\x9F\x94\x93", "*open*" },	/* 🔓 */
+	{ "\xF0\x9F\xA9\xB9", "*med*" },	/* 🩹 */
+	{ "\xF0\x9F\x92\x8A", "*med*" },	/* 💊 */
+	{ "\xF0\x9F\x93\xB1", "*phone*" },	/* 📱 */
+	{ "\xF0\x9F\x92\xBB", "*pc*" },	/* 💻 */
 	{ NULL, NULL },
 };
 
@@ -202,9 +299,13 @@ static inline void ui_feed_emoji_text(char *dst, size_t n, const char *src)
 				src += 3;
 				continue;
 			}
-			/* U+1F000..U+3FFFF is the pictograph plane(s): drop an
-			 * emoji we have no text for. */
+			/* U+1F000.. is the pictograph plane: an emoji with no
+			 * text of its own leaves a mark rather than vanish. */
 			if (m == 4) {
+				if (out + 4 <= n) {
+					memcpy(dst + out, "\xE2\x80\xA6", 3);
+					out += 3;
+				}
 				src += m;
 				continue;
 			}
@@ -702,7 +803,7 @@ static inline void ui_chat_iter_begin(struct ui_chat_iter *it)
 				int ncols = 0;
 				size_t out = 0;
 
-				snprintf(full, sizeof(full), "%s %s:", time,
+				snprintf(full, sizeof(full), "%s %s", time,
 					 name);
 				hp = full;
 				it->head[0] = '\0';

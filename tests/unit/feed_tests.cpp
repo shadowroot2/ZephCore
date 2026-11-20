@@ -202,7 +202,7 @@ TEST(feed_text_cleanup, "UNIT-FEED-012",
 }
 
 TEST(feed_emoji_substitution, "UNIT-FEED-007",
-     "Emoji become text, unknown pictographs go, other multi-byte text stays")
+     "Emoji become text, unknown pictographs leave a mark, other text stays")
 {
 	char buf[96];
 
@@ -217,7 +217,7 @@ TEST(feed_emoji_substitution, "UNIT-FEED-007",
 	CHECK(std::string(buf) ==
 	      "\xD0\xBF\xD1\x80\xD0\xB8\xD0\xB2\xD0\xB5\xD1\x82");
 	ui_feed_emoji_text(buf, sizeof(buf), "a\xF0\x9F\xA6\x84z");
-	CHECK(std::string(buf) == "az");
+	CHECK(std::string(buf) == "a\xE2\x80\xA6z");	/* a…z */
 	ui_feed_emoji_text(buf, 4, "abcdef");
 	CHECK(std::string(buf) == "abc");
 	ui_feed_emoji_text(buf, 1, "abc");
@@ -323,7 +323,7 @@ TEST(feed_continuous_paging, "UNIT-FEED-011",
 	start = (struct ui_feed_cursor){ 0, 0 };
 	ui_chat_iter_init(&it, c, start, NOW, 0, 11);
 	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
-	CHECK(std::string(row) == "12:34 Nick:");
+	CHECK(std::string(row) == "12:34 Nick");
 	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
 	CHECK(std::string(row) == "aaa bbb");
 	CHECK(it.cur.entry == 0);
