@@ -305,10 +305,12 @@ TEST(feed_continuous_paging, "UNIT-FEED-011",
 	struct ui_feed_cursor start = { 0, 0 };
 	int n = 0;
 
-	(void)ui_chat_push(&l, "Public", true, NOW, "one");
-	(void)ui_chat_push(&l, "Public", true, NOW + 1, "two");
-	(void)ui_chat_push(&l, "Public", true, NOW + 2, "three");
-	(void)ui_chat_push(&l, "Public", true, NOW + 3, "aaa bbb ccc ddd");
+	/* Channel messages carry their sender as the "<name>: " prefix. */
+	(void)ui_chat_push(&l, "Public", true, NOW, "Nick: one");
+	(void)ui_chat_push(&l, "Public", true, NOW + 1, "Nick: two");
+	(void)ui_chat_push(&l, "Public", true, NOW + 2, "Nick: three");
+	(void)ui_chat_push(&l, "Public", true, NOW + 3,
+			   "Nick: aaa bbb ccc ddd");
 	c = ui_chat_find(&l, "Public");
 	CHECK(c != NULL);
 
@@ -316,18 +318,40 @@ TEST(feed_continuous_paging, "UNIT-FEED-011",
 	while (ui_chat_iter_next(&it, row, sizeof(row))) {
 		n++;
 	}
-	/* Every message is time, text and blank.  "aaa bbb ccc ddd" wraps to
-	 * two rows at 11 columns, so the newest message is four rows and the
-	 * other three are three each: 13 in all. */
+	/* A channel message is its head line, the body and a blank.  The
+	 * newest body wraps to two rows at 11 columns, so it is four rows and
+	 * the other three are three each: 13 in all. */
 	CHECK(n == 13);
 
-	/* A page of two rows starting at the top ends inside the newest. */
+	/* A page of two rows starting at the top: the head, then the first
+	 * line of the body. */
 	start = (struct ui_feed_cursor){ 0, 0 };
 	ui_chat_iter_init(&it, c, start, NOW, 0, 11);
 	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
-	CHECK(std::string(row) == "12:34");	/* NOW+3 at UTC */
+	CHECK(std::string(row) == "12:34 Nick:");
 	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
 	CHECK(std::string(row) == "aaa bbb");
 	CHECK(it.cur.entry == 0);
 	CHECK(it.cur.row == 2);
+}
+
+TEST(feed_private_one_line, "UNIT-FEED-013",
+     "A direct chat carries its time on the text's own line")
+{
+	struct ui_chat_list l = fresh_list();
+	struct ui_chat *c;
+	char row[64];
+	struct ui_chat_iter it;
+	struct ui_feed_cursor start = { 0, 0 };
+
+	(void)ui_chat_push(&l, "Mama", false, NOW, "ты где?");
+	c = ui_chat_find(&l, "Mama");
+	CHECK(c != NULL);
+
+	ui_chat_iter_init(&it, c, start, NOW, 0, 21);
+	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
+	CHECK(std::string(row) == "12:34 ты где?");
+	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
+	CHECK(std::string(row) == "");	/* the blank after it */
+	CHECK(!ui_chat_iter_next(&it, row, sizeof(row)));
 }

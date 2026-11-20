@@ -567,18 +567,25 @@ struct ui_chat_iter {
 	uint32_t now;
 	int16_t tz_minutes;
 	int cols;
-	char line[UI_FEED_TEXT_LEN + 32];	/* the message text */
+	char head[UI_FEED_NAME_LEN + 32];	/* "18.11 13:02 Nick:" */
+	char line[UI_FEED_TEXT_LEN + 32];	/* what the rows carry */
 	const char *line_p;
-	int phase;			/* 0 = time, 1 = text, 2 = blank */
+	int phase;			/* 0 = head, 1 = text, 2 = blank */
 	bool loaded;
 };
 
-/* Rows of one message, in order: the time, the text, then the blank line
- * that separates it from the next. */
+/* A direct chat reads as "12:35 ты где?" - the time and the text on one
+ * line, wrapped together.  A channel puts the sender on the time's line
+ * and starts its text below:
+ *     18.11 13:02 Nick:
+ *     увидимся
+ */
 static inline void ui_chat_iter_begin(struct ui_chat_iter *it)
 {
 	const struct ui_chat_msg *m = ui_chat_get(it->c, it->cur.entry);
+	char time[16];
 
+	it->head[0] = '\0';
 	it->line[0] = '\0';
 	it->line_p = it->line;
 	it->phase = 0;
@@ -586,11 +593,41 @@ static inline void ui_chat_iter_begin(struct ui_chat_iter *it)
 		it->cur.entry = it->c->count;
 		return;
 	}
-	strncpy(it->line, m->text, sizeof(it->line) - 1);
-	it->line[sizeof(it->line) - 1] = '\0';
+	ui_feed_format_time(time, sizeof(time), m->ts, it->now, it->tz_minutes);
+
+	if (!it->c->is_group) {
+		snprintf(it->line, sizeof(it->line), "%s %s", time, m->text);
+		it->phase = 1;	/* no head: the text carries the time */
+		return;
+	}
+	{
+		/* The mesh prefixes a channel message with "<name>: ". */
+		const char *sep = strstr(m->text, ": ");
+
+		if (sep == NULL) {
+			snprintf(it->line, sizeof(it->line), "%s %s", time,
+				 m->text);
+			it->phase = 1;
+			return;
+		}
+		{
+			size_t name_len = (size_t)(sep - m->text);
+			char name[UI_FEED_NAME_LEN + 1];
+
+			if (name_len >= sizeof(name)) {
+				name_len = sizeof(name) - 1;
+			}
+			memcpy(name, m->text, name_len);
+			name[name_len] = '\0';
+			snprintf(it->head, sizeof(it->head), "%s %s:", time,
+				 name);
+			strncpy(it->line, sep + 2, sizeof(it->line) - 1);
+			it->line[sizeof(it->line) - 1] = '\0';
+		}
+	}
 }
 
-/* Step over one row without emitting it.  False when the chat is used up. */
+/* Step over one row without emitting it.  False at the message's end. */
 static inline bool ui_chat_iter_skip_one(struct ui_chat_iter *it)
 {
 	if (it->cur.entry >= it->c->count) {
@@ -608,7 +645,6 @@ static inline bool ui_chat_iter_skip_one(struct ui_chat_iter *it)
 					 it->cols);
 		}
 	} else {
-		/* The blank ends the message. */
 		return false;
 	}
 	it->cur.row++;
@@ -642,7 +678,7 @@ static inline void ui_chat_iter_init(struct ui_chat_iter *it,
 	it->loaded = false;
 }
 
-/* Pull the next row: a time, a line of text, or the blank between
+/* Pull the next row: the head line, a line of text, or the blank between
  * messages.  False at the end of the chat. */
 static inline bool ui_chat_iter_next(struct ui_chat_iter *it, char *out,
 				     size_t out_n)
@@ -652,20 +688,8 @@ static inline bool ui_chat_iter_next(struct ui_chat_iter *it, char *out,
 	}
 	while (it->cur.entry < it->c->count) {
 		if (it->phase == 0) {
-			const struct ui_chat_msg *m =
-				ui_chat_get(it->c, it->cur.entry);
-			char time[16];
-
-			if (m == NULL) {
-				it->cur.entry++;
-				it->cur.row = 0;
-				ui_chat_iter_begin(it);
-				continue;
-			}
-			ui_feed_format_time(time, sizeof(time), m->ts, it->now,
-					    it->tz_minutes);
 			if (out_n > 0) {
-				strncpy(out, time, out_n - 1);
+				strncpy(out, it->head, out_n - 1);
 				out[out_n - 1] = '\0';
 			}
 			it->phase = 1;

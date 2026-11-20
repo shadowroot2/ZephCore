@@ -871,6 +871,11 @@
       "id": "UNIT-FEED-012",
       "name": "A nickname keeps no smiley and a map link keeps only its coordinates",
       "source": "tests/unit/feed_tests.cpp"
+    },
+    {
+      "id": "UNIT-FEED-013",
+      "name": "A direct chat carries its time on the text's own line",
+      "source": "tests/unit/feed_tests.cpp"
     }
   ]
 }
