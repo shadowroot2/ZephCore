@@ -901,6 +901,16 @@
       "id": "UNIT-FEED-018",
       "name": "Paging past the last blank wraps to the newest, never past the chat",
       "source": "tests/unit/feed_tests.cpp"
+    },
+    {
+      "id": "UNIT-FEED-019",
+      "name": "A message finds the conversation its nickname already opened",
+      "source": "tests/unit/feed_tests.cpp"
+    },
+    {
+      "id": "UNIT-FEED-020",
+      "name": "A nickname loses the smiley and the gap it left behind",
+      "source": "tests/unit/feed_tests.cpp"
     }
   ]
 }

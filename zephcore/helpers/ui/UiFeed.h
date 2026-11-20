@@ -442,6 +442,23 @@ static inline void ui_feed_strip_pictographs(char *dst, size_t n, const char *sr
 		src += m;
 	}
 	dst[out] = '\0';
+	/* A nickname like "\xF0\x9F\x99\x82 ShadoW" must become "ShadoW", not
+	 * " ShadoW": the emoji goes entirely, the gap it left with it. */
+	{
+		size_t start = 0;
+		size_t end = out;
+
+		while (dst[start] == ' ') {
+			start++;
+		}
+		while (end > start && dst[end - 1] == ' ') {
+			end--;
+		}
+		if (start > 0) {
+			memmove(dst, dst + start, end - start);
+		}
+		dst[end - start] = '\0';
+	}
 }
 
 /* A message that carries map links is only coordinates to a reader on a
@@ -543,8 +560,15 @@ static inline void ui_chat_clean_text(char *dst, size_t n, const char *src)
 static inline struct ui_chat *ui_chat_ensure(struct ui_chat_list *l,
 					     const char *name, bool is_group)
 {
-	struct ui_chat *c = ui_chat_find(l, name);
+	char clean[UI_FEED_NAME_LEN];
+	struct ui_chat *c;
 
+	/* Look up by the name as it will be stored: the list keeps names
+	 * without their pictographs, and a raw search carrying one never
+	 * matched - a second, empty chat opened next to the real one and
+	 * the messages landed there. */
+	ui_feed_strip_pictographs(clean, sizeof(clean), name);
+	c = ui_chat_find(l, clean);
 	if (c != NULL) {
 		return c;
 	}
@@ -553,7 +577,7 @@ static inline struct ui_chat *ui_chat_ensure(struct ui_chat_list *l,
 	}
 	c = &l->chats[l->count++];
 	memset(c, 0, sizeof(*c));
-	ui_feed_strip_pictographs(c->name, sizeof(c->name), name);
+	strncpy(c->name, clean, sizeof(c->name) - 1);
 	c->is_group = is_group;
 	return c;
 }

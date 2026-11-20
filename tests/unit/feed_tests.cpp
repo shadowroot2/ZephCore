@@ -472,3 +472,45 @@ TEST(feed_page_wraps_not_past_end, "UNIT-FEED-018",
 	CHECK(cur.entry == 0 && cur.row == 0);
 	CHECK(pages < 8);
 }
+
+TEST(feed_name_matching, "UNIT-FEED-019",
+     "A message finds the conversation its nickname already opened")
+{
+	struct ui_chat_list l = fresh_list();
+	struct ui_chat *seeded;
+	struct ui_chat *landed;
+
+	/* The list is seeded from the contact book under the cleaned name. */
+	seeded = ui_chat_ensure(&l, "\xF0\x9F\x99\x82 ShadoW T1000-E", false);
+	CHECK(seeded != NULL);
+	CHECK(std::string(seeded->name) == "ShadoW T1000-E");
+	CHECK(ui_chat_list_len(&l) == 1);
+
+	/* A message from the same node carries the same nickname with its
+	 * smiley: it must land in that conversation, not open a second one. */
+	landed = ui_chat_push(&l, "\xF0\x9F\x99\x82 ShadoW T1000-E", false,
+			      NOW, "привет");
+	CHECK(landed == seeded);
+	CHECK(ui_chat_list_len(&l) == 1);
+	CHECK(landed->count == 1);
+	CHECK(landed->unread == 1);
+}
+
+TEST(feed_name_gap_trimmed, "UNIT-FEED-020",
+     "A nickname loses the smiley and the gap it left behind")
+{
+	char buf[64];
+
+	/* "🙂 ShadoW" -> "ShadoW", not " ShadoW": the head line would
+	 * otherwise read "17:22  ShadoW" with two spaces. */
+	ui_feed_strip_pictographs(buf, sizeof(buf),
+				  "\xF0\x9F\x99\x82 ShadoW T1000-E");
+	CHECK(std::string(buf) == "ShadoW T1000-E");
+
+	ui_feed_strip_pictographs(buf, sizeof(buf),
+				  "\xF0\x9F\x99\x82ShadoW T1000-E");
+	CHECK(std::string(buf) == "ShadoW T1000-E");
+
+	ui_feed_strip_pictographs(buf, sizeof(buf), "  Mama  ");
+	CHECK(std::string(buf) == "Mama");
+}

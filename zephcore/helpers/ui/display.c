@@ -892,7 +892,13 @@ void mc_display_text(int x, int y, const char *text, bool invert)
 			uint8_t slot = (uint8_t)slots[i];
 
 			if (slot < 128) {
-				cfb_print(disp_dev, &slots[i],
+				/* One glyph at a time: cfb_print runs to the
+				 * end of the string, and everything past an
+				 * ASCII letter would be looked up in the panel
+				 * font's ASCII range and turn to tofu. */
+				char one[2] = { (char)slot, '\0' };
+
+				cfb_print(disp_dev, one,
 					  (int16_t)(x + DISP_INSET),
 					  (int16_t)(y + DISP_INSET));
 				x += font_w ? font_w : 1;
