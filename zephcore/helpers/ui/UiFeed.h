@@ -670,8 +670,32 @@ static inline void ui_chat_iter_begin(struct ui_chat_iter *it)
 			}
 			memcpy(name, m->text, name_len);
 			name[name_len] = '\0';
-			snprintf(it->head, sizeof(it->head), "%s %s:", time,
-				 name);
+			/* One row only: cfb_print wraps at the panel edge
+			 * and would spill the name over the text below. */
+			{
+				char full[UI_FEED_NAME_LEN + 32];
+				const char *hp;
+				int ncols = 0;
+				size_t out = 0;
+
+				snprintf(full, sizeof(full), "%s %s:", time,
+					 name);
+				hp = full;
+				it->head[0] = '\0';
+				while (*hp != '\0' && ncols < it->cols) {
+					size_t adv = ui_feed_utf8_len(hp);
+
+					if (adv == 0 ||
+					    out + adv >= sizeof(it->head)) {
+						break;
+					}
+					memcpy(it->head + out, hp, adv);
+					hp += adv;
+					out += adv;
+					ncols++;
+				}
+				it->head[out] = '\0';
+			}
 			strncpy(it->line, sep + 2, sizeof(it->line) - 1);
 			it->line[sizeof(it->line) - 1] = '\0';
 		}

@@ -891,6 +891,11 @@
       "id": "UNIT-FEED-016",
       "name": "Two coordinates in one message stay on separate rows",
       "source": "tests/unit/feed_tests.cpp"
+    },
+    {
+      "id": "UNIT-FEED-017",
+      "name": "A long sender is cut to the row, never wrapped onto the text",
+      "source": "tests/unit/feed_tests.cpp"
     }
   ]
 }

@@ -594,8 +594,12 @@ static void feed_page_prev(void)
 static void feed_defer_handler(struct k_work *work)
 {
 	ARG_UNUSED(work);
-	/* Single-press timeout on the feed: step forward. */
-	feed_page_next();
+	/* Single-press timeout: step forward on the list or in the chat. */
+	if (ui_pages_current() == UI_PAGE_PUBLIC && !get_state()->chat_open) {
+		chat_list_next();
+	} else {
+		feed_page_next();
+	}
 }
 
 static void action_page_enter(void)
@@ -685,9 +689,16 @@ static void action_page_enter(void)
 
 	case UI_PAGE_PUBLIC:
 		if (!get_state()->chat_open) {
-			/* One press walks the conversation list, round and
-			 * round. */
-			chat_list_next();
+			/* One press walks the list forward after a beat; a
+			 * second press inside the window walks it back, the
+			 * same shape as the chat below. */
+			if (k_work_delayable_is_pending(&feed_defer_work)) {
+				k_work_cancel_delayable(&feed_defer_work);
+				chat_list_prev();
+			} else {
+				k_work_reschedule(&feed_defer_work,
+						  K_MSEC(FEED_DOUBLE_MS));
+			}
 			break;
 		}
 		/* One button pages the chat, the same shape as the advert

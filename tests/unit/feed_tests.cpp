@@ -411,3 +411,26 @@ TEST(feed_row_breaks_at_newline, "UNIT-FEED-016",
 	CHECK(std::string(row) == "55.8,37.7");
 	CHECK(*p == '\0');
 }
+
+TEST(feed_head_fits_one_row, "UNIT-FEED-017",
+     "A long sender is cut to the row, never wrapped onto the text")
+{
+	struct ui_chat_list l = fresh_list();
+	struct ui_chat *c;
+	char row[64];
+	struct ui_chat_iter it;
+	struct ui_feed_cursor start = { 0, 0 };
+
+	(void)ui_chat_push(&l, "Public", true, NOW,
+			   "\xF0\x9F\x99\x82VeryLongNicknameHere: текст");
+	c = ui_chat_find(&l, "Public");
+	CHECK(c != NULL);
+
+	ui_chat_iter_init(&it, c, start, NOW, 0, 12);
+	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
+	CHECK(it.row_is_head);
+	/* The head is one row of 12 columns and no smiley survives it. */
+	CHECK(std::string(row) == "12:34 VeryLo");
+	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
+	CHECK(std::string(row) == "\xD1\x82\xD0\xB5\xD0\xBA\xD1\x81\xD1\x82");
+}
