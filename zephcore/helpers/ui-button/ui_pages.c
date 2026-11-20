@@ -757,6 +757,8 @@ static void render_chat_list(int rows, bool color, uint16_t sel_color,
 	int n = ui_chat_list_len(&state.chats);
 	int shown = 0;
 	int first = 0;
+	/* The bottom row tells how to open one; the list gets the rest. */
+	int list_rows = rows > 1 ? rows - 1 : rows;
 
 	if (n == 0) {
 		if (color) {
@@ -765,41 +767,57 @@ static void render_chat_list(int rows, bool color, uint16_t sel_color,
 		} else {
 			draw_centered(centered_row(0, 1), "(no chats)");
 		}
-		return;
-	}
-	/* Keep the selection on screen: page the window around it. */
-	if (n > rows && state.chat_sel >= rows) {
-		first = state.chat_sel - rows + 1;
-	}
-	for (int i = first; i < n && shown < rows; i++, shown++) {
-		const struct ui_chat *c = ui_chat_nth(&state.chats, i);
-		char buf[40];
-
-		if (c == NULL) {
-			break;
+	} else {
+		/* Keep the selection on screen: page the window around it. */
+		if (n > list_rows && state.chat_sel >= list_rows) {
+			first = state.chat_sel - list_rows + 1;
 		}
-		if (c->unread > 0) {
-			snprintf(buf, sizeof(buf), "%s (%u)", c->name,
-				 (unsigned)c->unread);
-		} else {
-			snprintf(buf, sizeof(buf), "%s", c->name);
+		for (int i = first; i < n && shown < list_rows; i++, shown++) {
+			const struct ui_chat *c = ui_chat_nth(&state.chats, i);
+			char buf[40];
+
+			if (c == NULL) {
+				break;
+			}
+			if (c->unread > 0) {
+				snprintf(buf, sizeof(buf), "%s (%u)", c->name,
+					 (unsigned)c->unread);
+			} else {
+				snprintf(buf, sizeof(buf), "%s", c->name);
+			}
+			if (color) {
+				uint16_t col = (i == state.chat_sel) ? sel_color
+						: (c->unread > 0 ? warn_color
+								 : val_color);
+
+				mc_display_color_text(0, y, buf, col);
+			} else {
+				mc_display_text(0, y, buf, false);
+				if (i == state.chat_sel) {
+					/* A selected row is a solid band:
+					 * text inverting with the band reads
+					 * better on an e-paper than inverted
+					 * glyphs alone. */
+					mc_display_invert_rect(0, y,
+							       (int)DISP_W,
+							       LINE_H);
+				}
+			}
+			y += LINE_H;
+		}
+	}
+	if (rows > 1) {
+		int bottom_y = (int)DISP_H - LINE_H;
+
+		if (bottom_y < CONTENT_Y) {
+			bottom_y = CONTENT_Y;
 		}
 		if (color) {
-			uint16_t col = (i == state.chat_sel) ? sel_color
-					: (c->unread > 0 ? warn_color : val_color);
-
-			mc_display_color_text(0, y, buf, col);
+			draw_centered_color(bottom_y, "Long press ENTER",
+					    UI_COLOR_DISABLED);
 		} else {
-			mc_display_text(0, y, buf, false);
-			if (i == state.chat_sel) {
-				/* A selected row is a solid band: text
-				 * inverting with the band reads better on
-				 * an e-paper than inverted glyphs alone. */
-				mc_display_invert_rect(0, y, (int)DISP_W,
-						       LINE_H);
-			}
+			draw_centered(bottom_y, "Long press ENTER");
 		}
-		y += LINE_H;
 	}
 }
 
