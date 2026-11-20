@@ -858,11 +858,16 @@ static void render_public_rows(int cols, bool color, uint16_t title_color)
 		return;
 	}
 	/* The conversation names the page: its own name, centred, above the
-	 * messages.  The rows below carry only time and text. */
+	 * messages.  The rows below carry only time and text.  A direct chat
+	 * has no banded sender line to mark its messages, so the name wears
+	 * the band instead. */
 	if (color) {
 		draw_centered_color(y, c->name, UI_COLOR_TITLE);
 	} else {
 		draw_centered(y, c->name);
+	}
+	if (!c->is_group) {
+		mc_display_invert_rect(0, y, (int)DISP_W, LINE_H);
 	}
 	y += LINE_H;
 	ui_chat_iter_init(&it, c, s->chat_view, s->rtc_epoch,
