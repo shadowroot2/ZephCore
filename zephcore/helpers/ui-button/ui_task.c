@@ -229,7 +229,7 @@ static void chat_open_selected(void)
 	s->chat_open = true;
 	s->chat_view = zero;
 	ui_pages_set(UI_PAGE_PUBLIC);
-	schedule_render();
+	ui_request_render_now();
 }
 
 static void chat_close(void)
@@ -237,8 +237,7 @@ static void chat_close(void)
 	struct ui_state *s = get_state();
 
 	s->chat_open = false;
-	ui_pages_set(UI_PAGE_MESSAGES);
-	schedule_render();
+	ui_request_render_now();
 }
 
 static void home_hold_handler(struct k_work *work)
@@ -251,12 +250,12 @@ static void home_hold_handler(struct k_work *work)
 
 	/* The list: a hold is the choice of the highlighted conversation.
 	 * Inside one, the same hold is the way back out. */
-	if (ui_pages_current() == UI_PAGE_MESSAGES) {
-		chat_open_selected();
-		return;
-	}
 	if (ui_pages_current() == UI_PAGE_PUBLIC) {
-		chat_close();
+		if (get_state()->chat_open) {
+			chat_close();
+		} else {
+			chat_open_selected();
+		}
 		return;
 	}
 	if (st->nav_active) {
@@ -483,7 +482,7 @@ static void action_page_next(void)
 #ifdef CONFIG_ZEPHCORE_UI_DISPLAY
 	ui_pages_next();
 #endif
-	schedule_render();
+	ui_request_render_now();
 }
 
 static void action_page_prev(void)
@@ -491,7 +490,7 @@ static void action_page_prev(void)
 #ifdef CONFIG_ZEPHCORE_UI_DISPLAY
 	ui_pages_prev();
 #endif
-	schedule_render();
+	ui_request_render_now();
 }
 
 /* Forward declarations for page-enter dispatch */
@@ -522,7 +521,7 @@ static void chat_list_next(void)
 		return;
 	}
 	s->chat_sel = (uint8_t)((s->chat_sel + 1) % n);
-	schedule_render();
+	ui_request_render_now();
 }
 
 /* Chat paging: a conversation reads as one continuous text, so a page is a
@@ -545,12 +544,12 @@ static void feed_page_next(void)
 		if (!ui_chat_iter_next(&it, row, sizeof(row))) {
 			/* End of the chat: wrap to the newest page. */
 			s->chat_view = zero;
-			schedule_render();
+			ui_request_render_now();
 			return;
 		}
 	}
 	s->chat_view = it.cur;
-	schedule_render();
+	ui_request_render_now();
 }
 
 static void feed_page_prev(void)
@@ -565,7 +564,7 @@ static void feed_page_prev(void)
 					   s->tz_offset_min,
 					   mc_display_font_width(),
 					   ui_pages_feed_page_rows());
-	schedule_render();
+	ui_request_render_now();
 }
 
 static void feed_defer_handler(struct k_work *work)
@@ -624,8 +623,6 @@ static void action_page_enter(void)
 		break;
 
 	case UI_PAGE_MESSAGES:
-		/* One press walks the conversation list, round and round. */
-		chat_list_next();
 #ifdef CONFIG_ZEPHCORE_EASTER_EGG_DOOM
 		/* Doom activation: 3 presses — double-click + single-click. */
 		{
@@ -663,6 +660,12 @@ static void action_page_enter(void)
 		break;
 
 	case UI_PAGE_PUBLIC:
+		if (!get_state()->chat_open) {
+			/* One press walks the conversation list, round and
+			 * round. */
+			chat_list_next();
+			break;
+		}
 		/* One button pages the chat, the same shape as the advert
 		 * page: the first press steps forward after a beat, a second
 		 * press inside the window walks back instead. */
@@ -1066,16 +1069,16 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 		 * hold arms (home_hold_handler), the short press sends. */
 		if (code == INPUT_KEY_ENTER && home_press_active &&
 		    (ui_pages_current() == UI_PAGE_GPS_HOME ||
-		     ui_pages_current() == UI_PAGE_MESSAGES)) {
+		     ui_pages_current() == UI_PAGE_PUBLIC)) {
 			home_press_active = false;
 			if (!k_work_delayable_is_pending(&home_hold_work)) {
 				/* Hold already fired; the release ends it. */
 				return;
 			}
 			k_work_cancel_delayable(&home_hold_work);
-			if (ui_pages_current() == UI_PAGE_MESSAGES) {
-				/* Short press on the list walks it; the hold
-				 * above is what picks an entry. */
+			if (ui_pages_current() == UI_PAGE_PUBLIC) {
+				/* Short press walks the list or the chat; the
+				 * hold above is what opens or leaves one. */
 				action_page_enter();
 			} else {
 				action_home_key_short();
@@ -1268,7 +1271,7 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 		/* ZEPHCORE: the first page measures the action press too — a
 		 * hold of HOME_HOLD_MS arms the SOS launch (home_hold_handler),
 		 * the short press after it sends. */
-		if (ui_pages_current() == UI_PAGE_MESSAGES) {
+		if (ui_pages_current() == UI_PAGE_PUBLIC) {
 			home_press_active = true;
 			k_work_reschedule(&home_hold_work, K_MSEC(HOME_HOLD_DELAY_MS));
 			break;
@@ -1408,7 +1411,7 @@ static void ui_feed_add(const char *chat_name, bool is_group, const char *text,
 	}
 	/* On the list every message is worth a look: light the panel and let
 	 * the counter be seen.  Anywhere else the buzzer and LED carry it. */
-	if (ui_pages_current() == UI_PAGE_MESSAGES) {
+	if (ui_pages_current() == UI_PAGE_PUBLIC && !s->chat_open) {
 		mc_display_on_for(5000);
 	}
 	ui_request_render();

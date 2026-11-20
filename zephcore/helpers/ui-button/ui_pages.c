@@ -666,90 +666,74 @@ static void render_tiny_title(void)
  */
 static void render_messages_mono(void)
 {
-	/* The conversation list: channels first, then direct chats, each
-	 * "Name (unread)" with the unread count dropped when it is zero. */
-	int rows = (DISP_H - CONTENT_Y) / LINE_H;
-	int y = CONTENT_Y;
-	int n = ui_chat_list_len(&state.chats);
-	int shown = 0;
+	/* 3 centered rows: msg count, link status, offgrid status */
+	char buf[24];
 
-	if (rows <= 0) {
-		return;
-	}
-	if (n == 0) {
-		draw_centered(centered_row(0, 1), "(no chats)");
-		return;
-	}
-	/* Keep the selection on screen: page the window around it. */
-	int first = 0;
-
-	if (n > rows && state.chat_sel >= rows) {
-		first = state.chat_sel - rows + 1;
-	}
-	for (int i = first; i < n && shown < rows; i++, shown++) {
-		const struct ui_chat *c = ui_chat_nth(&state.chats, i);
-		char buf[40];
-
-		if (c == NULL) {
-			break;
-		}
-		if (c->unread > 0) {
-			snprintf(buf, sizeof(buf), "%s (%u)", c->name,
-				 (unsigned)c->unread);
+	if (ui_tiny()) {
+		snprintf(buf, sizeof(buf), "MSG:%u", state.msg_count);
+		draw_centered(centered_row(0, 3), buf);
+		if (state.app_connected) {
+			snprintf(buf, sizeof(buf), "%s:conn", link_label());
 		} else {
-			snprintf(buf, sizeof(buf), "%s", c->name);
+			snprintf(buf, sizeof(buf), "BLE:%s",
+				 state.ble_enabled ? "adv" : "off");
 		}
-		mc_display_text(0, y, buf, false);
-		if (i == state.chat_sel) {
-			/* A selected row is a solid band: text inverting with
-			 * the band reads better on an e-paper than inverted
-			 * glyphs alone. */
-			mc_display_invert_rect(0, y, (int)DISP_W, LINE_H);
-		}
-		y += LINE_H;
+		draw_centered(centered_row(1, 3), buf);
+
+		uint32_t up_s = (uint32_t)(k_uptime_get() / 1000);
+
+		snprintf(buf, sizeof(buf), "%uh%02um",
+			 (up_s % 86400) / 3600, (up_s % 3600) / 60);
+		draw_centered(centered_row(2, 3), buf);
+		return;
 	}
+
+	snprintf(buf, sizeof(buf), "MSG: %u", state.msg_count);
+	draw_centered(centered_row(0, 4), buf);
+
+	if (state.app_connected) {
+		snprintf(buf, sizeof(buf), "< Connected: %s >", link_label());
+		draw_centered(centered_row(1, 4), buf);
+	} else {
+		draw_centered(centered_row(1, 4), "Waiting for app...");
+	}
+
+	snprintf(buf, sizeof(buf), "Offgrid: %s",
+		 state.offgrid_enabled ? "ON" : "OFF");
+	draw_centered(centered_row(2, 4), buf);
+
+	uint32_t up_s = (uint32_t)(k_uptime_get() / 1000);
+	snprintf(buf, sizeof(buf), "Up: %ud %uh %um",
+		 up_s / 86400, (up_s % 86400) / 3600, (up_s % 3600) / 60);
+	draw_centered(centered_row(3, 4), buf);
 }
 
 #if MC_DISPLAY_COLOR_PANEL
 static void render_messages_color(void)
 {
-	int rows = (DISP_H - CONTENT_Y) / LINE_H;
-	int y = CONTENT_Y;
-	int n = ui_chat_list_len(&state.chats);
-	int shown = 0;
-	int first = 0;
+	char buf[24];
 
-	if (rows <= 0) {
-		return;
-	}
-	if (n == 0) {
-		draw_centered_color(centered_row(0, 1), "(no chats)",
+	snprintf(buf, sizeof(buf), "MSG %u", state.msg_count);
+	draw_centered_color(centered_row(0, 4), buf,
+			    state.msg_count ? UI_COLOR_WARN : UI_COLOR_VALUE);
+
+	if (state.app_connected) {
+		snprintf(buf, sizeof(buf), "< Connected: %s >", link_label());
+		draw_centered_color(centered_row(1, 4), buf, UI_COLOR_OK);
+	} else {
+		draw_centered_color(centered_row(1, 4), "Waiting for app...",
 				    UI_COLOR_DISABLED);
-		return;
 	}
-	if (n > rows && state.chat_sel >= rows) {
-		first = state.chat_sel - rows + 1;
-	}
-	for (int i = first; i < n && shown < rows; i++, shown++) {
-		const struct ui_chat *c = ui_chat_nth(&state.chats, i);
-		char buf[40];
-		uint16_t col = (i == state.chat_sel) ? UI_COLOR_ACTIVE
-						    : UI_COLOR_VALUE;
 
-		if (c == NULL) {
-			break;
-		}
-		if (c->unread > 0) {
-			snprintf(buf, sizeof(buf), "%s (%u)", c->name,
-				 (unsigned)c->unread);
-			col = (i == state.chat_sel) ? UI_COLOR_ACTIVE
-						   : UI_COLOR_WARN;
-		} else {
-			snprintf(buf, sizeof(buf), "%s", c->name);
-		}
-		mc_display_color_text(0, y, buf, col);
-		y += LINE_H;
-	}
+	snprintf(buf, sizeof(buf), "Offgrid: %s",
+		 state.offgrid_enabled ? "ON" : "OFF");
+	draw_centered_color(centered_row(2, 4), buf,
+			    state.offgrid_enabled ? UI_COLOR_OK : UI_COLOR_VALUE);
+
+	uint32_t up_s = (uint32_t)(k_uptime_get() / 1000);
+	snprintf(buf, sizeof(buf), "Up: %ud %uh %um",
+		 up_s / 86400, (up_s % 86400) / 3600, (up_s % 3600) / 60);
+	draw_centered_color(centered_row(3, 4), buf, UI_COLOR_VALUE);
 }
 #endif /* MC_DISPLAY_COLOR_PANEL */
 
@@ -766,6 +750,59 @@ static void render_messages(void)
 
 /* ========== PUBLIC feed ========== */
 
+static void render_chat_list(int rows, bool color, uint16_t sel_color,
+			     uint16_t val_color, uint16_t warn_color)
+{
+	int y = CONTENT_Y;
+	int n = ui_chat_list_len(&state.chats);
+	int shown = 0;
+	int first = 0;
+
+	if (n == 0) {
+		if (color) {
+			draw_centered_color(centered_row(0, 1), "(no chats)",
+					    UI_COLOR_DISABLED);
+		} else {
+			draw_centered(centered_row(0, 1), "(no chats)");
+		}
+		return;
+	}
+	/* Keep the selection on screen: page the window around it. */
+	if (n > rows && state.chat_sel >= rows) {
+		first = state.chat_sel - rows + 1;
+	}
+	for (int i = first; i < n && shown < rows; i++, shown++) {
+		const struct ui_chat *c = ui_chat_nth(&state.chats, i);
+		char buf[40];
+
+		if (c == NULL) {
+			break;
+		}
+		if (c->unread > 0) {
+			snprintf(buf, sizeof(buf), "%s (%u)", c->name,
+				 (unsigned)c->unread);
+		} else {
+			snprintf(buf, sizeof(buf), "%s", c->name);
+		}
+		if (color) {
+			uint16_t col = (i == state.chat_sel) ? sel_color
+					: (c->unread > 0 ? warn_color : val_color);
+
+			mc_display_color_text(0, y, buf, col);
+		} else {
+			mc_display_text(0, y, buf, false);
+			if (i == state.chat_sel) {
+				/* A selected row is a solid band: text
+				 * inverting with the band reads better on
+				 * an e-paper than inverted glyphs alone. */
+				mc_display_invert_rect(0, y, (int)DISP_W,
+						       LINE_H);
+			}
+		}
+		y += LINE_H;
+	}
+}
+
 static void render_public_rows(int cols, bool color, uint16_t title_color)
 {
 	const struct ui_state *s = &state;
@@ -773,12 +810,23 @@ static void render_public_rows(int cols, bool color, uint16_t title_color)
 	int rows = (DISP_H - CONTENT_Y) / LINE_H;
 	int y = CONTENT_Y;
 	int shown = 0;
-	/* One row for the conversation name, one for the counter. */
 	int text_rows = rows > 2 ? rows - 2 : (rows > 1 ? 1 : 0);
 	struct ui_chat_iter it;
 	char row[UI_FEED_TEXT_LEN + 32];
 
 	if (rows <= 0) {
+		return;
+	}
+	/* The page is the conversation list until one is opened, then that
+	 * conversation's messages. */
+	if (!s->chat_open) {
+		if (color) {
+			render_chat_list(rows, true, UI_COLOR_ACTIVE,
+					 UI_COLOR_VALUE, UI_COLOR_WARN);
+		} else {
+			render_chat_list(rows, false, UI_COLOR_VALUE,
+					 UI_COLOR_VALUE, UI_COLOR_VALUE);
+		}
 		return;
 	}
 	c = ui_chat_nth(&state.chats, s->chat_sel);
