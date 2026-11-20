@@ -839,7 +839,7 @@
     },
     {
       "id": "UNIT-FEED-006",
-      "name": "Direct, public and channel lines carry their own markers",
+      "name": "A line is just the time and the text: the conversation is the header",
       "source": "tests/unit/feed_tests.cpp"
     },
     {

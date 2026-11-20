@@ -773,7 +773,8 @@ static void render_public_rows(int cols, bool color, uint16_t title_color)
 	int rows = (DISP_H - CONTENT_Y) / LINE_H;
 	int y = CONTENT_Y;
 	int shown = 0;
-	int text_rows = rows > 1 ? rows - 1 : rows;
+	/* One row for the conversation name, one for the counter. */
+	int text_rows = rows > 2 ? rows - 2 : (rows > 1 ? 1 : 0);
 	struct ui_chat_iter it;
 	char row[UI_FEED_TEXT_LEN + 32];
 
@@ -790,6 +791,14 @@ static void render_public_rows(int cols, bool color, uint16_t title_color)
 		}
 		return;
 	}
+	/* The conversation names the page: its own name, centred, above the
+	 * messages.  The rows below carry only time and text. */
+	if (color) {
+		draw_centered_color(y, c->name, UI_COLOR_TITLE);
+	} else {
+		draw_centered(y, c->name);
+	}
+	y += LINE_H;
 	ui_chat_iter_init(&it, c, s->chat_view, s->rtc_epoch,
 			  s->tz_offset_min, cols);
 	while (shown < text_rows &&

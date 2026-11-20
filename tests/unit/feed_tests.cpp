@@ -160,12 +160,11 @@ TEST(feed_time_epoch_edge, "UNIT-FEED-005",
 }
 
 TEST(feed_line_shapes, "UNIT-FEED-006",
-     "Direct, public and channel lines carry their own markers")
+     "A line is just the time and the text: the conversation is the header")
 {
 	char buf[192];
 	struct ui_chat_list l = fresh_list();
 	struct ui_chat *dm;
-	struct ui_chat *pub;
 	struct ui_chat *grp;
 	struct ui_chat_msg m;
 
@@ -173,23 +172,26 @@ TEST(feed_line_shapes, "UNIT-FEED-006",
 	(void)ui_chat_push(&l, "Public", true, YESTERDAY, "Nick: привет, как дела?");
 	(void)ui_chat_push(&l, "#zephcore", true, NOW, "Nick: тру ляля");
 	dm = ui_chat_find(&l, "Mama");
-	pub = ui_chat_find(&l, "Public");
 	grp = ui_chat_find(&l, "#zephcore");
 	memset(&m, 0, sizeof(m));
+
+	/* A direct chat: no marker, no contact name - it is the header. */
 	m.ts = NOW;
 	strcpy(m.text, "ты где?");
 	ui_chat_format_line(buf, sizeof(buf), dm, &m, NOW, 0);
-	CHECK(std::string(buf) == ">> 12:34 Mama: ты где?");
+	CHECK(std::string(buf) == "12:34 ты где?");
 
+	/* A channel message keeps the sender the mesh prefixed; the channel
+	 * itself is the header and is not repeated. */
 	m.ts = YESTERDAY;
 	strcpy(m.text, "Nick: привет, как дела?");
-	ui_chat_format_line(buf, sizeof(buf), pub, &m, NOW, 0);
+	ui_chat_format_line(buf, sizeof(buf), grp, &m, NOW, 0);
 	CHECK(std::string(buf) == "18.11 12:34 Nick: привет, как дела?");
 
 	m.ts = NOW;
 	strcpy(m.text, "Nick: тру ляля");
 	ui_chat_format_line(buf, sizeof(buf), grp, &m, NOW, 0);
-	CHECK(std::string(buf) == "12:34 [#zephcore] Nick: тру ляля");
+	CHECK(std::string(buf) == "12:34 Nick: тру ляля");
 }
 
 TEST(feed_emoji_substitution, "UNIT-FEED-007",

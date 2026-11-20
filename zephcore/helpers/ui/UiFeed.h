@@ -445,13 +445,10 @@ static inline struct ui_chat *ui_chat_push(struct ui_chat_list *l,
 
 /* ---- lines ---- */
 
-/* One chat line in full, before any wrapping:
- *   ">> 12:35 Mama: ты где?"              direct
- *   "18.11 12:34 Nick: привет, как дела?" public channel (untagged)
- *   "12:34 [#zephcore] Nick: тру ляля"    any other channel
- * A channel message carries its sender as the "<name>: " prefix the mesh
- * already put in the text (sendGroupMessage), so only a direct chat adds a
- * name of its own. */
+/* One chat line in full, before any wrapping: just the time and the text.
+ * The conversation itself is the header of the page, and a channel message
+ * already carries its sender as the "<name>: " prefix the mesh put in the
+ * text (sendGroupMessage), so neither is repeated here. */
 static inline void ui_chat_format_line(char *buf, size_t n,
 				       const struct ui_chat *c,
 				       const struct ui_chat_msg *m,
@@ -459,15 +456,9 @@ static inline void ui_chat_format_line(char *buf, size_t n,
 {
 	char time[16];
 
+	(void)c;
 	ui_feed_format_time(time, sizeof(time), m->ts, now, tz_minutes);
-
-	if (!c->is_group) {
-		snprintf(buf, n, ">> %s %s: %s", time, c->name, m->text);
-	} else if (c->name[0] == '\0' || strcmp(c->name, "Public") == 0) {
-		snprintf(buf, n, "%s %s", time, m->text);
-	} else {
-		snprintf(buf, n, "%s [%.12s] %s", time, c->name, m->text);
-	}
+	snprintf(buf, n, "%s %s", time, m->text);
 }
 
 /* ---- paging ---- */
