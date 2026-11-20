@@ -390,6 +390,27 @@ static inline int ui_chat_list_len(const struct ui_chat_list *l)
 	return (int)l->count;
 }
 
+/* The conversation carrying `name`, created if this is its first.  No
+ * message is recorded: this is how the list is seeded from the channels
+ * and contacts the node already has. */
+static inline struct ui_chat *ui_chat_ensure(struct ui_chat_list *l,
+					     const char *name, bool is_group)
+{
+	struct ui_chat *c = ui_chat_find(l, name);
+
+	if (c != NULL) {
+		return c;
+	}
+	if (l->count >= UI_CHAT_COUNT) {
+		return NULL;
+	}
+	c = &l->chats[l->count++];
+	memset(c, 0, sizeof(*c));
+	strncpy(c->name, name, sizeof(c->name) - 1);
+	c->is_group = is_group;
+	return c;
+}
+
 /* Record one incoming message.  The chat is created if this is its first.
  * Returns the chat it landed in, or NULL when the list is full and the name
  * is unknown. */
@@ -397,16 +418,10 @@ static inline struct ui_chat *ui_chat_push(struct ui_chat_list *l,
 					   const char *name, bool is_group,
 					   uint32_t ts, const char *text)
 {
-	struct ui_chat *c = ui_chat_find(l, name);
+	struct ui_chat *c = ui_chat_ensure(l, name, is_group);
 
 	if (c == NULL) {
-		if (l->count >= UI_CHAT_COUNT) {
-			return NULL;
-		}
-		c = &l->chats[l->count++];
-		memset(c, 0, sizeof(*c));
-		strncpy(c->name, name, sizeof(c->name) - 1);
-		c->is_group = is_group;
+		return NULL;
 	}
 	{
 		uint8_t slot = (uint8_t)((c->head + 1) % UI_CHAT_MSGS);

@@ -208,6 +208,11 @@ WEAK void ui_show_low_battery(bool hold) { ARG_UNUSED(hold); }
 WEAK void ui_refresh_battery(void) { }
 WEAK void ui_invalidate_battery_cache(void) { }
 
+WEAK void ui_seed_chat(const char *name, bool is_group)
+{
+	ARG_UNUSED(name); ARG_UNUSED(is_group);
+}
+
 WEAK void ui_notify_contact_msg(uint8_t path_len, const char *from_name,
 				 const char *text, uint32_t ts,
 				 uint16_t msg_count)

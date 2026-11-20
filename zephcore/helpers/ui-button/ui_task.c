@@ -1417,6 +1417,18 @@ static void ui_feed_add(const char *chat_name, bool is_group, const char *text,
 #endif
 }
 
+void ui_seed_chat(const char *name, bool is_group)
+{
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
+	if (name == NULL || name[0] == '\0') {
+		return;
+	}
+	(void)ui_chat_ensure(&get_state()->chats, name, is_group);
+#else
+	(void)name; (void)is_group;
+#endif
+}
+
 void ui_notify_contact_msg(uint8_t path_len, const char *from_name,
 			   const char *text, uint32_t ts, uint16_t msg_count)
 {

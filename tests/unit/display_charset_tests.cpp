@@ -57,9 +57,9 @@ TEST(charset_cyrillic_slots, "UNIT-CHARSET-001",
 			n++;
 		}
 	}
-	/* U+0410..U+044F is 64 letters, 21 of which borrowed a Latin glyph,
+	/* U+0410..U+044F is 64 letters, 20 of which borrowed a Latin glyph,
 	 * plus the two yo's sitting outside that range. */
-	CHECK(n == 45);
+	CHECK(n == 46);
 }
 
 TEST(charset_latin_survivors, "UNIT-CHARSET-002",
@@ -114,7 +114,7 @@ TEST(charset_lookalike_borrowing, "UNIT-CHARSET-003",
 	CHECK(display_charset_map(0x43E) == 'o');
 	CHECK(display_charset_map(0x440) == 'p');
 	CHECK(display_charset_map(0x441) == 'c');
-	CHECK(display_charset_map(0x442) == 't');
+	CHECK(display_charset_map(0x442) != 't');	/* т is not t: a small T */
 	CHECK(display_charset_map(0x443) == 'y');
 	CHECK(display_charset_map(0x445) == 'x');
 	CHECK(display_charset_map(0x43A) == 'k');	/* к */

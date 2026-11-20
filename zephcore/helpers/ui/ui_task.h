@@ -324,6 +324,11 @@ void ui_invalidate_battery_cache(void);
  * @param ts         Sender timestamp (unix seconds, 0 = unknown)
  * @param msg_count  Updated offline queue message count
  */
+/* Put a conversation the node already knows about into the list without
+ * recording a message: the channels and contacts are there at boot, before
+ * anything arrives. */
+void ui_seed_chat(const char *name, bool is_group);
+
 void ui_notify_contact_msg(uint8_t path_len, const char *from_name,
 			   const char *text, uint32_t ts, uint16_t msg_count);
 

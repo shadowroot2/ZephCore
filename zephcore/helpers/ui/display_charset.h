@@ -43,7 +43,6 @@ static inline uint8_t display_charset_map(uint32_t cp)
 	case 0x43E: return 'o';	/* о */
 	case 0x440: return 'p';	/* р */
 	case 0x441: return 'c';	/* с */
-	case 0x442: return 't';	/* т */
 	case 0x443: return 'y';	/* у */
 	case 0x445: return 'x';	/* х */
 	case 0x43A: return 'k';	/* к */

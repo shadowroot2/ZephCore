@@ -4379,6 +4379,30 @@ int main(void)
 
 	ui_set_node_name(companion_mesh.prefs.node_name);
 	ui_push_radio_state(lora_radio);
+	/* The list is the node's own address book: channels first, then the
+	 * contacts it already has, so the first screen is not empty until a
+	 * message happens to arrive. */
+	{
+		int i;
+		int n = companion_mesh.getNumChannels();
+
+		for (i = 0; i < n; i++) {
+			ChannelDetails ch;
+
+			if (companion_mesh.getChannel(i, ch) && ch.name[0] != '\0') {
+				ui_seed_chat(ch.name, true);
+			}
+		}
+		n = companion_mesh.getNumContacts();
+		for (i = 0; i < n; i++) {
+			ContactInfo c;
+
+			if (companion_mesh.getContactByIdx((uint32_t)i, c) &&
+			    !c.isEmptySlot() && c.name[0] != '\0') {
+				ui_seed_chat(c.name, false);
+			}
+		}
+	}
 	ui_set_battery(zephyr_board.getBattMilliVolts(), zephyr_board.getBattPercent());
 	const bool gps_boot_enabled = gps_switch_effective_enabled(ui_gps_switch_present(),
 							 ui_gps_switch_is_on(),

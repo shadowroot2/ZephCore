@@ -699,7 +699,13 @@ static void render_messages_mono(void)
 		} else {
 			snprintf(buf, sizeof(buf), "%s", c->name);
 		}
-		mc_display_text(0, y, buf, i == state.chat_sel);
+		mc_display_text(0, y, buf, false);
+		if (i == state.chat_sel) {
+			/* A selected row is a solid band: text inverting with
+			 * the band reads better on an e-paper than inverted
+			 * glyphs alone. */
+			mc_display_invert_rect(0, y, (int)DISP_W, LINE_H);
+		}
 		y += LINE_H;
 	}
 }
