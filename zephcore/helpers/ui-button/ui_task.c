@@ -572,7 +572,13 @@ static void feed_page_next(void)
 			return;
 		}
 	}
-	s->chat_view = it.cur;
+	/* The pull of the last message's blank line leaves the cursor past
+	 * the end of the chat: wrap instead of showing an empty page. */
+	if (it.cur.entry >= c->count) {
+		s->chat_view = zero;
+	} else {
+		s->chat_view = it.cur;
+	}
 	ui_request_render_now();
 }
 

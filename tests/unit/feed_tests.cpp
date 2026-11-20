@@ -434,3 +434,41 @@ TEST(feed_head_fits_one_row, "UNIT-FEED-017",
 	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
 	CHECK(std::string(row) == "\xD1\x82\xD0\xB5\xD0\xBA\xD1\x81\xD1\x82");
 }
+
+TEST(feed_page_wraps_not_past_end, "UNIT-FEED-018",
+     "Paging past the last blank wraps to the newest, never past the chat")
+{
+	struct ui_chat_list l = fresh_list();
+	struct ui_chat *c;
+	char row[64];
+	struct ui_chat_iter it;
+	struct ui_feed_cursor cur = { 0, 0 };
+	int pages = 0;
+
+	(void)ui_chat_push(&l, "Public", true, NOW, "Nick: msg2");
+	(void)ui_chat_push(&l, "Public", true, NOW + 1, "Nick: msg1");
+	(void)ui_chat_push(&l, "Public", true, NOW + 2, "Nick: msg0");
+	c = ui_chat_find(&l, "Public");
+	CHECK(c != NULL);
+
+	/* Walk the chat in screens of five rows and record where each page
+	 * lands.  Before the fix the last page's pull of the closing blank
+	 * left the cursor past the end and the next render drew nothing. */
+	while (pages < 8) {
+		ui_chat_iter_init(&it, c, cur, NOW, 0, 11);
+		for (int i = 0; i < 5; i++) {
+			if (!ui_chat_iter_next(&it, row, sizeof(row))) {
+				break;
+			}
+		}
+		if (it.cur.entry >= c->count) {
+			/* Past the end: the pager must wrap. */
+			cur = (struct ui_feed_cursor){ 0, 0 };
+			break;
+		}
+		cur = it.cur;
+		pages++;
+	}
+	CHECK(cur.entry == 0 && cur.row == 0);
+	CHECK(pages < 8);
+}

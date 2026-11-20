@@ -828,7 +828,7 @@ static void render_public_rows(int cols, bool color, uint16_t title_color)
 	int rows = (DISP_H - CONTENT_Y) / LINE_H;
 	int y = CONTENT_Y;
 	int shown = 0;
-	int text_rows = rows > 2 ? rows - 2 : (rows > 1 ? 1 : 0);
+	int text_rows = rows > 1 ? rows - 1 : 0;	/* the name takes one row */
 	struct ui_chat_iter it;
 	char row[UI_FEED_TEXT_LEN + 32];
 
@@ -884,22 +884,6 @@ static void render_public_rows(int cols, bool color, uint16_t title_color)
 		}
 		y += LINE_H;
 		shown++;
-	}
-	if (rows > 1) {
-		char pos[16];
-		int bottom_y = (int)DISP_H - LINE_H;
-
-		if (bottom_y < y) {
-			bottom_y = y;
-		}
-		snprintf(pos, sizeof(pos), "%u/%u",
-			 (unsigned)(s->chat_view.entry + 1),
-			 (unsigned)c->count);
-		if (color) {
-			draw_centered_color(bottom_y, pos, UI_COLOR_DISABLED);
-		} else {
-			draw_centered(bottom_y, pos);
-		}
 	}
 }
 
