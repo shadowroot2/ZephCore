@@ -641,7 +641,10 @@ static inline bool ui_chat_iter_skip_one(struct ui_chat_iter *it)
 		if (*it->line_p == '\0') {
 			it->phase = 2;
 		} else {
-			char skip[8];
+			/* The wrap needs the full row width: a short buffer
+			 * cuts the row early and leaves the cursor standing
+			 * inside a line instead of past it. */
+			char skip[UI_FEED_TEXT_LEN + 32];
 
 			ui_feed_wrap_row(skip, sizeof(skip), &it->line_p,
 					 it->cols);
@@ -655,12 +658,17 @@ static inline bool ui_chat_iter_skip_one(struct ui_chat_iter *it)
 
 static inline void ui_chat_iter_load(struct ui_chat_iter *it)
 {
+	/* The skip count must be held outside the cursor: skip_one advances
+	 * cur.row as it goes, and a loop over a moving bound never ends. */
+	uint16_t skip = it->cur.row;
+
 	it->loaded = true;
+	it->cur.row = 0;
 	if (it->cur.entry >= it->c->count) {
 		return;
 	}
 	ui_chat_iter_begin(it);
-	for (uint16_t i = 0; i < it->cur.row; i++) {
+	for (uint16_t i = 0; i < skip; i++) {
 		if (!ui_chat_iter_skip_one(it)) {
 			break;
 		}

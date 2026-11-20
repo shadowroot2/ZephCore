@@ -355,3 +355,24 @@ TEST(feed_private_one_line, "UNIT-FEED-013",
 	CHECK(std::string(row) == "");	/* the blank after it */
 	CHECK(!ui_chat_iter_next(&it, row, sizeof(row)));
 }
+
+TEST(feed_seek_inside_message, "UNIT-FEED-014",
+     "Opening a chat at a row past the first never spins")
+{
+	struct ui_chat_list l = fresh_list();
+	struct ui_chat *c;
+	char row[64];
+	struct ui_chat_iter it;
+	struct ui_feed_cursor cur = { 0, 2 };
+
+	(void)ui_chat_push(&l, "Public", true, NOW, "Nick: aaa bbb ccc ddd");
+	c = ui_chat_find(&l, "Public");
+	CHECK(c != NULL);
+
+	/* Row 2 of the newest message: the head is row 0 and "aaa bbb" is
+	 * row 1, so this is the "ccc ddd" line.  Before the fix the skip
+	 * loop advanced the very bound it was counting to and never ended. */
+	ui_chat_iter_init(&it, c, cur, NOW, 0, 11);
+	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
+	CHECK(std::string(row) == "ccc ddd");
+}

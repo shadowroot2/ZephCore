@@ -982,6 +982,16 @@ void mc_display_invert_rect(int x, int y, int w, int h)
 	if (!disp_initialized) {
 		return;
 	}
+	if (is_epd) {
+		/* The band is part of the frame: without it a selection that
+		 * moves over the same text leaves the hash unchanged and the
+		 * panel never refreshes. */
+		epd_hash_u32(0x42414E44u);	/* "BAND" */
+		epd_hash_u32((uint32_t)x);
+		epd_hash_u32((uint32_t)y);
+		epd_hash_u32((uint32_t)w);
+		epd_hash_u32((uint32_t)h);
+	}
 	cfb_invert_area(disp_dev,
 		(uint16_t)(x + DISP_INSET), (uint16_t)(y + DISP_INSET),
 		(uint16_t)w, (uint16_t)h

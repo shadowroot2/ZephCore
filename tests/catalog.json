@@ -876,6 +876,11 @@
       "id": "UNIT-FEED-013",
       "name": "A direct chat carries its time on the text's own line",
       "source": "tests/unit/feed_tests.cpp"
+    },
+    {
+      "id": "UNIT-FEED-014",
+      "name": "Opening a chat at a row past the first never spins",
+      "source": "tests/unit/feed_tests.cpp"
     }
   ]
 }
