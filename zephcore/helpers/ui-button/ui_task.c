@@ -482,12 +482,6 @@ void ui_request_render_now(void)
 static void action_page_next(void)
 {
 #ifdef CONFIG_ZEPHCORE_UI_DISPLAY
-	/* On the conversation list one press walks it: there is only one
-	 * page of names, so the page key is the list key. */
-	if (ui_pages_current() == UI_PAGE_PUBLIC && !get_state()->chat_open) {
-		chat_list_next();
-		return;
-	}
 	ui_pages_next();
 #endif
 	ui_request_render_now();
@@ -496,10 +490,6 @@ static void action_page_next(void)
 static void action_page_prev(void)
 {
 #ifdef CONFIG_ZEPHCORE_UI_DISPLAY
-	if (ui_pages_current() == UI_PAGE_PUBLIC && !get_state()->chat_open) {
-		chat_list_prev();
-		return;
-	}
 	ui_pages_prev();
 #endif
 	ui_request_render_now();
