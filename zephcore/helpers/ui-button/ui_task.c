@@ -213,6 +213,8 @@ static struct k_work_delayable home_hold_work;
 
 static void schedule_render(void);
 static void schedule_render_auto(void);
+static void chat_list_next(void);
+static void chat_list_prev(void);
 
 /* Enter the highlighted conversation: the feed shows only its messages
  * and the unread count clears on the visit. */
@@ -480,6 +482,12 @@ void ui_request_render_now(void)
 static void action_page_next(void)
 {
 #ifdef CONFIG_ZEPHCORE_UI_DISPLAY
+	/* On the conversation list one press walks it: there is only one
+	 * page of names, so the page key is the list key. */
+	if (ui_pages_current() == UI_PAGE_PUBLIC && !get_state()->chat_open) {
+		chat_list_next();
+		return;
+	}
 	ui_pages_next();
 #endif
 	ui_request_render_now();
@@ -488,6 +496,10 @@ static void action_page_next(void)
 static void action_page_prev(void)
 {
 #ifdef CONFIG_ZEPHCORE_UI_DISPLAY
+	if (ui_pages_current() == UI_PAGE_PUBLIC && !get_state()->chat_open) {
+		chat_list_prev();
+		return;
+	}
 	ui_pages_prev();
 #endif
 	ui_request_render_now();
@@ -521,6 +533,18 @@ static void chat_list_next(void)
 		return;
 	}
 	s->chat_sel = (uint8_t)((s->chat_sel + 1) % n);
+	ui_request_render_now();
+}
+
+static void chat_list_prev(void)
+{
+	struct ui_state *s = get_state();
+	int n = ui_chat_list_len(&s->chats);
+
+	if (n == 0) {
+		return;
+	}
+	s->chat_sel = (uint8_t)((s->chat_sel + n - 1) % n);
 	ui_request_render_now();
 }
 
