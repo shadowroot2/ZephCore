@@ -22,6 +22,8 @@
 
 #include <zephyr/devicetree.h>
 
+#include "display_charset.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -345,17 +347,6 @@ void mc_display_epd_commit(void);
  * Returns NULL if display not initialized.
  */
 const struct device *mc_display_get_device(void);
-
-/**
- * Convert UTF-8 text to the display charset for rendering.
- * Passes ASCII unchanged, converts Latin-1 (U+00A0-U+00FF) to its native
- * code points, maps 32 Latin-2 letters (Hungarian/Czech/Slovak/Polish/...)
- * into font slots 128-159, folds the rest of Latin Extended-A to base ASCII
- * letters, and strips everything else (emojis, CJK). Bytes that are not
- * valid UTF-8 pass through unchanged, so already-converted text survives a
- * second pass.
- */
-void utf8_to_display(char *dst, const char *src, size_t dst_size);
 
 /**
  * utf8_to_display() + leading-space trim (names are sometimes space-padded

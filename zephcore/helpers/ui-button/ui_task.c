@@ -13,14 +13,19 @@
  * 2-tap slot to page-prev, pushing KEY_B out to 3 taps.
  *
  *   KEY_1     → action_page_next()       (1 tap, 400ms delayed)
- *   KEY_LEFT  → action_page_prev()       (2 taps on boards with a screen)
+ *   KEY_LEFT  → action_page_prev()       (2 taps on boards with a screen;
+ *                                         one-button boards step the feed
+ *                                         list/chat and the NAV waypoints
+ *                                         instead)
  *   KEY_B     → action_leds_toggle()     (LED heartbeat; 2 taps stock)
  *   KEY_D     → action_buzzer_toggle()   (notification mode; 3 taps stock)
  *   KEY_C     → action_gps_toggle()      (4 taps)
  *   KEY_E     → action_flood_advert()    (5 taps)
  *   KEY_G     → GPS switch on/off        (hardware toggle, ThinkNode M1)
  *   KEY_POWER / KEY_F → action_deep_sleep() (long press — boards that emit these)
- *   KEY_ENTER → action_page_enter()      (long press — Pocket / Heltec; joystick center Wio)
+ *   KEY_ENTER → action_page_enter()      (long press — Pocket / Heltec; joystick
+ *                                         center Wio; on the feed a hold enters
+ *                                         or leaves the conversation)
  *   KEY_RIGHT → action_page_next()       (joystick, Wio Tracker)
  *
  * The last entry of a board's tap-codes fires immediately (no tap-delay-ms
@@ -242,6 +247,17 @@ static void chat_close(void)
 	ui_request_render_now();
 }
 
+/* A hold on the feed is the choice of the highlighted conversation, and
+ * inside one the same hold is the way back out. */
+static void chat_open_toggle(void)
+{
+	if (get_state()->chat_open) {
+		chat_close();
+	} else {
+		chat_open_selected();
+	}
+}
+
 static void home_hold_handler(struct k_work *work)
 {
 	ARG_UNUSED(work);
@@ -253,11 +269,7 @@ static void home_hold_handler(struct k_work *work)
 	/* The list: a hold is the choice of the highlighted conversation.
 	 * Inside one, the same hold is the way back out. */
 	if (ui_pages_current() == UI_PAGE_PUBLIC) {
-		if (get_state()->chat_open) {
-			chat_close();
-		} else {
-			chat_open_selected();
-		}
+		chat_open_toggle();
 		return;
 	}
 	if (st->nav_active) {
@@ -591,10 +603,13 @@ static void feed_defer_handler(struct k_work *work)
 {
 	ARG_UNUSED(work);
 	/* Single-press timeout: step forward on the list or in the chat. */
-	if (ui_pages_current() == UI_PAGE_PUBLIC && !get_state()->chat_open) {
-		chat_list_next();
-	} else {
+	if (ui_pages_current() != UI_PAGE_PUBLIC) {
+		return;
+	}
+	if (get_state()->chat_open) {
 		feed_page_next();
+	} else {
+		chat_list_next();
 	}
 }
 
@@ -684,10 +699,16 @@ static void action_page_enter(void)
 		break;
 
 	case UI_PAGE_PUBLIC:
+		if (ENTER_FROM_HOLD) {
+			/* One action button: the hold is the choice of the
+			 * highlighted conversation, and the way back out. */
+			chat_open_toggle();
+			break;
+		}
+		/* A short ENTER walks: one press steps the list or the chat
+		 * forward after a beat, a second press inside the window
+		 * walks back instead. */
 		if (!get_state()->chat_open) {
-			/* One press walks the list forward after a beat; a
-			 * second press inside the window walks it back, the
-			 * same shape as the chat below. */
 			if (k_work_delayable_is_pending(&feed_defer_work)) {
 				k_work_cancel_delayable(&feed_defer_work);
 				chat_list_prev();
@@ -697,9 +718,6 @@ static void action_page_enter(void)
 			}
 			break;
 		}
-		/* One button pages the chat, the same shape as the advert
-		 * page: the first press steps forward after a beat, a second
-		 * press inside the window walks back instead. */
 		if (k_work_delayable_is_pending(&feed_defer_work)) {
 			k_work_cancel_delayable(&feed_defer_work);
 			feed_page_prev();
@@ -1258,6 +1276,16 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 		/* 2 taps of the one button: cycle the waypoints on the NAV page. */
 		if (ENTER_FROM_HOLD && ui_pages_current() == UI_PAGE_GPS_HOME) {
 			mesh_wp_cycle();
+			break;
+		}
+		/* 2 taps of the one button on the feed: step the list of
+		 * conversations, or the open one's message pages. */
+		if (ENTER_FROM_HOLD && ui_pages_current() == UI_PAGE_PUBLIC) {
+			if (get_state()->chat_open) {
+				feed_page_next();
+			} else {
+				chat_list_next();
+			}
 			break;
 		}
 #endif

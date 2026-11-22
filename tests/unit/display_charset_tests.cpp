@@ -7,6 +7,8 @@
 
 #include <display_charset.h>
 
+#include <cstring>
+
 #include "test.h"
 
 TEST(charset_cyrillic_slots, "UNIT-CHARSET-001",
@@ -57,9 +59,9 @@ TEST(charset_cyrillic_slots, "UNIT-CHARSET-001",
 			n++;
 		}
 	}
-	/* U+0410..U+044F is 64 letters, 20 of which borrowed a Latin glyph,
+	/* U+0410..U+044F is 64 letters, 15 of which borrowed a Latin glyph,
 	 * plus the two yo's sitting outside that range. */
-	CHECK(n == 46);
+	CHECK(n == 51);
 }
 
 TEST(charset_latin_survivors, "UNIT-CHARSET-002",
@@ -79,6 +81,19 @@ TEST(charset_latin_survivors, "UNIT-CHARSET-002",
 	CHECK(display_charset_map(0xA3) == 0);	/* pound */
 	CHECK(display_charset_map(0xBD) == 0);	/* 1/2 */
 
+	/* Spacing and quotes that must survive as themselves. */
+	CHECK(display_charset_map(0xA0) == ' ');	/* NBSP: still a break */
+	CHECK(display_charset_map(0xAB) == '<');	/* « */
+	CHECK(display_charset_map(0xBB) == '>');	/* » */
+
+	/* Common Russian punctuation folds to ASCII. */
+	CHECK(display_charset_map(0x2014) == '-');	/* — */
+	CHECK(display_charset_map(0x2013) == '-');	/* – */
+	CHECK(display_charset_map(0x2026) == '.');	/* … */
+	CHECK(display_charset_map(0x2116) == 'N');	/* № */
+	CHECK(display_charset_map(0x20BD) == 'P');	/* ₽ */
+	CHECK(display_charset_map(0x2019) == '\'');	/* ' */
+
 	/* Latin Extended-A folds to its base letter. */
 	CHECK(display_charset_map(0x0104) == 'A');	/* A ogonek */
 	CHECK(display_charset_map(0x017E) == 'z');	/* z caron */
@@ -94,21 +109,21 @@ TEST(charset_latin_survivors, "UNIT-CHARSET-002",
 TEST(charset_lookalike_borrowing, "UNIT-CHARSET-003",
      "A Russian letter drawn like a Latin one borrows its glyph")
 {
-	/* Upper: A B E K M H O P C T Y X */
+	/* Upper: A B E H O P C T */
 	CHECK(display_charset_map(0x410) == 'A');
 	CHECK(display_charset_map(0x412) == 'B');
 	CHECK(display_charset_map(0x415) == 'E');
-	CHECK(display_charset_map(0x41A) == 'K');
-	CHECK(display_charset_map(0x41C) == 'M');
+	CHECK(display_charset_map(0x41A) != 'K');	/* К is not K: own shape */
+	CHECK(display_charset_map(0x41C) != 'M');	/* М is not M: own shape */
 	CHECK(display_charset_map(0x41D) == 'H');
 	CHECK(display_charset_map(0x41E) == 'O');
 	CHECK(display_charset_map(0x420) == 'P');
 	CHECK(display_charset_map(0x421) == 'C');
 	CHECK(display_charset_map(0x422) == 'T');
-	CHECK(display_charset_map(0x423) == 'Y');
-	CHECK(display_charset_map(0x425) == 'X');
+	CHECK(display_charset_map(0x423) != 'Y');	/* У is not Y */
+	CHECK(display_charset_map(0x425) != 'X');	/* Х is not X */
 
-	/* Lower: a e o p c t y x */
+	/* Lower: a e o p c y x */
 	CHECK(display_charset_map(0x430) == 'a');
 	CHECK(display_charset_map(0x435) == 'e');
 	CHECK(display_charset_map(0x43E) == 'o');
@@ -117,7 +132,7 @@ TEST(charset_lookalike_borrowing, "UNIT-CHARSET-003",
 	CHECK(display_charset_map(0x442) != 't');	/* т is not t: a small T */
 	CHECK(display_charset_map(0x443) == 'y');
 	CHECK(display_charset_map(0x445) == 'x');
-	CHECK(display_charset_map(0x43A) == 'k');	/* к */
+	CHECK(display_charset_map(0x43A) != 'k');	/* к is not k: a small K */
 
 	/* The ones with no Latin twin still go to their own slot. */
 	CHECK(display_charset_map(0x411) == 129);	/* Б */
@@ -125,4 +140,48 @@ TEST(charset_lookalike_borrowing, "UNIT-CHARSET-003",
 	CHECK(display_charset_map(0x44F) == 193);	/* я */
 	CHECK(display_charset_map(0x401) == 134);	/* Ё */
 	CHECK(display_charset_map(0x451) == 167);	/* ё */
+}
+
+TEST(charset_second_pass_idempotent, "UNIT-CHARSET-004",
+     "Already display-encoded text survives a second sanitizing pass")
+{
+	/* utf8_to_display() runs twice over names: once to store them,
+	 * once at draw time.  The second pass must be a no-op, but slots
+	 * 192/193 (ю/я) sit on UTF-8 lead bytes and used to swallow the
+	 * glyph behind them. */
+	char once[48];
+	char twice[48];
+	const char *names[] = {
+		"яблоко",	/* я is slot 193 = 0xC1, a 2-byte lead */
+		"Юля",		/* ю is slot 192 = 0xC0 */
+		"объявление",
+		"Hello ёж №5 — юля",
+	};
+
+	for (const char *name : names) {
+		utf8_to_display(once, name, sizeof(once));
+		utf8_to_display(twice, once, sizeof(twice));
+		CHECK(strcmp(once, twice) == 0);
+	}
+
+	/* Explicit pair: lead-like slot must not eat the next slot. */
+	const char encoded[] = { (char)193, (char)162, 0 };	/* яб */
+	char out[8];
+
+	utf8_to_display(out, encoded, sizeof(out));
+	CHECK((uint8_t)out[0] == 193);
+	CHECK((uint8_t)out[1] == 162);
+
+	/* Valid UTF-8 still decodes: U+044F is я, U+0410 is А. */
+	utf8_to_display(out, "\xD1\x8F", sizeof(out));
+	CHECK((uint8_t)out[0] == 193);
+	utf8_to_display(out, "\xD0\x90", sizeof(out));
+	CHECK(out[0] == 'A');
+
+	/* Truncated and overlong sequences pass through as bytes. */
+	utf8_to_display(out, "\xD0", sizeof(out));
+	CHECK((uint8_t)out[0] == 0xD0);
+	utf8_to_display(out, "\xC0\xAF", sizeof(out));
+	CHECK((uint8_t)out[0] == 0xC0);
+	CHECK((uint8_t)out[1] == 0xAF);
 }

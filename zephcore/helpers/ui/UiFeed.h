@@ -628,9 +628,32 @@ static inline void ui_feed_shorten_map_url(char *dst, size_t n, const char *src)
 static inline void ui_chat_clean_text(char *dst, size_t n, const char *src)
 {
 	const char *sep;
+	const char *link = strstr(src, "maps.google.com");
 
-	if (strstr(src, "maps.google.com") != NULL) {
-		ui_feed_extract_coords(dst, n, src);
+	if (link != NULL) {
+		sep = strstr(src, ": ");
+		/* A map message is only coordinates to a reader on a panel,
+		 * but the "<name>: " prefix stays: the head row names the
+		 * sender like on any other message.  A ": " behind the link
+		 * is body text, not a name. */
+		if (sep != NULL && sep < link) {
+			char name[UI_FEED_NAME_LEN + 1];
+			char clean_name[UI_FEED_NAME_LEN + 1];
+			char coords[UI_FEED_TEXT_LEN + 1];
+			size_t name_len = (size_t)(sep - src);
+
+			if (name_len >= sizeof(name)) {
+				name_len = sizeof(name) - 1;
+			}
+			memcpy(name, src, name_len);
+			name[name_len] = '\0';
+			ui_feed_strip_pictographs(clean_name, sizeof(clean_name),
+						  name);
+			ui_feed_extract_coords(coords, sizeof(coords), sep + 2);
+			snprintf(dst, n, "%s: %s", clean_name, coords);
+		} else {
+			ui_feed_extract_coords(dst, n, src);
+		}
 		return;
 	}
 	sep = strstr(src, ": ");

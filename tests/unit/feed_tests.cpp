@@ -514,3 +514,44 @@ TEST(feed_name_gap_trimmed, "UNIT-FEED-020",
 	ui_feed_strip_pictographs(buf, sizeof(buf), "  Mama  ");
 	CHECK(std::string(buf) == "Mama");
 }
+
+TEST(feed_coords_keep_sender, "UNIT-FEED-021",
+     "A channel message with coordinates keeps its sender in the header")
+{
+	char buf[192];
+	struct ui_chat_list l = fresh_list();
+	struct ui_chat *c;
+	char row[64];
+	struct ui_chat_iter it;
+	struct ui_feed_cursor start = { 0, 0 };
+
+	/* The "<name>: " prefix survives the coordinate squeeze, or the
+	 * head row has no sender to name. */
+	ui_chat_clean_text(buf, sizeof(buf),
+			   "Nick: https://maps.google.com/?q=55.75580,37.61730");
+	CHECK(std::string(buf) == "Nick: 55.75580,37.61730");
+
+	/* Two links: two rows of coordinates, name kept once. */
+	ui_chat_clean_text(buf, sizeof(buf),
+			   "Nick: https://maps.google.com/?q=55.7,37.6 и "
+			   "https://maps.google.com/?q=55.8,37.7");
+	CHECK(std::string(buf) == "Nick: 55.7,37.6\n55.8,37.7");
+
+	/* A message without a name prefix stays coordinates only. */
+	ui_chat_clean_text(buf, sizeof(buf),
+			   "тут https://maps.google.com/?q=55.75580,37.61730");
+	CHECK(std::string(buf) == "55.75580,37.61730");
+
+	/* The head row names the sender like on any other message. */
+	(void)ui_chat_push(&l, "#tracks", true, NOW,
+			   "Nick: https://maps.google.com/?q=55.75580,37.61730");
+	c = ui_chat_find(&l, "#tracks");
+	CHECK(c != NULL);
+	ui_chat_iter_init(&it, c, start, NOW, 0, 21);
+	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
+	CHECK(it.row_is_head);
+	CHECK(std::string(row) == "12:34 Nick");
+	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
+	CHECK(!it.row_is_head);
+	CHECK(std::string(row) == "55.75580,37.61730");
+}

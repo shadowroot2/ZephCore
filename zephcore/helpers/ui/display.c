@@ -1163,69 +1163,9 @@ const struct device *mc_display_get_device(void)
 
 /* ========== UTF-8 to display-charset sanitizer ==========
  *
- * The 6x8 font covers Latin-1 at its native code points (0xA0-0xFF) and
- * hosts the Russian alphabet in 128-193 and Latin-1 A circumflex..
- * y diaeresis in 194-255 (see cfb_font_0608.c).  Latin Extended-A folds
- * to its base letters; there is no room for a glyph per accent. */
-
-
-void utf8_to_display(char *dst, const char *src, size_t dst_size)
-{
-	size_t di = 0;
-	size_t si = 0;
-
-	if (dst_size == 0) {
-		return;
-	}
-	while (src[si] && di < dst_size - 1) {
-		uint8_t c = (uint8_t)src[si];
-		uint32_t cp;
-		int len;
-
-		if (c < 0x80) {
-			dst[di++] = (char)c;
-			si++;
-			continue;
-		} else if ((c & 0xE0) == 0xC0) {
-			cp = c & 0x1F;
-			len = 2;
-		} else if ((c & 0xF0) == 0xE0) {
-			cp = c & 0x0F;
-			len = 3;
-		} else if ((c & 0xF8) == 0xF0) {
-			cp = c & 0x07;
-			len = 4;
-		} else {
-			/* Not a UTF-8 lead byte: already display-encoded text
-			 * (or junk) — pass through so a second sanitizing pass
-			 * is harmless. */
-			dst[di++] = (char)c;
-			si++;
-			continue;
-		}
-
-		bool valid = true;
-		for (int k = 1; k < len; k++) {
-			if (((uint8_t)src[si + k] & 0xC0) != 0x80) {
-				valid = false;
-				break;
-			}
-			cp = (cp << 6) | ((uint8_t)src[si + k] & 0x3F);
-		}
-		if (!valid) {
-			dst[di++] = (char)c;	/* lone lead byte: pass through */
-			si++;
-			continue;
-		}
-		si += len;
-
-		uint8_t out = display_charset_map(cp);
-		if (out) {
-			dst[di++] = (char)out;
-		}
-	}
-	dst[di] = '\0';
-}
+ * utf8_to_display() lives in display_charset.h (shared with host tests).
+ * The 6x8 font hosts the Russian alphabet in slots 128-193 and Latin-1
+ * A circumflex..y diaeresis in 194-255 (see cfb_font_0608.c). */
 
 /* Legacy entry point: transcode + trim leading spaces (names are sometimes
  * space-padded to game sort order). */
