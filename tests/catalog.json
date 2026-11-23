@@ -921,6 +921,11 @@
       "id": "UNIT-FEED-021",
       "name": "A channel message with coordinates keeps its sender in the header",
       "source": "tests/unit/feed_tests.cpp"
+    },
+    {
+      "id": "UNIT-FEED-022",
+      "name": "A tracking report keeps its speed and sector beside the coordinates",
+      "source": "tests/unit/feed_tests.cpp"
     }
   ]
 }

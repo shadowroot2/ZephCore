@@ -555,3 +555,41 @@ TEST(feed_coords_keep_sender, "UNIT-FEED-021",
 	CHECK(!it.row_is_head);
 	CHECK(std::string(row) == "55.75580,37.61730");
 }
+
+TEST(feed_coords_motion, "UNIT-FEED-022",
+     "A tracking report keeps its speed and sector beside the coordinates")
+{
+	char buf[192];
+
+	/* The wire line "🏃 12 км/ч ↗️ СВ\n📍 <link>" is motion and point:
+	 * the pictographs go, the speed and the sector stay. */
+	ui_chat_clean_text(buf, sizeof(buf),
+			   "🏃 12 км/ч ↗️ СВ\n"
+			   "📍 https://maps.google.com/?q=55.75580,37.61730");
+	CHECK(std::string(buf) == "12км/ч СВ 55.75580,37.61730");
+
+	/* The sender keeps its place ahead of the motion. */
+	ui_chat_clean_text(buf, sizeof(buf),
+			   "Nick: 🏃 6 км/ч ⬆️ Ю\n"
+			   "📍 https://maps.google.com/?q=55.75580,37.61730");
+	CHECK(std::string(buf) == "Nick: 6км/ч Ю 55.75580,37.61730");
+
+	/* A standstill carries no speed and no sector to keep. */
+	ui_chat_clean_text(buf, sizeof(buf),
+			   "🅿️\n"
+			   "📍 https://maps.google.com/?q=55.75580,37.61730");
+	CHECK(std::string(buf) == "55.75580,37.61730");
+
+	/* "15 км/ч)" is a trip summary's parenthetical, not a motion. */
+	ui_chat_clean_text(buf, sizeof(buf),
+			   "🏁 12.4км (10.2 / 15 км/ч)\n⏱️ 2ч15м\n🚶 1ч48м\n"
+			   "🅿️ 30 мин (3)\n"
+			   "📍 https://maps.google.com/?q=55.75580,37.61730");
+	CHECK(std::string(buf) == "55.75580,37.61730");
+
+	/* A whole word is not the СВ sector. */
+	ui_chat_clean_text(buf, sizeof(buf),
+			   "12 км/ч СВЕТ иду "
+			   "https://maps.google.com/?q=55.75580,37.61730");
+	CHECK(std::string(buf) == "55.75580,37.61730");
+}

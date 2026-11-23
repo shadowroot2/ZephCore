@@ -1147,7 +1147,9 @@ A channel message reads as its head line and the text below it —
 `18.11 13:02 Nick:` banded like a list row, then the message. A direct
 chat keeps the time and the text on one line. Both are cut to the panel
 width rather than wrapped onto each other. A message that carries map
-links keeps only the coordinates, one pair per line. A nickname keeps no
+links keeps the coordinates, one pair per line; a tracking report keeps
+its speed and sector ahead of the first pair, without its pictographs
+(`12км/ч СВ 55.75580,37.61730`). A nickname keeps no
 pictograph; the bitmap font carries the Russian alphabet in slots 128-193
 and borrows the Latin glyph for the twenty-one letters drawn like one
 (`UiFeed.h`, `display_charset.h`).

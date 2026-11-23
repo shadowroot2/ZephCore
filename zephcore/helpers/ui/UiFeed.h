@@ -562,18 +562,117 @@ static inline void ui_feed_strip_pictographs(char *dst, size_t n, const char *sr
 	}
 }
 
-/* A message that carries map links is only coordinates to a reader on a
- * panel: pull every "q=" pair out and put each on its own line.  Two links
- * in one message become two rows. */
+/* A tracking report on the wire is "🏃 12 км/ч ↗️ СВ\n📍 <link>": beside the
+ * point a reader wants the motion — "12км/ч СВ", the speed and the sector
+ * and none of the pictographs. */
+static inline const char *ui_feed_sector_token(const char *p)
+{
+	const char *tok;
+	size_t sl;
+
+	/* Whole compass tokens only: "СВЕТ" is a word, not the СВ sector.
+	 * Pairs are tried first so "СВ" never parses as "С". */
+	if (strncmp(p, "СВ", 4) == 0) {
+		tok = "СВ";
+		sl = 4;
+	} else if (strncmp(p, "ЮВ", 4) == 0) {
+		tok = "ЮВ";
+		sl = 4;
+	} else if (strncmp(p, "ЮЗ", 4) == 0) {
+		tok = "ЮЗ";
+		sl = 4;
+	} else if (strncmp(p, "СЗ", 4) == 0) {
+		tok = "СЗ";
+		sl = 4;
+	} else if (strncmp(p, "С", 2) == 0) {
+		tok = "С";
+		sl = 2;
+	} else if (strncmp(p, "В", 2) == 0) {
+		tok = "В";
+		sl = 2;
+	} else if (strncmp(p, "Ю", 2) == 0) {
+		tok = "Ю";
+		sl = 2;
+	} else if (strncmp(p, "З", 2) == 0) {
+		tok = "З";
+		sl = 2;
+	} else {
+		return NULL;
+	}
+	if (p[sl] != '\0' && ui_feed_utf8_len(p + sl) == 2) {
+		return NULL;
+	}
+	return tok;
+}
+
+static inline int ui_feed_extract_motion(char *dst, size_t n, const char *src)
+{
+	static const char unit[] = "км/ч";
+	const char *k = strstr(src, unit);
+	const char *end;
+	const char *p;
+	const char *sector;
+	unsigned speed = 0;
+
+	if (n == 0) {
+		return 0;
+	}
+	dst[0] = '\0';
+	if (k == NULL) {
+		return 0;
+	}
+	end = k;
+	while (end > src && end[-1] == ' ') {
+		end--;
+	}
+	p = end;
+	while (p > src && p[-1] >= '0' && p[-1] <= '9') {
+		p--;
+	}
+	if (p == end || (p > src && p[-1] == '.')) {
+		return 0;
+	}
+	while (p < end) {
+		speed = speed * 10u + (unsigned)(*p++ - '0');
+	}
+	/* Past the unit the travel arrow is a pictograph and drops; the
+	 * sector is plain Cyrillic and stops the walk. */
+	p = k + sizeof(unit) - 1;
+	for (;;) {
+		size_t m = ui_feed_utf8_len(p);
+
+		if (m == 2) {
+			break;
+		}
+		if (m == 0 || (m == 1 && *p != ' ')) {
+			return 0;
+		}
+		p += m;
+	}
+	sector = ui_feed_sector_token(p);
+	if (sector == NULL) {
+		return 0;
+	}
+	snprintf(dst, n, "%u%s %s", speed, unit, sector);
+	return 1;
+}
+
+/* A message that carries map links is the motion and the coordinates to a
+ * reader on a panel: the speed and sector a tracking report carries, then
+ * every "q=" pair on its own line.  Two links in one message become two
+ * rows. */
 static inline void ui_feed_extract_coords(char *dst, size_t n, const char *src)
 {
 	static const char host[] = "maps.google.com";
+	char motion[24];
 	size_t out = 0;
 	int found = 0;
 
 	if (n == 0) {
 		return;
 	}
+	motion[0] = '\0';
+	(void)ui_feed_extract_motion(motion, sizeof(motion), src);
 	while (*src != '\0' && out + 1 < n) {
 		const char *m = strstr(src, host);
 		const char *q;
@@ -587,6 +686,15 @@ static inline void ui_feed_extract_coords(char *dst, size_t n, const char *src)
 			continue;
 		}
 		q += 2;
+		if (found == 0 && motion[0] != '\0') {
+			size_t ml = strlen(motion);
+
+			if (out + ml + 2 < n) {
+				memcpy(dst + out, motion, ml);
+				out += ml;
+				dst[out++] = ' ';
+			}
+		}
 		if (found > 0) {
 			dst[out++] = '\n';
 		}
