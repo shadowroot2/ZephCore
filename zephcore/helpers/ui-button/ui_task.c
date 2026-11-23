@@ -247,12 +247,88 @@ static void chat_close(void)
 	ui_request_render_now();
 }
 
-/* A hold on the feed is the choice of the highlighted conversation, and
- * inside one the same hold is the way back out. */
-static void chat_open_toggle(void)
+/* The quick-reply picker over the open conversation: the non-empty presets
+ * snapshotted into the state, "Отмена" always the last row. */
+static void qr_picker_open(void)
 {
-	if (get_state()->chat_open) {
-		chat_close();
+	struct ui_state *s = get_state();
+
+	s->qr_count = 0;
+	for (int i = 0; i < 10; i++) {
+		const char *t = mesh_quick_reply_text(i);
+		size_t n;
+
+		if (t == NULL || t[0] == '\0') {
+			continue;
+		}
+		s->qr_slot[s->qr_count] = (int8_t)i;
+		n = strlen(t);
+		if (n >= sizeof(s->qr_text[0])) {
+			n = sizeof(s->qr_text[0]) - 1;
+		}
+		memcpy(s->qr_text[s->qr_count], t, n);
+		s->qr_text[s->qr_count][n] = '\0';
+		s->qr_count++;
+	}
+	s->qr_sel = 0;
+	s->qr_open = true;
+	ui_request_render_now();
+}
+
+static void qr_picker_close(void)
+{
+	get_state()->qr_open = false;
+	ui_request_render_now();
+}
+
+/* Walk the picker rows with wrap; the last row is "Отмена". */
+static void qr_picker_step(int dir)
+{
+	struct ui_state *s = get_state();
+	int rows = (int)s->qr_count + 1;
+	int next = (int)s->qr_sel + dir;
+
+	if (next < 0) {
+		next = rows - 1;
+	} else if (next >= rows) {
+		next = 0;
+	}
+	s->qr_sel = (uint8_t)next;
+	ui_request_render_now();
+}
+
+/* The hold takes the row: a preset goes out to the conversation, the
+ * "Отмена" row just closes the picker. */
+static void qr_picker_select(void)
+{
+	struct ui_state *s = get_state();
+	struct ui_chat *c;
+
+	if (s->qr_sel >= s->qr_count) {
+		qr_picker_close();
+		return;
+	}
+	c = ui_chat_nth(&s->chats, s->chat_sel);
+	if (c != NULL) {
+		mesh_quick_reply_send(s->qr_slot[s->qr_sel], c->name,
+				      c->is_group);
+	}
+	qr_picker_close();
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
+	buzzer_play(MELODY_ACK);
+#endif
+}
+
+/* A hold on the feed is the choice of the highlighted conversation; inside
+ * one it opens the quick-reply picker, and on the picker it takes the row. */
+static void feed_hold(void)
+{
+	struct ui_state *s = get_state();
+
+	if (s->qr_open) {
+		qr_picker_select();
+	} else if (s->chat_open) {
+		qr_picker_open();
 	} else {
 		chat_open_selected();
 	}
@@ -267,9 +343,10 @@ static void home_hold_handler(struct k_work *work)
 	struct ui_state *st = get_state();
 
 	/* The list: a hold is the choice of the highlighted conversation.
-	 * Inside one, the same hold is the way back out. */
+	 * Inside one it opens the quick-reply picker; on the picker it
+	 * takes the row. */
 	if (ui_pages_current() == UI_PAGE_PUBLIC) {
-		chat_open_toggle();
+		feed_hold();
 		return;
 	}
 	if (st->nav_active) {
@@ -584,29 +661,17 @@ static void feed_page_next(void)
 	ui_request_render_now();
 }
 
-static void feed_page_prev(void)
-{
-	struct ui_state *s = get_state();
-	const struct ui_chat *c = ui_chat_nth(&s->chats, s->chat_sel);
-
-	if (c == NULL || c->count == 0) {
-		return;
-	}
-	s->chat_view = ui_chat_page_before(c, s->chat_view, s->rtc_epoch,
-					   s->tz_offset_min,
-					   mc_display_font_width(),
-					   ui_pages_feed_page_rows());
-	ui_request_render_now();
-}
-
 static void feed_defer_handler(struct k_work *work)
 {
 	ARG_UNUSED(work);
-	/* Single-press timeout: step forward on the list or in the chat. */
+	/* Single-press timeout: step forward on the list, in the chat or
+	 * on the quick-reply picker. */
 	if (ui_pages_current() != UI_PAGE_PUBLIC) {
 		return;
 	}
-	if (get_state()->chat_open) {
+	if (get_state()->qr_open) {
+		qr_picker_step(1);
+	} else if (get_state()->chat_open) {
 		feed_page_next();
 	} else {
 		chat_list_next();
@@ -700,14 +765,24 @@ static void action_page_enter(void)
 
 	case UI_PAGE_PUBLIC:
 		if (ENTER_FROM_HOLD) {
-			/* One action button: the hold is the choice of the
-			 * highlighted conversation, and the way back out. */
-			chat_open_toggle();
+			/* One action button: the hold is the choice — the
+			 * highlighted conversation, or the picker row. */
+			feed_hold();
 			break;
 		}
-		/* A short ENTER walks: one press steps the list or the chat
-		 * forward after a beat, a second press inside the window
-		 * walks back instead. */
+		/* A short ENTER walks: one press steps the list, the chat
+		 * or the picker forward after a beat, a second press inside
+		 * the window walks back — or leaves the conversation. */
+		if (get_state()->qr_open) {
+			if (k_work_delayable_is_pending(&feed_defer_work)) {
+				k_work_cancel_delayable(&feed_defer_work);
+				qr_picker_step(-1);
+			} else {
+				k_work_reschedule(&feed_defer_work,
+						  K_MSEC(FEED_DOUBLE_MS));
+			}
+			break;
+		}
 		if (!get_state()->chat_open) {
 			if (k_work_delayable_is_pending(&feed_defer_work)) {
 				k_work_cancel_delayable(&feed_defer_work);
@@ -720,7 +795,7 @@ static void action_page_enter(void)
 		}
 		if (k_work_delayable_is_pending(&feed_defer_work)) {
 			k_work_cancel_delayable(&feed_defer_work);
-			feed_page_prev();
+			chat_close();
 		} else {
 			k_work_reschedule(&feed_defer_work,
 					  K_MSEC(FEED_DOUBLE_MS));
@@ -1204,6 +1279,13 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 		headless_sos_armed_until = k_uptime_get_32() + HEADLESS_GESTURE_ARM_WINDOW_MS;
 #endif
 #else
+		/* Inside a conversation the single press reads on: the next
+		 * page of its messages.  Everywhere else it is the window. */
+		if (ui_pages_current() == UI_PAGE_PUBLIC && get_state()->chat_open &&
+		    !get_state()->qr_open) {
+			feed_page_next();
+			break;
+		}
 		action_page_next();
 #endif
 		break;
@@ -1279,10 +1361,13 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 			break;
 		}
 		/* 2 taps of the one button on the feed: step the list of
-		 * conversations, or the open one's message pages. */
+		 * conversations or the picker rows, and inside a conversation
+		 * go back to the list. */
 		if (ENTER_FROM_HOLD && ui_pages_current() == UI_PAGE_PUBLIC) {
-			if (get_state()->chat_open) {
-				feed_page_next();
+			if (get_state()->qr_open) {
+				qr_picker_step(1);
+			} else if (get_state()->chat_open) {
+				chat_close();
 			} else {
 				chat_list_next();
 			}
@@ -1508,6 +1593,15 @@ void ui_notify_channel_msg(const char *channel_name, const char *text,
 	ui_feed_add(channel_name, true, text, ts);
 	ui_set_msg_count(msg_count);
 	ui_notify(UI_EVENT_CHANNEL_MSG);
+}
+
+void ui_push_own_msg(const char *chat_name, bool is_group, const char *text,
+		     uint32_t ts)
+{
+	/* A message the node itself just sent: the conversation view shows
+	 * it like any other, but it is not news to its reader — no buzz,
+	 * no queue count. */
+	ui_feed_add(chat_name, is_group, text, ts);
 }
 
 void ui_notify_packet_sent(void)

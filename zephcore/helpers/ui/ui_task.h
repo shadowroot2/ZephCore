@@ -346,6 +346,19 @@ void ui_notify_channel_msg(const char *channel_name, const char *text,
 			   uint32_t ts, uint8_t path_len, uint16_t msg_count);
 
 /**
+ * Notify UI of a message the node itself just sent into a conversation.
+ * Same shape as a received one, but it is not news to its reader: no
+ * message buzz and no queue-count bump.
+ *
+ * @param chat_name  Conversation name (channel or contact)
+ * @param is_group   True for a channel conversation
+ * @param text       Message text ("<sender>: " prefix splits to the head row)
+ * @param ts         Send timestamp (unix seconds)
+ */
+void ui_push_own_msg(const char *chat_name, bool is_group, const char *text,
+		     uint32_t ts);
+
+/**
  * Notify UI that an outbound packet was transmitted.
  * Rich UIs use this to start RTT timers; simpler ones ignore it.
  */

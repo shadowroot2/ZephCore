@@ -215,6 +215,14 @@ extern "C" void ui_notify_packet_sent(void)
 	}
 }
 
+extern "C" void ui_push_own_msg(const char *chat_name, bool is_group,
+				const char *text, uint32_t ts)
+{
+	/* The joystick keeps its own send history (UnreadScreen); the
+	 * button UI's echo has no home here. */
+	(void)chat_name; (void)is_group; (void)text; (void)ts;
+}
+
 extern "C" void ui_set_radio_params(
 	uint32_t freq_hz,
 	uint8_t sf,

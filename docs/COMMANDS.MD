@@ -81,6 +81,20 @@ get/set geo.radius
 - `set geo.radius <m>` — радиус в метрах (50..50000, по умолчанию 3000),
   local-only. Подробности — в [cli/companion.md](cli/companion.md).
 
+## Быстрые ответы companion (reply)
+
+```text
+reply get <n>
+reply set <n> <text>
+```
+
+- Десять готовых фраз для отправки с экрана ленты сообщений; слоты `1..10`
+  (`qr0..qr9` в prefs.json), лимит — 30 символов, пробелы считаются.
+- `reply set <n> <text>` — текст до конца строки, ответ `OK - reply 3: Иду`;
+  пустой текст очищает слот (`OK - reply 3: cleared`), пустой слот ничего
+  не отправляет. Локально (USB/BLE), сохраняется в prefs.json.
+- `reply get <n>` — `> Иду`; пустой слот — `> `.
+
 ## Bluetooth companion (pin)
 
 ```text

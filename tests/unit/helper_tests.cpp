@@ -515,6 +515,58 @@ TEST(companion_wp_save_autonames, "UNIT-CLI-006", "A set name survives every sav
 	CHECK(!companion_wp_save_autonames(0, "FREE"));
 	CHECK(!companion_wp_save_autonames(0, "GPS HOME"));
 }
+TEST(companion_reply, "UNIT-CLI-007", "reply get/set parses the slot and pins the 30-char limit") {
+	int slot;
+	char text[61];
+	char many[128];
+	char *w;
+	CHECK(companion_reply_parse("3", &slot, text, sizeof(text)) == NULL);
+	CHECK(slot == 2);
+	CHECK(std::strcmp(text, "") == 0);
+	CHECK(companion_reply_parse(" 1 Буду позже  ", &slot, text, sizeof(text)) == NULL);
+	CHECK(slot == 0);
+	CHECK(std::strcmp(text, "Буду позже") == 0);
+	CHECK(companion_reply_parse("10 012345678901234567890123456789",
+				    &slot, text, sizeof(text)) == NULL);
+	CHECK(slot == 9);
+	CHECK(std::strcmp(text, "012345678901234567890123456789") == 0);
+	CHECK(std::strcmp(companion_reply_parse("0", &slot, text, sizeof(text)),
+			  "Error: reply 1..10") == 0);
+	CHECK(std::strcmp(companion_reply_parse("11", &slot, text, sizeof(text)),
+			  "Error: reply 1..10") == 0);
+	CHECK(std::strcmp(companion_reply_parse("3.5", &slot, text, sizeof(text)),
+			  "Error: reply 1..10") == 0);
+	CHECK(std::strcmp(companion_reply_parse("", &slot, text, sizeof(text)),
+			  "Error: reply 1..10") == 0);
+	/* 30 Cyrillic characters fill the slot; 31 are refused. */
+	w = many;
+	memcpy(w, "5 ", 2);
+	w += 2;
+	for (int i = 0; i < 30; i++) {
+		memcpy(w, "а", 2);
+		w += 2;
+	}
+	*w = '\0';
+	CHECK(companion_reply_parse(many, &slot, text, sizeof(text)) == NULL);
+	CHECK(slot == 4);
+	CHECK(std::strlen(text) == 60);
+	memcpy(w, "а", 2);
+	w += 2;
+	*w = '\0';
+	CHECK(std::strcmp(companion_reply_parse(many, &slot, text, sizeof(text)),
+			  "Error: reply max 30 chars") == 0);
+	/* 30 three-byte characters count as 30 but outgrow the slot. */
+	w = many;
+	memcpy(w, "5 ", 2);
+	w += 2;
+	for (int i = 0; i < 30; i++) {
+		memcpy(w, "中", 3);
+		w += 3;
+	}
+	*w = '\0';
+	CHECK(std::strcmp(companion_reply_parse(many, &slot, text, sizeof(text)),
+			  "Error: reply max 30 chars") == 0);
+}
 TEST(gps_switch_policy, "UNIT-UI-001", "A physical GPS switch overrides the saved startup state") {
 	CHECK(gps_switch_effective_enabled(false, false, true));
 	CHECK(!gps_switch_effective_enabled(false, true, false));

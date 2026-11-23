@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <zephyr/sys/util.h>
+#include "NodePrefs.h"
 
 /* The nav/wp group exists only on boards whose DT has a GNSS receiver and
  * the build did not switch GPS off (NO_GPS / CONFIG_ZEPHCORE_NO_GPS). */
@@ -76,6 +77,61 @@ static inline bool companion_wp_save_autonames(int slot, const char *name)
 	return slot != 0 && strcmp(name, "FREE") == 0;
 }
 
+/* ZEPHCORE: arguments of "reply get <n>" and "reply set <n> <text>" — a
+ * slot 1..10 and a text of at most QUICK_REPLY_MAX_CHARS characters
+ * (spaces count; the text is the rest of the line and may be empty to
+ * clear the slot).  The cap counts UTF-8 characters, not bytes, so 30
+ * Cyrillic letters pass and 31 do not.  Returns the error reply, or NULL
+ * and fills the 0-based slot and the text. */
+static inline const char *companion_reply_parse(const char *args, int *slot_out,
+						char *text_out, size_t text_cap)
+{
+	const char *p = args;
+	size_t n, chars = 0;
+
+	*text_out = '\0';
+	while (*p == ' ') {
+		p++;
+	}
+	if (*p < '0' || *p > '9') {
+		return "Error: reply 1..10";
+	}
+	{
+		char *end;
+		long v = strtol(p, &end, 10);
+
+		if ((*end != '\0' && *end != ' ') || v < 1 || v > 10) {
+			return "Error: reply 1..10";
+		}
+		*slot_out = (int)v - 1;
+		p = end;
+	}
+	while (*p == ' ') {
+		p++;
+	}
+	{
+		const char *e = p + strlen(p);
+
+		while (e > p && (e[-1] == ' ' || e[-1] == '\t' ||
+				 e[-1] == '\r' || e[-1] == '\n')) {
+			e--;
+		}
+		n = (size_t)(e - p);
+	}
+	for (size_t i = 0; i < n; i++) {
+		/* One UTF-8 character per non-continuation byte. */
+		if (((unsigned char)p[i] & 0xC0) != 0x80) {
+			chars++;
+		}
+	}
+	if (chars > QUICK_REPLY_MAX_CHARS || n + 1 > text_cap) {
+		return "Error: reply max 30 chars";
+	}
+	memcpy(text_out, p, n);
+	text_out[n] = '\0';
+	return NULL;
+}
+
 #define COMPANION_WIFI_HELP \
 	"get wifi.status\nget wifi.ip\nget wifi.ssid\nset wifi.ssid <name>\n" \
 	"get wifi.pwd\nset wifi.pwd <password>\nget wifi.enabled\n" \
@@ -100,7 +156,7 @@ static inline const char *companion_app_cli_help(const char *line)
 #if IS_ENABLED(CONFIG_ZEPHCORE_COMPANION_WIFI)
 		       " | wifi"
 #endif
-		       " | extra | ui | power | stat | sys\n"
+		       " | reply | extra | ui | power | stat | sys\n"
 		       "Use: help <group>";
 	}
 	if (strcmp(line, "help id") == 0) {
@@ -155,6 +211,9 @@ static inline const char *companion_app_cli_help(const char *line)
 		return COMPANION_WIFI_HELP;
 	}
 #endif
+	if (strcmp(line, "help reply") == 0) {
+		return "reply get <n> (1..10)\nreply set <n> <text> (max 30 chars)";
+	}
 	if (strcmp(line, "help extra") == 0) {
 		return "findme\nsos\n"
 #if COMPANION_HAS_GPS

@@ -1086,6 +1086,67 @@ static bool companion_send_hidden_group_message(ChannelDetails &channel,
 			companion_mesh_ptr->prefs.node_name, text, (int)strlen(text));
 }
 
+/* ZEPHCORE: a quick reply picked on the feed screen goes out to the open
+ * conversation — the same visible send path a device-originated notice
+ * takes — and lands in the node's own conversation view as well. */
+extern "C" void companion_quick_reply_send_from_ui(int slot, const char *chat_name,
+						   bool is_group)
+{
+	if (!companion_mesh_ptr || chat_name == NULL || chat_name[0] == '\0' ||
+	    slot < 0 || slot >= 10) {
+		return;
+	}
+	const char *text = companion_mesh.prefs.quick_reply[slot];
+
+	if (text[0] == '\0') {
+		return;
+	}
+	uint32_t timestamp = rtc_clock.getCurrentTimeUnique();
+	char echo[MAX_TEXT_LEN];
+
+	/* The feed splits a "<name>: " prefix into the sender band, the
+	 * shape every message arrives in. */
+	snprintf(echo, sizeof(echo), "%s: %s", companion_mesh.prefs.node_name, text);
+	if (is_group) {
+		ChannelDetails ch;
+
+		if (!companion_get_public_channel(chat_name, ch)) {
+			LOG_WRN("quick reply: no %s channel", chat_name);
+			return;
+		}
+		if (!companion_send_visible_group_message(ch, text)) {
+			LOG_WRN("quick reply: unable to queue %s", chat_name);
+			return;
+		}
+	} else {
+		ContactInfo ci;
+		bool found = false;
+		uint32_t expected_ack = 0, est_timeout = 0;
+
+		for (int i = 0; i < companion_mesh_ptr->getNumContacts(); i++) {
+			if (companion_mesh_ptr->getContactByIdx(i, ci) &&
+			    strcmp(ci.name, chat_name) == 0) {
+				found = true;
+				break;
+			}
+		}
+		if (!found) {
+			LOG_WRN("quick reply: no contact %s", chat_name);
+			return;
+		}
+		if (companion_mesh_ptr->sendMessage(ci, timestamp, 0, text,
+						    expected_ack,
+						    est_timeout) == MSG_SEND_FAILED) {
+			LOG_WRN("quick reply: send failed to %s", chat_name);
+			return;
+		}
+		companion_mesh_ptr->queueLocalSentContactMessage(ci, timestamp,
+								text, true);
+	}
+	ui_push_own_msg(chat_name, is_group, echo, timestamp);
+	LOG_INF("quick reply sent to %s: %s", chat_name, text);
+}
+
 static void companion_send_fall_canceled_message(void)
 {
 	ChannelDetails sos_channel;
@@ -3285,6 +3346,55 @@ static bool handle_fall_cli(const char *line, char *reply)
 }
 #endif
 
+/* Quick replies for the message feed: canned phrases a thumb sends
+ * instead of typing.  Slots read 1..10 on the wire and qr0..qr9 in
+ * prefs.json. */
+static bool handle_reply_cli(const char *line, char *reply)
+{
+	int slot;
+	char text[QUICK_REPLY_LEN];
+	const char *err;
+
+	if (strcmp(line, "reply") != 0 && strncmp(line, "reply ", 6) != 0) {
+		return false;
+	}
+	if (strncmp(line, "reply get", 9) == 0 &&
+	    (line[9] == '\0' || line[9] == ' ')) {
+		err = companion_reply_parse(line + 9, &slot, text, sizeof(text));
+		if (err != NULL) {
+			strcpy(reply, err);
+			return true;
+		}
+		if (text[0] != '\0') {
+			strcpy(reply, "Error: reply get <n>");
+			return true;
+		}
+		snprintf(reply, CLI_REPLY_SIZE, "> %s",
+			 companion_mesh.prefs.quick_reply[slot]);
+		return true;
+	}
+	if (strncmp(line, "reply set", 9) == 0 &&
+	    (line[9] == '\0' || line[9] == ' ')) {
+		err = companion_reply_parse(line + 9, &slot, text, sizeof(text));
+		if (err != NULL) {
+			strcpy(reply, err);
+			return true;
+		}
+		strcpy(companion_mesh.prefs.quick_reply[slot], text);
+		k_event_post(&mesh_events, MESH_EVENT_PREFS_DIRTY);
+		if (text[0] == '\0') {
+			snprintf(reply, CLI_REPLY_SIZE,
+				 "OK - reply %d: cleared", slot + 1);
+		} else {
+			snprintf(reply, CLI_REPLY_SIZE,
+				 "OK - reply %d: %s", slot + 1, text);
+		}
+		return true;
+	}
+	strcpy(reply, "Error: reply get <n> | reply set <n> <text>");
+	return true;
+}
+
 #if ZEPHCORE_HAS_GPS
 static bool handle_tracking_cli(const char *line, char *reply, bool silent)
 {
@@ -4044,6 +4154,7 @@ static void companion_cli_exec(const char *line, uint32_t sender_timestamp,
 	    handle_tracking_cli(line, reply, silent_notifications) ||
 	    handle_geo_cli(line, reply) ||
 #endif
+	    handle_reply_cli(line, reply) ||
 	    handle_findme_cli(line, reply) ||
 	    handle_autoshutdown_emergency_cli(line, reply)) return;
 #if IS_ENABLED(CONFIG_BT)

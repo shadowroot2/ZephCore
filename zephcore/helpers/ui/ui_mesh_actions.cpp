@@ -62,6 +62,7 @@ LOG_MODULE_REGISTER(zephcore_ui_actions, CONFIG_ZEPHCORE_UI_ACTIONS_LOG_LEVEL);
 #define UI_ACTION_HOME_SAVE         BIT(20) /* ZEPHCORE: GPS HOME */
 #define UI_ACTION_NAV_TOGGLE        BIT(21)
 #define UI_ACTION_WP_CYCLE           BIT(22)
+#define UI_ACTION_QUICK_REPLY       BIT(23) /* ZEPHCORE: quick replies */
 
 extern "C" void companion_sos_request_from_ui(void);
 extern "C" bool companion_sos_cancel_available(void);
@@ -72,6 +73,8 @@ extern "C" bool companion_tracking_gps_control_allowed(void);
 extern "C" void companion_home_save_from_ui(void);
 extern "C" void companion_nav_toggle_from_ui(void);
 extern "C" void companion_wp_cycle_from_ui(void);
+extern "C" void companion_quick_reply_send_from_ui(int slot, const char *chat_name,
+						   bool is_group);
 
 /* Module-local pointers, set by init */
 static CompanionMesh *s_mesh;
@@ -103,6 +106,10 @@ static atomic_t pending_path_hash_mode;
 static atomic_t pending_gps_duty_sec;
 static atomic_t pending_display_rotate;
 static atomic_t pending_input_rotate;
+static atomic_t pending_qr_slot;
+static atomic_t pending_qr_group;
+/* Written before atomic_or on pending_ui_actions like the rest. */
+static char pending_qr_chat[32];
 
 extern "C" void ui_mesh_actions_init(struct k_event *mesh_events,
 				     uint32_t mesh_event_ui_action,
@@ -179,6 +186,34 @@ extern "C" void mesh_nav_toggle(void)
 extern "C" void mesh_wp_cycle(void)
 {
 	atomic_or(&pending_ui_actions, UI_ACTION_WP_CYCLE);
+	k_event_post(s_mesh_events, s_mesh_event_ui_action);
+}
+
+extern "C" const char *mesh_quick_reply_text(int slot)
+{
+	if (s_mesh == NULL || slot < 0 || slot >= 10) {
+		return "";
+	}
+	return s_mesh->prefs.quick_reply[slot];
+}
+
+extern "C" void mesh_quick_reply_send(int slot, const char *chat_name,
+				      bool is_group)
+{
+	if (s_mesh == NULL || slot < 0 || slot >= 10 ||
+	    chat_name == NULL || chat_name[0] == '\0') {
+		return;
+	}
+	size_t n = strlen(chat_name);
+
+	if (n >= sizeof(pending_qr_chat)) {
+		n = sizeof(pending_qr_chat) - 1;
+	}
+	memcpy(pending_qr_chat, chat_name, n);
+	pending_qr_chat[n] = '\0';
+	atomic_set(&pending_qr_slot, slot);
+	atomic_set(&pending_qr_group, is_group ? 1 : 0);
+	atomic_or(&pending_ui_actions, UI_ACTION_QUICK_REPLY);
 	k_event_post(s_mesh_events, s_mesh_event_ui_action);
 }
 
@@ -377,6 +412,11 @@ extern "C" void mesh_handle_ui_actions(void)
 	}
 	if (actions & UI_ACTION_WP_CYCLE) {
 		companion_wp_cycle_from_ui();
+	}
+	if (actions & UI_ACTION_QUICK_REPLY) {
+		companion_quick_reply_send_from_ui((int)atomic_get(&pending_qr_slot),
+						  pending_qr_chat,
+						  atomic_get(&pending_qr_group) != 0);
 	}
 
 	/* Save prefs if any toggle action changed them */

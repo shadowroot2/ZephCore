@@ -1122,7 +1122,8 @@ shared power-off path; e-paper retains the final frame.
 The **Messages** page is the status it has always been — message count,
 link state, offgrid and uptime. The **Public** page holds the conversation
 list and the feed under it: the list until a hold opens a conversation,
-then that conversation's messages, and the same hold walks back out.
+then that conversation's messages; a hold inside one opens the quick-reply
+picker, and a double press walks back out to the list.
 
 The list runs `Public`, then the `#` channels, then the private channels,
 then the direct chats — and only nodes that can answer (`ADV_TYPE_CHAT` and
@@ -1132,16 +1133,23 @@ row a solid band. The bottom row reads `Long press ENTER`.
 
 Gestures on that page:
 
-| | list | chat | any other page |
-|---|---|---|---|
-| page key, one press | next screen | next screen | next screen |
-| page key, two presses | previous screen | previous screen | previous screen |
-| action, one press | next conversation | next messages | the page's action |
-| action, second press | previous conversation | previous messages | — |
-| action, hold | open the conversation | back to the list | the page's hold |
+| | list | chat | quick replies | any other page |
+|---|---|---|---|---|
+| page key, one press | next screen | next screen | next screen | next screen |
+| page key, two presses | previous screen | previous screen | previous screen | previous screen |
+| action, one press | next conversation | next messages | next reply | the page's action |
+| action, second press | previous conversation | back to the list | previous reply | — |
+| action, hold | open the conversation | open the quick replies | send the reply | the page's hold |
 
 The page keys never touch the list: they are the screen flip and taking
 them over for the list made the pages unreachable.
+
+The quick-reply picker sits over the open conversation: its rows are the
+non-empty presets in slot order with a centred `Отмена` last, walked like
+the conversation list. A hold sends the preset into the conversation — it
+lands in the thread like any other message — and closes the picker;
+`Отмена` only closes it. The presets live in `NodePrefs.quick_reply` (ten
+slots of 30 characters) and are set over the `reply` CLI group.
 
 A channel message reads as its head line and the text below it —
 `18.11 13:02 Nick:` banded like a list row, then the message. A direct

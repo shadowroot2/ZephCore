@@ -89,6 +89,16 @@ struct ui_state {
 	uint8_t  chat_sel;		/* list index in display order */
 	bool     chat_open;		/* inside the selected conversation */
 	struct ui_feed_cursor chat_view; /* row at the top of its feed */
+	/* The quick-reply picker over an open conversation: the non-empty
+	 * presets in slot order, then "Отмена" as the last row. */
+	bool     qr_open;
+	uint8_t  qr_sel;		/* picker row, wraps over all rows */
+	uint8_t  qr_count;		/* preset rows shown */
+	int8_t   qr_slot[10];		/* picker row -> quick_reply slot */
+	/* One preset's text: QUICK_REPLY_LEN in NodePrefs.h (30 Cyrillic
+	 * characters + NUL), spelled out — that header is C++-only and this
+	 * one is included from C. */
+	char     qr_text[10][61];
 #endif
 
 	/* Radio page */

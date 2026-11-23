@@ -821,6 +821,61 @@ static void render_chat_list(int rows, bool color, uint16_t sel_color,
 	}
 }
 
+/* The quick-reply picker: the presets then "Отмена", centred, as the last
+ * row.  Rows walk like the conversation list and the hold picks one. */
+static void render_qr_picker(int rows, bool color, uint16_t sel_color,
+			     uint16_t val_color)
+{
+	int y = CONTENT_Y;
+	int total = (int)state.qr_count + 1;
+	int shown = 0;
+	int first = 0;
+	int list_rows = rows > 1 ? rows - 1 : rows;
+
+	if (total > list_rows && (int)state.qr_sel >= list_rows) {
+		first = (int)state.qr_sel - list_rows + 1;
+	}
+	for (int i = first; i < total && shown < list_rows; i++, shown++) {
+		int cancel = (i == (int)state.qr_count);
+		const char *text = cancel ? "Отмена" : state.qr_text[i];
+
+		if (color) {
+			uint16_t col = (i == (int)state.qr_sel) ? sel_color
+							       : val_color;
+
+			if (cancel) {
+				draw_centered_color(y, text, col);
+			} else {
+				mc_display_color_text(0, y, text, col);
+			}
+		} else {
+			if (cancel) {
+				draw_centered(y, text);
+			} else {
+				mc_display_text(0, y, text, false);
+			}
+			if (i == (int)state.qr_sel) {
+				mc_display_invert_rect(0, y, (int)DISP_W,
+						       LINE_H);
+			}
+		}
+		y += LINE_H;
+	}
+	if (rows > 1) {
+		int bottom_y = (int)DISP_H - LINE_H;
+
+		if (bottom_y < CONTENT_Y) {
+			bottom_y = CONTENT_Y;
+		}
+		if (color) {
+			draw_centered_color(bottom_y, "Long press ENTER",
+					    UI_COLOR_DISABLED);
+		} else {
+			draw_centered(bottom_y, "Long press ENTER");
+		}
+	}
+}
+
 static void render_public_rows(int cols, bool color, uint16_t title_color)
 {
 	const struct ui_state *s = &state;
@@ -833,6 +888,17 @@ static void render_public_rows(int cols, bool color, uint16_t title_color)
 	char row[UI_FEED_TEXT_LEN + 32];
 
 	if (rows <= 0) {
+		return;
+	}
+	/* The quick-reply picker takes the page over the conversation. */
+	if (s->qr_open) {
+		if (color) {
+			render_qr_picker(rows, true, UI_COLOR_ACTIVE,
+					 UI_COLOR_VALUE);
+		} else {
+			render_qr_picker(rows, false, UI_COLOR_VALUE,
+					 UI_COLOR_VALUE);
+		}
 		return;
 	}
 	/* The page is the conversation list until one is opened, then that

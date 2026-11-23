@@ -69,6 +69,11 @@
  * ConfigureSideDetectors limit of 3. */
 #define EXTRA_SF_MAX    3
 
+/* A quick-reply slot holds QUICK_REPLY_MAX_CHARS characters; Cyrillic is two
+ * bytes in UTF-8, so QUICK_REPLY_LEN is 2*30+1. */
+#define QUICK_REPLY_MAX_CHARS 30
+#define QUICK_REPLY_LEN 61
+
 struct NodePrefs {
 	/* ---- Common fields (both roles) ---- */
 	float airtime_factor;
@@ -238,6 +243,13 @@ struct NodePrefs {
 	uint32_t geo_out_sec;
 	uint16_t geo_stat_in;
 	uint16_t geo_stat_out;
+
+	/* Quick replies for the message feed: short canned phrases sent
+	 * without typing.  The presets are a starting point only - every
+	 * slot is the user's to overwrite.  A slot holds 30 Cyrillic
+	 * characters ("Буду позже" is 10 of them): two bytes each in UTF-8,
+	 * hence QUICK_REPLY_LEN with the NUL. */
+	char quick_reply[10][QUICK_REPLY_LEN];
 };
 
 /* Range guards for prefs that came off flash: a blob can be intact and
@@ -315,6 +327,9 @@ static inline void sanitizeNodePrefs(NodePrefs* p) {
 	p->wifi_ssid[sizeof(p->wifi_ssid) - 1] = '\0';
 	p->wifi_pwd[sizeof(p->wifi_pwd) - 1] = '\0';
 	p->tracking_group_name[sizeof(p->tracking_group_name) - 1] = '\0';
+	for (size_t i = 0; i < sizeof(p->quick_reply) / sizeof(p->quick_reply[0]); i++) {
+		p->quick_reply[i][sizeof(p->quick_reply[i]) - 1] = '\0';
+	}
 	p->wifi_enabled = saneBool(p->wifi_enabled, (uint8_t)1);
 
 	p->airtime_factor = sanePrefFloat(p->airtime_factor, 0.0f, 9.0f, 9.0f);
@@ -556,6 +571,17 @@ static inline void initNodePrefs(NodePrefs* prefs) {
 	prefs->geo_saved = 0;
 	prefs->geo_on = 0;
 	prefs->geo_radius_m = GEO_RADIUS_M_DEFAULT;
+	/* Quick-reply presets: short answers a thumb can send from the feed.
+	 * Russian-first, the node's own alphabet; an empty slot is legal and
+	 * just shows nothing to send. */
+	static const char *const quick_reply_presets[10] = {
+		"Да", "Нет", "Получил", "Иду", "Жду",
+		"На месте", "Буду позже", "Не могу", "Всё хорошо", "Спасибо",
+	};
+	for (int i = 0; i < 10; i++) {
+		strncpy(prefs->quick_reply[i], quick_reply_presets[i],
+			sizeof(prefs->quick_reply[i]) - 1);
+	}
 	/* Companion-only default, set here so every caller of initNodePrefs() sees
 	 * it. 0 means disabled and is a legal stored value. */
 #ifdef CONFIG_ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS

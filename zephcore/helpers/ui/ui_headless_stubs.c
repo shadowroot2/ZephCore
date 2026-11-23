@@ -229,6 +229,13 @@ WEAK void ui_notify_channel_msg(const char *channel_name, const char *text,
 	ARG_UNUSED(path_len); ARG_UNUSED(msg_count);
 }
 
+WEAK void ui_push_own_msg(const char *chat_name, bool is_group,
+			  const char *text, uint32_t ts)
+{
+	ARG_UNUSED(chat_name); ARG_UNUSED(is_group);
+	ARG_UNUSED(text); ARG_UNUSED(ts);
+}
+
 WEAK void ui_notify_packet_sent(void) { }
 
 /* Input axis flip. The real state lives in ui_common.c, which is compiled
