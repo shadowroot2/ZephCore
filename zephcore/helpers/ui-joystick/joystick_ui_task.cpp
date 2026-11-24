@@ -258,7 +258,7 @@ int JoystickUITask::allocPendingChannelSlot()
 	return -1;
 }
 
-void JoystickUITask::completePendingChannelSend(int slot_idx, bool heard)
+void JoystickUITask::completePendingChannelSend(int slot_idx, int repeaters)
 {
 	PendingChannelSend &s = _pending_channel_sends[slot_idx];
 
@@ -267,13 +267,13 @@ void JoystickUITask::completePendingChannelSend(int slot_idx, bool heard)
 	 * to defend against ring wrap-around. */
 	if (s.preview_index >= 0 && s.preview_index < JOYSTICK_OFFLINE_QUEUE_SIZE &&
 		_ch_previews[s.preview_index].timestamp == s.preview_timestamp) {
-		_ch_previews[s.preview_index].path_len = heard ? OUT_PATH_SENT_HEARD : OUT_PATH_SENT_UNHEARD;
+		_ch_previews[s.preview_index].path_len = repeaters > 0 ? OUT_PATH_SENT_HEARD : OUT_PATH_SENT_UNHEARD;
 	}
 
 	/* Mirror to BLE app now (deferred until outcome is known) with the
-	 * heard/unheard prefix. */
+	 * count of neighbours that repeated the message. */
 	if (CompanionMesh *cm = static_cast<CompanionMesh *>(_mesh)) {
-		cm->queueLocalSentChannelMessage(s.channel_idx, s.timestamp, s.text, heard);
+		cm->queueLocalSentChannelMessage(s.channel_idx, s.timestamp, s.text, repeaters);
 	}
 
 	s.active = false;
@@ -288,8 +288,7 @@ void JoystickUITask::processPendingChannelFeedback()
 		if (!s.active || !s.feedback_due) continue;
 		s.feedback_due = false;
 		int dupe_count = _mesh ? _mesh->getContentionTracker().extractDupeCount(s.hash) : -1;
-		bool heard = (dupe_count > 0);
-		completePendingChannelSend(i, heard);
+		completePendingChannelSend(i, dupe_count > 0 ? dupe_count : 0);
 	}
 }
 

@@ -936,6 +936,11 @@
       "id": "UNIT-FEED-022",
       "name": "A tracking report keeps its speed and sector beside the coordinates",
       "source": "tests/unit/feed_tests.cpp"
+    },
+    {
+      "id": "UNIT-FEED-023",
+      "name": "An own message stamps its outcome on the time it reads by",
+      "source": "tests/unit/feed_tests.cpp"
     }
   ]
 }

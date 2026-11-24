@@ -350,7 +350,7 @@ private:
 	static void pendingChannelFeedbackCb(struct k_timer *t);
 	int allocPendingChannelSlot();
 	void processPendingChannelFeedback();
-	void completePendingChannelSend(int slot_idx, bool heard);
+	void completePendingChannelSend(int slot_idx, int repeaters);
 public:
 	/* Initiate a DM with retry tracking (called by sendComposedMessage). */
 	bool startPendingDM(ContactInfo &recipient, uint32_t ts, const char *text);

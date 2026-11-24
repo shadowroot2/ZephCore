@@ -223,6 +223,13 @@ extern "C" void ui_push_own_msg(const char *chat_name, bool is_group,
 	(void)chat_name; (void)is_group; (void)text; (void)ts;
 }
 
+extern "C" void ui_own_msg_mark(const char *chat_name, uint32_t ts,
+				uint8_t mark, uint8_t heard)
+{
+	/* Same: the joystick stamps its own sent entries. */
+	(void)chat_name; (void)ts; (void)mark; (void)heard;
+}
+
 extern "C" void ui_set_radio_params(
 	uint32_t freq_hz,
 	uint8_t sf,

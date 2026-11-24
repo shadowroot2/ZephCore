@@ -600,3 +600,45 @@ TEST(feed_coords_motion, "UNIT-FEED-022",
 			   "https://maps.google.com/?q=55.75580,37.61730");
 	CHECK(std::string(buf) == "55.75580,37.61730");
 }
+
+TEST(feed_own_mark, "UNIT-FEED-023",
+     "An own message stamps its outcome on the time it reads by")
+{
+	struct ui_chat_list l = fresh_list();
+	struct ui_chat *c;
+	char row[64];
+	struct ui_chat_iter it;
+	struct ui_feed_cursor start = { 0, 0 };
+
+	(void)ui_chat_push(&l, "Public", true, NOW, "Nick: привет");
+	(void)ui_chat_push(&l, "Public", true, NOW + 1, "Nick: пока");
+	c = ui_chat_find(&l, "Public");
+	CHECK(c != NULL);
+
+	/* Delivered and heard-by-three ride on the time; an unknown
+	 * timestamp (already evicted) changes nothing. */
+	CHECK(ui_chat_set_mark(c, NOW + 1, UI_MSG_MARK_DELIVERED, 0));
+	CHECK(ui_chat_set_mark(c, NOW, UI_MSG_MARK_HEARD, 3));
+	CHECK(!ui_chat_set_mark(c, NOW + 99, UI_MSG_MARK_FAILED, 0));
+
+	ui_chat_iter_init(&it, c, start, NOW, 0, 21);
+	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
+	CHECK(std::string(row) == "12:34+ Nick");
+	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
+	CHECK(std::string(row) == "\xD0\xBF\xD0\xBE\xD0\xBA\xD0\xB0");
+	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
+	CHECK(std::string(row) == "12:34+3 Nick");
+	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
+	CHECK(std::string(row) == "\xD0\xBF\xD1\x80\xD0\xB8\xD0\xB2\xD0\xB5\xD1\x82");
+	CHECK(!ui_chat_iter_next(&it, row, sizeof(row)));
+
+	/* A failed direct message reads "12:34! текст". */
+	(void)ui_chat_push(&l, "Mama", false, NOW, "ты где?");
+	c = ui_chat_find(&l, "Mama");
+	CHECK(c != NULL);
+	CHECK(ui_chat_set_mark(c, NOW, UI_MSG_MARK_FAILED, 0));
+	start = (struct ui_feed_cursor){ 0, 0 };
+	ui_chat_iter_init(&it, c, start, NOW, 0, 21);
+	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
+	CHECK(std::string(row) == "12:34! \xD1\x82\xD1\x8B \xD0\xB3\xD0\xB4\xD0\xB5?");
+}

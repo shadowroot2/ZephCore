@@ -391,9 +391,19 @@ static inline int ui_feed_wrap_row(char *dst, size_t dst_n, const char **src,
 
 /* One conversation — a channel or a direct chat — with its own small ring.
  * The list screen shows the names, entering one shows its messages. */
+
+/* Own-message outcome, stamped on the time the message reads by: "12:34+"
+ * delivered, "12:34!" failed, "12:34+3" repeated by three neighbours. */
+#define UI_MSG_MARK_NONE      0
+#define UI_MSG_MARK_DELIVERED 1
+#define UI_MSG_MARK_FAILED    2
+#define UI_MSG_MARK_HEARD     3
+
 struct ui_chat_msg {
 	uint32_t ts;			/* sender timestamp (unix seconds), 0 = unknown */
 	char text[UI_FEED_TEXT_LEN + 1];
+	uint8_t mark;			/* UI_MSG_MARK_*, own messages only */
+	uint8_t heard;			/* repeaters, when mark is UI_MSG_MARK_HEARD */
 };
 
 #ifndef UI_CHAT_MSGS
@@ -449,6 +459,24 @@ static inline const struct ui_chat_msg *ui_chat_get(const struct ui_chat *c,
 		return NULL;
 	}
 	return &c->msgs[(uint8_t)((c->head + UI_CHAT_MSGS - i) % UI_CHAT_MSGS)];
+}
+
+/* Stamp the own message sent at `ts` with its outcome.  False when no
+ * message carries that timestamp (already evicted, or never ours). */
+static inline bool ui_chat_set_mark(struct ui_chat *c, uint32_t ts,
+				    uint8_t mark, uint8_t heard)
+{
+	if (ts == 0) {
+		return false;
+	}
+	for (uint8_t i = 0; i < UI_CHAT_MSGS; i++) {
+		if (c->msgs[i].ts == ts && c->msgs[i].text[0] != '\0') {
+			c->msgs[i].mark = mark;
+			c->msgs[i].heard = heard;
+			return true;
+		}
+	}
+	return false;
 }
 
 static inline void ui_chat_reset(struct ui_chat *c)
@@ -840,6 +868,8 @@ static inline struct ui_chat *ui_chat_push(struct ui_chat_list *l,
 		 * thread, and a half-written message must never become
 		 * reachable. */
 		c->msgs[slot].ts = ts;
+		c->msgs[slot].mark = UI_MSG_MARK_NONE;
+		c->msgs[slot].heard = 0;
 		{
 			char cleaned[UI_FEED_TEXT_LEN + 1];
 
@@ -861,14 +891,29 @@ static inline struct ui_chat *ui_chat_push(struct ui_chat_list *l,
 /* ---- lines ---- */
 
 /* A message reads as two kinds of row: the time, and the text below it.
- * This is the first of them. */
+ * This is the first of them — with the own-message outcome on the time. */
 static inline void ui_chat_format_line(char *buf, size_t n,
 				       const struct ui_chat *c,
 				       const struct ui_chat_msg *m,
 				       uint32_t now, int16_t tz_minutes)
 {
+	char suffix[6];
+	size_t len;
+
 	(void)c;
+	suffix[0] = '\0';
+	if (m->mark == UI_MSG_MARK_DELIVERED) {
+		snprintf(suffix, sizeof(suffix), "+");
+	} else if (m->mark == UI_MSG_MARK_FAILED) {
+		snprintf(suffix, sizeof(suffix), "!");
+	} else if (m->mark == UI_MSG_MARK_HEARD) {
+		snprintf(suffix, sizeof(suffix), "+%u", (unsigned)m->heard);
+	}
 	ui_feed_format_time(buf, n, m->ts, now, tz_minutes);
+	len = strlen(buf);
+	if (suffix[0] != '\0' && len + strlen(suffix) < n) {
+		memcpy(buf + len, suffix, strlen(suffix) + 1);
+	}
 }
 
 /* ---- paging ---- */
@@ -896,7 +941,7 @@ struct ui_chat_iter {
 static inline void ui_chat_iter_begin(struct ui_chat_iter *it)
 {
 	const struct ui_chat_msg *m = ui_chat_get(it->c, it->cur.entry);
-	char time[16];
+	char time[20];
 
 	it->head[0] = '\0';
 	it->line[0] = '\0';
@@ -906,7 +951,8 @@ static inline void ui_chat_iter_begin(struct ui_chat_iter *it)
 		it->cur.entry = it->c->count;
 		return;
 	}
-	ui_feed_format_time(time, sizeof(time), m->ts, it->now, it->tz_minutes);
+	ui_chat_format_line(time, sizeof(time), it->c, m, it->now,
+			    it->tz_minutes);
 
 	it->row_is_head = false;
 	if (!it->c->is_group) {

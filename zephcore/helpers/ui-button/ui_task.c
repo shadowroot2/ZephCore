@@ -1622,6 +1622,18 @@ void ui_push_own_msg(const char *chat_name, bool is_group, const char *text,
 	ui_feed_add(chat_name, is_group, text, ts, true);
 }
 
+void ui_own_msg_mark(const char *chat_name, uint32_t ts, uint8_t mark,
+		     uint8_t heard)
+{
+	struct ui_state *s = get_state();
+	struct ui_chat *c = ui_chat_find(&s->chats, chat_name);
+
+	if (c == NULL || !ui_chat_set_mark(c, ts, mark, heard)) {
+		return;
+	}
+	ui_request_render_now();
+}
+
 void ui_notify_packet_sent(void)
 {
 	/* Button UI has no per-packet tracking */

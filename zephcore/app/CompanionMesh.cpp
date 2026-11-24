@@ -790,6 +790,12 @@ ContactInfo *CompanionMesh::processAck(const uint8_t *data)
 			return lookupContactByPubKey(recipient_pubkey, 6);
 		}
 	}
+	{
+		uint8_t recipient_pubkey[6];
+		if (ui_send_try_match_ack(ack_crc, recipient_pubkey)) {
+			return lookupContactByPubKey(recipient_pubkey, 6);
+		}
+	}
 	return checkConnectionsAck(data);
 }
 
@@ -914,10 +920,16 @@ void CompanionMesh::queueLocalSentContactMessage(const ContactInfo &contact,
 }
 
 void CompanionMesh::queueLocalSentChannelMessage(uint8_t channel_idx,
-	uint32_t timestamp, const char *text, bool heard_repeat)
+	uint32_t timestamp, const char *text, int repeaters)
 {
-	queueLocalChannelMessage(channel_idx, timestamp, text,
-		heard_repeat ? "(>>\xe2\x9c\x93) " : "(>>\xe2\x9c\x97) ");
+	/* "(>>N)": how many neighbours repeated the message on its way out. */
+	char marker[12];
+
+	if (repeaters < 0) {
+		repeaters = 0;
+	}
+	snprintf(marker, sizeof(marker), "(>>%d) ", repeaters);
+	queueLocalChannelMessage(channel_idx, timestamp, text, marker);
 }
 
 void CompanionMesh::queueLocalAutomatedChannelMessage(

@@ -1156,7 +1156,11 @@ slots of 30 characters) and are set over the `reply` CLI group.
 A channel message reads as its head line and the text below it —
 `+1d 13:02 Nick` banded like a list row, then the message. The head line
 carries the time as `HH:MM` today, `+1d HH:MM` yesterday, `DD.MM HH:MM`
-any earlier day. A direct
+any earlier day. An own message stamps its outcome on that time:
+`12:34+` delivered (its mesh ACK came), `12:34!` failed, `12:34+3`
+repeated by three neighbours on its way out. The same outcome reaches
+the phone-app mirror as `(>>✓) `/`(>>✗) ` for a direct message and
+`(>>N) ` with the neighbour count for a channel one. A direct
 chat keeps the time and the text on one line. Both are cut to the panel
 width rather than wrapped onto each other. A message that carries map
 links keeps the coordinates, one pair per line; a tracking report keeps

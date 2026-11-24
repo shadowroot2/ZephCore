@@ -36,6 +36,7 @@ LOG_MODULE_REGISTER(zephcore_main, CONFIG_ZEPHCORE_MAIN_LOG_LEVEL);
 #include <helpers/time_sync.h>
 #include <helpers/LocalCLIHelp.h>
 #include "ui_task.h"
+#include "UiFeed.h"
 #include "ui_radio_state.h"
 #include "ui_mesh_actions.h"
 #include <helpers/ui/ui_timezone.h>
@@ -126,6 +127,7 @@ extern "C" void bt_ctlr_assert_handle(char *file, uint32_t line)
 #define MESH_EVENT_FALL_PREALERT BIT(MESH_EVENT_ROLE_BASE + 8)
 #define MESH_EVENT_GPS_FIX       BIT(MESH_EVENT_ROLE_BASE + 9)
 #define MESH_EVENT_MANUAL_SHUTDOWN BIT(MESH_EVENT_ROLE_BASE + 10)
+#define MESH_EVENT_UI_SEND_FEEDBACK BIT(MESH_EVENT_ROLE_BASE + 11) /* Quick-reply send outcome window closed */
 
 #ifdef ZEPHCORE_LORA
 static void save_prefs_to_flash(void);
@@ -159,6 +161,7 @@ static void companion_ota_unpark(void);
 	MESH_EVENT_CONTACT_ITER | MESH_EVENT_LINK | MESH_EVENT_PERSIST | \
 	MESH_EVENT_CUSTOM_TIMER | MESH_EVENT_FALL_DETECTED | \
 	MESH_EVENT_FALL_PREALERT | MESH_EVENT_GPS_FIX | MESH_EVENT_MANUAL_SHUTDOWN | \
+	MESH_EVENT_UI_SEND_FEEDBACK | \
 	MESH_EVENT_BLE_OTA)
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_DESIGN_JOYSTICK)
 #define MESH_EVENT_ALL           (MESH_EVENT_BASE | MESH_EVENT_JOYSTICK_LOOP)
@@ -174,6 +177,9 @@ static void process_companion_rx(void);   /* runs on MAIN thread (see link_on_rx
 static void run_contact_iteration(void);  /* runs on MAIN thread (see MESH_EVENT_CONTACT_ITER) */
 static void housekeeping_timer_fn(struct k_timer *timer);
 static void custom_timer_fn(struct k_timer *timer);
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
+static void ui_send_feedback_sweep(void);
+#endif
 #if ZEPHCORE_USB_STACK
 static void companion_cli_run(const char *line);  /* main-thread text-CLI exec */
 #endif
@@ -516,6 +522,13 @@ static void mesh_event_loop(void)
 		if (events & MESH_EVENT_UI_ACTION) {
 			mesh_handle_ui_actions();
 		}
+
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
+		/* Quick-reply outcomes: the ACK stamp or the neighbour count. */
+		if (events & MESH_EVENT_UI_SEND_FEEDBACK) {
+			ui_send_feedback_sweep();
+		}
+#endif
 
 		/* GPS wake/timeout. GNSS configuration blocks on a semaphore the
 		 * system work queue signals, so it would deadlock there. */
@@ -1087,9 +1100,139 @@ static bool companion_send_hidden_group_message(ChannelDetails &channel,
 }
 
 #ifdef CONFIG_ZEPHCORE_UI_DISPLAY
+/* Quick replies trust nothing: a direct message is delivered only on its
+ * mesh ACK, and a channel message reports how many neighbours repeated
+ * it.  The feedback work only posts MESH_EVENT_UI_SEND_FEEDBACK — the
+ * stamps and the app mirrors run on the main thread, like the sends. */
+struct ui_pending_send {
+	bool active;
+	bool is_group;
+	uint32_t timestamp;
+	uint32_t due_at;
+	uint32_t expected_ack;
+	uint32_t hash;
+	int16_t channel_idx;
+	uint8_t pubkey[PUB_KEY_SIZE];
+	char chat_name[UI_FEED_NAME_LEN];
+	char text[MAX_TEXT_LEN];
+};
+#define UI_PENDING_SEND_SLOTS 4
+#define UI_CHANNEL_FEEDBACK_MS 5000	/* neighbour-repeats window, like the joystick's */
+static struct ui_pending_send ui_pending_sends[UI_PENDING_SEND_SLOTS];
+
+static void ui_send_feedback_work_fn(struct k_work *work)
+{
+	ARG_UNUSED(work);
+	k_event_post(&mesh_events, MESH_EVENT_UI_SEND_FEEDBACK);
+}
+
+static K_WORK_DELAYABLE_DEFINE(ui_send_feedback_work, ui_send_feedback_work_fn);
+
+static void ui_pending_send_arm(uint32_t now)
+{
+	uint32_t next = 0;
+
+	for (int i = 0; i < UI_PENDING_SEND_SLOTS; i++) {
+		struct ui_pending_send *s = &ui_pending_sends[i];
+		uint32_t left;
+
+		if (!s->active) {
+			continue;
+		}
+		left = (s->due_at > now) ? (s->due_at - now) : 1;
+		if (next == 0 || left < next) {
+			next = left;
+		}
+	}
+	if (next != 0) {
+		k_work_reschedule(&ui_send_feedback_work, K_MSEC(next));
+	}
+}
+
+static void ui_pending_send_complete(struct ui_pending_send *s, bool delivered,
+				     int repeaters)
+{
+	uint8_t heard = (uint8_t)((repeaters > 255) ? 255
+						  : (repeaters < 0 ? 0 : repeaters));
+	ContactInfo *ci;
+
+	ui_own_msg_mark(s->chat_name, s->timestamp,
+			s->is_group ? UI_MSG_MARK_HEARD
+				    : (delivered ? UI_MSG_MARK_DELIVERED
+						 : UI_MSG_MARK_FAILED),
+			heard);
+	if (s->is_group) {
+		companion_mesh_ptr->queueLocalSentChannelMessage(
+			(uint8_t)s->channel_idx, s->timestamp, s->text, heard);
+	} else {
+		ci = companion_mesh_ptr->lookupContactByPubKey(s->pubkey,
+							      PUB_KEY_SIZE);
+		if (ci != NULL) {
+			companion_mesh_ptr->queueLocalSentContactMessage(
+				*ci, s->timestamp, s->text, delivered);
+		}
+	}
+	s->active = false;
+}
+
+static void ui_send_feedback_sweep(void)
+{
+	uint32_t now = k_uptime_get_32();
+
+	for (int i = 0; i < UI_PENDING_SEND_SLOTS; i++) {
+		struct ui_pending_send *s = &ui_pending_sends[i];
+
+		if (!s->active || (int32_t)(now - s->due_at) < 0) {
+			continue;
+		}
+		if (s->is_group) {
+			int n = companion_mesh_ptr->getContentionTracker()
+					.extractDupeCount(s->hash);
+
+			ui_pending_send_complete(s, false, n > 0 ? n : 0);
+		} else {
+			/* The window closed without an ACK. */
+			ui_pending_send_complete(s, false, 0);
+		}
+	}
+	ui_pending_send_arm(now);
+}
+
+/* The mesh hands a matched ACK to whoever waits for it: the app's own
+ * sends first (findAndRemoveAck), the joystick's, then ours. */
+extern "C" bool ui_send_try_match_ack(uint32_t ack, uint8_t out_pubkey[6])
+{
+	if (ack == 0) {
+		return false;
+	}
+	for (int i = 0; i < UI_PENDING_SEND_SLOTS; i++) {
+		struct ui_pending_send *s = &ui_pending_sends[i];
+
+		if (!s->active || s->is_group || s->expected_ack != ack) {
+			continue;
+		}
+		memcpy(out_pubkey, s->pubkey, PUB_KEY_SIZE);
+		ui_pending_send_complete(s, true, 0);
+		return true;
+	}
+	return false;
+}
+
+static struct ui_pending_send *ui_pending_send_alloc(void)
+{
+	for (int i = 0; i < UI_PENDING_SEND_SLOTS; i++) {
+		if (!ui_pending_sends[i].active) {
+			return &ui_pending_sends[i];
+		}
+	}
+	return NULL;
+}
+
 /* ZEPHCORE: a quick reply picked on the feed screen goes out to the open
  * conversation — the same visible send path a device-originated notice
- * takes — and lands in the node's own conversation view as well. */
+ * takes — and lands in the node's own conversation view as well.  The
+ * app mirror waits for the outcome: "(>>✓) "/"(>>✗) " on a direct
+ * message, "(>>N) " with the neighbour count on a channel one. */
 extern "C" void companion_quick_reply_send_from_ui(int slot, const char *chat_name,
 						   bool is_group)
 {
@@ -1103,21 +1246,39 @@ extern "C" void companion_quick_reply_send_from_ui(int slot, const char *chat_na
 		return;
 	}
 	uint32_t timestamp = rtc_clock.getCurrentTimeUnique();
+	uint32_t window_ms = 0;
 	char echo[MAX_TEXT_LEN];
+	struct ui_pending_send *pending;
 
 	/* The feed splits a "<name>: " prefix into the sender band, the
 	 * shape every message arrives in. */
 	snprintf(echo, sizeof(echo), "%s: %s", companion_mesh.prefs.node_name, text);
 	if (is_group) {
 		ChannelDetails ch;
+		uint32_t hash = 0;
 
 		if (!companion_get_public_channel(chat_name, ch)) {
 			LOG_WRN("quick reply: no %s channel", chat_name);
 			return;
 		}
-		if (!companion_send_visible_group_message(ch, text)) {
+		if (!companion_mesh_ptr->sendGroupMessage(timestamp, ch.channel,
+				companion_mesh.prefs.node_name, text,
+				(int)strlen(text), &hash)) {
 			LOG_WRN("quick reply: unable to queue %s", chat_name);
 			return;
+		}
+		window_ms = UI_CHANNEL_FEEDBACK_MS;
+		pending = ui_pending_send_alloc();
+		if (pending != NULL) {
+			pending->is_group = true;
+			pending->hash = hash;
+			pending->channel_idx =
+				(int16_t)companion_mesh_ptr->findChannelIdx(ch.channel);
+		} else {
+			/* No slot to track the outcome: the neutral marker,
+			 * never a guessed one. */
+			companion_mesh_ptr->queueLocalAutomatedChannelMessage(
+				ch.channel, timestamp, text);
 		}
 	} else {
 		ContactInfo ci;
@@ -1141,8 +1302,28 @@ extern "C" void companion_quick_reply_send_from_ui(int slot, const char *chat_na
 			LOG_WRN("quick reply: send failed to %s", chat_name);
 			return;
 		}
-		companion_mesh_ptr->queueLocalSentContactMessage(ci, timestamp,
-								text, true);
+		/* The ACK round-trip, the window the joystick also waits. */
+		window_ms = (est_timeout > 0) ? (est_timeout * 2 + 3000) : 8000;
+		pending = ui_pending_send_alloc();
+		if (pending != NULL) {
+			pending->is_group = false;
+			pending->expected_ack = expected_ack;
+			memcpy(pending->pubkey, ci.id.pub_key, PUB_KEY_SIZE);
+		} else {
+			companion_mesh_ptr->queueLocalSentContactMessage(ci,
+				timestamp, text, false);
+		}
+	}
+	if (pending != NULL) {
+		uint32_t now = k_uptime_get_32();
+
+		pending->active = true;
+		pending->timestamp = timestamp;
+		pending->due_at = now + window_ms;
+		snprintf(pending->chat_name, sizeof(pending->chat_name), "%s",
+			 chat_name);
+		snprintf(pending->text, sizeof(pending->text), "%s", text);
+		ui_pending_send_arm(now);
 	}
 	ui_push_own_msg(chat_name, is_group, echo, timestamp);
 	LOG_INF("quick reply sent to %s: %s", chat_name, text);

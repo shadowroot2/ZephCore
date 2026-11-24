@@ -236,6 +236,19 @@ WEAK void ui_push_own_msg(const char *chat_name, bool is_group,
 	ARG_UNUSED(text); ARG_UNUSED(ts);
 }
 
+WEAK void ui_own_msg_mark(const char *chat_name, uint32_t ts, uint8_t mark,
+			  uint8_t heard)
+{
+	ARG_UNUSED(chat_name); ARG_UNUSED(ts);
+	ARG_UNUSED(mark); ARG_UNUSED(heard);
+}
+
+WEAK bool ui_send_try_match_ack(uint32_t ack, uint8_t out_pubkey[6])
+{
+	ARG_UNUSED(ack); ARG_UNUSED(out_pubkey);
+	return false;
+}
+
 WEAK void ui_notify_packet_sent(void) { }
 
 /* Input axis flip. The real state lives in ui_common.c, which is compiled

@@ -192,9 +192,10 @@ public:
 			const char *text, bool delivered);
 
 	/* A channel message sent from the device UI, queued for the app as
-	 * "<marker> <node_name>: <text>"; the marker says whether a repeat was heard. */
+	 * "<marker> <node_name>: <text>"; the marker is "(>>N)" with the
+	 * number of neighbours that repeated the message. */
 	void queueLocalSentChannelMessage(uint8_t channel_idx, uint32_t timestamp,
-			const char *text, bool heard_repeat);
+			const char *text, int repeaters);
 	void queueLocalAutomatedChannelMessage(const mesh::GroupChannel &channel,
 			uint32_t timestamp, const char *text);
 

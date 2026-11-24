@@ -359,6 +359,22 @@ void ui_push_own_msg(const char *chat_name, bool is_group, const char *text,
 		     uint32_t ts);
 
 /**
+ * Stamp the outcome of an own message sent at `ts` into the feed: mark is
+ * UI_MSG_MARK_DELIVERED, UI_MSG_MARK_FAILED or UI_MSG_MARK_HEARD (heard =
+ * neighbours that repeated the message).  The message is found in the
+ * named conversation and the screen repaints.
+ */
+void ui_own_msg_mark(const char *chat_name, uint32_t ts, uint8_t mark,
+		     uint8_t heard);
+
+/**
+ * Match a mesh ACK against the button-UI's own pending sends (quick
+ * replies).  On a match the send is stamped delivered and out_pubkey
+ * receives the recipient's key prefix for the caller's own lookup.
+ */
+bool ui_send_try_match_ack(uint32_t ack, uint8_t out_pubkey[6]);
+
+/**
  * Notify UI that an outbound packet was transmitted.
  * Rich UIs use this to start RTT timers; simpler ones ignore it.
  */
