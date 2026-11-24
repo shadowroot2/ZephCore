@@ -1144,9 +1144,11 @@ Gestures on that page:
 The page keys never touch the list: they are the screen flip and taking
 them over for the list made the pages unreachable.
 
-The quick-reply picker sits over the open conversation: its rows are the
+The quick-reply picker sits over the open conversation: a header band
+names the conversation and the walk position (`Mama  3/8`), then the
 non-empty presets in slot order with a centred `Отмена` last; one press
-walks the rows and a second press goes back to the chat. A hold sends the preset into the conversation — it
+walks the rows and a second press goes back to the chat. A preset past
+the panel is cut at a word and marked `...`. A hold sends the preset into the conversation — it
 lands in the thread like any other message — and closes the picker;
 `Отмена` only closes it. The presets live in `NodePrefs.quick_reply` (seven
 slots of 30 characters) and are set over the `reply` CLI group.

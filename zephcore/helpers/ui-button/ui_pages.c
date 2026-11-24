@@ -835,9 +835,10 @@ static void render_chat_list(int rows, bool color, uint16_t sel_color,
 	}
 }
 
-/* The quick-reply picker: the presets then "Отмена", centred, as the last
- * row.  Rows walk like the conversation list and the hold picks one. */
-static void render_qr_picker(int rows, bool color, uint16_t sel_color,
+/* The quick-reply picker over the open conversation: a header band with
+ * the chat's name and the walk position ("Mama  3/8"), then the presets
+ * and "Отмена", centred, as the last row. */
+static void render_qr_picker(int rows, int cols, bool color, uint16_t sel_color,
 			     uint16_t val_color)
 {
 	int y = CONTENT_Y;
@@ -845,6 +846,29 @@ static void render_qr_picker(int rows, bool color, uint16_t sel_color,
 	int shown = 0;
 	int first = 0;
 	int list_rows = rows > 1 ? rows - 1 : rows;
+	const struct ui_chat *c = ui_chat_nth(&state.chats, state.chat_sel);
+	const char *name = (c != NULL) ? c->name : "";
+	char cnt[8];
+	char head[UI_FEED_NAME_LEN + 8];
+	const char *p;
+
+	snprintf(cnt, sizeof(cnt), "%d/%d", (int)state.qr_sel + 1, total);
+	/* The counter keeps the right edge; the name gets what is left. */
+	p = name;
+	ui_feed_wrap_row(head, sizeof(head), &p, cols - text_cols(cnt) - 1);
+	if (color) {
+		mc_display_color_fill_rect(0, y, (int)DISP_W, LINE_H,
+					   UI_COLOR_HEADER_BG);
+		mc_display_color_text(0, y, head, UI_COLOR_TITLE);
+		mc_display_color_text((int)DISP_W - color_text_width(cnt), y,
+				      cnt, UI_COLOR_TITLE);
+	} else {
+		mc_display_text(0, y, head, false);
+		mc_display_text((int)DISP_W - text_cols(cnt) * FONT_W, y, cnt,
+				false);
+		mc_display_invert_rect(0, y, (int)DISP_W, LINE_H);
+	}
+	y += LINE_H;
 
 	if (total > list_rows && (int)state.qr_sel >= list_rows) {
 		first = (int)state.qr_sel - list_rows + 1;
@@ -852,6 +876,17 @@ static void render_qr_picker(int rows, bool color, uint16_t sel_color,
 	for (int i = first; i < total && shown < list_rows; i++, shown++) {
 		int cancel = (i == (int)state.qr_count);
 		const char *text = cancel ? "Отмена" : state.qr_text[i];
+		char row[UI_FEED_TEXT_LEN + 8];
+
+		/* A preset past the panel is cut at a word and marked with
+		 * "..." so the cut is visible; cfb_print would wrap the
+		 * overflow onto the row below. */
+		if (text_cols(text) > cols && cols > 3) {
+			p = text;
+			ui_feed_wrap_row(row, sizeof(row), &p, cols - 3);
+			strcat(row, "...");
+			text = row;
+		}
 
 		if (color) {
 			uint16_t col = (i == (int)state.qr_sel) ? sel_color
@@ -875,19 +910,6 @@ static void render_qr_picker(int rows, bool color, uint16_t sel_color,
 		}
 		y += LINE_H;
 	}
-	if (rows > 1) {
-		int bottom_y = (int)DISP_H - LINE_H;
-
-		if (bottom_y < CONTENT_Y) {
-			bottom_y = CONTENT_Y;
-		}
-		if (color) {
-			draw_centered_color(bottom_y, "Long press ENTER",
-					    UI_COLOR_DISABLED);
-		} else {
-			draw_centered(bottom_y, "Long press ENTER");
-		}
-	}
 }
 
 static void render_public_rows(int cols, bool color, uint16_t title_color)
@@ -907,10 +929,10 @@ static void render_public_rows(int cols, bool color, uint16_t title_color)
 	/* The quick-reply picker takes the page over the conversation. */
 	if (s->qr_open) {
 		if (color) {
-			render_qr_picker(rows, true, UI_COLOR_ACTIVE,
+			render_qr_picker(rows, cols, true, UI_COLOR_ACTIVE,
 					 UI_COLOR_VALUE);
 		} else {
-			render_qr_picker(rows, false, UI_COLOR_VALUE,
+			render_qr_picker(rows, cols, false, UI_COLOR_VALUE,
 					 UI_COLOR_VALUE);
 		}
 		return;
