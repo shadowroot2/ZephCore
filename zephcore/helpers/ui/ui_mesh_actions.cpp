@@ -17,6 +17,7 @@
 #include <zephyr/devicetree.h>
 #include <zephyr/sys/reboot.h>
 #include <errno.h>
+#include <string.h>
 #if IS_ENABLED(CONFIG_ZEPHCORE_BLE_OTA)
 #include "ble_ota.h"
 #endif

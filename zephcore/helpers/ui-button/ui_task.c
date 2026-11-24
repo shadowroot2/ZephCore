@@ -602,6 +602,7 @@ static void action_enter_dfu(void);
 static void action_wifi_toggle(void);
 #endif
 
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
 /* Walk the conversation list, round and round. */
 static void chat_list_next(void)
 {
@@ -660,12 +661,14 @@ static void feed_page_next(void)
 	}
 	ui_request_render_now();
 }
+#endif /* CONFIG_ZEPHCORE_UI_DISPLAY */
 
 static void feed_defer_handler(struct k_work *work)
 {
 	ARG_UNUSED(work);
 	/* Single-press timeout: step forward on the list, in the chat or
 	 * on the quick-reply picker. */
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
 	if (ui_pages_current() != UI_PAGE_PUBLIC) {
 		return;
 	}
@@ -676,6 +679,7 @@ static void feed_defer_handler(struct k_work *work)
 	} else {
 		chat_list_next();
 	}
+#endif
 }
 
 static void action_page_enter(void)
@@ -1279,10 +1283,12 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 		headless_sos_armed_until = k_uptime_get_32() + HEADLESS_GESTURE_ARM_WINDOW_MS;
 #endif
 #else
-		/* Inside a conversation the single press reads on: the next
-		 * page of its messages.  Everywhere else it is the window. */
-		if (ui_pages_current() == UI_PAGE_PUBLIC && get_state()->chat_open &&
-		    !get_state()->qr_open) {
+		/* One action button: inside a conversation the single tap
+		 * reads on — the next page of its messages.  Everywhere
+		 * else it is the window; on two-button boards KEY_1 comes
+		 * from the page key and stays a window flip. */
+		if (ENTER_FROM_HOLD && ui_pages_current() == UI_PAGE_PUBLIC &&
+		    get_state()->chat_open && !get_state()->qr_open) {
 			feed_page_next();
 			break;
 		}
@@ -1519,7 +1525,7 @@ int ui_init(void)
  * before the ring indices move (ui_chat_push), so the renderer may read
  * from the UI task while this runs on the mesh thread. */
 static void ui_feed_add(const char *chat_name, bool is_group, const char *text,
-			uint32_t ts)
+			uint32_t ts, bool own)
 {
 #ifdef CONFIG_ZEPHCORE_UI_DISPLAY
 	struct ui_state *s = get_state();
@@ -1533,6 +1539,11 @@ static void ui_feed_add(const char *chat_name, bool is_group, const char *text,
 	c = ui_chat_push(&s->chats, chat_name, is_group, ts, text);
 	if (c == NULL) {
 		return;
+	}
+	/* The node's own message is not news to its reader: take back the
+	 * unread bump ui_chat_push gives every message. */
+	if (own && c->unread > 0) {
+		c->unread--;
 	}
 	if (c == sel) {
 		/* It landed in the conversation on screen: it is being read,
@@ -1560,7 +1571,7 @@ static void ui_feed_add(const char *chat_name, bool is_group, const char *text,
 	}
 	ui_request_render();
 #else
-	(void)chat_name; (void)is_group; (void)text; (void)ts;
+	(void)chat_name; (void)is_group; (void)text; (void)ts; (void)own;
 #endif
 }
 
@@ -1580,7 +1591,7 @@ void ui_notify_contact_msg(uint8_t path_len, const char *from_name,
 			   const char *text, uint32_t ts, uint16_t msg_count)
 {
 	(void)path_len;
-	ui_feed_add(from_name, false, text, ts);
+	ui_feed_add(from_name, false, text, ts, false);
 	ui_set_msg_count(msg_count);
 	ui_notify(UI_EVENT_CONTACT_MSG);
 }
@@ -1590,7 +1601,7 @@ void ui_notify_channel_msg(const char *channel_name, const char *text,
 {
 	(void)path_len;
 	/* The mesh already prefixes the sender: sendGroupMessage(). */
-	ui_feed_add(channel_name, true, text, ts);
+	ui_feed_add(channel_name, true, text, ts, false);
 	ui_set_msg_count(msg_count);
 	ui_notify(UI_EVENT_CHANNEL_MSG);
 }
@@ -1601,7 +1612,7 @@ void ui_push_own_msg(const char *chat_name, bool is_group, const char *text,
 	/* A message the node itself just sent: the conversation view shows
 	 * it like any other, but it is not news to its reader — no buzz,
 	 * no queue count. */
-	ui_feed_add(chat_name, is_group, text, ts);
+	ui_feed_add(chat_name, is_group, text, ts, true);
 }
 
 void ui_notify_packet_sent(void)
