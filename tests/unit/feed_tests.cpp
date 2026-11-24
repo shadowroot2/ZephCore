@@ -1,10 +1,10 @@
 /* SPDX-License-Identifier: MIT */
 /*
  * Host tests for the conversation feed: the per-chat ring and its newest
- * first order, the "HH:MM"/"DD.MM HH:MM" line time at the display offset,
- * the ">>"/Public/"[#channel]" line shapes, the emoji substitution table,
- * the word wrap and the continuous paging that spills a long message onto
- * the next page.
+ * first order, the "HH:MM"/"+1d HH:MM"/"DD.MM HH:MM" line time at the
+ * display offset, the ">>"/Public/"[#channel]" line shapes, the emoji
+ * substitution table, the word wrap and the continuous paging that spills
+ * a long message onto the next page.
  */
 
 #include <UiFeed.h>
@@ -47,12 +47,15 @@ TEST(chat_ring_newest_first, "UNIT-FEED-001",
 	}
 	{
 		struct ui_chat *c = ui_chat_find(&l, name);
+		char exp[8];
 
 		CHECK(c != NULL);
 		CHECK(c->count == UI_CHAT_MSGS);
 		CHECK(c->unread == UI_CHAT_MSGS);
-		/* Newest first: m3 on top, m0 at the bottom. */
-		CHECK(std::string(ui_chat_get(c, 0)->text) == "m3");
+		/* Newest first: the last pushed on top, the first at the
+		 * bottom. */
+		snprintf(exp, sizeof(exp), "m%d", UI_CHAT_MSGS - 1);
+		CHECK(std::string(ui_chat_get(c, 0)->text) == exp);
 		CHECK(std::string(ui_chat_get(c, UI_CHAT_MSGS - 1)->text) == "m0");
 		CHECK(ui_chat_get(c, UI_CHAT_MSGS) == NULL);
 	}
@@ -60,10 +63,12 @@ TEST(chat_ring_newest_first, "UNIT-FEED-001",
 	CHECK(ui_chat_push(&l, name, true, NOW + 99, "new") != NULL);
 	{
 		struct ui_chat *c = ui_chat_find(&l, name);
+		char exp[8];
 
 		CHECK(c->count == UI_CHAT_MSGS);
 		CHECK(std::string(ui_chat_get(c, 0)->text) == "new");
-		CHECK(std::string(ui_chat_get(c, 1)->text) == "m3");
+		snprintf(exp, sizeof(exp), "m%d", UI_CHAT_MSGS - 1);
+		CHECK(std::string(ui_chat_get(c, 1)->text) == exp);
 		CHECK(std::string(ui_chat_get(c, UI_CHAT_MSGS - 1)->text) == "m1");
 		for (uint8_t i = 0; i < c->count; i++) {
 			CHECK(std::string(ui_chat_get(c, i)->text) != "m0");
@@ -120,7 +125,7 @@ TEST(chat_unread, "UNIT-FEED-003",
 }
 
 TEST(feed_time_today_and_before, "UNIT-FEED-004",
-     "Line time is HH:MM today and DD.MM HH:MM on an earlier local day")
+     "Line time is HH:MM today, +1d HH:MM yesterday, DD.MM HH:MM earlier")
 {
 	char buf[32];
 
@@ -129,7 +134,7 @@ TEST(feed_time_today_and_before, "UNIT-FEED-004",
 	ui_feed_format_time(buf, sizeof(buf), NOW, NOW, 0);
 	CHECK(std::string(buf) == "12:34");
 	ui_feed_format_time(buf, sizeof(buf), YESTERDAY, NOW, 0);
-	CHECK(std::string(buf) == "18.11 12:34");
+	CHECK(std::string(buf) == "+1d 12:34");
 
 	ui_feed_format_time(buf, sizeof(buf), LATE, LATE, 180);
 	CHECK(std::string(buf) == "02:50");
@@ -155,12 +160,16 @@ TEST(feed_time_epoch_edge, "UNIT-FEED-005",
 	CHECK(ui_feed_local_day(1000, -720) == -1);
 	CHECK(ui_feed_local_day(50000, -720) == 0);
 	CHECK(ui_feed_local_day(1000, -720) != ui_feed_local_day(50000, -720));
+	/* One local day apart is "+1d"; further back keeps its date, even
+	 * below the epoch. */
 	ui_feed_format_time(buf, sizeof(buf), 1000, 50000, -720);
+	CHECK(std::string(buf) == "+1d 12:16");
+	ui_feed_format_time(buf, sizeof(buf), 1000, 50000 + 2 * 86400, -720);
 	CHECK(std::string(buf) == "31.12 12:16");
 }
 
 TEST(feed_line_shapes, "UNIT-FEED-006",
-     "A message reads as time, then text, then a blank line")
+     "A message reads as time, then text")
 {
 	char buf[192];
 	struct ui_chat_list l = fresh_list();
@@ -179,7 +188,7 @@ TEST(feed_line_shapes, "UNIT-FEED-006",
 
 	m.ts = YESTERDAY;
 	ui_chat_format_line(buf, sizeof(buf), dm, &m, NOW, 0);
-	CHECK(std::string(buf) == "18.11 12:34");
+	CHECK(std::string(buf) == "+1d 12:34");
 }
 
 TEST(feed_text_cleanup, "UNIT-FEED-012",
@@ -313,10 +322,10 @@ TEST(feed_continuous_paging, "UNIT-FEED-011",
 	while (ui_chat_iter_next(&it, row, sizeof(row))) {
 		n++;
 	}
-	/* A channel message is its head line, the body and a blank.  The
-	 * newest body wraps to two rows at 11 columns, so it is four rows and
-	 * the other three are three each: 13 in all. */
-	CHECK(n == 13);
+	/* A channel message is its head line and the body.  The newest body
+	 * wraps to two rows at 11 columns, so it is three rows and the other
+	 * three are two each: 9 in all. */
+	CHECK(n == 9);
 
 	/* A page of two rows starting at the top: the head, then the first
 	 * line of the body. */
@@ -346,8 +355,6 @@ TEST(feed_private_one_line, "UNIT-FEED-013",
 	ui_chat_iter_init(&it, c, start, NOW, 0, 21);
 	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
 	CHECK(std::string(row) == "12:34 ты где?");
-	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
-	CHECK(std::string(row) == "");	/* the blank after it */
 	CHECK(!ui_chat_iter_next(&it, row, sizeof(row)));
 }
 
@@ -436,7 +443,7 @@ TEST(feed_head_fits_one_row, "UNIT-FEED-017",
 }
 
 TEST(feed_page_wraps_not_past_end, "UNIT-FEED-018",
-     "Paging past the last blank wraps to the newest, never past the chat")
+     "Paging past the last row wraps to the newest, never past the chat")
 {
 	struct ui_chat_list l = fresh_list();
 	struct ui_chat *c;
@@ -452,7 +459,7 @@ TEST(feed_page_wraps_not_past_end, "UNIT-FEED-018",
 	CHECK(c != NULL);
 
 	/* Walk the chat in screens of five rows and record where each page
-	 * lands.  Before the fix the last page's pull of the closing blank
+	 * lands.  Before the fix the last page's pull of the closing row
 	 * left the cursor past the end and the next render drew nothing. */
 	while (pages < 8) {
 		ui_chat_iter_init(&it, c, cur, NOW, 0, 11);

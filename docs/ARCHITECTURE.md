@@ -1152,7 +1152,9 @@ lands in the thread like any other message — and closes the picker;
 slots of 30 characters) and are set over the `reply` CLI group.
 
 A channel message reads as its head line and the text below it —
-`18.11 13:02 Nick:` banded like a list row, then the message. A direct
+`+1d 13:02 Nick` banded like a list row, then the message. The head line
+carries the time as `HH:MM` today, `+1d HH:MM` yesterday, `DD.MM HH:MM`
+any earlier day. A direct
 chat keeps the time and the text on one line. Both are cut to the panel
 width rather than wrapped onto each other. A message that carries map
 links keeps the coordinates, one pair per line; a tracking report keeps
@@ -1162,7 +1164,7 @@ pictograph; the bitmap font carries the Russian alphabet in slots 128-193
 and borrows the Latin glyph for the twenty-one letters drawn like one
 (`UiFeed.h`, `display_charset.h`).
 
-Each conversation keeps its own four-message ring (`CONFIG_ZEPHCORE_UI_CHAT_MSGS`,
+Each conversation keeps its own ten-message ring (`CONFIG_ZEPHCORE_UI_CHAT_MSGS`,
 six conversations, `CONFIG_ZEPHCORE_UI_CHAT_COUNT`), so a busy channel cannot
 wash a quiet one out of the buffer. The action button pages the conversation
 after a beat and a second press inside that window walks back. Long lines wrap

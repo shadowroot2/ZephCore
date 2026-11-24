@@ -652,8 +652,9 @@ static void feed_page_next(void)
 			return;
 		}
 	}
-	/* The pull of the last message's blank line leaves the cursor past
-	 * the end of the chat: wrap instead of showing an empty page. */
+	/* A message's last row leaves the cursor at the next message, past
+	 * the chat when it was the final one: wrap instead of showing an
+	 * empty page. */
 	if (it.cur.entry >= c->count) {
 		s->chat_view = zero;
 	} else {

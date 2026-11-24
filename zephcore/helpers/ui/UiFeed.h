@@ -53,13 +53,14 @@ static inline int32_t ui_feed_local_day(uint32_t ts, int16_t tz_minutes)
 	return (int32_t)((local - (local < 0 ? 86399 : 0)) / 86400);
 }
 
-/* "HH:MM" today, "DD.MM HH:MM" once the message is from an earlier local
+/* "HH:MM" today, "+1d HH:MM" yesterday, "DD.MM HH:MM" any earlier local
  * day, "--:--" when the sender carried no timestamp. */
 static inline void ui_feed_format_time(char *buf, size_t n, uint32_t ts,
 				       uint32_t now, int16_t tz_minutes)
 {
 	int64_t local;
 	uint32_t day_sec;
+	int32_t day_diff;
 
 	if (ts == 0) {
 		snprintf(buf, n, "--:--");
@@ -69,9 +70,15 @@ static inline void ui_feed_format_time(char *buf, size_t n, uint32_t ts,
 	/* 86400 is the day length; the offset cannot push a timestamp past the
 	 * int64 range here. */
 	day_sec = (uint32_t)(((local % 86400) + 86400) % 86400);
+	day_diff = ui_feed_local_day(now, tz_minutes) -
+		   ui_feed_local_day(ts, tz_minutes);
 
-	if (ui_feed_local_day(ts, tz_minutes) == ui_feed_local_day(now, tz_minutes)) {
+	if (day_diff == 0) {
 		snprintf(buf, n, "%02u:%02u", day_sec / 3600U,
+			 (day_sec % 3600U) / 60U);
+	} else if (day_diff == 1) {
+		/* Yesterday keeps the time readable: "+1d 13:02". */
+		snprintf(buf, n, "+1d %02u:%02u", day_sec / 3600U,
 			 (day_sec % 3600U) / 60U);
 	} else {
 		/* Day-of-month and month of the local date. */
@@ -393,7 +400,7 @@ struct ui_chat_msg {
 #ifdef CONFIG_ZEPHCORE_UI_CHAT_MSGS
 #define UI_CHAT_MSGS CONFIG_ZEPHCORE_UI_CHAT_MSGS
 #else
-#define UI_CHAT_MSGS 4
+#define UI_CHAT_MSGS 10
 #endif
 #endif
 
@@ -853,8 +860,8 @@ static inline struct ui_chat *ui_chat_push(struct ui_chat_list *l,
 
 /* ---- lines ---- */
 
-/* A message reads as three kinds of row: the time, the text below it, and a
- * blank line before the next message.  This is the first of them. */
+/* A message reads as two kinds of row: the time, and the text below it.
+ * This is the first of them. */
 static inline void ui_chat_format_line(char *buf, size_t n,
 				       const struct ui_chat *c,
 				       const struct ui_chat_msg *m,
@@ -875,7 +882,7 @@ struct ui_chat_iter {
 	char head[UI_FEED_NAME_LEN + 32];	/* "18.11 13:02 Nick:" */
 	char line[UI_FEED_TEXT_LEN + 32];	/* what the rows carry */
 	const char *line_p;
-	int phase;			/* 0 = head, 1 = text, 2 = blank */
+	int phase;			/* 0 = head, 1 = text */
 	bool row_is_head;		/* the last row pulled was the head */
 	bool loaded;
 };
@@ -883,7 +890,7 @@ struct ui_chat_iter {
 /* A direct chat reads as "12:35 ты где?" - the time and the text on one
  * line, wrapped together.  A channel puts the sender on the time's line
  * and starts its text below:
- *     18.11 13:02 Nick:
+ *     13:02 Nick:
  *     увидимся
  */
 static inline void ui_chat_iter_begin(struct ui_chat_iter *it)
@@ -966,20 +973,19 @@ static inline bool ui_chat_iter_skip_one(struct ui_chat_iter *it)
 	}
 	if (it->phase == 0) {
 		it->phase = 1;
-	} else if (it->phase == 1) {
+	} else {
 		if (*it->line_p == '\0') {
-			it->phase = 2;
-		} else {
-			/* The wrap needs the full row width: a short buffer
-			 * cuts the row early and leaves the cursor standing
-			 * inside a line instead of past it. */
+			return false;
+		}
+		/* The wrap needs the full row width: a short buffer
+		 * cuts the row early and leaves the cursor standing
+		 * inside a line instead of past it. */
+		{
 			char skip[UI_FEED_TEXT_LEN + 32];
 
 			ui_feed_wrap_row(skip, sizeof(skip), &it->line_p,
 					 it->cols);
 		}
-	} else {
-		return false;
 	}
 	it->cur.row++;
 	return true;
@@ -1017,8 +1023,17 @@ static inline void ui_chat_iter_init(struct ui_chat_iter *it,
 	it->loaded = false;
 }
 
-/* Pull the next row: the head line, a line of text, or the blank between
- * messages.  False at the end of the chat. */
+/* On to the next message; past the last one the cursor stands at the end
+ * of the chat and a pull reports false. */
+static inline void ui_chat_iter_advance(struct ui_chat_iter *it)
+{
+	it->cur.entry++;
+	it->cur.row = 0;
+	ui_chat_iter_begin(it);
+}
+
+/* Pull the next row: the head line or a line of text.  False at the end
+ * of the chat. */
 static inline bool ui_chat_iter_next(struct ui_chat_iter *it, char *out,
 				     size_t out_n)
 {
@@ -1034,36 +1049,37 @@ static inline bool ui_chat_iter_next(struct ui_chat_iter *it, char *out,
 			it->row_is_head = true;
 			it->phase = 1;
 			it->cur.row++;
+			if (*it->line_p == '\0') {
+				/* A bare head was the whole message. */
+				ui_chat_iter_advance(it);
+			}
 			return true;
 		}
-		if (it->phase == 1) {
-			if (*it->line_p == '\0') {
-				it->phase = 2;
-				continue;
-			}
-			{
-				char row[UI_FEED_TEXT_LEN + 32];
+		if (*it->line_p == '\0') {
+			/* The rows were stepped over past their end. */
+			ui_chat_iter_advance(it);
+			continue;
+		}
+		{
+			char row[UI_FEED_TEXT_LEN + 32];
 
-				ui_feed_wrap_row(row, sizeof(row), &it->line_p,
-						 it->cols);
-				if (out_n > 0) {
-					strncpy(out, row, out_n - 1);
-					out[out_n - 1] = '\0';
-				}
-				it->row_is_head = false;
-				it->cur.row++;
-				return true;
+			ui_feed_wrap_row(row, sizeof(row), &it->line_p,
+					 it->cols);
+			if (out_n > 0) {
+				strncpy(out, row, out_n - 1);
+				out[out_n - 1] = '\0';
 			}
+			it->row_is_head = false;
+			it->cur.row++;
+			if (*it->line_p == '\0') {
+				/* The message's last row: the cursor waits
+				 * at the next message, so a page ending here
+				 * shows the rest and the pager sees the end
+				 * of the chat. */
+				ui_chat_iter_advance(it);
+			}
+			return true;
 		}
-		/* The blank line: the last row of the message. */
-		if (out_n > 0) {
-			out[0] = '\0';
-		}
-		it->row_is_head = false;
-		it->cur.entry++;
-		it->cur.row = 0;
-		ui_chat_iter_begin(it);
-		return true;
 	}
 	return false;
 }
