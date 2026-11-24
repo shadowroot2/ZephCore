@@ -1094,7 +1094,7 @@ extern "C" void companion_quick_reply_send_from_ui(int slot, const char *chat_na
 						   bool is_group)
 {
 	if (!companion_mesh_ptr || chat_name == NULL || chat_name[0] == '\0' ||
-	    slot < 0 || slot >= 10) {
+	    slot < 0 || slot >= QUICK_REPLY_SLOTS) {
 		return;
 	}
 	const char *text = companion_mesh.prefs.quick_reply[slot];
@@ -3350,8 +3350,8 @@ static bool handle_fall_cli(const char *line, char *reply)
 
 #ifdef CONFIG_ZEPHCORE_UI_DISPLAY
 /* Quick replies for the message feed: canned phrases a thumb sends
- * instead of typing.  Slots read 1..10 on the wire and qr0..qr9 in
- * prefs.json. */
+ * instead of typing.  Slots read 1..QUICK_REPLY_SLOTS on the wire and
+ * qr0.. in prefs.json. */
 static bool handle_reply_cli(const char *line, char *reply)
 {
 	int slot;

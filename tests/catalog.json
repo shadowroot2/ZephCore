@@ -69,7 +69,7 @@
     },
     {
       "id": "UNIT-PJSON-015",
-      "name": "Quick-reply presets fill the slots and qr0..qr9 round trip in prefs.json",
+      "name": "Quick-reply presets fill the slots and qr0..qr6 round trip in prefs.json",
       "source": "tests/unit/prefs_json_tests.cpp"
     },
     {

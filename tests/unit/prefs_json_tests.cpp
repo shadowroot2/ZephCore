@@ -313,13 +313,13 @@ TEST(pjson_geo_defaults, "UNIT-PJSON-012", "initNodePrefs puts the Almaty defaul
 }
 
 TEST(pjson_quick_reply, "UNIT-PJSON-015",
-     "Quick-reply presets fill the slots and qr0..qr9 round trip in prefs.json") {
+     "Quick-reply presets fill the slots and qr0..qr6 round trip in prefs.json") {
     NodePrefs p = defaults();
-    static const char *presets[10] = {
+    static const char *presets[7] = {
         "Да", "Нет", "Получил", "Иду", "Жду",
-        "На месте", "Буду позже", "Не могу", "Всё хорошо", "Спасибо",
+        "На месте", "Буду позже",
     };
-    for (int i = 0; i < 10; i++) {
+    for (int i = 0; i < 7; i++) {
         CHECK(std::strcmp(p.quick_reply[i], presets[i]) == 0);
     }
     /* A slot is 30 Cyrillic characters: 60 bytes of text and the NUL. */
@@ -330,14 +330,14 @@ TEST(pjson_quick_reply, "UNIT-PJSON-015",
     *w = '\0';
     strcpy(p.quick_reply[0], full);
     /* An empty slot is legal and just shows nothing to send. */
-    p.quick_reply[9][0] = '\0';
+    p.quick_reply[6][0] = '\0';
     MemStream s;
     CHECK(companionPrefsToJson(p, s));
     NodePrefs q = defaults();
     CHECK(companionPrefsFromJson(q, s));
     CHECK(std::strcmp(q.quick_reply[0], full) == 0);
     CHECK(std::strcmp(q.quick_reply[3], "Иду") == 0);
-    CHECK(q.quick_reply[9][0] == '\0');
+    CHECK(q.quick_reply[6][0] == '\0');
     /* sanitizeNodePrefs NUL-terminates every slot it is handed. */
     memset(q.quick_reply[2], 'x', sizeof(q.quick_reply[2]));
     sanitizeNodePrefs(&q);

@@ -78,11 +78,11 @@ static inline bool companion_wp_save_autonames(int slot, const char *name)
 }
 
 /* ZEPHCORE: arguments of "reply get <n>" and "reply set <n> <text>" — a
- * slot 1..10 and a text of at most QUICK_REPLY_MAX_CHARS characters
- * (spaces count; the text is the rest of the line and may be empty to
- * clear the slot).  The cap counts UTF-8 characters, not bytes, so 30
- * Cyrillic letters pass and 31 do not.  Returns the error reply, or NULL
- * and fills the 0-based slot and the text. */
+ * slot 1..QUICK_REPLY_SLOTS and a text of at most QUICK_REPLY_MAX_CHARS
+ * characters (spaces count; the text is the rest of the line and may be
+ * empty to clear the slot).  The cap counts UTF-8 characters, not bytes,
+ * so 30 Cyrillic letters pass and 31 do not.  Returns the error reply, or
+ * NULL and fills the 0-based slot and the text. */
 static inline const char *companion_reply_parse(const char *args, int *slot_out,
 						char *text_out, size_t text_cap)
 {
@@ -94,14 +94,14 @@ static inline const char *companion_reply_parse(const char *args, int *slot_out,
 		p++;
 	}
 	if (*p < '0' || *p > '9') {
-		return "Error: reply 1..10";
+		return "Error: reply 1..7";
 	}
 	{
 		char *end;
 		long v = strtol(p, &end, 10);
 
-		if ((*end != '\0' && *end != ' ') || v < 1 || v > 10) {
-			return "Error: reply 1..10";
+		if ((*end != '\0' && *end != ' ') || v < 1 || v > QUICK_REPLY_SLOTS) {
+			return "Error: reply 1..7";
 		}
 		*slot_out = (int)v - 1;
 		p = end;
@@ -216,7 +216,7 @@ static inline const char *companion_app_cli_help(const char *line)
 #endif
 #ifdef CONFIG_ZEPHCORE_UI_DISPLAY
 	if (strcmp(line, "help reply") == 0) {
-		return "reply get <n> (1..10)\nreply set <n> <text> (max 30 chars)";
+		return "reply get <n> (1..7)\nreply set <n> <text> (max 30 chars)";
 	}
 #endif
 	if (strcmp(line, "help extra") == 0) {

@@ -73,6 +73,7 @@
  * bytes in UTF-8, so QUICK_REPLY_LEN is 2*30+1. */
 #define QUICK_REPLY_MAX_CHARS 30
 #define QUICK_REPLY_LEN 61
+#define QUICK_REPLY_SLOTS 7
 
 struct NodePrefs {
 	/* ---- Common fields (both roles) ---- */
@@ -251,7 +252,7 @@ struct NodePrefs {
 	 * characters ("Буду позже" is 10 of them): two bytes each in UTF-8,
 	 * hence QUICK_REPLY_LEN with the NUL.  A screenless build has no
 	 * feed to send them from and no RAM to spare for them. */
-	char quick_reply[10][QUICK_REPLY_LEN];
+	char quick_reply[QUICK_REPLY_SLOTS][QUICK_REPLY_LEN];
 #endif
 };
 
@@ -580,11 +581,11 @@ static inline void initNodePrefs(NodePrefs* prefs) {
 	/* Quick-reply presets: short answers a thumb can send from the feed.
 	 * Russian-first, the node's own alphabet; an empty slot is legal and
 	 * just shows nothing to send. */
-	static const char *const quick_reply_presets[10] = {
+	static const char *const quick_reply_presets[QUICK_REPLY_SLOTS] = {
 		"Да", "Нет", "Получил", "Иду", "Жду",
-		"На месте", "Буду позже", "Не могу", "Всё хорошо", "Спасибо",
+		"На месте", "Буду позже",
 	};
-	for (int i = 0; i < 10; i++) {
+	for (int i = 0; i < QUICK_REPLY_SLOTS; i++) {
 		strncpy(prefs->quick_reply[i], quick_reply_presets[i],
 			sizeof(prefs->quick_reply[i]) - 1);
 	}

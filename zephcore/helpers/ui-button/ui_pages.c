@@ -375,9 +375,23 @@ static void render_page_indicator(void)
 
 /* ========== Helper: Center text ========== */
 
+/* Display width in columns: one UTF-8 character per glyph.  A byte count
+ * pushes Cyrillic text off its mark — "Отмена" is 12 bytes, 6 columns. */
+static inline int text_cols(const char *text)
+{
+	int n = 0;
+
+	for (const char *p = text; *p != '\0'; p++) {
+		if (((unsigned char)*p & 0xC0) != 0x80) {
+			n++;
+		}
+	}
+	return n;
+}
+
 static void draw_centered(int y, const char *text)
 {
-	int len = (int)strlen(text);
+	int len = text_cols(text);
 	int x = (DISP_W - (len * FONT_W)) / 2;
 
 	if (x < 0) {
@@ -388,7 +402,7 @@ static void draw_centered(int y, const char *text)
 
 static void draw_centered_color(int y, const char *text, uint16_t color)
 {
-	int len = (int)strlen(text);
+	int len = text_cols(text);
 	int x = (DISP_W - (len * COLOR_FONT_W)) / 2;
 
 	if (x < 0) {
@@ -401,7 +415,7 @@ static void draw_color_segments_at(int x, int y, const char *label,
 				   const char *value, uint16_t value_color)
 {
 	mc_display_color_text(x, y, label, UI_COLOR_LABEL);
-	x += (int)strlen(label) * COLOR_FONT_W;
+	x += text_cols(label) * COLOR_FONT_W;
 	mc_display_color_text(x, y, value, value_color);
 }
 
@@ -413,7 +427,7 @@ static void draw_color_segments(int y, const char *label,
 
 static int color_text_width(const char *text)
 {
-	return (int)strlen(text) * COLOR_FONT_W;
+	return text_cols(text) * COLOR_FONT_W;
 }
 
 static void draw_badge(int x, int y, const char *text, uint16_t color)

@@ -526,18 +526,18 @@ TEST(companion_reply, "UNIT-CLI-007", "reply get/set parses the slot and pins th
 	CHECK(companion_reply_parse(" 1 Буду позже  ", &slot, text, sizeof(text)) == NULL);
 	CHECK(slot == 0);
 	CHECK(std::strcmp(text, "Буду позже") == 0);
-	CHECK(companion_reply_parse("10 012345678901234567890123456789",
+	CHECK(companion_reply_parse("7 012345678901234567890123456789",
 				    &slot, text, sizeof(text)) == NULL);
-	CHECK(slot == 9);
+	CHECK(slot == 6);
 	CHECK(std::strcmp(text, "012345678901234567890123456789") == 0);
 	CHECK(std::strcmp(companion_reply_parse("0", &slot, text, sizeof(text)),
-			  "Error: reply 1..10") == 0);
-	CHECK(std::strcmp(companion_reply_parse("11", &slot, text, sizeof(text)),
-			  "Error: reply 1..10") == 0);
+			  "Error: reply 1..7") == 0);
+	CHECK(std::strcmp(companion_reply_parse("8", &slot, text, sizeof(text)),
+			  "Error: reply 1..7") == 0);
 	CHECK(std::strcmp(companion_reply_parse("3.5", &slot, text, sizeof(text)),
-			  "Error: reply 1..10") == 0);
+			  "Error: reply 1..7") == 0);
 	CHECK(std::strcmp(companion_reply_parse("", &slot, text, sizeof(text)),
-			  "Error: reply 1..10") == 0);
+			  "Error: reply 1..7") == 0);
 	/* 30 Cyrillic characters fill the slot; 31 are refused. */
 	w = many;
 	memcpy(w, "5 ", 2);

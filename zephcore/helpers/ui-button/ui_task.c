@@ -254,7 +254,7 @@ static void qr_picker_open(void)
 	struct ui_state *s = get_state();
 
 	s->qr_count = 0;
-	for (int i = 0; i < 10; i++) {
+	for (int i = 0; i < 7; i++) {
 		const char *t = mesh_quick_reply_text(i);
 		size_t n;
 
@@ -775,12 +775,13 @@ static void action_page_enter(void)
 			break;
 		}
 		/* A short ENTER walks: one press steps the list, the chat
-		 * or the picker forward after a beat, a second press inside
-		 * the window walks back — or leaves the conversation. */
+		 * or the picker forward after a beat; a second press inside
+		 * the window goes back — out of the picker to the chat, out
+		 * of the chat to the list. */
 		if (get_state()->qr_open) {
 			if (k_work_delayable_is_pending(&feed_defer_work)) {
 				k_work_cancel_delayable(&feed_defer_work);
-				qr_picker_step(-1);
+				qr_picker_close();
 			} else {
 				k_work_reschedule(&feed_defer_work,
 						  K_MSEC(FEED_DOUBLE_MS));
@@ -1284,12 +1285,17 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 #endif
 #else
 		/* One action button: inside a conversation the single tap
-		 * reads on — the next page of its messages.  Everywhere
-		 * else it is the window; on two-button boards KEY_1 comes
-		 * from the page key and stays a window flip. */
+		 * reads on — the next page of its messages — and on the
+		 * picker it steps the rows.  Everywhere else it is the
+		 * window; on two-button boards KEY_1 comes from the page
+		 * key and stays a window flip. */
 		if (ENTER_FROM_HOLD && ui_pages_current() == UI_PAGE_PUBLIC &&
-		    get_state()->chat_open && !get_state()->qr_open) {
-			feed_page_next();
+		    get_state()->chat_open) {
+			if (get_state()->qr_open) {
+				qr_picker_step(1);
+			} else {
+				feed_page_next();
+			}
 			break;
 		}
 		action_page_next();
@@ -1367,11 +1373,11 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 			break;
 		}
 		/* 2 taps of the one button on the feed: step the list of
-		 * conversations or the picker rows, and inside a conversation
-		 * go back to the list. */
+		 * conversations, and inside a conversation or the picker go
+		 * back out. */
 		if (ENTER_FROM_HOLD && ui_pages_current() == UI_PAGE_PUBLIC) {
 			if (get_state()->qr_open) {
-				qr_picker_step(1);
+				qr_picker_close();
 			} else if (get_state()->chat_open) {
 				chat_close();
 			} else {

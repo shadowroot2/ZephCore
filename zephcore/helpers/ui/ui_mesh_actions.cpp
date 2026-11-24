@@ -197,7 +197,7 @@ extern "C" void mesh_wp_cycle(void)
 #ifdef CONFIG_ZEPHCORE_UI_DISPLAY
 extern "C" const char *mesh_quick_reply_text(int slot)
 {
-	if (s_mesh == NULL || slot < 0 || slot >= 10) {
+	if (s_mesh == NULL || slot < 0 || slot >= QUICK_REPLY_SLOTS) {
 		return "";
 	}
 	return s_mesh->prefs.quick_reply[slot];
@@ -206,7 +206,7 @@ extern "C" const char *mesh_quick_reply_text(int slot)
 extern "C" void mesh_quick_reply_send(int slot, const char *chat_name,
 				      bool is_group)
 {
-	if (s_mesh == NULL || slot < 0 || slot >= 10 ||
+	if (s_mesh == NULL || slot < 0 || slot >= QUICK_REPLY_SLOTS ||
 	    chat_name == NULL || chat_name[0] == '\0') {
 		return;
 	}

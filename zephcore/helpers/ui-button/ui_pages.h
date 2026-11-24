@@ -94,11 +94,12 @@ struct ui_state {
 	bool     qr_open;
 	uint8_t  qr_sel;		/* picker row, wraps over all rows */
 	uint8_t  qr_count;		/* preset rows shown */
-	int8_t   qr_slot[10];		/* picker row -> quick_reply slot */
-	/* One preset's text: QUICK_REPLY_LEN in NodePrefs.h (30 Cyrillic
-	 * characters + NUL), spelled out — that header is C++-only and this
-	 * one is included from C. */
-	char     qr_text[10][61];
+	int8_t   qr_slot[7];		/* picker row -> quick_reply slot */
+	/* One preset's text.  7 is QUICK_REPLY_SLOTS and 61 is
+	 * QUICK_REPLY_LEN in NodePrefs.h (30 Cyrillic characters + NUL),
+	 * spelled out — that header is C++-only and this one is included
+	 * from C. */
+	char     qr_text[7][61];
 #endif
 
 	/* Radio page */
