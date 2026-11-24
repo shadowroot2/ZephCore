@@ -74,8 +74,10 @@ extern "C" bool companion_tracking_gps_control_allowed(void);
 extern "C" void companion_home_save_from_ui(void);
 extern "C" void companion_nav_toggle_from_ui(void);
 extern "C" void companion_wp_cycle_from_ui(void);
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
 extern "C" void companion_quick_reply_send_from_ui(int slot, const char *chat_name,
 						   bool is_group);
+#endif
 
 /* Module-local pointers, set by init */
 static CompanionMesh *s_mesh;
@@ -107,10 +109,12 @@ static atomic_t pending_path_hash_mode;
 static atomic_t pending_gps_duty_sec;
 static atomic_t pending_display_rotate;
 static atomic_t pending_input_rotate;
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
 static atomic_t pending_qr_slot;
 static atomic_t pending_qr_group;
 /* Written before atomic_or on pending_ui_actions like the rest. */
 static char pending_qr_chat[32];
+#endif
 
 extern "C" void ui_mesh_actions_init(struct k_event *mesh_events,
 				     uint32_t mesh_event_ui_action,
@@ -190,6 +194,7 @@ extern "C" void mesh_wp_cycle(void)
 	k_event_post(s_mesh_events, s_mesh_event_ui_action);
 }
 
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
 extern "C" const char *mesh_quick_reply_text(int slot)
 {
 	if (s_mesh == NULL || slot < 0 || slot >= 10) {
@@ -217,6 +222,7 @@ extern "C" void mesh_quick_reply_send(int slot, const char *chat_name,
 	atomic_or(&pending_ui_actions, UI_ACTION_QUICK_REPLY);
 	k_event_post(s_mesh_events, s_mesh_event_ui_action);
 }
+#endif /* CONFIG_ZEPHCORE_UI_DISPLAY */
 
 extern "C" void mesh_gps_set_enabled(bool enable)
 {
@@ -414,11 +420,13 @@ extern "C" void mesh_handle_ui_actions(void)
 	if (actions & UI_ACTION_WP_CYCLE) {
 		companion_wp_cycle_from_ui();
 	}
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
 	if (actions & UI_ACTION_QUICK_REPLY) {
 		companion_quick_reply_send_from_ui((int)atomic_get(&pending_qr_slot),
 						  pending_qr_chat,
 						  atomic_get(&pending_qr_group) != 0);
 	}
+#endif
 
 	/* Save prefs if any toggle action changed them */
 	bool need_save = false;

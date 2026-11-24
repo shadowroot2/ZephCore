@@ -178,12 +178,14 @@ protected:
 		def("geo_stat_out", _p->geo_stat_out);
 		def("geo_radius", _p->geo_radius_m);
 		def("adc_mult", _p->adc_multiplier);
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
 #define QUICK_REPLY_DEFS(n) def("qr" #n, _p->quick_reply[n], sizeof(_p->quick_reply[n]))
 		QUICK_REPLY_DEFS(0); QUICK_REPLY_DEFS(1); QUICK_REPLY_DEFS(2);
 		QUICK_REPLY_DEFS(3); QUICK_REPLY_DEFS(4); QUICK_REPLY_DEFS(5);
 		QUICK_REPLY_DEFS(6); QUICK_REPLY_DEFS(7); QUICK_REPLY_DEFS(8);
 		QUICK_REPLY_DEFS(9);
 #undef QUICK_REPLY_DEFS
+#endif
 		def("pwr_sav_en", _p->powersaving_enabled);
 		def("og_home", _p->offgrid_home_freq);
 	}

@@ -94,11 +94,13 @@ void mesh_save_path_hash_mode(uint8_t mode);
  * (lightweight); the flash write is deferred to the mesh thread. */
 void mesh_save_gps_duty_sec(uint32_t sec);
 
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
 /* ZEPHCORE: quick replies for the message feed — canned phrases the thumb
  * sends instead of typing.  The text is read where it is sent (prefs), the
  * picker shows what was there when it opened. */
 const char *mesh_quick_reply_text(int slot);
 void mesh_quick_reply_send(int slot, const char *chat_name, bool is_group);
+#endif
 
 #ifdef __cplusplus
 }

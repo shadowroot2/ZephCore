@@ -74,7 +74,9 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 		"leds [on|off]\r\n"
 #endif
 		"offgrid on|off\r\n"
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
 		"reply get <n>\r\nreply set <n> <text>\r\n"
+#endif
 		"stats-packets\r\nstats-radio\r\nstats-core\r\nclear stats\r\n"
 		"get role\r\nget public.key\r\n"
 		"get dc.restarts\r\nget cad\r\nget bootloader.ver\r\n"

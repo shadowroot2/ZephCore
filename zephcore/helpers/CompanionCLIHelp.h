@@ -156,7 +156,10 @@ static inline const char *companion_app_cli_help(const char *line)
 #if IS_ENABLED(CONFIG_ZEPHCORE_COMPANION_WIFI)
 		       " | wifi"
 #endif
-		       " | reply | extra | ui | power | stat | sys\n"
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
+		       " | reply"
+#endif
+		       " | extra | ui | power | stat | sys\n"
 		       "Use: help <group>";
 	}
 	if (strcmp(line, "help id") == 0) {
@@ -211,9 +214,11 @@ static inline const char *companion_app_cli_help(const char *line)
 		return COMPANION_WIFI_HELP;
 	}
 #endif
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
 	if (strcmp(line, "help reply") == 0) {
 		return "reply get <n> (1..10)\nreply set <n> <text> (max 30 chars)";
 	}
+#endif
 	if (strcmp(line, "help extra") == 0) {
 		return "findme\nsos\n"
 #if COMPANION_HAS_GPS

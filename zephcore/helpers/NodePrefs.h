@@ -244,12 +244,15 @@ struct NodePrefs {
 	uint16_t geo_stat_in;
 	uint16_t geo_stat_out;
 
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
 	/* Quick replies for the message feed: short canned phrases sent
 	 * without typing.  The presets are a starting point only - every
 	 * slot is the user's to overwrite.  A slot holds 30 Cyrillic
 	 * characters ("Буду позже" is 10 of them): two bytes each in UTF-8,
-	 * hence QUICK_REPLY_LEN with the NUL. */
+	 * hence QUICK_REPLY_LEN with the NUL.  A screenless build has no
+	 * feed to send them from and no RAM to spare for them. */
 	char quick_reply[10][QUICK_REPLY_LEN];
+#endif
 };
 
 /* Range guards for prefs that came off flash: a blob can be intact and
@@ -327,9 +330,11 @@ static inline void sanitizeNodePrefs(NodePrefs* p) {
 	p->wifi_ssid[sizeof(p->wifi_ssid) - 1] = '\0';
 	p->wifi_pwd[sizeof(p->wifi_pwd) - 1] = '\0';
 	p->tracking_group_name[sizeof(p->tracking_group_name) - 1] = '\0';
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
 	for (size_t i = 0; i < sizeof(p->quick_reply) / sizeof(p->quick_reply[0]); i++) {
 		p->quick_reply[i][sizeof(p->quick_reply[i]) - 1] = '\0';
 	}
+#endif
 	p->wifi_enabled = saneBool(p->wifi_enabled, (uint8_t)1);
 
 	p->airtime_factor = sanePrefFloat(p->airtime_factor, 0.0f, 9.0f, 9.0f);
@@ -571,6 +576,7 @@ static inline void initNodePrefs(NodePrefs* prefs) {
 	prefs->geo_saved = 0;
 	prefs->geo_on = 0;
 	prefs->geo_radius_m = GEO_RADIUS_M_DEFAULT;
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
 	/* Quick-reply presets: short answers a thumb can send from the feed.
 	 * Russian-first, the node's own alphabet; an empty slot is legal and
 	 * just shows nothing to send. */
@@ -582,6 +588,7 @@ static inline void initNodePrefs(NodePrefs* prefs) {
 		strncpy(prefs->quick_reply[i], quick_reply_presets[i],
 			sizeof(prefs->quick_reply[i]) - 1);
 	}
+#endif
 	/* Companion-only default, set here so every caller of initNodePrefs() sees
 	 * it. 0 means disabled and is a legal stored value. */
 #ifdef CONFIG_ZEPHCORE_AUTO_SHUTDOWN_MILLIVOLTS

@@ -1086,6 +1086,7 @@ static bool companion_send_hidden_group_message(ChannelDetails &channel,
 			companion_mesh_ptr->prefs.node_name, text, (int)strlen(text));
 }
 
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
 /* ZEPHCORE: a quick reply picked on the feed screen goes out to the open
  * conversation — the same visible send path a device-originated notice
  * takes — and lands in the node's own conversation view as well. */
@@ -1146,6 +1147,7 @@ extern "C" void companion_quick_reply_send_from_ui(int slot, const char *chat_na
 	ui_push_own_msg(chat_name, is_group, echo, timestamp);
 	LOG_INF("quick reply sent to %s: %s", chat_name, text);
 }
+#endif /* CONFIG_ZEPHCORE_UI_DISPLAY */
 
 static void companion_send_fall_canceled_message(void)
 {
@@ -3346,6 +3348,7 @@ static bool handle_fall_cli(const char *line, char *reply)
 }
 #endif
 
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
 /* Quick replies for the message feed: canned phrases a thumb sends
  * instead of typing.  Slots read 1..10 on the wire and qr0..qr9 in
  * prefs.json. */
@@ -3394,6 +3397,7 @@ static bool handle_reply_cli(const char *line, char *reply)
 	strcpy(reply, "Error: reply get <n> | reply set <n> <text>");
 	return true;
 }
+#endif /* CONFIG_ZEPHCORE_UI_DISPLAY */
 
 #if ZEPHCORE_HAS_GPS
 static bool handle_tracking_cli(const char *line, char *reply, bool silent)
@@ -4154,7 +4158,9 @@ static void companion_cli_exec(const char *line, uint32_t sender_timestamp,
 	    handle_tracking_cli(line, reply, silent_notifications) ||
 	    handle_geo_cli(line, reply) ||
 #endif
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
 	    handle_reply_cli(line, reply) ||
+#endif
 	    handle_findme_cli(line, reply) ||
 	    handle_autoshutdown_emergency_cli(line, reply)) return;
 #if IS_ENABLED(CONFIG_BT)
