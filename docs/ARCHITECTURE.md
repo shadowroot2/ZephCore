@@ -1138,17 +1138,17 @@ Gestures on that page:
 | page key, one press | next screen | next screen | next screen | next screen |
 | page key, two presses | previous screen | previous screen | previous screen | previous screen |
 | action, one press | next conversation | next messages | next reply | the page's action |
-| action, second press | previous conversation | back to the list | previous reply | — |
+| action, second press | previous conversation | back to the list | back to the chat | — |
 | action, hold | open the conversation | open the quick replies | send the reply | the page's hold |
 
 The page keys never touch the list: they are the screen flip and taking
 them over for the list made the pages unreachable.
 
 The quick-reply picker sits over the open conversation: its rows are the
-non-empty presets in slot order with a centred `Отмена` last, walked like
-the conversation list. A hold sends the preset into the conversation — it
+non-empty presets in slot order with a centred `Отмена` last; one press
+walks the rows and a second press goes back to the chat. A hold sends the preset into the conversation — it
 lands in the thread like any other message — and closes the picker;
-`Отмена` only closes it. The presets live in `NodePrefs.quick_reply` (ten
+`Отмена` only closes it. The presets live in `NodePrefs.quick_reply` (seven
 slots of 30 characters) and are set over the `reply` CLI group.
 
 A channel message reads as its head line and the text below it —
