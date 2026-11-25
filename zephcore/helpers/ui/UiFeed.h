@@ -1024,19 +1024,25 @@ static inline void ui_chat_iter_begin(struct ui_chat_iter *it)
 					mark_cols++;
 				}
 			}
-			left_cols = it->cols - mark_cols;
+			/* The head row reads inset at both ends: a column
+			 * before the time and one after the outcome (or
+			 * after the name when there is no outcome). */
+			left_cols = it->cols - 2 - mark_cols;
+			if (left_cols < 1) {
+				left_cols = 1;
+			}
 			/* One row only: cfb_print wraps at the panel edge
 			 * and would spill the name over the text below. */
 			{
 				char full[UI_FEED_NAME_LEN + 32];
 				const char *hp;
 				int ncols = 0;
-				size_t out = 0;
+				size_t out = 1;
 
 				snprintf(full, sizeof(full), "%s %s", time,
 					 name);
 				hp = full;
-				it->head[0] = '\0';
+				it->head[0] = ' ';
 				while (*hp != '\0' && ncols < left_cols) {
 					size_t adv = ui_feed_utf8_len(hp);
 

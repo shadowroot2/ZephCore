@@ -1159,7 +1159,8 @@ carries the time as `HH:MM` today, `+1d HH:MM` yesterday, `DD.MM HH:MM`
 any earlier day. An own message wears the same head with `Я` in place of
 the sender and its outcome right-aligned at the row's end: `+3`
 neighbours repeated it, `x` nobody heard it, and a direct message is
-only delivered (`+`) or not (`x`) — no counts there. The same outcome reaches the phone-app mirror as
+only delivered (`+`) or not (`x`) — no counts there. Every head row
+reads inset by a column at both ends. The same outcome reaches the phone-app mirror as
 `(>>✓) `/`(>>✗) ` for a direct message and `(>>N) ` with the neighbour
 count for a channel one. A direct
 chat keeps the time and the text on one line. Both are cut to the panel

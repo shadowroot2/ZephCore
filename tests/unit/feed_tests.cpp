@@ -332,7 +332,7 @@ TEST(feed_continuous_paging, "UNIT-FEED-011",
 	start = (struct ui_feed_cursor){ 0, 0 };
 	ui_chat_iter_init(&it, c, start, NOW, 0, 11);
 	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
-	CHECK(std::string(row) == "12:34 Nick");
+	CHECK(std::string(row) == " 12:34 Nic");
 	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
 	CHECK(std::string(row) == "aaa bbb");
 	CHECK(it.cur.entry == 0);
@@ -436,8 +436,8 @@ TEST(feed_head_fits_one_row, "UNIT-FEED-017",
 	ui_chat_iter_init(&it, c, start, NOW, 0, 12);
 	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
 	CHECK(it.row_is_head);
-	/* The head is one row of 12 columns and no smiley survives it. */
-	CHECK(std::string(row) == "12:34 VeryLo");
+	/* The head is one inset row and no smiley survives it. */
+	CHECK(std::string(row) == " 12:34 Very");
 	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
 	CHECK(std::string(row) == "\xD1\x82\xD0\xB5\xD0\xBA\xD1\x81\xD1\x82");
 }
@@ -557,7 +557,7 @@ TEST(feed_coords_keep_sender, "UNIT-FEED-021",
 	ui_chat_iter_init(&it, c, start, NOW, 0, 21);
 	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
 	CHECK(it.row_is_head);
-	CHECK(std::string(row) == "12:34 Nick");
+	CHECK(std::string(row) == " 12:34 Nick");
 	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
 	CHECK(!it.row_is_head);
 	CHECK(std::string(row) == "55.75580,37.61730");
@@ -626,15 +626,15 @@ TEST(feed_own_mark, "UNIT-FEED-023",
 
 	ui_chat_iter_init(&it, c, start, NOW, 0, 21);
 	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
-	CHECK(std::string(row) == "12:34 Я             x");
+	CHECK(std::string(row) == " 12:34 Я           x");
 	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
 	CHECK(std::string(row) == "\xD0\xB5\xD0\xB4\xD1\x83");
 	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
-	CHECK(std::string(row) == "12:34 Я            +3");
+	CHECK(std::string(row) == " 12:34 Я          +3");
 	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
 	CHECK(std::string(row) == "\xD0\xBF\xD1\x80\xD0\xB8\xD0\xB2\xD0\xB5\xD1\x82");
 	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
-	CHECK(std::string(row) == "12:34 Nick");
+	CHECK(std::string(row) == " 12:34 Nick");
 	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
 	CHECK(std::string(row) == "\xD1\x87\xD1\x83\xD0\xB6\xD0\xBE\xD0\xB5");
 	CHECK(!ui_chat_iter_next(&it, row, sizeof(row)));
@@ -654,12 +654,12 @@ TEST(feed_own_mark, "UNIT-FEED-023",
 	start = (struct ui_feed_cursor){ 0, 0 };
 	ui_chat_iter_init(&it, c, start, NOW, 0, 21);
 	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
-	CHECK(std::string(row) == "12:34 Я             x");
+	CHECK(std::string(row) == " 12:34 Я           x");
 	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
 	CHECK(std::string(row) ==
 	      "\xD0\xB1\xD1\x83\xD0\xB4\xD1\x83 \xD0\xBF\xD0\xBE\xD0\xB7\xD0\xB6\xD0\xB5");
 	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
-	CHECK(std::string(row) == "12:34 Я             +");
+	CHECK(std::string(row) == " 12:34 Я           +");
 	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
 	CHECK(std::string(row) == "\xD0\xB3\xD0\xB4\xD0\xB5 \xD1\x82\xD1\x8B?");
 	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
