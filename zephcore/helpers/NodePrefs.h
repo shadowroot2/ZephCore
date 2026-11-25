@@ -597,8 +597,8 @@ static inline void initNodePrefs(NodePrefs* prefs) {
 	 * Russian-first, the node's own alphabet; an empty slot is legal and
 	 * just shows nothing to send. */
 	static const char *const quick_reply_presets[QUICK_REPLY_SLOTS] = {
-		"Да", "Нет", "Хорошо", "Принял", "В пути",
-		"На месте", "Привет",
+		"✅ Да", "❌ Нет", "👍 Хорошо", "📥 Принял", "🚶 В пути",
+		"📍 На месте", "👋 Привет",
 	};
 	for (int i = 0; i < QUICK_REPLY_SLOTS; i++) {
 		strncpy(prefs->quick_reply[i], quick_reply_presets[i],
