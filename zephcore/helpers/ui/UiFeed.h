@@ -429,7 +429,7 @@ struct ui_chat_msg {
 #ifdef CONFIG_ZEPHCORE_UI_CHAT_COUNT
 #define UI_CHAT_COUNT CONFIG_ZEPHCORE_UI_CHAT_COUNT
 #else
-#define UI_CHAT_COUNT 6
+#define UI_CHAT_COUNT 12
 #endif
 #endif
 

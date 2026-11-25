@@ -1178,7 +1178,7 @@ and borrows the Latin glyph for the twenty-one letters drawn like one
 (`UiFeed.h`, `display_charset.h`).
 
 Each conversation keeps its own ten-message ring (`CONFIG_ZEPHCORE_UI_CHAT_MSGS`,
-six conversations, `CONFIG_ZEPHCORE_UI_CHAT_COUNT`), so a busy channel cannot
+twelve conversations, `CONFIG_ZEPHCORE_UI_CHAT_COUNT`), so a busy channel cannot
 wash a quiet one out of the buffer. The action button pages the conversation
 after a beat and a second press inside that window walks back. Long lines wrap
 at the display width without splitting a UTF-8 sequence and spill onto the
