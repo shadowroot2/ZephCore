@@ -667,3 +667,32 @@ TEST(feed_own_mark, "UNIT-FEED-023",
 	      "12:34 \xD1\x82\xD1\x8B \xD0\xB3\xD0\xB4\xD0\xB5?");
 	CHECK(!ui_chat_iter_next(&it, row, sizeof(row)));
 }
+
+TEST(feed_quote_names, "UNIT-FEED-024",
+     "An @[] quote keeps no smiley in the name it quotes")
+{
+	char out[64];
+	struct ui_chat_list l = fresh_list();
+	struct ui_chat *c;
+
+	/* The smiley goes with the gap: the quote reads "@[ShadoW M1]". */
+	ui_feed_strip_quote_names(out, sizeof(out), "@[📟 ShadoW M1] привет");
+	CHECK(std::string(out) == "@[ShadoW M1] привет");
+
+	/* A compound emoji and a BMP smiley go the same way. */
+	ui_feed_strip_quote_names(out, sizeof(out), "@[👨‍💻 ShadoW M1] hi");
+	CHECK(std::string(out) == "@[ShadoW M1] hi");
+	ui_feed_strip_quote_names(out, sizeof(out), "@[⭐ ShadoW M1] hi");
+	CHECK(std::string(out) == "@[ShadoW M1] hi");
+
+	/* Text outside the quote is left alone. */
+	ui_feed_strip_quote_names(out, sizeof(out), "просто текст");
+	CHECK(std::string(out) == "просто текст");
+
+	/* The push pipeline cleans the quote before the emoji table can
+	 * turn its smiley into "..." and the panel into a bare ". ". */
+	(void)ui_chat_push(&l, "Public", true, NOW, "@[📟 ShadoW M1] привет");
+	c = ui_chat_find(&l, "Public");
+	CHECK(c != NULL);
+	CHECK(std::string(ui_chat_get(c, 0)->text) == "@[ShadoW M1] привет");
+}

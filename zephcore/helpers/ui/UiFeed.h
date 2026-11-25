@@ -582,10 +582,21 @@ static inline void ui_feed_strip_pictographs(char *dst, size_t n, const char *sr
 			src += m;
 			continue;
 		}
-		if (m == 3 && (strncmp(src, UI_FEED_VS_EMOJI, 3) == 0 ||
-			       strncmp(src, UI_FEED_VS_TEXT, 3) == 0)) {
-			src += 3;
-			continue;
+		if (m == 3) {
+			uint32_t cp = (((uint32_t)(unsigned char)src[0] & 0x0F) << 12) |
+				      (((uint32_t)(unsigned char)src[1] & 0x3F) << 6) |
+				      ((uint32_t)(unsigned char)src[2] & 0x3F);
+
+			/* Variation selectors and the ZWJ of a compound emoji
+			 * have no glyph, and "…" and the BMP pictographs are
+			 * the same noise as a 4-byte smiley. */
+			if (cp == 0x200D || cp == 0x2026 ||
+			    cp == 0xFE0E || cp == 0xFE0F ||
+			    (cp >= 0x2600 && cp <= 0x27BF) ||
+			    (cp >= 0x2B00 && cp <= 0x2BFF)) {
+				src += 3;
+				continue;
+			}
 		}
 		if (out + m + 1 > n) {
 			break;
@@ -783,6 +794,51 @@ static inline void ui_feed_shorten_map_url(char *dst, size_t n, const char *src)
 	dst[out] = '\0';
 }
 
+/* An "@[<name>] " quote names the message being replied to: the name
+ * keeps no pictograph there either.  Left alone, a smiley becomes "…"
+ * and the panel folds that to a bare ". " before the name. */
+static inline void ui_feed_strip_quote_names(char *dst, size_t n, const char *src)
+{
+	size_t out = 0;
+
+	if (n == 0) {
+		return;
+	}
+	while (*src != '\0' && out + 1 < n) {
+		if (src[0] == '@' && src[1] == '[') {
+			const char *close = strchr(src + 2, ']');
+
+			if (close != NULL) {
+				char name[UI_FEED_NAME_LEN + 1];
+				char clean[UI_FEED_NAME_LEN + 1];
+				size_t len = (size_t)(close - (src + 2));
+				size_t clen;
+
+				if (len >= sizeof(name)) {
+					len = sizeof(name) - 1;
+				}
+				memcpy(name, src + 2, len);
+				name[len] = '\0';
+				ui_feed_strip_pictographs(clean, sizeof(clean),
+							  name);
+				clen = strlen(clean);
+				if (out + clen + 3 >= n) {
+					break;
+				}
+				dst[out++] = '@';
+				dst[out++] = '[';
+				memcpy(dst + out, clean, clen);
+				out += clen;
+				dst[out++] = ']';
+				src = close + 1;
+				continue;
+			}
+		}
+		dst[out++] = *src++;
+	}
+	dst[out] = '\0';
+}
+
 /* The "<name>: " prefix the mesh puts on a channel message: clean the name
  * of pictographs and shorten any map link in what follows. */
 static inline void ui_chat_clean_text(char *dst, size_t n, const char *src)
@@ -889,9 +945,11 @@ static inline struct ui_chat *ui_chat_push(struct ui_chat_list *l,
 		c->msgs[slot].heard = 0;
 		c->msgs[slot].own = 0;
 		{
+			char quoted[UI_FEED_TEXT_LEN + 1];
 			char cleaned[UI_FEED_TEXT_LEN + 1];
 
-			ui_chat_clean_text(cleaned, sizeof(cleaned), text);
+			ui_feed_strip_quote_names(quoted, sizeof(quoted), text);
+			ui_chat_clean_text(cleaned, sizeof(cleaned), quoted);
 			ui_feed_emoji_text(c->msgs[slot].text,
 					   sizeof(c->msgs[slot].text), cleaned);
 		}

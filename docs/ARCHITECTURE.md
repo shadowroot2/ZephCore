@@ -1168,7 +1168,9 @@ width rather than wrapped onto each other. A message that carries map
 links keeps the coordinates, one pair per line; a tracking report keeps
 its speed and sector ahead of the first pair, without its pictographs
 (`12км/ч СВ 55.75580,37.61730`). A nickname keeps no
-pictograph; the bitmap font carries the Russian alphabet in slots 128-193
+pictograph — including one inside an `@[...]` reply quote, which would
+otherwise reach the panel as a bare `. ` before the name; the bitmap font
+carries the Russian alphabet in slots 128-193
 and borrows the Latin glyph for the twenty-one letters drawn like one
 (`UiFeed.h`, `display_charset.h`).
 
