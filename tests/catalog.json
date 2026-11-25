@@ -939,7 +939,7 @@
     },
     {
       "id": "UNIT-FEED-023",
-      "name": "An own message stamps its outcome on the time it reads by",
+      "name": "An own message wears the Я head with its outcome right-aligned",
       "source": "tests/unit/feed_tests.cpp"
     }
   ]

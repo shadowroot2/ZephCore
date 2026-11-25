@@ -404,6 +404,7 @@ struct ui_chat_msg {
 	char text[UI_FEED_TEXT_LEN + 1];
 	uint8_t mark;			/* UI_MSG_MARK_*, own messages only */
 	uint8_t heard;			/* repeaters, when mark is UI_MSG_MARK_HEARD */
+	uint8_t own;			/* this node sent it: head row "Я" + outcome */
 };
 
 #ifndef UI_CHAT_MSGS
@@ -473,6 +474,22 @@ static inline bool ui_chat_set_mark(struct ui_chat *c, uint32_t ts,
 		if (c->msgs[i].ts == ts && c->msgs[i].text[0] != '\0') {
 			c->msgs[i].mark = mark;
 			c->msgs[i].heard = heard;
+			return true;
+		}
+	}
+	return false;
+}
+
+/* Mark the message sent at `ts` as this node's own: it reads by the
+ * "Я" head and takes the outcome when one arrives. */
+static inline bool ui_chat_set_own(struct ui_chat *c, uint32_t ts)
+{
+	if (ts == 0) {
+		return false;
+	}
+	for (uint8_t i = 0; i < UI_CHAT_MSGS; i++) {
+		if (c->msgs[i].ts == ts && c->msgs[i].text[0] != '\0') {
+			c->msgs[i].own = 1;
 			return true;
 		}
 	}
@@ -870,6 +887,7 @@ static inline struct ui_chat *ui_chat_push(struct ui_chat_list *l,
 		c->msgs[slot].ts = ts;
 		c->msgs[slot].mark = UI_MSG_MARK_NONE;
 		c->msgs[slot].heard = 0;
+		c->msgs[slot].own = 0;
 		{
 			char cleaned[UI_FEED_TEXT_LEN + 1];
 
@@ -891,29 +909,14 @@ static inline struct ui_chat *ui_chat_push(struct ui_chat_list *l,
 /* ---- lines ---- */
 
 /* A message reads as two kinds of row: the time, and the text below it.
- * This is the first of them — with the own-message outcome on the time. */
+ * This is the first of them. */
 static inline void ui_chat_format_line(char *buf, size_t n,
 				       const struct ui_chat *c,
 				       const struct ui_chat_msg *m,
 				       uint32_t now, int16_t tz_minutes)
 {
-	char suffix[6];
-	size_t len;
-
 	(void)c;
-	suffix[0] = '\0';
-	if (m->mark == UI_MSG_MARK_DELIVERED) {
-		snprintf(suffix, sizeof(suffix), "+");
-	} else if (m->mark == UI_MSG_MARK_FAILED) {
-		snprintf(suffix, sizeof(suffix), "!");
-	} else if (m->mark == UI_MSG_MARK_HEARD) {
-		snprintf(suffix, sizeof(suffix), "+%u", (unsigned)m->heard);
-	}
 	ui_feed_format_time(buf, n, m->ts, now, tz_minutes);
-	len = strlen(buf);
-	if (suffix[0] != '\0' && len + strlen(suffix) < n) {
-		memcpy(buf + len, suffix, strlen(suffix) + 1);
-	}
 }
 
 /* ---- paging ---- */
@@ -938,6 +941,24 @@ struct ui_chat_iter {
  *     13:02 Nick:
  *     увидимся
  */
+/* The own-message outcome as it rides the head row's right edge: "+3"
+ * neighbours repeated the message, "x" nobody heard it, "+1" a delivered
+ * direct message (its one addressee did). */
+static inline const char *ui_feed_mark_text(char *buf, size_t n,
+					    const struct ui_chat_msg *m)
+{
+	buf[0] = '\0';
+	if (m->mark == UI_MSG_MARK_DELIVERED) {
+		snprintf(buf, n, "+1");
+	} else if (m->mark == UI_MSG_MARK_FAILED) {
+		snprintf(buf, n, "x");
+	} else if (m->mark == UI_MSG_MARK_HEARD) {
+		snprintf(buf, n, m->heard > 0 ? "+%u" : "x",
+			 (unsigned)m->heard);
+	}
+	return buf;
+}
+
 static inline void ui_chat_iter_begin(struct ui_chat_iter *it)
 {
 	const struct ui_chat_msg *m = ui_chat_get(it->c, it->cur.entry);
@@ -955,7 +976,13 @@ static inline void ui_chat_iter_begin(struct ui_chat_iter *it)
 			    it->tz_minutes);
 
 	it->row_is_head = false;
-	if (!it->c->is_group) {
+	/* A direct chat reads as "12:35 ты где?" - the time and the text on
+	 * one line, wrapped together.  A channel message and this node's own
+	 * put the sender on the time's line and start the text below:
+	 *     13:02 Я
+	 *     увидимся
+	 */
+	if (!it->c->is_group && !m->own) {
 		snprintf(it->line, sizeof(it->line), "%s %s", time, m->text);
 		it->phase = 1;	/* no head: the text carries the time */
 		return;
@@ -973,12 +1000,31 @@ static inline void ui_chat_iter_begin(struct ui_chat_iter *it)
 		{
 			size_t name_len = (size_t)(sep - m->text);
 			char name[UI_FEED_NAME_LEN + 1];
+			char mark_buf[8];
+			const char *mark;
+			int mark_cols = 0;
+			int left_cols;
 
 			if (name_len >= sizeof(name)) {
 				name_len = sizeof(name) - 1;
 			}
 			memcpy(name, m->text, name_len);
 			name[name_len] = '\0';
+			mark = ui_feed_mark_text(mark_buf, sizeof(mark_buf), m);
+			if (mark[0] != '\0') {
+				const char *mp = mark;
+
+				while (*mp != '\0') {
+					size_t adv = ui_feed_utf8_len(mp);
+
+					if (adv == 0) {
+						break;
+					}
+					mp += adv;
+					mark_cols++;
+				}
+			}
+			left_cols = it->cols - mark_cols;
 			/* One row only: cfb_print wraps at the panel edge
 			 * and would spill the name over the text below. */
 			{
@@ -991,7 +1037,7 @@ static inline void ui_chat_iter_begin(struct ui_chat_iter *it)
 					 name);
 				hp = full;
 				it->head[0] = '\0';
-				while (*hp != '\0' && ncols < it->cols) {
+				while (*hp != '\0' && ncols < left_cols) {
 					size_t adv = ui_feed_utf8_len(hp);
 
 					if (adv == 0 ||
@@ -1003,7 +1049,24 @@ static inline void ui_chat_iter_begin(struct ui_chat_iter *it)
 					out += adv;
 					ncols++;
 				}
-				it->head[out] = '\0';
+				if (mark_cols > 0) {
+					/* The outcome right-aligns at the
+					 * row's end. */
+					while (ncols < left_cols &&
+					       out + 1 < sizeof(it->head)) {
+						it->head[out++] = ' ';
+						ncols++;
+					}
+					if (out + strlen(mark) <
+					    sizeof(it->head)) {
+						memcpy(it->head + out, mark,
+						       strlen(mark) + 1);
+					} else {
+						it->head[out] = '\0';
+					}
+				} else {
+					it->head[out] = '\0';
+				}
 			}
 			strncpy(it->line, sep + 2, sizeof(it->line) - 1);
 			it->line[sizeof(it->line) - 1] = '\0';

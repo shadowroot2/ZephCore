@@ -1137,30 +1137,31 @@ Gestures on that page:
 |---|---|---|---|---|
 | page key, one press | next screen | next screen | next screen | next screen |
 | page key, two presses | previous screen | previous screen | previous screen | previous screen |
-| action, one press | next conversation | next messages | next reply | the page's action |
-| action, second press | previous conversation | back to the list | back to the chat | — |
-| action, hold | open the conversation | open the quick replies | send the reply | the page's hold |
+| action, one press | next conversation | next messages | next row | the page's action |
+| action, second press | previous conversation | back to the list | previous row | — |
+| action, hold | open the conversation | open the quick replies | take the row | the page's hold |
 
 The page keys never touch the list: they are the screen flip and taking
 them over for the list made the pages unreachable.
 
-The quick-reply picker sits over the open conversation: a header band
-names the conversation and the walk position (`Mama  3/8`), then the
-non-empty presets in slot order with a centred `Отмена` last; one press
-walks the rows and a second press goes back to the chat. A preset past
-the panel is cut at a word and marked `...`. A hold sends the preset into the conversation — it
-lands in the thread like any other message — and closes the picker;
-`Отмена` only closes it. The presets live in `NodePrefs.quick_reply` (seven
+The quick-reply picker sits over the open conversation: the
+conversation's name centred above the non-empty presets in slot order
+with a centred `Отмена` last. The walk starts on `Отмена`; one press
+steps down the rows, a second press steps back up, and a hold takes the
+row — a preset goes into the conversation like any other message,
+`Отмена` only closes the picker. A preset past the panel is cut at a
+word and marked `...`. The presets live in `NodePrefs.quick_reply` (seven
 slots of 30 characters) and are set over the `reply` CLI group.
 
 A channel message reads as its head line and the text below it —
 `+1d 13:02 Nick` banded like a list row, then the message. The head line
 carries the time as `HH:MM` today, `+1d HH:MM` yesterday, `DD.MM HH:MM`
-any earlier day. An own message stamps its outcome on that time:
-`12:34+` delivered (its mesh ACK came), `12:34!` failed, `12:34+3`
-repeated by three neighbours on its way out. The same outcome reaches
-the phone-app mirror as `(>>✓) `/`(>>✗) ` for a direct message and
-`(>>N) ` with the neighbour count for a channel one. A direct
+any earlier day. An own message wears the same head with `Я` in place of
+the sender and its outcome right-aligned at the row's end: `+3`
+neighbours repeated it, `+1` a delivered direct message, `x` nobody
+heard it. The same outcome reaches the phone-app mirror as
+`(>>✓) `/`(>>✗) ` for a direct message and `(>>N) ` with the neighbour
+count for a channel one. A direct
 chat keeps the time and the text on one line. Both are cut to the panel
 width rather than wrapped onto each other. A message that carries map
 links keeps the coordinates, one pair per line; a tracking report keeps

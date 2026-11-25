@@ -316,8 +316,8 @@ TEST(pjson_quick_reply, "UNIT-PJSON-015",
      "Quick-reply presets fill the slots and qr0..qr6 round trip in prefs.json") {
     NodePrefs p = defaults();
     static const char *presets[7] = {
-        "Да", "Нет", "Получил", "Иду", "Жду",
-        "На месте", "Буду позже",
+        "Да", "Нет", "Хорошо", "Принял", "В пути",
+        "На месте", "Привет",
     };
     for (int i = 0; i < 7; i++) {
         CHECK(std::strcmp(p.quick_reply[i], presets[i]) == 0);
@@ -336,7 +336,7 @@ TEST(pjson_quick_reply, "UNIT-PJSON-015",
     NodePrefs q = defaults();
     CHECK(companionPrefsFromJson(q, s));
     CHECK(std::strcmp(q.quick_reply[0], full) == 0);
-    CHECK(std::strcmp(q.quick_reply[3], "Иду") == 0);
+    CHECK(std::strcmp(q.quick_reply[3], "Принял") == 0);
     CHECK(q.quick_reply[6][0] == '\0');
     /* sanitizeNodePrefs NUL-terminates every slot it is handed. */
     memset(q.quick_reply[2], 'x', sizeof(q.quick_reply[2]));

@@ -835,9 +835,9 @@ static void render_chat_list(int rows, bool color, uint16_t sel_color,
 	}
 }
 
-/* The quick-reply picker over the open conversation: a header band with
- * the chat's name and the walk position ("Mama  3/8"), then the presets
- * and "Отмена", centred, as the last row. */
+/* The quick-reply picker over the open conversation: the conversation's
+ * name centred like in its own view, then the presets and "Отмена",
+ * centred, as the last row. */
 static void render_qr_picker(int rows, int cols, bool color, uint16_t sel_color,
 			     uint16_t val_color)
 {
@@ -848,25 +848,11 @@ static void render_qr_picker(int rows, int cols, bool color, uint16_t sel_color,
 	int list_rows = rows > 1 ? rows - 1 : rows;
 	const struct ui_chat *c = ui_chat_nth(&state.chats, state.chat_sel);
 	const char *name = (c != NULL) ? c->name : "";
-	char cnt[8];
-	char head[UI_FEED_NAME_LEN + 8];
-	const char *p;
 
-	snprintf(cnt, sizeof(cnt), "%d/%d", (int)state.qr_sel + 1, total);
-	/* The counter keeps the right edge; the name gets what is left. */
-	p = name;
-	ui_feed_wrap_row(head, sizeof(head), &p, cols - text_cols(cnt) - 1);
 	if (color) {
-		mc_display_color_fill_rect(0, y, (int)DISP_W, LINE_H,
-					   UI_COLOR_HEADER_BG);
-		mc_display_color_text(0, y, head, UI_COLOR_TITLE);
-		mc_display_color_text((int)DISP_W - color_text_width(cnt), y,
-				      cnt, UI_COLOR_TITLE);
+		draw_centered_color(y, name, UI_COLOR_TITLE);
 	} else {
-		mc_display_text(0, y, head, false);
-		mc_display_text((int)DISP_W - text_cols(cnt) * FONT_W, y, cnt,
-				false);
-		mc_display_invert_rect(0, y, (int)DISP_W, LINE_H);
+		draw_centered(y, name);
 	}
 	y += LINE_H;
 

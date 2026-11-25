@@ -1117,7 +1117,6 @@ struct ui_pending_send {
 	char text[MAX_TEXT_LEN];
 };
 #define UI_PENDING_SEND_SLOTS 4
-#define UI_CHANNEL_FEEDBACK_MS 5000	/* neighbour-repeats window, like the joystick's */
 static struct ui_pending_send ui_pending_sends[UI_PENDING_SEND_SLOTS];
 
 static void ui_send_feedback_work_fn(struct k_work *work)
@@ -1251,8 +1250,8 @@ extern "C" void companion_quick_reply_send_from_ui(int slot, const char *chat_na
 	struct ui_pending_send *pending;
 
 	/* The feed splits a "<name>: " prefix into the sender band, the
-	 * shape every message arrives in. */
-	snprintf(echo, sizeof(echo), "%s: %s", companion_mesh.prefs.node_name, text);
+	 * shape every message arrives in.  Own messages wear "Я" there. */
+	snprintf(echo, sizeof(echo), "Я: %s", text);
 	if (is_group) {
 		ChannelDetails ch;
 		uint32_t hash = 0;
@@ -1267,7 +1266,10 @@ extern "C" void companion_quick_reply_send_from_ui(int slot, const char *chat_na
 			LOG_WRN("quick reply: unable to queue %s", chat_name);
 			return;
 		}
-		window_ms = UI_CHANNEL_FEEDBACK_MS;
+		/* The whole dupe window must close before the count is
+		 * asked for — the verdict is one-shot (TrackingBacklog
+		 * waits the same way). */
+		window_ms = mesh::ContentionTracker::WINDOW_MS;
 		pending = ui_pending_send_alloc();
 		if (pending != NULL) {
 			pending->is_group = true;
