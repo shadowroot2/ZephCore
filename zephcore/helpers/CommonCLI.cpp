@@ -1144,8 +1144,8 @@ void CommonCLI::handleGetCmd(uint32_t sender_timestamp, const char* command, cha
 		snprintf(reply, CLI_REPLY_SIZE, "> %d", (int)_prefs->rx_duty_cycle);
 	} else if (memcmp(config, "bl.timeout", 10) == 0) {
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
-		snprintf(reply, CLI_REPLY_SIZE, "> %u ms",
-			 mc_display_get_auto_off_ms());
+		snprintf(reply, CLI_REPLY_SIZE, "> %u s",
+			 mc_display_get_auto_off_ms() / 1000);
 #else
 		strcpy(reply, "> unsupported (no display)");
 #endif
@@ -1716,19 +1716,20 @@ void CommonCLI::handleSetCmd(uint32_t sender_timestamp, const char* command, cha
 		}
 	} else if (memcmp(config, "bl.timeout ", 11) == 0) {
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
-		/* Display auto-off window in ms; 0 keeps the backlight dark. */
+		/* Display auto-off window in seconds; 0 keeps the backlight
+		 * dark.  The display layer works in ms. */
 		char *end;
 		unsigned long v = strtoul(&config[11], &end, 10);
 
-		if ((*end != '\0' && *end != ' ') || v > 3600000) {
-			strcpy(reply, "Error: bl.timeout <ms> 0..3600000 (0 = backlight off)");
+		if ((*end != '\0' && *end != ' ') || v > 3600) {
+			strcpy(reply, "Error: bl.timeout <s> 0..3600 (0 = backlight off)");
 		} else {
-			_prefs->bl_timeout_ms = (uint32_t)v;
+			_prefs->bl_timeout_ms = (uint32_t)(v * 1000);
 			savePrefs();
 			mc_display_set_auto_off_ms(_prefs->bl_timeout_ms);
 			mc_display_reset_auto_off();
 			snprintf(reply, CLI_REPLY_SIZE, "OK - bl.timeout=%u",
-				 _prefs->bl_timeout_ms);
+				 (unsigned)v);
 		}
 #else
 		strcpy(reply, "Error: no display");

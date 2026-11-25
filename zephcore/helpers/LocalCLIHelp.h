@@ -23,7 +23,7 @@ static constexpr size_t REPEATER_CLI_TX_BUF_SIZE = 4096;
 #define CLI_UI_RADIO_HELP \
 	"get/set leds.radio\r\nget/set leds.hb\r\n" \
 	"get/set display.rotate\r\nget/set input.rotate\r\n" \
-	"get/set bl.timeout (ms)\r\n" \
+	"get/set bl.timeout (s)\r\n" \
 	"get/set tz.offset (hours)\r\n" \
 	"get/set radio.fem.rxgain\r\nget/set extra.sf\r\n"
 
