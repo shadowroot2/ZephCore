@@ -514,9 +514,10 @@ static void splash_work_handler(struct k_work *work)
 	mc_display_epd_full_reset();
 
 	/* The splash handoff takes the frontlight with it; a backlight of
-	 * its own gets 5 s more so the first page is readable at boot. */
+	 * its own wakes for the first page and holds as long as any button
+	 * press would. */
 	if (mc_display_has_backlight()) {
-		mc_display_on_for(5000);
+		mc_display_on();
 	}
 
 	/* Transition from splash to home page (first active page for this role) */
