@@ -1130,8 +1130,8 @@ key), the `#` channels, the private groups, the rooms and the direct
 chats — each block alphabetical — and only nodes that can answer
 (`ADV_TYPE_CHAT` and `ADV_TYPE_ROOM`); repeaters and sensors advertise
 into the list otherwise. Each row is `Name (unread)` with the count
-dropped at zero and a marker naming what is private: `[**]` a group,
-`[***]` a room, `[*]` a direct chat. The selected
+dropped at zero and a marker naming what is private: `[G]` a group,
+`[R]` a room — a direct chat is just its name. The selected
 row is a solid band. The bottom row reads `Long press ENTER`.
 
 Gestures on that page:

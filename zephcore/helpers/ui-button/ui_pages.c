@@ -794,14 +794,12 @@ static void render_chat_list(int rows, bool color, uint16_t sel_color,
 			if (c == NULL) {
 				break;
 			}
-			/* Private things name themselves: a group, a room,
-			 * a direct chat.  The open ones show no marker. */
+			/* Private things name themselves: a group, a room.
+			 * A direct chat needs no marker — it is just a name. */
 			if (c->kind == UI_CHAT_KIND_GROUP) {
-				mark = "[**]";
+				mark = "[G]";
 			} else if (c->kind == UI_CHAT_KIND_ROOM) {
-				mark = "[***]";
-			} else if (c->kind == UI_CHAT_KIND_DIRECT) {
-				mark = "[*]";
+				mark = "[R]";
 			}
 			if (c->unread > 0) {
 				snprintf(buf, sizeof(buf), "%s%s (%u)", mark,
