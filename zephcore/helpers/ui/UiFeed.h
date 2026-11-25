@@ -1008,7 +1008,12 @@ struct ui_chat_iter {
 	char line[UI_FEED_TEXT_LEN + 32];	/* what the rows carry */
 	const char *line_p;
 	int phase;			/* 0 = head, 1 = text */
+	int time_cols;			/* the time's width at the line start */
 	bool row_is_head;		/* the last row pulled was the head */
+	int row_time_cols;		/* the time's width on the row pulled,
+					 * else 0: the direct chats invert it
+					 * so their one-liners do not run
+					 * together */
 	bool loaded;
 };
 
@@ -1053,6 +1058,8 @@ static inline void ui_chat_iter_begin(struct ui_chat_iter *it)
 			    it->tz_minutes);
 
 	it->row_is_head = false;
+	it->row_time_cols = 0;
+	it->time_cols = 0;
 	/* A direct chat reads as "12:35 ты где?" - the time and the text on
 	 * one line, wrapped together.  A channel message and this node's own
 	 * put the sender on the time's line and start the text below:
@@ -1062,6 +1069,7 @@ static inline void ui_chat_iter_begin(struct ui_chat_iter *it)
 	if (!it->c->is_group && !m->own) {
 		snprintf(it->line, sizeof(it->line), "%s %s", time, m->text);
 		it->phase = 1;	/* no head: the text carries the time */
+		it->time_cols = (int)strlen(time);
 		return;
 	}
 	{
@@ -1072,6 +1080,7 @@ static inline void ui_chat_iter_begin(struct ui_chat_iter *it)
 			snprintf(it->line, sizeof(it->line), "%s %s", time,
 				 m->text);
 			it->phase = 1;
+			it->time_cols = (int)strlen(time);
 			return;
 		}
 		{
@@ -1239,6 +1248,7 @@ static inline bool ui_chat_iter_next(struct ui_chat_iter *it, char *out,
 				out[out_n - 1] = '\0';
 			}
 			it->row_is_head = true;
+			it->row_time_cols = 0;
 			it->phase = 1;
 			it->cur.row++;
 			if (*it->line_p == '\0') {
@@ -1254,6 +1264,7 @@ static inline bool ui_chat_iter_next(struct ui_chat_iter *it, char *out,
 		}
 		{
 			char row[UI_FEED_TEXT_LEN + 32];
+			bool first = (it->line_p == it->line);
 
 			ui_feed_wrap_row(row, sizeof(row), &it->line_p,
 					 it->cols);
@@ -1262,6 +1273,8 @@ static inline bool ui_chat_iter_next(struct ui_chat_iter *it, char *out,
 				out[out_n - 1] = '\0';
 			}
 			it->row_is_head = false;
+			/* Only the row the time opens gets the invert. */
+			it->row_time_cols = first ? it->time_cols : 0;
 			it->cur.row++;
 			if (*it->line_p == '\0') {
 				/* The message's last row: the cursor waits

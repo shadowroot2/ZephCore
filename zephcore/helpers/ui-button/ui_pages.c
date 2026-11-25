@@ -986,6 +986,12 @@ static void render_public_rows(int cols, bool color, uint16_t title_color)
 		}
 		if (it.row_is_head) {
 			mc_display_invert_rect(0, y, (int)DISP_W, LINE_H);
+		} else if (!color && it.row_time_cols > 0) {
+			/* The direct chats run their one-liners together; the
+			 * inverted time is the seam between them. */
+			mc_display_invert_rect(0, y,
+					       it.row_time_cols * FONT_W,
+					       LINE_H);
 		}
 		y += LINE_H;
 		shown++;
@@ -1780,12 +1786,6 @@ static void render_leds_mono(void)
 	char buf[24];
 	int y = CONTENT_Y;
 
-#if MC_DISPLAY_HAS_BACKLIGHT
-	backlight_state_text(buf, sizeof(buf));
-	mc_display_text(0, y, buf, false);
-	y += LINE_H;
-#endif
-
 	snprintf(buf, sizeof(buf), "LEDs: %s",
 		 state.leds_disabled ? "off" : "on");
 	mc_display_text(0, y, buf, false);
@@ -1799,19 +1799,6 @@ static void render_leds_mono(void)
 static void render_leds_color(void)
 {
 	int y = CONTENT_Y;
-
-#if MC_DISPLAY_HAS_BACKLIGHT
-	{
-		char buf[24];
-
-		backlight_state_text(buf, sizeof(buf));
-		mc_display_color_text(0, y, buf,
-				      mc_display_get_auto_off_ms() == 0
-					      ? UI_COLOR_DISABLED
-					      : UI_COLOR_VALUE);
-		y += LINE_H + 4;
-	}
-#endif
 
 	draw_badge(0, y, "LED", state.leds_disabled ? UI_COLOR_DISABLED
 						      : UI_COLOR_OK);

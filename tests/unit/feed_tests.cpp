@@ -369,12 +369,25 @@ TEST(feed_private_one_line, "UNIT-FEED-013",
 	struct ui_feed_cursor start = { 0, 0 };
 
 	(void)ui_chat_push(&l, "Mama", UI_CHAT_KIND_DIRECT, NOW, "ты где?");
+	/* A long one wraps; only the row the time opens carries it. */
+	(void)ui_chat_push(&l, "Mama", UI_CHAT_KIND_DIRECT, NOW + 1,
+			   "aaa bbb ccc ddd");
 	c = ui_chat_find(&l, "Mama");
 	CHECK(c != NULL);
 
-	ui_chat_iter_init(&it, c, start, NOW, 0, 21);
+	ui_chat_iter_init(&it, c, start, NOW, 0, 11);
 	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
-	CHECK(std::string(row) == "12:34 ты где?");
+	CHECK(std::string(row) == "12:34 aaa");
+	CHECK(it.row_time_cols == 5);
+	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
+	CHECK(std::string(row) == "bbb ccc ddd");
+	CHECK(it.row_time_cols == 0);
+	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
+	CHECK(std::string(row) == "12:34 \xD1\x82\xD1\x8B");
+	CHECK(it.row_time_cols == 5);
+	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
+	CHECK(std::string(row) == "\xD0\xB3\xD0\xB4\xD0\xB5?");
+	CHECK(it.row_time_cols == 0);
 	CHECK(!ui_chat_iter_next(&it, row, sizeof(row)));
 }
 
