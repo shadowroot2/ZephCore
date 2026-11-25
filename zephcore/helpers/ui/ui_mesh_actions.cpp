@@ -35,6 +35,7 @@ LOG_MODULE_REGISTER(zephcore_ui_actions, CONFIG_ZEPHCORE_UI_ACTIONS_LOG_LEVEL);
 #include <ZephyrSensorManager.h>
 #include "ui_task.h"
 #include "display.h"
+#include "buzzer.h"
 #include <joystick_ui_hooks.h>
 #include "ui_mesh_actions.h"
 #include "ui_radio_state.h"
@@ -545,6 +546,10 @@ extern "C" void mesh_handle_ui_actions(void)
 		if (ms > 0) {
 			mc_display_on();
 		}
+#ifdef CONFIG_ZEPHCORE_UI_BUZZER
+		/* The same confirm the LEDS toggle gives. */
+		buzzer_play(ms > 0 ? MELODY_LED_ON : MELODY_LED_OFF);
+#endif
 		ui_request_render();
 		LOG_INF("bl_timeout=%u ms (button)", (unsigned)ms);
 		need_save = true;
