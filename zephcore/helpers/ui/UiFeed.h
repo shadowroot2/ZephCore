@@ -1067,9 +1067,10 @@ static inline void ui_chat_iter_begin(struct ui_chat_iter *it)
 	 *     увидимся
 	 */
 	if (!it->c->is_group && !m->own) {
-		snprintf(it->line, sizeof(it->line), "%s %s", time, m->text);
+		/* The inverted time wears a column's inset on both sides. */
+		snprintf(it->line, sizeof(it->line), " %s %s", time, m->text);
 		it->phase = 1;	/* no head: the text carries the time */
-		it->time_cols = (int)strlen(time);
+		it->time_cols = (int)strlen(time) + 2;
 		return;
 	}
 	{
@@ -1077,10 +1078,10 @@ static inline void ui_chat_iter_begin(struct ui_chat_iter *it)
 		const char *sep = strstr(m->text, ": ");
 
 		if (sep == NULL) {
-			snprintf(it->line, sizeof(it->line), "%s %s", time,
+			snprintf(it->line, sizeof(it->line), " %s %s", time,
 				 m->text);
 			it->phase = 1;
-			it->time_cols = (int)strlen(time);
+			it->time_cols = (int)strlen(time) + 2;
 			return;
 		}
 		{

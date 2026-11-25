@@ -377,14 +377,14 @@ TEST(feed_private_one_line, "UNIT-FEED-013",
 
 	ui_chat_iter_init(&it, c, start, NOW, 0, 11);
 	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
-	CHECK(std::string(row) == "12:34 aaa");
-	CHECK(it.row_time_cols == 5);
+	CHECK(std::string(row) == " 12:34 aaa");
+	CHECK(it.row_time_cols == 7);
 	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
 	CHECK(std::string(row) == "bbb ccc ddd");
 	CHECK(it.row_time_cols == 0);
 	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
-	CHECK(std::string(row) == "12:34 \xD1\x82\xD1\x8B");
-	CHECK(it.row_time_cols == 5);
+	CHECK(std::string(row) == " 12:34 \xD1\x82\xD1\x8B");
+	CHECK(it.row_time_cols == 7);
 	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
 	CHECK(std::string(row) == "\xD0\xB3\xD0\xB4\xD0\xB5?");
 	CHECK(it.row_time_cols == 0);
@@ -697,7 +697,7 @@ TEST(feed_own_mark, "UNIT-FEED-023",
 	CHECK(std::string(row) == "\xD0\xB3\xD0\xB4\xD0\xB5 \xD1\x82\xD1\x8B?");
 	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
 	CHECK(std::string(row) ==
-	      "12:34 \xD1\x82\xD1\x8B \xD0\xB3\xD0\xB4\xD0\xB5?");
+	      " 12:34 \xD1\x82\xD1\x8B \xD0\xB3\xD0\xB4\xD0\xB5?");
 	CHECK(!ui_chat_iter_next(&it, row, sizeof(row)));
 }
 

@@ -1167,8 +1167,8 @@ only delivered (`+`) or not (`x`) — no counts there. Every head row
 reads inset by a column at both ends. The same outcome reaches the phone-app mirror as
 `(>>✓) `/`(>>✗) ` for a direct message and `(>>N) ` with the neighbour
 count for a channel one. A direct
-chat keeps the time and the text on one line, the time inverted so one
-message does not run into the next. Both are cut to the panel
+chat keeps the time and the text on one line, the time inverted inside a
+column's inset so one message does not run into the next. Both are cut to the panel
 width rather than wrapped onto each other. A message that carries map
 links keeps the coordinates, one pair per line; a tracking report keeps
 its speed and sector ahead of the first pair, without its pictographs
