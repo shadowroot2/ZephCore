@@ -392,6 +392,16 @@ static inline int ui_feed_wrap_row(char *dst, size_t dst_n, const char **src,
 /* One conversation — a channel or a direct chat — with its own small ring.
  * The list screen shows the names, entering one shows its messages. */
 
+/* What a conversation is: the list's blocks and the marker it wears.
+ * The blocks walk in this order and the names sort alphabetically
+ * inside a block. */
+#define UI_CHAT_KIND_PUBLIC	0	/* the "Public" channel */
+#define UI_CHAT_KIND_CHANNEL	1	/* an open channel (well-known key) */
+#define UI_CHAT_KIND_HASH	2	/* a "#..." channel */
+#define UI_CHAT_KIND_GROUP	3	/* a private group: "[**] name" */
+#define UI_CHAT_KIND_ROOM	4	/* a room: "[***] name" */
+#define UI_CHAT_KIND_DIRECT	5	/* a direct chat: "[*] name" */
+
 /* Own-message outcome, stamped on the time the message reads by: "12:34+"
  * delivered, "12:34!" failed, "12:34+3" repeated by three neighbours. */
 #define UI_MSG_MARK_NONE      0
@@ -426,6 +436,7 @@ struct ui_chat_msg {
 struct ui_chat {
 	char name[UI_FEED_NAME_LEN];
 	bool is_group;			/* a channel, not a direct chat */
+	uint8_t kind;			/* UI_CHAT_KIND_* */
 	uint16_t unread;		/* messages since the last visit */
 	uint8_t head;			/* index of the newest message */
 	uint8_t count;			/* messages kept, 0..UI_CHAT_MSGS */
@@ -519,39 +530,46 @@ static inline struct ui_chat *ui_chat_find(struct ui_chat_list *l,
 	return NULL;
 }
 
-/* A conversation's place in the list: Public first, then the public "#"
- * channels, then the private channels, then the direct chats. */
-static inline int ui_chat_tier(const struct ui_chat *c)
+/* A channel's kind from its name and whether it carries the open-channel
+ * key: "Public" leads the list, "#" marks a hash channel. */
+static inline uint8_t ui_chat_kind_channel(const char *name, bool is_public)
 {
-	if (!c->is_group) {
-		return 3;
+	if (name != NULL && strcmp(name, "Public") == 0) {
+		return UI_CHAT_KIND_PUBLIC;
 	}
-	if (strcmp(c->name, "Public") == 0) {
-		return 0;
+	if (name != NULL && name[0] == '#') {
+		return UI_CHAT_KIND_HASH;
 	}
-	if (c->name[0] == '#') {
-		return 1;
+	return is_public ? UI_CHAT_KIND_CHANNEL : UI_CHAT_KIND_GROUP;
+}
+
+/* Display order: the kind's block first (see UI_CHAT_KIND_*), then the
+ * name alphabetically inside the block. */
+static inline int ui_chat_order(const struct ui_chat *a,
+				const struct ui_chat *b)
+{
+	if (a->kind != b->kind) {
+		return (int)a->kind - (int)b->kind;
 	}
-	return 2;
+	return strcmp(a->name, b->name);
 }
 
 /* The n-th chat in display order.  NULL past the end. */
 static inline struct ui_chat *ui_chat_nth(struct ui_chat_list *l, int n)
 {
-	int seen = 0;
-
-	if (n < 0) {
+	if (n < 0 || n >= (int)l->count) {
 		return NULL;
 	}
-	for (uint8_t tier = 0; tier < 4; tier++) {
-		for (uint8_t i = 0; i < l->count; i++) {
-			if ((uint8_t)ui_chat_tier(&l->chats[i]) != tier) {
-				continue;
+	for (uint8_t i = 0; i < l->count; i++) {
+		int before = 0;
+
+		for (uint8_t j = 0; j < l->count; j++) {
+			if (ui_chat_order(&l->chats[j], &l->chats[i]) < 0) {
+				before++;
 			}
-			if (seen == n) {
-				return &l->chats[i];
-			}
-			seen++;
+		}
+		if (before == n) {
+			return &l->chats[i];
 		}
 	}
 	return NULL;
@@ -898,7 +916,7 @@ static inline void ui_chat_clean_text(char *dst, size_t n, const char *src)
  * message is recorded: this is how the list is seeded from the channels
  * and contacts the node already has. */
 static inline struct ui_chat *ui_chat_ensure(struct ui_chat_list *l,
-					     const char *name, bool is_group)
+					     const char *name, uint8_t kind)
 {
 	char clean[UI_FEED_NAME_LEN];
 	struct ui_chat *c;
@@ -918,7 +936,8 @@ static inline struct ui_chat *ui_chat_ensure(struct ui_chat_list *l,
 	c = &l->chats[l->count++];
 	memset(c, 0, sizeof(*c));
 	strncpy(c->name, clean, sizeof(c->name) - 1);
-	c->is_group = is_group;
+	c->kind = kind;
+	c->is_group = (kind <= UI_CHAT_KIND_GROUP);
 	return c;
 }
 
@@ -926,10 +945,10 @@ static inline struct ui_chat *ui_chat_ensure(struct ui_chat_list *l,
  * Returns the chat it landed in, or NULL when the list is full and the name
  * is unknown. */
 static inline struct ui_chat *ui_chat_push(struct ui_chat_list *l,
-					   const char *name, bool is_group,
+					   const char *name, uint8_t kind,
 					   uint32_t ts, const char *text)
 {
-	struct ui_chat *c = ui_chat_ensure(l, name, is_group);
+	struct ui_chat *c = ui_chat_ensure(l, name, kind);
 
 	if (c == NULL) {
 		return NULL;

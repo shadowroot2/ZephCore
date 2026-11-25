@@ -42,7 +42,7 @@ TEST(chat_ring_newest_first, "UNIT-FEED-001",
 
 		snprintf(name, sizeof(name), "c");
 		snprintf(text, sizeof(text), "m%d", i);
-		CHECK(ui_chat_push(&l, name, true, NOW + (uint32_t)i, text)
+		CHECK(ui_chat_push(&l, name, UI_CHAT_KIND_PUBLIC, NOW + (uint32_t)i, text)
 		      != NULL);
 	}
 	{
@@ -60,7 +60,7 @@ TEST(chat_ring_newest_first, "UNIT-FEED-001",
 		CHECK(ui_chat_get(c, UI_CHAT_MSGS) == NULL);
 	}
 	/* Overflow evicts the oldest (m0), never drops the newest. */
-	CHECK(ui_chat_push(&l, name, true, NOW + 99, "new") != NULL);
+	CHECK(ui_chat_push(&l, name, UI_CHAT_KIND_PUBLIC, NOW + 99, "new") != NULL);
 	{
 		struct ui_chat *c = ui_chat_find(&l, name);
 		char exp[8];
@@ -77,26 +77,46 @@ TEST(chat_ring_newest_first, "UNIT-FEED-001",
 }
 
 TEST(chat_list_order, "UNIT-FEED-002",
-     "The list shows channels first, then direct chats")
+     "The list walks the kind blocks and sorts names inside one")
 {
 	struct ui_chat_list l = fresh_list();
 
-	CHECK(ui_chat_push(&l, "Mama", false, NOW, "hi") != NULL);
-	CHECK(ui_chat_push(&l, "Public", true, NOW, "hi") != NULL);
-	CHECK(ui_chat_push(&l, "Papa", false, NOW, "hi") != NULL);
-	CHECK(ui_chat_push(&l, "#zephcore", true, NOW, "hi") != NULL);
+	CHECK(ui_chat_push(&l, "Mama", UI_CHAT_KIND_DIRECT, NOW, "hi") != NULL);
+	CHECK(ui_chat_push(&l, "Public", UI_CHAT_KIND_PUBLIC, NOW, "hi") != NULL);
+	CHECK(ui_chat_push(&l, "Room1", UI_CHAT_KIND_ROOM, NOW, "hi") != NULL);
+	CHECK(ui_chat_push(&l, "#zephcore", UI_CHAT_KIND_HASH, NOW, "hi") != NULL);
+	CHECK(ui_chat_push(&l, "Beta", UI_CHAT_KIND_GROUP, NOW, "hi") != NULL);
+	CHECK(ui_chat_push(&l, "Alpha", UI_CHAT_KIND_CHANNEL, NOW, "hi") != NULL);
 
-	CHECK(ui_chat_list_len(&l) == 4);
-	/* Groups first in slot order, then DMs in slot order. */
+	CHECK(ui_chat_list_len(&l) == 6);
+	/* Public first; then open channels, "#", groups, rooms, direct. */
 	CHECK(std::string(ui_chat_nth(&l, 0)->name) == "Public");
-	CHECK(std::string(ui_chat_nth(&l, 1)->name) == "#zephcore");
-	CHECK(std::string(ui_chat_nth(&l, 2)->name) == "Mama");
-	CHECK(std::string(ui_chat_nth(&l, 3)->name) == "Papa");
-	CHECK(ui_chat_nth(&l, 4) == NULL);
+	CHECK(std::string(ui_chat_nth(&l, 1)->name) == "Alpha");
+	CHECK(std::string(ui_chat_nth(&l, 2)->name) == "#zephcore");
+	CHECK(std::string(ui_chat_nth(&l, 3)->name) == "Beta");
+	CHECK(std::string(ui_chat_nth(&l, 4)->name) == "Room1");
+	CHECK(std::string(ui_chat_nth(&l, 5)->name) == "Mama");
+	CHECK(ui_chat_nth(&l, 6) == NULL);
 	CHECK(ui_chat_nth(&l, -1) == NULL);
-	/* Both groups are flagged, both chats are not. */
+	/* Groups flag on, direct chats off. */
 	CHECK(ui_chat_nth(&l, 0)->is_group);
-	CHECK(!ui_chat_nth(&l, 2)->is_group);
+	CHECK(ui_chat_nth(&l, 3)->is_group);
+	CHECK(!ui_chat_nth(&l, 5)->is_group);
+
+	/* Names sort alphabetically inside a block. */
+	l = fresh_list();
+	CHECK(ui_chat_push(&l, "Papa", UI_CHAT_KIND_DIRECT, NOW, "hi") != NULL);
+	CHECK(ui_chat_push(&l, "#zephcore", UI_CHAT_KIND_HASH, NOW, "hi") != NULL);
+	CHECK(ui_chat_push(&l, "Mama", UI_CHAT_KIND_DIRECT, NOW, "hi") != NULL);
+	CHECK(ui_chat_push(&l, "Public", UI_CHAT_KIND_PUBLIC, NOW, "hi") != NULL);
+	CHECK(ui_chat_push(&l, "#ada", UI_CHAT_KIND_HASH, NOW, "hi") != NULL);
+	CHECK(ui_chat_push(&l, "Zulu", UI_CHAT_KIND_DIRECT, NOW, "hi") != NULL);
+	CHECK(std::string(ui_chat_nth(&l, 0)->name) == "Public");
+	CHECK(std::string(ui_chat_nth(&l, 1)->name) == "#ada");
+	CHECK(std::string(ui_chat_nth(&l, 2)->name) == "#zephcore");
+	CHECK(std::string(ui_chat_nth(&l, 3)->name) == "Mama");
+	CHECK(std::string(ui_chat_nth(&l, 4)->name) == "Papa");
+	CHECK(std::string(ui_chat_nth(&l, 5)->name) == "Zulu");
 }
 
 TEST(chat_unread, "UNIT-FEED-003",
@@ -105,22 +125,22 @@ TEST(chat_unread, "UNIT-FEED-003",
 	struct ui_chat_list l = fresh_list();
 	struct ui_chat *c;
 
-	c = ui_chat_push(&l, "Public", true, NOW, "one");
+	c = ui_chat_push(&l, "Public", UI_CHAT_KIND_PUBLIC, NOW, "one");
 	CHECK(c != NULL);
 	CHECK(c->unread == 1);
-	(void)ui_chat_push(&l, "Public", true, NOW, "two");
-	(void)ui_chat_push(&l, "Public", true, NOW, "three");
+	(void)ui_chat_push(&l, "Public", UI_CHAT_KIND_PUBLIC, NOW, "two");
+	(void)ui_chat_push(&l, "Public", UI_CHAT_KIND_PUBLIC, NOW, "three");
 	CHECK(c->unread == 3);
 
 	/* Entering the conversation is the reset. */
 	c->unread = 0;
 	CHECK(c->unread == 0);
-	(void)ui_chat_push(&l, "Public", true, NOW, "four");
+	(void)ui_chat_push(&l, "Public", UI_CHAT_KIND_PUBLIC, NOW, "four");
 	CHECK(c->unread == 1);
 
 	/* The counter saturates rather than wrapping. */
 	c->unread = 0xFFFF;
-	(void)ui_chat_push(&l, "Public", true, NOW, "five");
+	(void)ui_chat_push(&l, "Public", UI_CHAT_KIND_PUBLIC, NOW, "five");
 	CHECK(c->unread == 0xFFFF);
 }
 
@@ -176,7 +196,7 @@ TEST(feed_line_shapes, "UNIT-FEED-006",
 	struct ui_chat *dm;
 	struct ui_chat_msg m;
 
-	(void)ui_chat_push(&l, "Mama", false, NOW, "ты где?");
+	(void)ui_chat_push(&l, "Mama", UI_CHAT_KIND_DIRECT, NOW, "ты где?");
 	dm = ui_chat_find(&l, "Mama");
 	memset(&m, 0, sizeof(m));
 
@@ -310,10 +330,10 @@ TEST(feed_continuous_paging, "UNIT-FEED-011",
 	int n = 0;
 
 	/* Channel messages carry their sender as the "<name>: " prefix. */
-	(void)ui_chat_push(&l, "Public", true, NOW, "Nick: one");
-	(void)ui_chat_push(&l, "Public", true, NOW + 1, "Nick: two");
-	(void)ui_chat_push(&l, "Public", true, NOW + 2, "Nick: three");
-	(void)ui_chat_push(&l, "Public", true, NOW + 3,
+	(void)ui_chat_push(&l, "Public", UI_CHAT_KIND_PUBLIC, NOW, "Nick: one");
+	(void)ui_chat_push(&l, "Public", UI_CHAT_KIND_PUBLIC, NOW + 1, "Nick: two");
+	(void)ui_chat_push(&l, "Public", UI_CHAT_KIND_PUBLIC, NOW + 2, "Nick: three");
+	(void)ui_chat_push(&l, "Public", UI_CHAT_KIND_PUBLIC, NOW + 3,
 			   "Nick: aaa bbb ccc ddd");
 	c = ui_chat_find(&l, "Public");
 	CHECK(c != NULL);
@@ -348,7 +368,7 @@ TEST(feed_private_one_line, "UNIT-FEED-013",
 	struct ui_chat_iter it;
 	struct ui_feed_cursor start = { 0, 0 };
 
-	(void)ui_chat_push(&l, "Mama", false, NOW, "ты где?");
+	(void)ui_chat_push(&l, "Mama", UI_CHAT_KIND_DIRECT, NOW, "ты где?");
 	c = ui_chat_find(&l, "Mama");
 	CHECK(c != NULL);
 
@@ -367,7 +387,7 @@ TEST(feed_seek_inside_message, "UNIT-FEED-014",
 	struct ui_chat_iter it;
 	struct ui_feed_cursor cur = { 0, 2 };
 
-	(void)ui_chat_push(&l, "Public", true, NOW, "Nick: aaa bbb ccc ddd");
+	(void)ui_chat_push(&l, "Public", UI_CHAT_KIND_PUBLIC, NOW, "Nick: aaa bbb ccc ddd");
 	c = ui_chat_find(&l, "Public");
 	CHECK(c != NULL);
 
@@ -428,7 +448,7 @@ TEST(feed_head_fits_one_row, "UNIT-FEED-017",
 	struct ui_chat_iter it;
 	struct ui_feed_cursor start = { 0, 0 };
 
-	(void)ui_chat_push(&l, "Public", true, NOW,
+	(void)ui_chat_push(&l, "Public", UI_CHAT_KIND_PUBLIC, NOW,
 			   "\xF0\x9F\x99\x82VeryLongNicknameHere: текст");
 	c = ui_chat_find(&l, "Public");
 	CHECK(c != NULL);
@@ -452,9 +472,9 @@ TEST(feed_page_wraps_not_past_end, "UNIT-FEED-018",
 	struct ui_feed_cursor cur = { 0, 0 };
 	int pages = 0;
 
-	(void)ui_chat_push(&l, "Public", true, NOW, "Nick: msg2");
-	(void)ui_chat_push(&l, "Public", true, NOW + 1, "Nick: msg1");
-	(void)ui_chat_push(&l, "Public", true, NOW + 2, "Nick: msg0");
+	(void)ui_chat_push(&l, "Public", UI_CHAT_KIND_PUBLIC, NOW, "Nick: msg2");
+	(void)ui_chat_push(&l, "Public", UI_CHAT_KIND_PUBLIC, NOW + 1, "Nick: msg1");
+	(void)ui_chat_push(&l, "Public", UI_CHAT_KIND_PUBLIC, NOW + 2, "Nick: msg0");
 	c = ui_chat_find(&l, "Public");
 	CHECK(c != NULL);
 
@@ -495,7 +515,7 @@ TEST(feed_name_matching, "UNIT-FEED-019",
 
 	/* A message from the same node carries the same nickname with its
 	 * smiley: it must land in that conversation, not open a second one. */
-	landed = ui_chat_push(&l, "\xF0\x9F\x99\x82 ShadoW T1000-E", false,
+	landed = ui_chat_push(&l, "\xF0\x9F\x99\x82 ShadoW T1000-E", UI_CHAT_KIND_DIRECT,
 			      NOW, "привет");
 	CHECK(landed == seeded);
 	CHECK(ui_chat_list_len(&l) == 1);
@@ -550,7 +570,7 @@ TEST(feed_coords_keep_sender, "UNIT-FEED-021",
 	CHECK(std::string(buf) == "55.75580,37.61730");
 
 	/* The head row names the sender like on any other message. */
-	(void)ui_chat_push(&l, "#tracks", true, NOW,
+	(void)ui_chat_push(&l, "#tracks", UI_CHAT_KIND_HASH, NOW,
 			   "Nick: https://maps.google.com/?q=55.75580,37.61730");
 	c = ui_chat_find(&l, "#tracks");
 	CHECK(c != NULL);
@@ -611,9 +631,9 @@ TEST(feed_own_mark, "UNIT-FEED-023",
 	struct ui_feed_cursor start = { 0, 0 };
 
 	/* A channel outcome is a neighbour count: "+3" repeated, "x" not. */
-	(void)ui_chat_push(&l, "Public", true, NOW, "Nick: чужое");
-	(void)ui_chat_push(&l, "Public", true, NOW + 1, "Я: привет");
-	(void)ui_chat_push(&l, "Public", true, NOW + 2, "Я: еду");
+	(void)ui_chat_push(&l, "Public", UI_CHAT_KIND_PUBLIC, NOW, "Nick: чужое");
+	(void)ui_chat_push(&l, "Public", UI_CHAT_KIND_PUBLIC, NOW + 1, "Я: привет");
+	(void)ui_chat_push(&l, "Public", UI_CHAT_KIND_PUBLIC, NOW + 2, "Я: еду");
 	c = ui_chat_find(&l, "Public");
 	CHECK(c != NULL);
 
@@ -642,9 +662,9 @@ TEST(feed_own_mark, "UNIT-FEED-023",
 	/* A direct outcome is only delivered ("+") or not ("x"); the text
 	 * sits below the "Я" head like a channel one, and an incoming
 	 * direct message stays one line. */
-	(void)ui_chat_push(&l, "Mama", false, NOW, "ты где?");
-	(void)ui_chat_push(&l, "Mama", false, NOW + 1, "Я: где ты?");
-	(void)ui_chat_push(&l, "Mama", false, NOW + 2, "Я: буду позже");
+	(void)ui_chat_push(&l, "Mama", UI_CHAT_KIND_DIRECT, NOW, "ты где?");
+	(void)ui_chat_push(&l, "Mama", UI_CHAT_KIND_DIRECT, NOW + 1, "Я: где ты?");
+	(void)ui_chat_push(&l, "Mama", UI_CHAT_KIND_DIRECT, NOW + 2, "Я: буду позже");
 	c = ui_chat_find(&l, "Mama");
 	CHECK(c != NULL);
 	CHECK(ui_chat_set_own(c, NOW + 1));
@@ -691,7 +711,7 @@ TEST(feed_quote_names, "UNIT-FEED-024",
 
 	/* The push pipeline cleans the quote before the emoji table can
 	 * turn its smiley into "..." and the panel into a bare ". ". */
-	(void)ui_chat_push(&l, "Public", true, NOW, "@[📟 ShadoW M1] привет");
+	(void)ui_chat_push(&l, "Public", UI_CHAT_KIND_PUBLIC, NOW, "@[📟 ShadoW M1] привет");
 	c = ui_chat_find(&l, "Public");
 	CHECK(c != NULL);
 	CHECK(std::string(ui_chat_get(c, 0)->text) == "@[ShadoW M1] привет");

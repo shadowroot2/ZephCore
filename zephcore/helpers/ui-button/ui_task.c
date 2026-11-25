@@ -1532,7 +1532,7 @@ int ui_init(void)
 /* One incoming message into its conversation.  The message body is written
  * before the ring indices move (ui_chat_push), so the renderer may read
  * from the UI task while this runs on the mesh thread. */
-static void ui_feed_add(const char *chat_name, bool is_group, const char *text,
+static void ui_feed_add(const char *chat_name, uint8_t kind, const char *text,
 			uint32_t ts, bool own)
 {
 #ifdef CONFIG_ZEPHCORE_UI_DISPLAY
@@ -1544,7 +1544,7 @@ static void ui_feed_add(const char *chat_name, bool is_group, const char *text,
 	if (in_feed) {
 		sel = ui_chat_nth(&s->chats, s->chat_sel);
 	}
-	c = ui_chat_push(&s->chats, chat_name, is_group, ts, text);
+	c = ui_chat_push(&s->chats, chat_name, kind, ts, text);
 	if (c == NULL) {
 		return;
 	}
@@ -1583,37 +1583,39 @@ static void ui_feed_add(const char *chat_name, bool is_group, const char *text,
 	}
 	ui_request_render();
 #else
-	(void)chat_name; (void)is_group; (void)text; (void)ts; (void)own;
+	(void)chat_name; (void)kind; (void)text; (void)ts; (void)own;
 #endif
 }
 
-void ui_seed_chat(const char *name, bool is_group)
+void ui_seed_chat(const char *name, uint8_t kind)
 {
 #ifdef CONFIG_ZEPHCORE_UI_DISPLAY
 	if (name == NULL || name[0] == '\0') {
 		return;
 	}
-	(void)ui_chat_ensure(&get_state()->chats, name, is_group);
+	(void)ui_chat_ensure(&get_state()->chats, name, kind);
 #else
-	(void)name; (void)is_group;
+	(void)name; (void)kind;
 #endif
 }
 
 void ui_notify_contact_msg(uint8_t path_len, const char *from_name,
-			   const char *text, uint32_t ts, uint16_t msg_count)
+			   const char *text, uint32_t ts, uint16_t msg_count,
+			   uint8_t kind)
 {
 	(void)path_len;
-	ui_feed_add(from_name, false, text, ts, false);
+	ui_feed_add(from_name, kind, text, ts, false);
 	ui_set_msg_count(msg_count);
 	ui_notify(UI_EVENT_CONTACT_MSG);
 }
 
 void ui_notify_channel_msg(const char *channel_name, const char *text,
-			   uint32_t ts, uint8_t path_len, uint16_t msg_count)
+			   uint32_t ts, uint8_t path_len, uint16_t msg_count,
+			   uint8_t kind)
 {
 	(void)path_len;
 	/* The mesh already prefixes the sender: sendGroupMessage(). */
-	ui_feed_add(channel_name, true, text, ts, false);
+	ui_feed_add(channel_name, kind, text, ts, false);
 	ui_set_msg_count(msg_count);
 	ui_notify(UI_EVENT_CHANNEL_MSG);
 }
@@ -1623,8 +1625,10 @@ void ui_push_own_msg(const char *chat_name, bool is_group, const char *text,
 {
 	/* A message the node itself just sent: the conversation view shows
 	 * it like any other, but it is not news to its reader — no buzz,
-	 * no queue count. */
-	ui_feed_add(chat_name, is_group, text, ts, true);
+	 * no queue count.  The conversation is open already, so the kind
+	 * only fills in if the chat were somehow missing. */
+	ui_feed_add(chat_name, is_group ? UI_CHAT_KIND_GROUP
+					: UI_CHAT_KIND_DIRECT, text, ts, true);
 }
 
 void ui_own_msg_mark(const char *chat_name, uint32_t ts, uint8_t mark,

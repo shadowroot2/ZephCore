@@ -4626,12 +4626,8 @@ int main(void)
 
 	/* First boot: the Public channel */
 	if (companion_mesh.getNumChannels() == 0) {
-		// "izOH6cXN6mrJ5e26oRXNcg==" decoded
-		static const uint8_t public_psk[16] = {
-			0x8b, 0x33, 0x87, 0xe9, 0xc5, 0xcd, 0xea, 0x6a,
-			0xc9, 0xe5, 0xed, 0xba, 0xa1, 0x15, 0xcd, 0x72
-		};
-		companion_mesh.addChannel("Public", public_psk, 16);
+		companion_mesh.addChannel("Public", CHANNEL_PUBLIC_PSK,
+					  sizeof(CHANNEL_PUBLIC_PSK));
 		data_store.saveChannels(&companion_mesh);
 		LOG_INF("Added default Public channel");
 	}
@@ -4701,7 +4697,9 @@ int main(void)
 			ChannelDetails ch;
 
 			if (companion_mesh.getChannel(i, ch) && ch.name[0] != '\0') {
-				ui_seed_chat(ch.name, true);
+				ui_seed_chat(ch.name,
+					     ui_chat_kind_channel(ch.name,
+								  channel_is_public(ch)));
 			}
 		}
 		n = companion_mesh.getNumContacts();
@@ -4715,7 +4713,9 @@ int main(void)
 			if (c.type != ADV_TYPE_CHAT && c.type != ADV_TYPE_ROOM) {
 				continue;
 			}
-			ui_seed_chat(c.name, false);
+			ui_seed_chat(c.name, c.type == ADV_TYPE_ROOM
+					     ? UI_CHAT_KIND_ROOM
+					     : UI_CHAT_KIND_DIRECT);
 		}
 	}
 	ui_set_battery(zephyr_board.getBattMilliVolts(), zephyr_board.getBattPercent());

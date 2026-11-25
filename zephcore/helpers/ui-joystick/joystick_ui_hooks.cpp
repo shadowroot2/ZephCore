@@ -149,9 +149,10 @@ extern "C" void ui_request_render(void)
 }
 
 extern "C" void ui_notify_contact_msg(uint8_t path_len, const char *from_name,
-	const char *text, uint32_t ts, uint16_t msg_count)
+	const char *text, uint32_t ts, uint16_t msg_count, uint8_t kind)
 {
 	(void)ts;  /* the joystick feed comes in stage 2 */
+	(void)kind;
 	if (s_task) {
 	#if defined(CONFIG_BOARD_T1000_E)
 		if (!s_task->isBLEConnected()) {
@@ -163,9 +164,10 @@ extern "C" void ui_notify_contact_msg(uint8_t path_len, const char *from_name,
 }
 
 extern "C" void ui_notify_channel_msg(const char *channel_name, const char *text,
-	uint32_t ts, uint8_t path_len, uint16_t msg_count)
+	uint32_t ts, uint8_t path_len, uint16_t msg_count, uint8_t kind)
 {
 	(void)msg_count;
+	(void)kind;
 	if (s_task) {
 	#if defined(CONFIG_BOARD_T1000_E)
 		if (!s_task->isBLEConnected()) {

@@ -1125,11 +1125,14 @@ list and the feed under it: the list until a hold opens a conversation,
 then that conversation's messages; a hold inside one opens the quick-reply
 picker, and a double press walks back out to the list.
 
-The list runs `Public`, then the `#` channels, then the private channels,
-then the direct chats — and only nodes that can answer (`ADV_TYPE_CHAT` and
-`ADV_TYPE_ROOM`); repeaters and sensors advertise into the list otherwise.
-Each row is `Name (unread)` with the count dropped at zero and the selected
-row a solid band. The bottom row reads `Long press ENTER`.
+The list runs `Public` first, then the open channels (the well-known
+key), the `#` channels, the private groups, the rooms and the direct
+chats — each block alphabetical — and only nodes that can answer
+(`ADV_TYPE_CHAT` and `ADV_TYPE_ROOM`); repeaters and sensors advertise
+into the list otherwise. Each row is `Name (unread)` with the count
+dropped at zero and a marker naming what is private: `[**]` a group,
+`[***]` a room, `[*]` a direct chat. The selected
+row is a solid band. The bottom row reads `Long press ENTER`.
 
 Gestures on that page:
 

@@ -208,25 +208,26 @@ WEAK void ui_show_low_battery(bool hold) { ARG_UNUSED(hold); }
 WEAK void ui_refresh_battery(void) { }
 WEAK void ui_invalidate_battery_cache(void) { }
 
-WEAK void ui_seed_chat(const char *name, bool is_group)
+WEAK void ui_seed_chat(const char *name, uint8_t kind)
 {
-	ARG_UNUSED(name); ARG_UNUSED(is_group);
+	ARG_UNUSED(name); ARG_UNUSED(kind);
 }
 
 WEAK void ui_notify_contact_msg(uint8_t path_len, const char *from_name,
 				 const char *text, uint32_t ts,
-				 uint16_t msg_count)
+				 uint16_t msg_count, uint8_t kind)
 {
 	ARG_UNUSED(path_len); ARG_UNUSED(from_name);
 	ARG_UNUSED(text); ARG_UNUSED(ts); ARG_UNUSED(msg_count);
+	ARG_UNUSED(kind);
 }
 
 WEAK void ui_notify_channel_msg(const char *channel_name, const char *text,
 				 uint32_t ts, uint8_t path_len,
-				 uint16_t msg_count)
+				 uint16_t msg_count, uint8_t kind)
 {
 	ARG_UNUSED(channel_name); ARG_UNUSED(text); ARG_UNUSED(ts);
-	ARG_UNUSED(path_len); ARG_UNUSED(msg_count);
+	ARG_UNUSED(path_len); ARG_UNUSED(msg_count); ARG_UNUSED(kind);
 }
 
 WEAK void ui_push_own_msg(const char *chat_name, bool is_group,

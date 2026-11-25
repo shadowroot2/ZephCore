@@ -23,6 +23,7 @@
 #include <helpers/CommonCLI.h>
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_DESIGN_BUTTON) || IS_ENABLED(CONFIG_ZEPHCORE_UI_DESIGN_JOYSTICK)
 #include <ui_task.h>
+#include <UiFeed.h>
 #define ZEPHCORE_HAS_UI_TASK 1
 #endif
 #include <joystick_ui_hooks.h>
@@ -39,7 +40,9 @@ static void notify_contact_msg_ui(
 ){
 	uint8_t path_len = (pkt && pkt->isRouteFlood()) ? pkt->path_len : OUT_PATH_UNKNOWN;
 	ui_notify_contact_msg(path_len, contact.name, text, sender_timestamp,
-			      (uint16_t)queue_count);
+			      (uint16_t)queue_count,
+			      contact.type == ADV_TYPE_ROOM ? UI_CHAT_KIND_ROOM
+							    : UI_CHAT_KIND_DIRECT);
 }
 #endif
 
@@ -1155,9 +1158,15 @@ void CompanionMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh
 	{
 		ChannelDetails ch;
 		const char *ch_name = "";
-		if (getChannel(channel_idx, ch)) ch_name = ch.name;
+		uint8_t kind = UI_CHAT_KIND_GROUP;
+
+		if (getChannel(channel_idx, ch)) {
+			ch_name = ch.name;
+			kind = ui_chat_kind_channel(ch.name, channel_is_public(ch));
+		}
 		ui_notify_channel_msg(
-			ch_name, text, timestamp, path_len, (uint16_t)_offline_queue_count
+			ch_name, text, timestamp, path_len,
+			(uint16_t)_offline_queue_count, kind
 		);
 	}
 #endif

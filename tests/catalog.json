@@ -834,7 +834,7 @@
     },
     {
       "id": "UNIT-FEED-002",
-      "name": "The list shows channels first, then direct chats",
+      "name": "The list walks the kind blocks and sorts names inside one",
       "source": "tests/unit/feed_tests.cpp"
     },
     {

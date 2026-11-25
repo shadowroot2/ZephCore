@@ -326,11 +326,13 @@ void ui_invalidate_battery_cache(void);
  */
 /* Put a conversation the node already knows about into the list without
  * recording a message: the channels and contacts are there at boot, before
- * anything arrives. */
-void ui_seed_chat(const char *name, bool is_group);
+ * anything arrives.  `kind` is a UI_CHAT_KIND_* — it sorts the list and
+ * picks the marker the row wears. */
+void ui_seed_chat(const char *name, uint8_t kind);
 
 void ui_notify_contact_msg(uint8_t path_len, const char *from_name,
-			   const char *text, uint32_t ts, uint16_t msg_count);
+			   const char *text, uint32_t ts, uint16_t msg_count,
+			   uint8_t kind);
 
 /**
  * Notify UI of a received channel message.
@@ -341,9 +343,11 @@ void ui_notify_contact_msg(uint8_t path_len, const char *from_name,
  * @param ts            Sender timestamp (epoch)
  * @param path_len      Hop count (OUT_PATH_UNKNOWN = direct/unknown)
  * @param msg_count     Updated offline queue message count
+ * @param kind          UI_CHAT_KIND_* of the conversation
  */
 void ui_notify_channel_msg(const char *channel_name, const char *text,
-			   uint32_t ts, uint8_t path_len, uint16_t msg_count);
+			   uint32_t ts, uint8_t path_len, uint16_t msg_count,
+			   uint8_t kind);
 
 /**
  * Notify UI of a message the node itself just sent into a conversation.

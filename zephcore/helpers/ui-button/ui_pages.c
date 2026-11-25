@@ -788,16 +788,27 @@ static void render_chat_list(int rows, bool color, uint16_t sel_color,
 		}
 		for (int i = first; i < n && shown < list_rows; i++, shown++) {
 			const struct ui_chat *c = ui_chat_nth(&state.chats, i);
-			char buf[40];
+			const char *mark = "";
+			char buf[48];
 
 			if (c == NULL) {
 				break;
 			}
+			/* Private things name themselves: a group, a room,
+			 * a direct chat.  The open ones show no marker. */
+			if (c->kind == UI_CHAT_KIND_GROUP) {
+				mark = "[**] ";
+			} else if (c->kind == UI_CHAT_KIND_ROOM) {
+				mark = "[***] ";
+			} else if (c->kind == UI_CHAT_KIND_DIRECT) {
+				mark = "[*] ";
+			}
 			if (c->unread > 0) {
-				snprintf(buf, sizeof(buf), "%s (%u)", c->name,
-					 (unsigned)c->unread);
+				snprintf(buf, sizeof(buf), "%s%s (%u)", mark,
+					 c->name, (unsigned)c->unread);
 			} else {
-				snprintf(buf, sizeof(buf), "%s", c->name);
+				snprintf(buf, sizeof(buf), "%s%s", mark,
+					 c->name);
 			}
 			if (color) {
 				uint16_t col = (i == state.chat_sel) ? sel_color
