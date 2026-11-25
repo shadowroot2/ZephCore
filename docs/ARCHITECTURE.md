@@ -1114,7 +1114,8 @@ Color TFT panels (T114, T096, Wireless Tracker) are wrapped as 1bpp displays for
 
 **Companion** (up to 17 pages): Messages, Public, Recent, Radio, Traffic,
 Bluetooth, WiFi (WiFi companion builds only), Advert, GPS, Tracking, SOS,
-Buzzer (if buzzer present), LEDs, Sensors, Offgrid, DFU (nRF52: reboot to the
+Buzzer (if buzzer present), Backlight (e-paper frontlight boards),
+LEDs, Sensors, Offgrid, DFU (nRF52: reboot to the
 BLE DFU bootloader; ESP32 BLE OTA builds: open the BLE OTA window; absent
 elsewhere), Shutdown. Manual shutdown renders `Power OFF` before entering the
 shared power-off path; e-paper retains the final frame.

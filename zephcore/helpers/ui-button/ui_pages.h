@@ -43,6 +43,7 @@ enum ui_page {
 	UI_PAGE_ADVERT,         /* Send broadcast advert */
 	UI_PAGE_GPS,            /* GPS status / position */
 	UI_PAGE_BUZZER,         /* Buzzer mute toggle */
+	UI_PAGE_BACKLIGHT,      /* Backlight window toggle (e-paper frontlight) */
 	UI_PAGE_LEDS,           /* LED enable/disable toggle */
 	UI_PAGE_SENSORS,        /* Environment sensor data */
 	UI_PAGE_OFFGRID,        /* Offgrid mode (client repeat) toggle */

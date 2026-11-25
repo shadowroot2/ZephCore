@@ -84,6 +84,7 @@ void mesh_save_brightness(uint8_t brightness);
 void mesh_save_and_restart(void);
 void mesh_set_wake_on_msg(bool enabled);
 void mesh_save_screen_off_secs(uint16_t secs);
+void mesh_save_bl_timeout(uint32_t ms);
 /* Mounting orientation. Both are applied live by the caller (panel remap /
  * axis swap are immediate and cheap); these only persist the choice. */
 void mesh_save_display_rotate(bool rotated);

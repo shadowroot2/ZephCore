@@ -1142,12 +1142,10 @@ void CommonCLI::handleGetCmd(uint32_t sender_timestamp, const char* command, cha
 		}
 	} else if (memcmp(config, "rxduty", 6) == 0) {
 		snprintf(reply, CLI_REPLY_SIZE, "> %d", (int)_prefs->rx_duty_cycle);
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY) && MC_DISPLAY_HAS_BACKLIGHT
 	} else if (memcmp(config, "bl.timeout", 10) == 0) {
-#if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
 		snprintf(reply, CLI_REPLY_SIZE, "> %u s",
 			 mc_display_get_auto_off_ms() / 1000);
-#else
-		strcpy(reply, "> unsupported (no display)");
 #endif
 	} else if (memcmp(config, "display.rotate", 14) == 0) {
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY) && MC_DISPLAY_ROTATE_SUPPORTED
@@ -1714,8 +1712,8 @@ void CommonCLI::handleSetCmd(uint32_t sender_timestamp, const char* command, cha
 		} else {
 			strcpy(reply, "Error: must be 0, 1, on, or off");
 		}
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY) && MC_DISPLAY_HAS_BACKLIGHT
 	} else if (memcmp(config, "bl.timeout ", 11) == 0) {
-#if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
 		/* Display auto-off window in seconds; 0 keeps the backlight
 		 * dark.  The display layer works in ms. */
 		char *end;
@@ -1731,8 +1729,6 @@ void CommonCLI::handleSetCmd(uint32_t sender_timestamp, const char* command, cha
 			snprintf(reply, CLI_REPLY_SIZE, "OK - bl.timeout=%u",
 				 (unsigned)v);
 		}
-#else
-		strcpy(reply, "Error: no display");
 #endif
 	} else if (memcmp(config, "display.rotate ", 15) == 0) {
 		// Rotate the panel 180 degrees for cases that mount it upside down.

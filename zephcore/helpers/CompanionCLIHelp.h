@@ -4,6 +4,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <zephyr/sys/util.h>
+#if defined(__ZEPHYR__)
+#include <helpers/ui/display.h>
+#endif
+/* Host tests build no devicetree: no backlight window to name. */
+#ifndef MC_DISPLAY_HAS_BACKLIGHT
+#define MC_DISPLAY_HAS_BACKLIGHT 0
+#endif
 #include "NodePrefs.h"
 
 /* The nav/wp group exists only on boards whose DT has a GNSS receiver and
@@ -233,7 +240,10 @@ static inline const char *companion_app_cli_help(const char *line)
 	if (strcmp(line, "help ui") == 0) {
 		return "buzz [on|off]\nleds [on|off]\n"
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
-		       "get/set display.rotate\nget/set input.rotate\nget/set bl.timeout\n"
+		       "get/set display.rotate\nget/set input.rotate\n"
+#if MC_DISPLAY_HAS_BACKLIGHT
+		       "get/set bl.timeout\n"
+#endif
 #endif
 		       "get/set leds.hb\n"
 		       "get/set leds.radio";
@@ -314,7 +324,10 @@ static inline const char *companion_remote_cli_help(const char *line)
 	if (strcmp(line, "help ui") == 0) {
 		return "buzz [on|off]\nleds [on|off]\n"
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
-		       "get/set display.rotate\nget/set input.rotate\nget/set bl.timeout\n"
+		       "get/set display.rotate\nget/set input.rotate\n"
+#if MC_DISPLAY_HAS_BACKLIGHT
+		       "get/set bl.timeout\n"
+#endif
 #endif
 		       "get/set leds.hb\nget/set leds.radio";
 	}
@@ -383,7 +396,10 @@ static inline bool companion_remote_cli_command_allowed(const char *cmd)
 		"get fall.sens",
 		"get v.contact", "get leds.hb", "get leds.radio", "get adc.multiplier",
 		"get autoshutdown", "get autoshutdown.emergency", "get v.batteryalert",
-		"get display.rotate", "get input.rotate", "get bl.timeout",
+		"get display.rotate", "get input.rotate",
+#if MC_DISPLAY_HAS_BACKLIGHT
+		"get bl.timeout",
+#endif
 	};
 	static const char *const prefix[] = {
 		"set af ", "set dutycycle ", "set int.thresh ", "set cad ",
@@ -401,7 +417,10 @@ static inline bool companion_remote_cli_command_allowed(const char *cmd)
 #endif
 		"set fall.sens ", "set v.contact ", "set leds.hb ",
 		"set leds.radio ", "set autoshutdown.emergency ", "set v.batteryalert ",
-		"set display.rotate ", "set input.rotate ", "set bl.timeout ",
+		"set display.rotate ", "set input.rotate ",
+#if MC_DISPLAY_HAS_BACKLIGHT
+		"set bl.timeout ",
+#endif
 	};
 	for (const char *e : exact) {
 		if (strcmp(cmd, e) == 0) return true;

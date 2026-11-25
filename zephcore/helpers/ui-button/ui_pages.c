@@ -175,6 +175,9 @@ static const enum ui_page active_pages[] = {
 	UI_PAGE_BUZZER,
 #endif
 #if defined(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
+#if MC_DISPLAY_HAS_BACKLIGHT
+	UI_PAGE_BACKLIGHT,
+#endif
 	UI_PAGE_LEDS,
 #endif
 	UI_PAGE_SHUTDOWN,
@@ -193,6 +196,9 @@ static const enum ui_page active_pages[] = {
 #endif
 #ifdef CONFIG_ZEPHCORE_UI_BUZZER
 	UI_PAGE_BUZZER,
+#endif
+#if MC_DISPLAY_HAS_BACKLIGHT
+	UI_PAGE_BACKLIGHT,
 #endif
 	UI_PAGE_LEDS,
 	UI_PAGE_ADVERT,
@@ -645,6 +651,7 @@ static const char *tiny_page_title(enum ui_page p)
 	case UI_PAGE_GPS_HOME:  return "NAV";
 #endif
 	case UI_PAGE_BUZZER:    return "BUZZER";
+	case UI_PAGE_BACKLIGHT: return "BACKLIGHT";
 	case UI_PAGE_LEDS:      return "LEDS";
 	case UI_PAGE_SENSORS:   return "SENSORS";
 	case UI_PAGE_OFFGRID:   return "OFFGRID";
@@ -1751,21 +1758,33 @@ static void render_buzzer(void)
 	draw_centered(y + 8, buf);
 }
 
+#if MC_DISPLAY_HAS_BACKLIGHT
+/* The backlight window as the screens name it: "Backlight: 5s" or
+ * "Backlight: off". */
+static void backlight_state_text(char *buf, size_t n)
+{
+	uint32_t bl = mc_display_get_auto_off_ms();
+
+	if (bl == 0) {
+		snprintf(buf, n, "Backlight: off");
+	} else if (bl % 1000 == 0) {
+		snprintf(buf, n, "Backlight: %us", (unsigned)(bl / 1000));
+	} else {
+		snprintf(buf, n, "Backlight: %ums", (unsigned)bl);
+	}
+}
+#endif
+
 static void render_leds_mono(void)
 {
 	char buf[24];
 	int y = CONTENT_Y;
-	uint32_t bl = mc_display_get_auto_off_ms();
 
-	if (bl == 0) {
-		snprintf(buf, sizeof(buf), "Backlight: off");
-	} else if (bl % 1000 == 0) {
-		snprintf(buf, sizeof(buf), "Backlight: %us", (unsigned)(bl / 1000));
-	} else {
-		snprintf(buf, sizeof(buf), "Backlight: %ums", (unsigned)bl);
-	}
+#if MC_DISPLAY_HAS_BACKLIGHT
+	backlight_state_text(buf, sizeof(buf));
 	mc_display_text(0, y, buf, false);
 	y += LINE_H;
+#endif
 
 	snprintf(buf, sizeof(buf), "LEDs: %s",
 		 state.leds_disabled ? "off" : "on");
@@ -1779,20 +1798,20 @@ static void render_leds_mono(void)
 #if MC_DISPLAY_COLOR_PANEL
 static void render_leds_color(void)
 {
-	char buf[24];
 	int y = CONTENT_Y;
-	uint32_t bl = mc_display_get_auto_off_ms();
 
-	if (bl == 0) {
-		snprintf(buf, sizeof(buf), "Backlight: off");
-	} else if (bl % 1000 == 0) {
-		snprintf(buf, sizeof(buf), "Backlight: %us", (unsigned)(bl / 1000));
-	} else {
-		snprintf(buf, sizeof(buf), "Backlight: %ums", (unsigned)bl);
+#if MC_DISPLAY_HAS_BACKLIGHT
+	{
+		char buf[24];
+
+		backlight_state_text(buf, sizeof(buf));
+		mc_display_color_text(0, y, buf,
+				      mc_display_get_auto_off_ms() == 0
+					      ? UI_COLOR_DISABLED
+					      : UI_COLOR_VALUE);
+		y += LINE_H + 4;
 	}
-	mc_display_color_text(0, y, buf,
-			      bl == 0 ? UI_COLOR_DISABLED : UI_COLOR_VALUE);
-	y += LINE_H + 4;
+#endif
 
 	draw_badge(0, y, "LED", state.leds_disabled ? UI_COLOR_DISABLED
 						      : UI_COLOR_OK);
@@ -1807,6 +1826,48 @@ static void render_leds_color(void)
 			    UI_COLOR_VALUE);
 }
 #endif /* MC_DISPLAY_COLOR_PANEL */
+
+#if MC_DISPLAY_HAS_BACKLIGHT
+static void render_backlight_mono(void)
+{
+	char buf[24];
+	int y = CONTENT_Y;
+	bool off = mc_display_get_auto_off_ms() == 0;
+
+	backlight_state_text(buf, sizeof(buf));
+	mc_display_text(0, y, buf, false);
+	y += LINE_H;
+
+	draw_centered(y + 8, off ? "Press to Enable" : "Press to Disable");
+}
+
+#if MC_DISPLAY_COLOR_PANEL
+static void render_backlight_color(void)
+{
+	char buf[24];
+	int y = CONTENT_Y;
+	bool off = mc_display_get_auto_off_ms() == 0;
+
+	backlight_state_text(buf, sizeof(buf));
+	mc_display_color_text(0, y, buf,
+			      off ? UI_COLOR_DISABLED : UI_COLOR_VALUE);
+	y += LINE_H + 4;
+	draw_centered_color(y, off ? "Press to enable" : "Press to disable",
+			    UI_COLOR_VALUE);
+}
+#endif /* MC_DISPLAY_COLOR_PANEL */
+
+static void render_backlight(void)
+{
+#if MC_DISPLAY_COLOR_PANEL
+	if (mc_display_has_color()) {
+		render_backlight_color();
+		return;
+	}
+#endif
+	render_backlight_mono();
+}
+#endif /* MC_DISPLAY_HAS_BACKLIGHT */
 
 static void render_leds(void)
 {
@@ -2389,6 +2450,9 @@ static const page_render_fn renderers[] = {
 	[UI_PAGE_GPS_HOME]  = render_gps_home,
 #endif
 	[UI_PAGE_BUZZER]    = render_buzzer,
+#if MC_DISPLAY_HAS_BACKLIGHT
+	[UI_PAGE_BACKLIGHT] = render_backlight,
+#endif
 	[UI_PAGE_LEDS]      = render_leds,
 	[UI_PAGE_SENSORS]   = render_sensors,
 	[UI_PAGE_OFFGRID]   = render_offgrid,

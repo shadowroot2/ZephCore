@@ -598,6 +598,9 @@ static void action_sos(void);
 static void action_gps_toggle(void);
 static void action_buzzer_toggle(void);
 static void action_leds_toggle(void);
+#if MC_DISPLAY_HAS_BACKLIGHT
+static void action_backlight_toggle(void);
+#endif
 #if defined(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
 static void action_bridge_toggle(void);
 #endif
@@ -820,6 +823,13 @@ static void action_page_enter(void)
 		action_buzzer_toggle();
 		break;
 
+#if MC_DISPLAY_HAS_BACKLIGHT
+	case UI_PAGE_BACKLIGHT:
+		/* Toggle the backlight window on/off */
+		action_backlight_toggle();
+		break;
+#endif
+
 	case UI_PAGE_LEDS:
 		/* Toggle LED on/off */
 		action_leds_toggle();
@@ -971,6 +981,31 @@ static void action_leds_toggle(void)
 	LOG_INF("LEDs %s (user toggle)", new_disabled ? "disabled" : "enabled");
 	schedule_render();
 }
+
+#if MC_DISPLAY_HAS_BACKLIGHT
+static void action_backlight_toggle(void)
+{
+	uint32_t ms;
+
+	if (mc_display_get_auto_off_ms() == 0) {
+		/* Back on with the board's own window. */
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY_AUTO_OFF_MS
+		ms = CONFIG_ZEPHCORE_UI_DISPLAY_AUTO_OFF_MS;
+#else
+		ms = 10000;
+#endif
+	} else {
+		ms = 0;	/* never light */
+	}
+	mc_display_set_auto_off_ms(ms);
+	if (ms > 0) {
+		mc_display_on();
+	}
+	mesh_save_bl_timeout(ms);
+	LOG_INF("bl.timeout=%u ms (user toggle)", (unsigned)ms);
+	schedule_render();
+}
+#endif
 
 #if defined(CONFIG_ZEPHCORE_ROLE_REPEATER_BRIDGE)
 static void action_bridge_toggle(void)

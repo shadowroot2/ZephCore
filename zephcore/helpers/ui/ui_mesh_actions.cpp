@@ -64,6 +64,7 @@ LOG_MODULE_REGISTER(zephcore_ui_actions, CONFIG_ZEPHCORE_UI_ACTIONS_LOG_LEVEL);
 #define UI_ACTION_NAV_TOGGLE        BIT(21)
 #define UI_ACTION_WP_CYCLE           BIT(22)
 #define UI_ACTION_QUICK_REPLY       BIT(23) /* ZEPHCORE: quick replies */
+#define UI_ACTION_BL_TIMEOUT_SAVE   BIT(24) /* ZEPHCORE: backlight window */
 
 extern "C" void companion_sos_request_from_ui(void);
 extern "C" bool companion_sos_cancel_available(void);
@@ -109,6 +110,7 @@ static atomic_t pending_path_hash_mode;
 static atomic_t pending_gps_duty_sec;
 static atomic_t pending_display_rotate;
 static atomic_t pending_input_rotate;
+static atomic_t pending_bl_timeout_ms;
 #ifdef CONFIG_ZEPHCORE_UI_DISPLAY
 static atomic_t pending_qr_slot;
 static atomic_t pending_qr_group;
@@ -279,6 +281,13 @@ extern "C" void mesh_save_screen_off_secs(uint16_t secs)
 {
 	atomic_set(&pending_screen_off_secs, (atomic_val_t)secs);
 	atomic_or(&pending_ui_actions, UI_ACTION_SCREEN_OFF_SAVE);
+	k_event_post(s_mesh_events, s_mesh_event_ui_action);
+}
+
+extern "C" void mesh_save_bl_timeout(uint32_t ms)
+{
+	atomic_set(&pending_bl_timeout_ms, (atomic_val_t)ms);
+	atomic_or(&pending_ui_actions, UI_ACTION_BL_TIMEOUT_SAVE);
 	k_event_post(s_mesh_events, s_mesh_event_ui_action);
 }
 
@@ -506,6 +515,13 @@ extern "C" void mesh_handle_ui_actions(void)
 	if (actions & UI_ACTION_DISPLAY_ROTATE_SAVE) {
 		s_mesh->prefs.display_rotate = atomic_get(&pending_display_rotate) ? 1 : 0;
 		LOG_INF("display_rotate=%d (button)", s_mesh->prefs.display_rotate);
+		need_save = true;
+	}
+
+	if (actions & UI_ACTION_BL_TIMEOUT_SAVE) {
+		s_mesh->prefs.bl_timeout_ms = (uint32_t)atomic_get(&pending_bl_timeout_ms);
+		LOG_INF("bl_timeout=%u ms (button)",
+			(unsigned)s_mesh->prefs.bl_timeout_ms);
 		need_save = true;
 	}
 

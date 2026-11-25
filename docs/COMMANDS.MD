@@ -187,7 +187,7 @@ help
 │  ├─ get/set leds.radio (при radio LED)
 │  ├─ get/set display.rotate (при поддержке поворота панели)
 │  ├─ get/set input.rotate (при дисплее)
-│  ├─ get/set bl.timeout (сек, при дисплее; 0 = подсветка off)
+│  ├─ get/set bl.timeout (сек, e-paper frontlight; 0 = off)
 │  └─ get/set tz.offset (при дисплее)
 ├─ power
 │  ├─ power
