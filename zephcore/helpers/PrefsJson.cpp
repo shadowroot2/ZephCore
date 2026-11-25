@@ -72,6 +72,7 @@ protected:
 		def("xsf", (void *)_p->extra_sf, EXTRA_SF_MAX);
 		def("disp_rot", _p->display_rotate);
 		def("in_rot", _p->input_rotate);
+		def("bl_timeout", _p->bl_timeout_ms);
 		def("pwr_sav_set", _p->powersaving_set);
 		def("gps_stby", _p->gps_standby_max);
 		/* Low-battery auto-shutdown: every role that protects a cell, not

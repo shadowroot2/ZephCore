@@ -1142,6 +1142,16 @@ void CommonCLI::handleGetCmd(uint32_t sender_timestamp, const char* command, cha
 		}
 	} else if (memcmp(config, "rxduty", 6) == 0) {
 		snprintf(reply, CLI_REPLY_SIZE, "> %d", (int)_prefs->rx_duty_cycle);
+	} else if (memcmp(config, "bl.timeout", 10) == 0) {
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
+		/* The effective window: the override, else the board's own. */
+		uint32_t ms = _prefs->bl_timeout_ms
+			? _prefs->bl_timeout_ms
+			: CONFIG_ZEPHCORE_UI_DISPLAY_AUTO_OFF_MS;
+		snprintf(reply, CLI_REPLY_SIZE, "> %u ms", ms);
+#else
+		strcpy(reply, "> unsupported (no display)");
+#endif
 	} else if (memcmp(config, "display.rotate", 14) == 0) {
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY) && MC_DISPLAY_ROTATE_SUPPORTED
 		// Report the live panel state, not the stored byte: they only
@@ -1707,6 +1717,25 @@ void CommonCLI::handleSetCmd(uint32_t sender_timestamp, const char* command, cha
 		} else {
 			strcpy(reply, "Error: must be 0, 1, on, or off");
 		}
+	} else if (memcmp(config, "bl.timeout ", 11) == 0) {
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
+		/* Display auto-off window in ms; 0 restores the board's own. */
+		char *end;
+		unsigned long v = strtoul(&config[11], &end, 10);
+
+		if ((*end != '\0' && *end != ' ') || v > 3600000) {
+			strcpy(reply, "Error: bl.timeout <ms> 0..3600000 (0 = board default)");
+		} else {
+			_prefs->bl_timeout_ms = (uint32_t)v;
+			savePrefs();
+			mc_display_set_auto_off_ms(_prefs->bl_timeout_ms);
+			mc_display_reset_auto_off();
+			snprintf(reply, CLI_REPLY_SIZE, "OK - bl.timeout=%u",
+				 _prefs->bl_timeout_ms);
+		}
+#else
+		strcpy(reply, "Error: no display");
+#endif
 	} else if (memcmp(config, "display.rotate ", 15) == 0) {
 		// Rotate the panel 180 degrees for cases that mount it upside down.
 		// Applied immediately -- the SSD1306/SH1106 remap is two bytes on

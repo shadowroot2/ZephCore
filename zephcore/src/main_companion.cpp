@@ -4681,6 +4681,9 @@ int main(void)
 	if (companion_mesh.prefs.display_rotate) {
 		mc_display_set_rotated(true);
 	}
+	if (companion_mesh.prefs.bl_timeout_ms > 0) {
+		mc_display_set_auto_off_ms(companion_mesh.prefs.bl_timeout_ms);
+	}
 #endif
 
 	ui_set_node_name(companion_mesh.prefs.node_name);

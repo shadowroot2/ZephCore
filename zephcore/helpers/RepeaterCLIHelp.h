@@ -156,6 +156,7 @@ static inline const char *repeater_remote_cli_help(const char *line, bool bridge
 #if REPEATER_HELP_HAS_DISPLAY_ROTATE
 		"get/set display.rotate\n"
 #endif
+		"get/set bl.timeout\n"
 		"get/set input.rotate\nget/set tz.offset"
 #endif
 		);

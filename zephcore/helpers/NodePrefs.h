@@ -161,6 +161,10 @@ struct NodePrefs {
 	uint8_t display_rotate;         // 1 = panel rotated 180 degrees
 	uint8_t input_rotate;           // 1 = joystick up/down and left/right swapped
 
+	/* Display auto-off timeout in ms ("bl.timeout"): 0 keeps the board's
+	 * own policy (CONFIG_ZEPHCORE_UI_DISPLAY_AUTO_OFF_MS). */
+	uint32_t bl_timeout_ms;
+
 	/* Hours from UTC, -12..+14 in quarter hours (float, as upstream), applied
 	 * only when formatting a clock for the local display. It must never reach
 	 * RTCClock or any timestamp that leaves this node. See tz_offset.h. */
@@ -406,6 +410,7 @@ static inline void sanitizeNodePrefs(NodePrefs* p) {
 	p->powersaving_set     = saneBool<uint8_t>(p->powersaving_set, 0);
 	p->display_rotate      = saneBool<uint8_t>(p->display_rotate, 0);
 	p->input_rotate        = saneBool<uint8_t>(p->input_rotate, 0);
+	p->bl_timeout_ms       = clampPref<uint32_t>(p->bl_timeout_ms, 0, 3600000);
 	/* Defaults that are on, not off. */
 	p->rx_boost            = saneBool<uint8_t>(p->rx_boost, 1);
 	p->fem_rxgain          = saneBool<uint8_t>(p->fem_rxgain, 1);
@@ -549,6 +554,7 @@ static inline void initNodePrefs(NodePrefs* prefs) {
 	prefs->wake_on_msg = 1;           // Default ON — wake display when message arrives
 	prefs->display_rotate = 0;        // Default OFF — panel in the stock case orientation
 	prefs->input_rotate = 0;          // Default OFF — joystick axes as the board wires them
+	prefs->bl_timeout_ms = 0;         // 0 = the board's own auto-off policy
 	prefs->v_contact_enabled = 1;     // Default ON — v-contact loopback admin chat (companion)
 	prefs->v_battery_alert_mv = 0xFFFF; // Sentinel: derive from board auto-shutdown threshold
 	prefs->wifi_enabled = 1;          // as upstream: WiFi still stays off until an SSID is set

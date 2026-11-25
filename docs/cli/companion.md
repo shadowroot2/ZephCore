@@ -127,7 +127,7 @@ help
    └─ erase
 ```
 
-Команды Fall в BLE help показываются только на T1000-E и ThinkNode M3; `display.rotate` и `input.rotate` добавляются в `ui` на сборках с дисплеем.
+Команды Fall в BLE help показываются только на T1000-E и ThinkNode M3; `display.rotate`, `input.rotate` и `bl.timeout` добавляются в `ui` на сборках с дисплеем.
 
 ### Remote LoRa CLI: Companion
 
@@ -169,7 +169,7 @@ help
 │  └─ get/set v.contact
 ├─ ui
 │  ├─ buzz [on|off] | leds [on|off]
-│  ├─ get/set display.rotate | input.rotate
+│  ├─ get/set display.rotate | input.rotate | bl.timeout
 │  └─ get/set leds.hb | leds.radio
 ├─ power
 │  ├─ get adc.multiplier | autoshutdown
@@ -251,6 +251,7 @@ help
 - `get/set autoshutdown.emergency` — читает/задаёт on|off для аварийного сообщения перед автоматическим выключением.
 - `get/set buzzer off|on|vibrate|sound` — читает/задаёт режим уведомлений: выключено, звук и вибрация, только вибрация, только звук; зависит от оборудования.
 - `get/set display.rotate` — читает/задаёт разворот дисплея на 180°; только поддерживаемые дисплеи.
+- `get/set bl.timeout` — читает/задаёт окно авто-гашения подсветки/дисплея после последнего нажатия, мс (0..3600000); `0` — политика платы (по умолчанию 10 с).
 - `get/set dutycycle` — читает/задаёт ограничение доли времени передачи: 1..100%.
 - `get/set extra.sf` — читает/задаёт дополнительные SF для одновременного приёма на LR2021; не для SX1262.
 - `get/set fall.sens (1-5)` — читает/задаёт чувствительность падения: 1 — максимальная, 3 — обычная, 5 — минимальная (M3, T-1000E).

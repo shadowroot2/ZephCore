@@ -23,6 +23,7 @@ static constexpr size_t REPEATER_CLI_TX_BUF_SIZE = 4096;
 #define CLI_UI_RADIO_HELP \
 	"get/set leds.radio\r\nget/set leds.hb\r\n" \
 	"get/set display.rotate\r\nget/set input.rotate\r\n" \
+	"get/set bl.timeout (ms)\r\n" \
 	"get/set tz.offset (hours)\r\n" \
 	"get/set radio.fem.rxgain\r\nget/set extra.sf\r\n"
 
@@ -90,6 +91,7 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
 		"get/set display.rotate\r\n"
+		"get/set bl.timeout\r\n"
 #endif
 		"get/set dutycycle\r\nget/set extra.sf\r\n"
 #if defined(CONFIG_BOARD_THINKNODE_M3) || defined(CONFIG_BOARD_T1000_E)
@@ -261,6 +263,7 @@ static inline const char *local_cli_help(LocalCLIHelpRole role, const char *line
 #endif
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
 		"get/set display.rotate\r\n"
+		"get/set bl.timeout\r\n"
 #endif
 		"get/set dutycycle\r\n"
 #if IS_ENABLED(CONFIG_ZEPHCORE_RADIO_LR2021)
