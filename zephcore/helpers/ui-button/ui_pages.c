@@ -797,11 +797,11 @@ static void render_chat_list(int rows, bool color, uint16_t sel_color,
 			/* Private things name themselves: a group, a room,
 			 * a direct chat.  The open ones show no marker. */
 			if (c->kind == UI_CHAT_KIND_GROUP) {
-				mark = "[**] ";
+				mark = "[**]";
 			} else if (c->kind == UI_CHAT_KIND_ROOM) {
-				mark = "[***] ";
+				mark = "[***]";
 			} else if (c->kind == UI_CHAT_KIND_DIRECT) {
-				mark = "[*] ";
+				mark = "[*]";
 			}
 			if (c->unread > 0) {
 				snprintf(buf, sizeof(buf), "%s%s (%u)", mark,
