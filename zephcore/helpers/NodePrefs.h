@@ -162,8 +162,10 @@ struct NodePrefs {
 	uint8_t input_rotate;           // 1 = joystick up/down and left/right swapped
 
 	/* Display auto-off timeout in ms ("bl.timeout"): 0 keeps the
-	 * backlight dark forever. */
+	 * backlight dark forever.  bl_window_ms remembers the window the
+	 * user chose, so the BACKLIGHT toggle can bring it back after a 0. */
 	uint32_t bl_timeout_ms;
+	uint32_t bl_window_ms;
 
 	/* Hours from UTC, -12..+14 in quarter hours (float, as upstream), applied
 	 * only when formatting a clock for the local display. It must never reach
@@ -411,6 +413,7 @@ static inline void sanitizeNodePrefs(NodePrefs* p) {
 	p->display_rotate      = saneBool<uint8_t>(p->display_rotate, 0);
 	p->input_rotate        = saneBool<uint8_t>(p->input_rotate, 0);
 	p->bl_timeout_ms       = clampPref<uint32_t>(p->bl_timeout_ms, 0, 3600000);
+	p->bl_window_ms        = clampPref<uint32_t>(p->bl_window_ms, 0, 3600000);
 	/* Defaults that are on, not off. */
 	p->rx_boost            = saneBool<uint8_t>(p->rx_boost, 1);
 	p->fem_rxgain          = saneBool<uint8_t>(p->fem_rxgain, 1);
@@ -556,8 +559,10 @@ static inline void initNodePrefs(NodePrefs* prefs) {
 	prefs->input_rotate = 0;          // Default OFF — joystick axes as the board wires them
 #ifdef CONFIG_ZEPHCORE_UI_DISPLAY_AUTO_OFF_MS
 	prefs->bl_timeout_ms = CONFIG_ZEPHCORE_UI_DISPLAY_AUTO_OFF_MS;
+	prefs->bl_window_ms = CONFIG_ZEPHCORE_UI_DISPLAY_AUTO_OFF_MS;
 #else
 	prefs->bl_timeout_ms = 10000;     // 10 s, the board's usual window
+	prefs->bl_window_ms = 10000;
 #endif
 	prefs->v_contact_enabled = 1;     // Default ON — v-contact loopback admin chat (companion)
 	prefs->v_battery_alert_mv = 0xFFFF; // Sentinel: derive from board auto-shutdown threshold

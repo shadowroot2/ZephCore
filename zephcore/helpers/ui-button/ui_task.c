@@ -985,24 +985,9 @@ static void action_leds_toggle(void)
 #if MC_DISPLAY_HAS_BACKLIGHT
 static void action_backlight_toggle(void)
 {
-	uint32_t ms;
-
-	if (mc_display_get_auto_off_ms() == 0) {
-		/* Back on with the board's own window. */
-#ifdef CONFIG_ZEPHCORE_UI_DISPLAY_AUTO_OFF_MS
-		ms = CONFIG_ZEPHCORE_UI_DISPLAY_AUTO_OFF_MS;
-#else
-		ms = 10000;
-#endif
-	} else {
-		ms = 0;	/* never light */
-	}
-	mc_display_set_auto_off_ms(ms);
-	if (ms > 0) {
-		mc_display_on();
-	}
-	mesh_save_bl_timeout(ms);
-	LOG_INF("bl.timeout=%u ms (user toggle)", (unsigned)ms);
+	/* The mesh thread owns the prefs; it brings back the window the
+	 * user last chose when switching on. */
+	mesh_bl_timeout_toggle();
 	schedule_render();
 }
 #endif

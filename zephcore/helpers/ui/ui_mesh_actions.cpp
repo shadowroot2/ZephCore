@@ -34,6 +34,7 @@ LOG_MODULE_REGISTER(zephcore_ui_actions, CONFIG_ZEPHCORE_UI_ACTIONS_LOG_LEVEL);
 #include <ZephyrBLE.h>
 #include <ZephyrSensorManager.h>
 #include "ui_task.h"
+#include "display.h"
 #include <joystick_ui_hooks.h>
 #include "ui_mesh_actions.h"
 #include "ui_radio_state.h"
@@ -64,7 +65,7 @@ LOG_MODULE_REGISTER(zephcore_ui_actions, CONFIG_ZEPHCORE_UI_ACTIONS_LOG_LEVEL);
 #define UI_ACTION_NAV_TOGGLE        BIT(21)
 #define UI_ACTION_WP_CYCLE           BIT(22)
 #define UI_ACTION_QUICK_REPLY       BIT(23) /* ZEPHCORE: quick replies */
-#define UI_ACTION_BL_TIMEOUT_SAVE   BIT(24) /* ZEPHCORE: backlight window */
+#define UI_ACTION_BL_TIMEOUT_TOGGLE BIT(24) /* ZEPHCORE: backlight window */
 
 extern "C" void companion_sos_request_from_ui(void);
 extern "C" bool companion_sos_cancel_available(void);
@@ -110,7 +111,6 @@ static atomic_t pending_path_hash_mode;
 static atomic_t pending_gps_duty_sec;
 static atomic_t pending_display_rotate;
 static atomic_t pending_input_rotate;
-static atomic_t pending_bl_timeout_ms;
 #ifdef CONFIG_ZEPHCORE_UI_DISPLAY
 static atomic_t pending_qr_slot;
 static atomic_t pending_qr_group;
@@ -284,12 +284,15 @@ extern "C" void mesh_save_screen_off_secs(uint16_t secs)
 	k_event_post(s_mesh_events, s_mesh_event_ui_action);
 }
 
-extern "C" void mesh_save_bl_timeout(uint32_t ms)
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
+extern "C" void mesh_bl_timeout_toggle(void)
 {
-	atomic_set(&pending_bl_timeout_ms, (atomic_val_t)ms);
-	atomic_or(&pending_ui_actions, UI_ACTION_BL_TIMEOUT_SAVE);
+	atomic_or(&pending_ui_actions, UI_ACTION_BL_TIMEOUT_TOGGLE);
 	k_event_post(s_mesh_events, s_mesh_event_ui_action);
 }
+#else
+extern "C" void mesh_bl_timeout_toggle(void) {}
+#endif
 
 extern "C" void mesh_save_display_rotate(bool rotated)
 {
@@ -518,12 +521,35 @@ extern "C" void mesh_handle_ui_actions(void)
 		need_save = true;
 	}
 
-	if (actions & UI_ACTION_BL_TIMEOUT_SAVE) {
-		s_mesh->prefs.bl_timeout_ms = (uint32_t)atomic_get(&pending_bl_timeout_ms);
-		LOG_INF("bl_timeout=%u ms (button)",
-			(unsigned)s_mesh->prefs.bl_timeout_ms);
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
+	if (actions & UI_ACTION_BL_TIMEOUT_TOGGLE) {
+		uint32_t ms;
+
+		if (s_mesh->prefs.bl_timeout_ms == 0) {
+			/* Back on with the window the user last chose. */
+			ms = s_mesh->prefs.bl_window_ms;
+			if (ms == 0) {
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY_AUTO_OFF_MS
+				ms = CONFIG_ZEPHCORE_UI_DISPLAY_AUTO_OFF_MS;
+#else
+				ms = 10000;
+#endif
+			}
+		} else {
+			/* Off, remembering the window for the way back. */
+			s_mesh->prefs.bl_window_ms = s_mesh->prefs.bl_timeout_ms;
+			ms = 0;
+		}
+		s_mesh->prefs.bl_timeout_ms = ms;
+		mc_display_set_auto_off_ms(ms);
+		if (ms > 0) {
+			mc_display_on();
+		}
+		ui_request_render();
+		LOG_INF("bl_timeout=%u ms (button)", (unsigned)ms);
 		need_save = true;
 	}
+#endif
 
 	if (actions & UI_ACTION_INPUT_ROTATE_SAVE) {
 		s_mesh->prefs.input_rotate = atomic_get(&pending_input_rotate) ? 1 : 0;

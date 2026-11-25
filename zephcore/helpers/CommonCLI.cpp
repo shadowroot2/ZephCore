@@ -1723,6 +1723,11 @@ void CommonCLI::handleSetCmd(uint32_t sender_timestamp, const char* command, cha
 			strcpy(reply, "Error: bl.timeout <s> 0..3600 (0 = backlight off)");
 		} else {
 			_prefs->bl_timeout_ms = (uint32_t)(v * 1000);
+			if (v > 0) {
+				/* Remember the window: the BACKLIGHT toggle
+				 * brings it back after a 0. */
+				_prefs->bl_window_ms = _prefs->bl_timeout_ms;
+			}
 			savePrefs();
 			mc_display_set_auto_off_ms(_prefs->bl_timeout_ms);
 			mc_display_reset_auto_off();
