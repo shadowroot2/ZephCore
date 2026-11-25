@@ -868,7 +868,8 @@ static void render_qr_picker(int rows, int cols, bool color, uint16_t sel_color,
 		 * "..." so the cut is visible; cfb_print would wrap the
 		 * overflow onto the row below. */
 		if (text_cols(text) > cols && cols > 3) {
-			p = text;
+			const char *p = text;
+
 			ui_feed_wrap_row(row, sizeof(row), &p, cols - 3);
 			strcat(row, "...");
 			text = row;
