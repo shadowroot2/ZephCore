@@ -99,6 +99,10 @@ bool mc_display_is_on(void);
  */
 bool mc_display_is_epd(void);
 
+/* True when the panel carries its own backlight regulator (an e-paper
+ * frontlight or similar) that the driver switches with display on/off. */
+bool mc_display_has_backlight(void);
+
 /* Color overlay support is compiled only when the devicetree names a raw
  * RGB565 TFT, by the `zephcore,color-tft` chosen node (for a panel in an
  * upstream DTS) or the `tft` nodelabel. Other boards get mono inlines. */

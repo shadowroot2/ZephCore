@@ -750,6 +750,11 @@ bool mc_display_is_epd(void)
 	return is_epd;
 }
 
+bool mc_display_has_backlight(void)
+{
+	return backlight_reg != NULL;
+}
+
 int mc_display_set_rotated(bool rotated)
 {
 #if !MC_DISPLAY_ROTATE_SUPPORTED

@@ -513,6 +513,12 @@ static void splash_work_handler(struct k_work *work)
 #ifdef CONFIG_ZEPHCORE_UI_DISPLAY
 	mc_display_epd_full_reset();
 
+	/* The splash handoff takes the frontlight with it; a backlight of
+	 * its own gets 5 s more so the first page is readable at boot. */
+	if (mc_display_has_backlight()) {
+		mc_display_on_for(5000);
+	}
+
 	/* Transition from splash to home page (first active page for this role) */
 #ifdef ZEPHCORE_REPEATER
 	ui_pages_set(UI_PAGE_STATUS);
