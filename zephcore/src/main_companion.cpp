@@ -1288,8 +1288,17 @@ extern "C" void companion_quick_reply_send_from_ui(int slot, const char *chat_na
 		uint32_t expected_ack = 0, est_timeout = 0;
 
 		for (int i = 0; i < companion_mesh_ptr->getNumContacts(); i++) {
-			if (companion_mesh_ptr->getContactByIdx(i, ci) &&
-			    strcmp(ci.name, chat_name) == 0) {
+			char clean[UI_FEED_NAME_LEN];
+
+			if (!companion_mesh_ptr->getContactByIdx(i, ci)) {
+				continue;
+			}
+			/* The feed's chats are named without pictographs while
+			 * the contact still wears its smiley: compare the two
+			 * as the list keeps them, or a smiley in a name hides
+			 * the contact from its own quick reply. */
+			ui_feed_strip_pictographs(clean, sizeof(clean), ci.name);
+			if (strcmp(clean, chat_name) == 0) {
 				found = true;
 				break;
 			}
