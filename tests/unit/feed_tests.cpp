@@ -610,26 +610,25 @@ TEST(feed_own_mark, "UNIT-FEED-023",
 	struct ui_chat_iter it;
 	struct ui_feed_cursor start = { 0, 0 };
 
+	/* A channel outcome is a neighbour count: "+3" repeated, "x" not. */
 	(void)ui_chat_push(&l, "Public", true, NOW, "Nick: чужое");
 	(void)ui_chat_push(&l, "Public", true, NOW + 1, "Я: привет");
-	(void)ui_chat_push(&l, "Public", true, NOW + 2, "Я: пока");
+	(void)ui_chat_push(&l, "Public", true, NOW + 2, "Я: еду");
 	c = ui_chat_find(&l, "Public");
 	CHECK(c != NULL);
 
 	CHECK(ui_chat_set_own(c, NOW + 1));
 	CHECK(ui_chat_set_own(c, NOW + 2));
 	CHECK(ui_chat_set_mark(c, NOW + 1, UI_MSG_MARK_HEARD, 3));
-	CHECK(ui_chat_set_mark(c, NOW + 2, UI_MSG_MARK_DELIVERED, 0));
+	CHECK(ui_chat_set_mark(c, NOW + 2, UI_MSG_MARK_HEARD, 0));
 	/* An unknown timestamp (already evicted) changes nothing. */
 	CHECK(!ui_chat_set_mark(c, NOW + 99, UI_MSG_MARK_FAILED, 0));
 
-	/* Rows at 21 columns: "12:34 Я" on the left and the outcome at the
-	 * row's end. */
 	ui_chat_iter_init(&it, c, start, NOW, 0, 21);
 	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
-	CHECK(std::string(row) == "12:34 Я            +1");
+	CHECK(std::string(row) == "12:34 Я             x");
 	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
-	CHECK(std::string(row) == "\xD0\xBF\xD0\xBE\xD0\xBA\xD0\xB0");
+	CHECK(std::string(row) == "\xD0\xB5\xD0\xB4\xD1\x83");
 	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
 	CHECK(std::string(row) == "12:34 Я            +3");
 	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
@@ -640,18 +639,31 @@ TEST(feed_own_mark, "UNIT-FEED-023",
 	CHECK(std::string(row) == "\xD1\x87\xD1\x83\xD0\xB6\xD0\xBE\xD0\xB5");
 	CHECK(!ui_chat_iter_next(&it, row, sizeof(row)));
 
-	/* An unheard direct message reads "x" at the row's end, and its
-	 * text sits below the "Я" head like a channel one. */
-	(void)ui_chat_push(&l, "Mama", false, NOW, "Я: где ты?");
+	/* A direct outcome is only delivered ("+") or not ("x"); the text
+	 * sits below the "Я" head like a channel one, and an incoming
+	 * direct message stays one line. */
+	(void)ui_chat_push(&l, "Mama", false, NOW, "ты где?");
+	(void)ui_chat_push(&l, "Mama", false, NOW + 1, "Я: где ты?");
+	(void)ui_chat_push(&l, "Mama", false, NOW + 2, "Я: буду позже");
 	c = ui_chat_find(&l, "Mama");
 	CHECK(c != NULL);
-	CHECK(ui_chat_set_own(c, NOW));
-	CHECK(ui_chat_set_mark(c, NOW, UI_MSG_MARK_FAILED, 0));
+	CHECK(ui_chat_set_own(c, NOW + 1));
+	CHECK(ui_chat_set_own(c, NOW + 2));
+	CHECK(ui_chat_set_mark(c, NOW + 1, UI_MSG_MARK_DELIVERED, 0));
+	CHECK(ui_chat_set_mark(c, NOW + 2, UI_MSG_MARK_FAILED, 0));
 	start = (struct ui_feed_cursor){ 0, 0 };
 	ui_chat_iter_init(&it, c, start, NOW, 0, 21);
 	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
 	CHECK(std::string(row) == "12:34 Я             x");
 	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
+	CHECK(std::string(row) ==
+	      "\xD0\xB1\xD1\x83\xD0\xB4\xD1\x83 \xD0\xBF\xD0\xBE\xD0\xB7\xD0\xB6\xD0\xB5");
+	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
+	CHECK(std::string(row) == "12:34 Я             +");
+	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
 	CHECK(std::string(row) == "\xD0\xB3\xD0\xB4\xD0\xB5 \xD1\x82\xD1\x8B?");
+	CHECK(ui_chat_iter_next(&it, row, sizeof(row)));
+	CHECK(std::string(row) ==
+	      "12:34 \xD1\x82\xD1\x8B \xD0\xB3\xD0\xB4\xD0\xB5?");
 	CHECK(!ui_chat_iter_next(&it, row, sizeof(row)));
 }

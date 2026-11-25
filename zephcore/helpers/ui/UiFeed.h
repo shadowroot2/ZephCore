@@ -942,14 +942,14 @@ struct ui_chat_iter {
  *     увидимся
  */
 /* The own-message outcome as it rides the head row's right edge: "+3"
- * neighbours repeated the message, "x" nobody heard it, "+1" a delivered
- * direct message (its one addressee did). */
+ * neighbours repeated the message, "x" nobody heard it, and a direct
+ * message is only delivered ("+") or not ("x") — no counts there. */
 static inline const char *ui_feed_mark_text(char *buf, size_t n,
 					    const struct ui_chat_msg *m)
 {
 	buf[0] = '\0';
 	if (m->mark == UI_MSG_MARK_DELIVERED) {
-		snprintf(buf, n, "+1");
+		snprintf(buf, n, "+");
 	} else if (m->mark == UI_MSG_MARK_FAILED) {
 		snprintf(buf, n, "x");
 	} else if (m->mark == UI_MSG_MARK_HEARD) {
