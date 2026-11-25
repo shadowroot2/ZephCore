@@ -1755,6 +1755,17 @@ static void render_leds_mono(void)
 {
 	char buf[24];
 	int y = CONTENT_Y;
+	uint32_t bl = mc_display_get_auto_off_ms();
+
+	if (bl == 0) {
+		snprintf(buf, sizeof(buf), "Backlight: off");
+	} else if (bl % 1000 == 0) {
+		snprintf(buf, sizeof(buf), "Backlight: %us", (unsigned)(bl / 1000));
+	} else {
+		snprintf(buf, sizeof(buf), "Backlight: %ums", (unsigned)bl);
+	}
+	mc_display_text(0, y, buf, false);
+	y += LINE_H;
 
 	snprintf(buf, sizeof(buf), "LEDs: %s",
 		 state.leds_disabled ? "off" : "on");
@@ -1768,7 +1779,20 @@ static void render_leds_mono(void)
 #if MC_DISPLAY_COLOR_PANEL
 static void render_leds_color(void)
 {
+	char buf[24];
 	int y = CONTENT_Y;
+	uint32_t bl = mc_display_get_auto_off_ms();
+
+	if (bl == 0) {
+		snprintf(buf, sizeof(buf), "Backlight: off");
+	} else if (bl % 1000 == 0) {
+		snprintf(buf, sizeof(buf), "Backlight: %us", (unsigned)(bl / 1000));
+	} else {
+		snprintf(buf, sizeof(buf), "Backlight: %ums", (unsigned)bl);
+	}
+	mc_display_color_text(0, y, buf,
+			      bl == 0 ? UI_COLOR_DISABLED : UI_COLOR_VALUE);
+	y += LINE_H + 4;
 
 	draw_badge(0, y, "LED", state.leds_disabled ? UI_COLOR_DISABLED
 						      : UI_COLOR_OK);

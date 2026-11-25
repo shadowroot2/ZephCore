@@ -714,7 +714,8 @@ void mc_display_on(void)
 		}
 		disp_set_on(true);
 	}
-	backlight_set(true);
+	/* A 0 policy keeps the backlight dark forever. */
+	backlight_set(mc_display_get_auto_off_ms() > 0);
 
 	mc_display_reset_auto_off();
 }
@@ -1086,27 +1087,44 @@ void mc_display_finalize(void)
 }
 
 static uint32_t auto_off_ms_override;
+static bool auto_off_override_set;	/* 0 is a real value: never light */
 
 void mc_display_set_auto_off_ms(uint32_t ms)
 {
 	auto_off_ms_override = ms;
+	auto_off_override_set = true;
+	if (ms == 0) {
+		/* The backlight never lights again. */
+		backlight_set(false);
+		k_work_cancel_delayable(&auto_off_work);
+	} else {
+		mc_display_reset_auto_off();
+	}
+}
+
+uint32_t mc_display_get_auto_off_ms(void)
+{
+	if (auto_off_override_set) {
+		return auto_off_ms_override;
+	}
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY_AUTO_OFF_MS
+	return CONFIG_ZEPHCORE_UI_DISPLAY_AUTO_OFF_MS;
+#else
+	return 0;
+#endif
 }
 
 void mc_display_reset_auto_off(void)
 {
+	uint32_t timeout;
+
 	if (!disp_initialized) {
 		return;
 	}
-
-#ifdef CONFIG_ZEPHCORE_UI_DISPLAY_AUTO_OFF_MS
-	uint32_t timeout = auto_off_ms_override
-		? auto_off_ms_override
-		: CONFIG_ZEPHCORE_UI_DISPLAY_AUTO_OFF_MS;
-
+	timeout = mc_display_get_auto_off_ms();
 	if (timeout > 0) {
 		k_work_reschedule(&auto_off_work, K_MSEC(timeout));
 	}
-#endif
 }
 
 void mc_display_on_for(uint32_t ms)

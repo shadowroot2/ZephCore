@@ -1144,11 +1144,8 @@ void CommonCLI::handleGetCmd(uint32_t sender_timestamp, const char* command, cha
 		snprintf(reply, CLI_REPLY_SIZE, "> %d", (int)_prefs->rx_duty_cycle);
 	} else if (memcmp(config, "bl.timeout", 10) == 0) {
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
-		/* The effective window: the override, else the board's own. */
-		uint32_t ms = _prefs->bl_timeout_ms
-			? _prefs->bl_timeout_ms
-			: CONFIG_ZEPHCORE_UI_DISPLAY_AUTO_OFF_MS;
-		snprintf(reply, CLI_REPLY_SIZE, "> %u ms", ms);
+		snprintf(reply, CLI_REPLY_SIZE, "> %u ms",
+			 mc_display_get_auto_off_ms());
 #else
 		strcpy(reply, "> unsupported (no display)");
 #endif
@@ -1719,12 +1716,12 @@ void CommonCLI::handleSetCmd(uint32_t sender_timestamp, const char* command, cha
 		}
 	} else if (memcmp(config, "bl.timeout ", 11) == 0) {
 #if IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
-		/* Display auto-off window in ms; 0 restores the board's own. */
+		/* Display auto-off window in ms; 0 keeps the backlight dark. */
 		char *end;
 		unsigned long v = strtoul(&config[11], &end, 10);
 
 		if ((*end != '\0' && *end != ' ') || v > 3600000) {
-			strcpy(reply, "Error: bl.timeout <ms> 0..3600000 (0 = board default)");
+			strcpy(reply, "Error: bl.timeout <ms> 0..3600000 (0 = backlight off)");
 		} else {
 			_prefs->bl_timeout_ms = (uint32_t)v;
 			savePrefs();

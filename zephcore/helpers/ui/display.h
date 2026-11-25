@@ -320,6 +320,11 @@ void mc_display_reset_auto_off(void);
  * one-shot wake that does not touch the user's screen-off setting. */
 void mc_display_on_for(uint32_t ms);
 
+/* The display auto-off window in ms (0 = the backlight never lights).
+ * The override set by mc_display_set_auto_off_ms wins over the board's
+ * CONFIG_ZEPHCORE_UI_DISPLAY_AUTO_OFF_MS. */
+uint32_t mc_display_get_auto_off_ms(void);
+
 /**
  * Override the auto-off timeout (0 = revert to Kconfig default).
  * Call from the UI layer when the user changes the screen-off duration
