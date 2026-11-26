@@ -194,13 +194,13 @@ TEST(tracking_backlog_probe_cap, "UNIT-TRACKBUF-006",
 		tracking_backlog_verdict(&b, false);
 	}
 	CHECK(!tracking_backlog_may_probe(&b));
-	/* The point stays: a live report reopens the tap and the tries. */
+	/* The point stays: only a heard send brings the tries back. */
 	CHECK(b.count == 1);
 	pt.time_s = PT1234;
 	pt.lat_ndeg = LAT;
 	pt.lon_ndeg = LON;
 	tracking_backlog_begin_live(&b, 8, 0, &pt);
-	CHECK(tracking_backlog_may_probe(&b));
+	CHECK(!tracking_backlog_may_probe(&b));
 
 	/* A heard send opens the tap for good. */
 	tracking_backlog_reset(&b);

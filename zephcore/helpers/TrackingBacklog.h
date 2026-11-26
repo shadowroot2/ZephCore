@@ -108,8 +108,6 @@ static inline void tracking_backlog_begin_live(struct tracking_backlog *b, uint3
 	b->inflight_due_ms = now_ms + TRACKING_BACKLOG_VERDICT_MS;
 	b->inflight_points = 1;
 	b->inflight_live_pt = *pt;
-	/* A live report is fresh activity: the tap gets its tries back. */
-	b->probe_tries = 0;
 }
 
 /* A backlog message (probe or drain) left: it carries the first `points`
@@ -142,6 +140,12 @@ static inline void tracking_backlog_verdict(struct tracking_backlog *b, bool hea
 					      b->inflight_live_pt.lat_ndeg,
 					      b->inflight_live_pt.lon_ndeg);
 			b->draining = false;
+		} else {
+			/* The tap is open: the backlog may flush now. */
+			b->draining = true;
+			b->probe_tries = 0;
+			b->next_send_ms = b->inflight_sent_ms +
+					  TRACKING_BACKLOG_DRAIN_INTERVAL_MS;
 		}
 		b->inflight = false;
 		return;
