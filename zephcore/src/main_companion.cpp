@@ -2154,7 +2154,7 @@ static void companion_send_tracking_summary(void)
 {
 	struct gps_position pos;
 	bool has_fix = gps_get_last_known_position(&pos);
-	char text[160];
+	char text[160], vtext[176];
 	/* The group copy goes out under the "name: " prefix: reserve it or the
 	 * maps link gets cut mid-URL. */
 	size_t name_prefix = strlen(companion_mesh.prefs.node_name) + 2;
@@ -2166,6 +2166,10 @@ static void companion_send_tracking_summary(void)
 				&tracking_odo,
 				has_fix ? pos.latitude_ndeg : 0,
 				has_fix ? pos.longitude_ndeg : 0, has_fix);
+	/* The v-contact gets tracking's on/off and the final report — the
+	 * stream itself lives in the group. */
+	snprintf(vtext, sizeof(vtext), "Трекинг завершён\n%s", text);
+	companion_mesh.vcontactNotify(vtext);
 
 	ChannelDetails tracks_channel;
 	const char *group_name = companion_mesh.prefs.tracking_group_name;
@@ -2197,6 +2201,9 @@ static void companion_send_tracking_start(void)
 				  pos.longitude_ndeg / 1e9);
 		snprintf(text + n, sizeof(text) - n, "\n📍 %s", url);
 	}
+	/* The v-contact gets tracking's on/off and the final report — the
+	 * stream itself lives in the group. */
+	companion_mesh.vcontactNotify(text);
 
 	ChannelDetails tracks_channel;
 	const char *group_name = companion_mesh.prefs.tracking_group_name;
