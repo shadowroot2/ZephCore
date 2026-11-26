@@ -2,16 +2,14 @@
  * Common: mark the 'buttons' gpio-keys node as a wakeup source.
  *
  * NOTE: On nRF52, this property is currently inert — the nRF GPIO driver
- * does not implement GPIO_INT_WAKEUP, so wakeup-source alone does not set
- * the GPIO SENSE bits required for System OFF wakeup. Actual SENSE
- * configuration is done explicitly for the sw0 alias in
- * adapters/board/zephyr_poweroff.c via nrf_gpio_cfg_sense_input() right
- * before sys_poweroff().
+ * does not implement GPIO_INT_WAKEUP, and the power-off path
+ * (adapters/board/zephyr_poweroff.c) arms no SENSE on purpose: power-on
+ * is the RESET button's job alone.
  *
  * Kept here so that:
  *   1. If a future Zephyr nRF GPIO driver gains GPIO_INT_WAKEUP support,
- *      this will work automatically alongside the HAL call (harmless
- *      double-set).
+ *      boards that DO want a button to power the board on can opt in by
+ *      dropping this file's include — the default stays reset-only.
  *   2. It documents wakeup intent in devicetree for boards that may run
  *      on other platforms where the driver does honour GPIO_INT_WAKEUP.
  *
