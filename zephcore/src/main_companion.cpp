@@ -496,6 +496,11 @@ static void mesh_event_loop(void)
 		if (events & MESH_EVENT_MANUAL_SHUTDOWN) {
 			bool queued = false;
 			companion_sos_flush_on_shutdown();
+			/* The last wide advert: the node introduces itself on
+			 * the way out, once, like at boot. */
+			if (companion_mesh_ptr->sendSelfAdvert(true)) {
+				queued = true;
+			}
 #if IS_ENABLED(CONFIG_ZEPHCORE_POWER_ANNOUNCE)
 			/* The power-off notice goes out right after the shutdown
 			 * melody the UI played. The boot notice is superseded —
