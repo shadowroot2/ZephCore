@@ -2100,12 +2100,22 @@ static void companion_tracking_backlog_process(void)
 		tracking_backlog_verdict(b, heard);
 		LOG_INF("tracking: deferred send %s (%d repeats, %d pending)",
 			heard ? "heard" : "not heard", dupes, b->count);
-		/* An unheard send must probe again on the retry cadence — waiting
-		 * for the next report window starves the ring for a whole
-		 * interval and evicts its points.  A few tries only: re-sending
-		 * a message nobody repeats reaches nobody. */
-		if (!heard && tracking_backlog_probe_ms == INT64_MAX &&
-		    tracking_backlog_may_probe(b)) {
+		if (!heard && !companion_tracking.enabled &&
+		    !tracking_backlog_may_probe(b)) {
+			/* Tracking off, ten tries and nobody heard it: the
+			 * points are stale, the buffer goes with them. */
+			LOG_WRN("tracking: %d deferred points dropped",
+				b->count);
+			tracking_backlog_reset(b);
+			tracking_backlog_probe_ms = INT64_MAX;
+		} else if (!heard && tracking_backlog_probe_ms == INT64_MAX &&
+			   (companion_tracking.enabled ||
+			    tracking_backlog_may_probe(b))) {
+			/* An unheard send must probe again on the retry
+			 * cadence — waiting for the next report window
+			 * starves the ring for a whole interval and evicts
+			 * its points.  While tracking runs the retries are
+			 * unlimited; after tracking off they are not. */
 			tracking_backlog_probe_ms = now + TRACKING_BACKLOG_PROBE_RETRY_MS;
 		}
 		break;
@@ -2266,8 +2276,9 @@ static bool companion_tracking_set_enabled(bool enabled, char *reply, bool silen
 	tracking_odometer_finish(&tracking_odo, k_uptime_get());
 	companion_send_tracking_summary();
 	memset(&companion_tracking, 0, sizeof(companion_tracking));
-	/* The buffer outlives the session: the points are still worth
-	 * delivering and the backlog frees itself as they go out. */
+	/* The buffer outlives the session and tries to finish it: ten
+	 * attempts on the retry period, then the points go with it. */
+	tracking_backlog_buf.probe_tries = 0;
 	tracking_backlog_probe_ms = INT64_MAX;
 	companion_gps_user_left();
 	companion_tracking_ui_update();

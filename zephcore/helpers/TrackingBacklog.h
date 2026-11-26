@@ -32,11 +32,11 @@
  * is due only once the backlog is out and goes live as always. */
 #define TRACKING_BACKLOG_PROBE_LEAD_MS 150000
 /* With no report running (`tracking off`) the probe repeats on this period
- * so an ended session still flushes what accumulated — but only a few
+ * so an ended session still flushes what accumulated — but only so many
  * times: a send nobody repeats would otherwise go out again and again
  * forever. */
 #define TRACKING_BACKLOG_PROBE_RETRY_MS 60000
-#define TRACKING_BACKLOG_PROBE_MAX_TRIES 3
+#define TRACKING_BACKLOG_PROBE_MAX_TRIES 10
 
 enum tracking_backlog_action {
 	TRACKING_BACKLOG_IDLE = 0,
@@ -173,8 +173,8 @@ static inline void tracking_backlog_verdict(struct tracking_backlog *b, bool hea
 	b->inflight = false;
 }
 
-/* Whether another probe send is worth trying: a send nobody repeats is
- * re-sent only TRACKING_BACKLOG_PROBE_MAX_TRIES times. */
+/* Whether another probe send is worth trying: after tracking off a send
+ * nobody repeats is re-sent only TRACKING_BACKLOG_PROBE_MAX_TRIES times. */
 static inline bool tracking_backlog_may_probe(const struct tracking_backlog *b)
 {
 	return b->probe_tries < TRACKING_BACKLOG_PROBE_MAX_TRIES;
