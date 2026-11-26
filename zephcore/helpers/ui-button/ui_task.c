@@ -1481,9 +1481,15 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 		}
 		/* ZEPHCORE: the first page measures the action press too — a
 		 * short press arms the SOS window, the hold inside it sends
-		 * (home_hold_handler). */
+		 * (home_hold_handler).  A running SOS owns the short press:
+		 * that is the cancel. */
 		if (ui_pages_current() == UI_PAGE_PUBLIC ||
 		    ui_pages_current() == UI_PAGE_MESSAGES) {
+			if (companion_sos_cancel_available()) {
+				enter_press_at = k_uptime_get_32();
+				enter_captured = true;
+				break;
+			}
 			home_press_active = true;
 			k_work_reschedule(&home_hold_work, K_MSEC(HOME_HOLD_DELAY_MS));
 			break;
