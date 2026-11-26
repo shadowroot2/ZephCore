@@ -32,8 +32,11 @@
  * is due only once the backlog is out and goes live as always. */
 #define TRACKING_BACKLOG_PROBE_LEAD_MS 150000
 /* With no report running (`tracking off`) the probe repeats on this period
- * so an ended session still flushes what accumulated. */
+ * so an ended session still flushes what accumulated — but only a few
+ * times: a send nobody repeats would otherwise go out again and again
+ * forever. */
 #define TRACKING_BACKLOG_PROBE_RETRY_MS 60000
+#define TRACKING_BACKLOG_PROBE_MAX_TRIES 3
 
 enum tracking_backlog_action {
 	TRACKING_BACKLOG_IDLE = 0,
@@ -53,6 +56,9 @@ struct tracking_backlog {
 	bool inflight_live;    /* a live report: its point is not in the ring */
 	struct tracking_deferred_point inflight_live_pt;
 	int64_t next_send_ms;   /* the drain deadline (valid while draining) */
+	uint8_t probe_tries;	/* consecutive unheard probes; the tap is
+				 * closed and re-sending the same message
+				 * again and again reaches nobody */
 };
 
 static inline void tracking_backlog_reset(struct tracking_backlog *b)
@@ -102,6 +108,8 @@ static inline void tracking_backlog_begin_live(struct tracking_backlog *b, uint3
 	b->inflight_due_ms = now_ms + TRACKING_BACKLOG_VERDICT_MS;
 	b->inflight_points = 1;
 	b->inflight_live_pt = *pt;
+	/* A live report is fresh activity: the tap gets its tries back. */
+	b->probe_tries = 0;
 }
 
 /* A backlog message (probe or drain) left: it carries the first `points`
@@ -148,11 +156,24 @@ static inline void tracking_backlog_verdict(struct tracking_backlog *b, bool hea
 		/* The tap is open: the next message goes out on the drain
 		 * cadence even if only the fresh report is left. */
 		b->draining = true;
+		b->probe_tries = 0;
 		b->next_send_ms = b->inflight_sent_ms + TRACKING_BACKLOG_DRAIN_INTERVAL_MS;
 	} else {
 		b->draining = false;
+		/* The tap is closed; a couple more probes and the message
+		 * has to wait for a live report to reopen it. */
+		if (b->probe_tries < 255) {
+			b->probe_tries++;
+		}
 	}
 	b->inflight = false;
+}
+
+/* Whether another probe send is worth trying: a send nobody repeats is
+ * re-sent only TRACKING_BACKLOG_PROBE_MAX_TRIES times. */
+static inline bool tracking_backlog_may_probe(const struct tracking_backlog *b)
+{
+	return b->probe_tries < TRACKING_BACKLOG_PROBE_MAX_TRIES;
 }
 
 /* What to do at now_ms: VERDICT when the inflight send is due its heard

@@ -2083,9 +2083,11 @@ static void companion_tracking_backlog_process(void)
 	int64_t now = k_uptime_get();
 
 	/* With no report to anchor the probe to (`tracking off`), retry on a
-	 * fixed period so an ended session still flushes what accumulated. */
+	 * fixed period so an ended session still flushes what accumulated —
+	 * while the tries last, so an unheard message cannot repeat forever. */
 	if (!companion_tracking.enabled && !b->draining && !b->inflight &&
-	    b->count > 0 && tracking_backlog_probe_ms == INT64_MAX) {
+	    b->count > 0 && tracking_backlog_probe_ms == INT64_MAX &&
+	    tracking_backlog_may_probe(b)) {
 		tracking_backlog_probe_ms = now + TRACKING_BACKLOG_PROBE_RETRY_MS;
 	}
 
@@ -2100,8 +2102,10 @@ static void companion_tracking_backlog_process(void)
 			heard ? "heard" : "not heard", dupes, b->count);
 		/* An unheard send must probe again on the retry cadence — waiting
 		 * for the next report window starves the ring for a whole
-		 * interval and evicts its points. */
-		if (!heard && tracking_backlog_probe_ms == INT64_MAX) {
+		 * interval and evicts its points.  A few tries only: re-sending
+		 * a message nobody repeats reaches nobody. */
+		if (!heard && tracking_backlog_probe_ms == INT64_MAX &&
+		    tracking_backlog_may_probe(b)) {
 			tracking_backlog_probe_ms = now + TRACKING_BACKLOG_PROBE_RETRY_MS;
 		}
 		break;

@@ -179,3 +179,39 @@ TEST(tracking_backlog_verdict_window, "UNIT-TRACKBUF-004",
 	CHECK(tracking_backlog_next(&b, TRACKING_BACKLOG_VERDICT_MS, 0) ==
 	      TRACKING_BACKLOG_VERDICT);
 }
+
+TEST(tracking_backlog_probe_cap, "UNIT-TRACKBUF-006",
+     "A send nobody repeats is probed a few times, not forever") {
+	struct tracking_backlog b;
+	struct tracking_deferred_point pt;
+	int i;
+
+	/* Unheard probes eat the tries; the third is the last. */
+	tracking_backlog_reset(&b);
+	tracking_backlog_push(&b, PT1234, LAT, LON);
+	for (i = 0; i < TRACKING_BACKLOG_PROBE_MAX_TRIES; i++) {
+		tracking_backlog_begin(&b, 7, 0, 1);
+		tracking_backlog_verdict(&b, false);
+	}
+	CHECK(!tracking_backlog_may_probe(&b));
+	/* The point stays: a live report reopens the tap and the tries. */
+	CHECK(b.count == 1);
+	pt.time_s = PT1234;
+	pt.lat_ndeg = LAT;
+	pt.lon_ndeg = LON;
+	tracking_backlog_begin_live(&b, 8, 0, &pt);
+	CHECK(tracking_backlog_may_probe(&b));
+
+	/* A heard send opens the tap for good. */
+	tracking_backlog_reset(&b);
+	tracking_backlog_push(&b, PT1234, LAT, LON);
+	for (i = 0; i < TRACKING_BACKLOG_PROBE_MAX_TRIES; i++) {
+		tracking_backlog_begin(&b, 7, 0, 1);
+		tracking_backlog_verdict(&b, false);
+	}
+	CHECK(!tracking_backlog_may_probe(&b));
+	tracking_backlog_begin(&b, 7, 0, 1);
+	tracking_backlog_verdict(&b, true);
+	CHECK(tracking_backlog_may_probe(&b));
+	CHECK(b.count == 0);
+}

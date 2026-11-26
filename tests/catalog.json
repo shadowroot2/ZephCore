@@ -946,6 +946,11 @@
       "id": "UNIT-FEED-024",
       "name": "An @[] quote keeps no smiley in the name it quotes",
       "source": "tests/unit/feed_tests.cpp"
+    },
+    {
+      "id": "UNIT-TRACKBUF-006",
+      "name": "A send nobody repeats is probed a few times, not forever",
+      "source": "tests/unit/tracking_backlog_tests.cpp"
     }
   ]
 }
