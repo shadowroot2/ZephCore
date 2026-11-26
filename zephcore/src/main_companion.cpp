@@ -571,8 +571,6 @@ static void mesh_event_loop(void)
 			}
 		}
 #endif
-		if (events & MESH_EVENT_LORA_TX_DONE) companion_sos_tx_done();
-
 		/* Inbound frames and CLI lines, before loop() drains what they
 		 * queued. */
 		if (events & (MESH_EVENT_BLE_RX | MESH_EVENT_CONTACT_ITER |
@@ -598,6 +596,12 @@ static void mesh_event_loop(void)
 			       MESH_EVENT_BLE_RX | MESH_EVENT_TX_DRAIN |
 			       MESH_EVENT_HOUSEKEEPING))) {
 			companion_mesh_ptr->loop();
+		}
+
+		/* After loop(): the dispatcher's isSendComplete() is what ticks
+		 * getPacketsSent(), and the SOS tone reads that tally. */
+		if (events & MESH_EVENT_LORA_TX_DONE) {
+			companion_sos_tx_done();
 		}
 
 		if (events & MESH_EVENT_HOUSEKEEPING) {
