@@ -51,13 +51,16 @@ extern "C" {
 #define MELODY_SOS_CONFIRM "sok:d=16,o=7,b=200:c,p,e,p,g"
 /* Short falling acknowledgement after a Fall alarm is cancelled. */
 #define MELODY_FALL_CANCELED "fcan:d=16,o=7,b=220:g,e,c"
-/* The Super Mario Bros. opening — the find-me tune (was Morse "ZEPHCORE"). */
-#define MELODY_FINDME      "mario:d=8,o=5,b=180:" \
-                           "e5,e5,p,e5,p,c5,e5,g5,"          /* E E _ E _ C E G */ \
-                           "4p,2g4,4p,"                      /* _ G4(half) _ */ \
-                           "2c5,4p,2g4,4p,"                  /* C5(half) _ G4(half) _ */ \
-                           "2e4,4p,4a4,4b4,4a#4,4a4,"        /* E4(half) _ A4 B4 Bb A4 */ \
-                           "2g4,4e5,4g5,4a5"                 /* G4(half) E5 G5 A5 */
+/* The Super Mario Bros. theme — the find-me tune, twice through the
+ * classic 8-bit sequence at a brisk 1/16, held notes carrying their
+ * length in the rests after them. */
+#define MELODY_FINDME      "mario:d=16,o=5,b=200:" \
+	"e5,e5,p,e5,p,c5,e5,p,g5,p,p,p,g4,p,p,p," \
+	"c5,p,p,g4,p,p,e4,p,p,a4,p,b4,p,a#4,a4,p," \
+	"g4,e5,g5,a5,p,f5,g5,p,e5,p,c5,p,d5,b4,p,p," \
+	"e5,e5,p,e5,p,c5,e5,p,g5,p,p,p,g4,p,p,p," \
+	"c5,p,p,g4,p,p,e4,p,p,a4,p,b4,p,a#4,a4,p," \
+	"g4,e5,g5,a5,p,f5,g5,p,e5,p,c5,p,d5,b4,p,p"
 /* Morse "SOS" (... --- ...), played after the message is transmitted. */
 #define MELODY_SOS         "SOS:d=32,o=6,b=120:" \
                            "c6,p,c6,p,c6,p,p,p,"              /* S ... */ \
