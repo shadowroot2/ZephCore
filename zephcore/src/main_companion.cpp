@@ -1836,6 +1836,9 @@ static struct tracking_backlog tracking_backlog_buf;
 /* When the head may be probed next (INT64_MAX = disarmed): armed at each
  * report advance, consumed by a probe send. */
 static int64_t tracking_backlog_probe_ms = INT64_MAX;
+/* The inflight deferred message's text: the v-contact hears it only once
+ * a repeater repeats the send. */
+static char tracking_deferred_last_text[MAX_TEXT_LEN + 1];
 #endif
 
 /* ===== GPS HOME: save the point and navigate to it ===== */
@@ -2073,6 +2076,8 @@ static bool companion_send_tracking_deferred(void)
 
 	LOG_INF("tracking: queued deferred message (%d pts, %d pending): %s",
 		packed, b->count, text);
+	snprintf(tracking_deferred_last_text,
+		 sizeof(tracking_deferred_last_text), "%s", text);
 	tracking_backlog_begin(b, hash, k_uptime_get(), packed);
 	return true;
 }
@@ -2082,9 +2087,9 @@ static void companion_tracking_backlog_process(void)
 	struct tracking_backlog *b = &tracking_backlog_buf;
 	int64_t now = k_uptime_get();
 
-	/* With no report to anchor the probe to (`tracking off`), retry on a
-	 * fixed period so an ended session still flushes what accumulated —
-	 * while the tries last, so an unheard message cannot repeat forever. */
+	/* With no report to anchor the probe to (`tracking off`), the backlog
+	 * still tries to finish: one probe per retry period, while the tries
+	 * last, so an unheard message cannot repeat forever. */
 	if (!companion_tracking.enabled && !b->draining && !b->inflight &&
 	    b->count > 0 && tracking_backlog_probe_ms == INT64_MAX &&
 	    tracking_backlog_may_probe(b)) {
@@ -2096,10 +2101,17 @@ static void companion_tracking_backlog_process(void)
 		int dupes = companion_mesh_ptr->getContentionTracker()
 				.extractDupeCount(b->inflight_hash);
 		bool heard = dupes > 0;
+		bool from_buffer = !b->inflight_live;
 
 		tracking_backlog_verdict(b, heard);
 		LOG_INF("tracking: deferred send %s (%d repeats, %d pending)",
 			heard ? "heard" : "not heard", dupes, b->count);
+		/* The v-contact hears a buffer message only when the message
+		 * really went out — a repeater repeated it. */
+		if (heard && from_buffer && tracking_deferred_last_text[0] != '\0') {
+			companion_mesh.vcontactNotify(tracking_deferred_last_text);
+			tracking_deferred_last_text[0] = '\0';
+		}
 		/* An unheard send must probe again on the retry cadence — waiting
 		 * for the next report window starves the ring for a whole
 		 * interval and evicts its points.  A few tries only: re-sending
@@ -2262,8 +2274,8 @@ static bool companion_tracking_set_enabled(bool enabled, char *reply, bool silen
 	tracking_odometer_finish(&tracking_odo, k_uptime_get());
 	companion_send_tracking_summary();
 	memset(&companion_tracking, 0, sizeof(companion_tracking));
-	/* No report window anchors the probe any more: it re-arms on the
-	 * retry period so the backlog still flushes after the session. */
+	/* The buffer outlives the session: the points are still worth
+	 * delivering and the backlog frees itself as they go out. */
 	tracking_backlog_probe_ms = INT64_MAX;
 	companion_gps_user_left();
 	companion_tracking_ui_update();
