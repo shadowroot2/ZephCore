@@ -1340,6 +1340,15 @@ config ZEPHCORE_UI_DISPLAY_AUTO_OFF_MS
 	  Time in milliseconds before the display turns off
 	  after the last user interaction. Set to 0 to disable.
 
+config ZEPHCORE_UI_CHAT_COUNT
+	int "Conversations kept in the feed's list"
+	default 12
+	depends on ZEPHCORE_UI_DISPLAY
+	help
+	  How many conversations the message feed keeps at once, each with
+	  its own ring of messages.  Every conversation costs about 1.7 KB
+	  times the ring size in RAM; a board tight on DRAM can lower it.
+
 config ZEPHCORE_NAV_HOLD_BACKLIGHT
 	bool "Keep the display backlight on while navigating"
 	default y
