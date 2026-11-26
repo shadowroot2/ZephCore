@@ -1266,6 +1266,12 @@ DFU and Power Off act on a second ENTER inside `CONFIG_ZEPHCORE_UI_CONFIRM_WINDO
 of 500 ms is for a direct-tap ENTER; a board whose ENTER is a long press must set 3000 in its `board.conf`, or the
 confirmation can never be given.
 
+On the first page the action key of the two-button boards runs the SOS pair: a short press arms a 3 s window
+without a tone, and the hold inside it starts the SOS (a bare hold arms one too). A running manual SOS owns the
+short press as its cancel; the button takes the pending flag as it queues the cancel, so the next press arms the
+pair again instead of counting as a second cancel, and the action batch runs a cancel before a request queued
+behind it.
+
 ### 8.4 Buzzer and vibration
 
 Non-blocking RTTTL parser on dedicated work queue. Predefined melodies for startup, shutdown, messages, ACKs. 2-second safety watchdog auto-silences on work queue stall.

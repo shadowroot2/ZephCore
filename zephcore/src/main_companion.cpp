@@ -1385,6 +1385,13 @@ extern "C" bool companion_sos_cancel_available(void)
 	return atomic_get(&companion_manual_sos_pending) != 0;
 }
 
+/* The button takes the flag when it queues the cancel, so the next press
+ * arms the launch again instead of reading as a second cancel. */
+extern "C" bool companion_sos_cancel_take(void)
+{
+	return atomic_clear(&companion_manual_sos_pending) != 0;
+}
+
 extern "C" void companion_sos_cancel_from_ui(void)
 {
 	if (!companion_sos_button_cancelable(companion_sos.pending,

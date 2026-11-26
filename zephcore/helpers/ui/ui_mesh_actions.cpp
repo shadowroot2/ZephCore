@@ -69,7 +69,7 @@ LOG_MODULE_REGISTER(zephcore_ui_actions, CONFIG_ZEPHCORE_UI_ACTIONS_LOG_LEVEL);
 #define UI_ACTION_BL_TIMEOUT_TOGGLE BIT(24) /* ZEPHCORE: backlight window */
 
 extern "C" void companion_sos_request_from_ui(void);
-extern "C" bool companion_sos_cancel_available(void);
+extern "C" bool companion_sos_cancel_take(void);
 extern "C" void companion_sos_cancel_from_ui(void);
 extern "C" void companion_fall_alarm_acknowledge_from_ui(void);
 extern "C" void companion_tracking_toggle_from_ui(void);
@@ -156,7 +156,9 @@ extern "C" void mesh_send_sos(void)
 
 extern "C" bool mesh_sos_cancel_if_active(void)
 {
-	if (!companion_sos_cancel_available()) {
+	/* Take the pending flag with the cancel: the next press must arm the
+	 * launch pair again instead of reading as another cancel. */
+	if (!companion_sos_cancel_take()) {
 		return false;
 	}
 	atomic_or(&pending_ui_actions, UI_ACTION_SOS_CANCEL);
@@ -412,11 +414,14 @@ extern "C" void mesh_handle_ui_actions(void)
 		}
 	}
 
-	if (actions & UI_ACTION_SOS) {
-		companion_sos_request_from_ui();
-	}
+	/* CANCEL runs before SOS: the cancel belongs to the emergency behind
+	 * it, while a request queued after it is a new launch that must not
+	 * meet the old one still pending. */
 	if (actions & UI_ACTION_SOS_CANCEL) {
 		companion_sos_cancel_from_ui();
+	}
+	if (actions & UI_ACTION_SOS) {
+		companion_sos_request_from_ui();
 	}
 	if (actions & UI_ACTION_FALL_ACK) {
 		companion_fall_alarm_acknowledge_from_ui();

@@ -339,9 +339,6 @@ static void feed_hold(void)
 static void sos_arm_launch(void)
 {
 	sos_arm_until = k_uptime_get_32() + SOS_ARM_WINDOW_MS;
-#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
-	buzzer_play(MELODY_ACK);
-#endif
 }
 
 static void home_hold_handler(struct k_work *work)
