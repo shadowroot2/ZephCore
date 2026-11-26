@@ -9,7 +9,8 @@
  *   - hold the LoRa radio in HW reset (its internal duty cycle would
  *     otherwise keep cycling autonomously, drawing mA)
  *   - wait out any held button (it can be the power-on input too) and arm
- *     NO wake source: power-on is the RESET button's job alone
+ *     sw0 as the wake source, unless the board opts out with
+ *     zephcore,no-wake-after-poweroff (its RESET button powers it on)
  *
  * Non-nRF platforms likewise rely on nothing being armed as a wake source;
  * the DT wakeup-source property is inert on nRF and honoured elsewhere
@@ -31,6 +32,10 @@
 #include <zephyr/sys/poweroff.h>
 #include <zephyr/sys/reboot.h>
 #include <zephyr/logging/log.h>
+
+#if defined(CONFIG_SOC_FAMILY_NORDIC_NRF)
+#include <hal/nrf_gpio.h>
+#endif
 
 LOG_MODULE_REGISTER(zephcore_poweroff, CONFIG_ZEPHCORE_BOARD_LOG_LEVEL);
 
@@ -140,11 +145,11 @@ void zephcore_power_off(void)
 	}
 #endif
 
-	/* 4. Wait for the user to release any held button: on the boards with
-	 * a soft-power rail the button is also the power-on input, and a
-	 * DETECT already asserted at System OFF would never sleep cleanly.
-	 * No button is armed to wake the chip — power-on is the RESET
-	 * button's job alone. */
+	/* 4. Wait for the user to release any held button (it can be the
+	 * power-on input too), then arm sw0 as the wake source — unless the
+	 * board says its RESET button alone powers it back on
+	 * (zephcore,no-wake-after-poweroff on the sw0 node).
+	 * nRF only — other platforms rely on the DT wakeup-source property. */
 #if defined(CONFIG_SOC_FAMILY_NORDIC_NRF) && DT_NODE_EXISTS(DT_ALIAS(sw0))
 	{
 		static const struct gpio_dt_spec sw0 =
@@ -156,6 +161,26 @@ void zephcore_power_off(void)
 		while (gpio_pin_get_dt(&sw0) && k_uptime_get() < deadline) {
 			k_sleep(K_MSEC(10));
 		}
+
+#if !DT_NODE_HAS_PROP(DT_ALIAS(sw0), zephcore_no_wake_after_poweroff) && \
+	!defined(CONFIG_BOARD_XIAO_NRF52840)
+#define _SW0_NODE  DT_ALIAS(sw0)
+#define _SW0_PORT  DT_PROP(DT_GPIO_CTLR(_SW0_NODE, gpios), port)
+#define _SW0_PIN   DT_GPIO_PIN(_SW0_NODE, gpios)
+#define _SW0_FLAGS DT_GPIO_FLAGS(_SW0_NODE, gpios)
+
+		nrf_gpio_cfg_sense_input(
+			NRF_GPIO_PIN_MAP(_SW0_PORT, _SW0_PIN),
+			(_SW0_FLAGS & GPIO_PULL_UP)   ? NRF_GPIO_PIN_PULLUP   :
+			(_SW0_FLAGS & GPIO_PULL_DOWN) ? NRF_GPIO_PIN_PULLDOWN :
+						       NRF_GPIO_PIN_NOPULL,
+			(_SW0_FLAGS & GPIO_ACTIVE_LOW) ? NRF_GPIO_PIN_SENSE_LOW
+						       : NRF_GPIO_PIN_SENSE_HIGH);
+#undef _SW0_NODE
+#undef _SW0_PORT
+#undef _SW0_PIN
+#undef _SW0_FLAGS
+#endif /* wake-on-button boards; XIAO uses USB/RESET only */
 	}
 #endif
 

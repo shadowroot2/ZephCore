@@ -97,6 +97,9 @@
 			gpios = <&gpio1 10 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
 			zephyr,code = <INPUT_KEY_0>;
 			label = "User Button";
+			/* Power-on is the RESET button's job alone: after
+			 * Power OFF no input wakes the board (2026-11-25). */
+			zephcore,no-wake-after-poweroff;
 		};
 	};
 
