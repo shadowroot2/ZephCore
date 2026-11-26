@@ -1836,9 +1836,6 @@ static struct tracking_backlog tracking_backlog_buf;
 /* When the head may be probed next (INT64_MAX = disarmed): armed at each
  * report advance, consumed by a probe send. */
 static int64_t tracking_backlog_probe_ms = INT64_MAX;
-/* The inflight deferred message's text: the v-contact hears it only once
- * a repeater repeats the send. */
-static char tracking_deferred_last_text[MAX_TEXT_LEN + 1];
 #endif
 
 /* ===== GPS HOME: save the point and navigate to it ===== */
@@ -2076,8 +2073,6 @@ static bool companion_send_tracking_deferred(void)
 
 	LOG_INF("tracking: queued deferred message (%d pts, %d pending): %s",
 		packed, b->count, text);
-	snprintf(tracking_deferred_last_text,
-		 sizeof(tracking_deferred_last_text), "%s", text);
 	tracking_backlog_begin(b, hash, k_uptime_get(), packed);
 	return true;
 }
@@ -2101,17 +2096,10 @@ static void companion_tracking_backlog_process(void)
 		int dupes = companion_mesh_ptr->getContentionTracker()
 				.extractDupeCount(b->inflight_hash);
 		bool heard = dupes > 0;
-		bool from_buffer = !b->inflight_live;
 
 		tracking_backlog_verdict(b, heard);
 		LOG_INF("tracking: deferred send %s (%d repeats, %d pending)",
 			heard ? "heard" : "not heard", dupes, b->count);
-		/* The v-contact hears a buffer message only when the message
-		 * really went out — a repeater repeated it. */
-		if (heard && from_buffer && tracking_deferred_last_text[0] != '\0') {
-			companion_mesh.vcontactNotify(tracking_deferred_last_text);
-			tracking_deferred_last_text[0] = '\0';
-		}
 		/* An unheard send must probe again on the retry cadence — waiting
 		 * for the next report window starves the ring for a whole
 		 * interval and evicts its points.  A few tries only: re-sending
@@ -2166,7 +2154,7 @@ static void companion_send_tracking_summary(void)
 {
 	struct gps_position pos;
 	bool has_fix = gps_get_last_known_position(&pos);
-	char text[160], vtext[176];
+	char text[160];
 	/* The group copy goes out under the "name: " prefix: reserve it or the
 	 * maps link gets cut mid-URL. */
 	size_t name_prefix = strlen(companion_mesh.prefs.node_name) + 2;
@@ -2178,8 +2166,6 @@ static void companion_send_tracking_summary(void)
 				&tracking_odo,
 				has_fix ? pos.latitude_ndeg : 0,
 				has_fix ? pos.longitude_ndeg : 0, has_fix);
-	snprintf(vtext, sizeof(vtext), "Трекинг завершён\n%s", text);
-	companion_mesh.vcontactNotify(vtext);
 
 	ChannelDetails tracks_channel;
 	const char *group_name = companion_mesh.prefs.tracking_group_name;
@@ -2193,8 +2179,8 @@ static void companion_send_tracking_summary(void)
 	LOG_INF("tracking: queued %s summary: %s", group_name, text);
 }
 
-/* Track-start notice to the v-contact and the tracking group: one text, the
- * report interval and the map link only while a last fix is known. */
+/* Track-start notice to the tracking group: one text, the report interval
+ * and the map link only while a last fix is known. */
 static void companion_send_tracking_start(void)
 {
 	struct gps_position pos;
@@ -2211,7 +2197,6 @@ static void companion_send_tracking_start(void)
 				  pos.longitude_ndeg / 1e9);
 		snprintf(text + n, sizeof(text) - n, "\n📍 %s", url);
 	}
-	companion_mesh.vcontactNotify(text);
 
 	ChannelDetails tracks_channel;
 	const char *group_name = companion_mesh.prefs.tracking_group_name;
