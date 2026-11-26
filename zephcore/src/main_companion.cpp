@@ -3261,6 +3261,10 @@ static bool power_notify_shutdown(uint16_t battery_mv)
 {
 	bool queued = false;
 	companion_sos_flush_on_shutdown();
+	/* The last wide advert goes out at any power-off, auto ones too. */
+	if (companion_mesh_ptr->sendSelfAdvert(true)) {
+		queued = true;
+	}
 #if IS_ENABLED(CONFIG_ZEPHCORE_POWER_ANNOUNCE)
 	/* The boot notice is superseded — it must never land after this one. */
 	power_announce_at_ms = 0;
