@@ -651,7 +651,10 @@ and is not silent. All of them still appear in the boot log.
 With an app connected, button-initiated power-off queues `Powering off: button`
 on the mesh thread and leaves eight seconds for the app to fetch it before
 System OFF. Without a connected app, shutdown proceeds immediately; the
-offline queue does not survive System OFF.
+offline queue does not survive System OFF. Power-on after System OFF is the
+`sw0` button by default — the T1000-E lives by its single button. A board
+whose RESET button alone should power it on opts out with
+`zephcore,no-wake-after-poweroff` on its `sw0` node (the T-Echo does).
 
 **Identity**: seed = `SHA256("zc-vcontact" || self_prv_key || counter)`,
 pubkey = that seed's Ed25519 public point — stable per node, unique per device.
