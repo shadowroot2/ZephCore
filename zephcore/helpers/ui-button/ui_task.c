@@ -334,6 +334,16 @@ static void feed_hold(void)
 	}
 }
 
+/* The first screen's SOS launch: 1 short + 1 long — the short arms a
+ * window, the hold inside it starts the SOS. */
+static void sos_arm_launch(void)
+{
+	sos_arm_until = k_uptime_get_32() + SOS_ARM_WINDOW_MS;
+#if IS_ENABLED(CONFIG_ZEPHCORE_UI_BUZZER)
+	buzzer_play(MELODY_ACK);
+#endif
+}
+
 static void home_hold_handler(struct k_work *work)
 {
 	ARG_UNUSED(work);
@@ -342,6 +352,18 @@ static void home_hold_handler(struct k_work *work)
 	 * confirmation; boards with a short ENTER arm the Confirm SAVE step. */
 	struct ui_state *st = get_state();
 
+	/* The first screen: the hold inside the armed window starts the
+	 * SOS; a bare hold arms one, so the pair works either way round. */
+	if (ui_pages_current() == UI_PAGE_MESSAGES) {
+		if ((int32_t)(sos_arm_until - k_uptime_get_32()) > 0) {
+			sos_arm_until = 0;
+			LOG_INF("SOS requested");
+			mesh_send_sos();
+		} else {
+			sos_arm_launch();
+		}
+		return;
+	}
 	/* The list: a hold is the choice of the highlighted conversation.
 	 * Inside one it opens the quick-reply picker; on the picker it
 	 * takes the row. */
@@ -1226,14 +1248,18 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 		 * hold arms (home_hold_handler), the short press sends. */
 		if (code == INPUT_KEY_ENTER && home_press_active &&
 		    (ui_pages_current() == UI_PAGE_GPS_HOME ||
-		     ui_pages_current() == UI_PAGE_PUBLIC)) {
+		     ui_pages_current() == UI_PAGE_PUBLIC ||
+		     ui_pages_current() == UI_PAGE_MESSAGES)) {
 			home_press_active = false;
 			if (!k_work_delayable_is_pending(&home_hold_work)) {
 				/* Hold already fired; the release ends it. */
 				return;
 			}
 			k_work_cancel_delayable(&home_hold_work);
-			if (ui_pages_current() == UI_PAGE_PUBLIC) {
+			if (ui_pages_current() == UI_PAGE_MESSAGES) {
+				/* The short press of the SOS pair: arm. */
+				sos_arm_launch();
+			} else if (ui_pages_current() == UI_PAGE_PUBLIC) {
 				/* Short press walks the list or the chat; the
 				 * hold above is what opens or leaves one. */
 				action_page_enter();
@@ -1454,9 +1480,10 @@ static void ui_input_cb(struct input_event *evt, void *user_data)
 			break;
 		}
 		/* ZEPHCORE: the first page measures the action press too — a
-		 * hold of HOME_HOLD_MS arms the SOS launch (home_hold_handler),
-		 * the short press after it sends. */
-		if (ui_pages_current() == UI_PAGE_PUBLIC) {
+		 * short press arms the SOS window, the hold inside it sends
+		 * (home_hold_handler). */
+		if (ui_pages_current() == UI_PAGE_PUBLIC ||
+		    ui_pages_current() == UI_PAGE_MESSAGES) {
 			home_press_active = true;
 			k_work_reschedule(&home_hold_work, K_MSEC(HOME_HOLD_DELAY_MS));
 			break;
