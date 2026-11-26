@@ -213,11 +213,11 @@ static struct k_work_delayable nav_refresh_work;
 static struct k_work_delayable home_defer_work;
 #endif
 
-#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
-static struct k_work_delayable home_hold_work;
-
 static void schedule_render(void);
 static void schedule_render_auto(void);
+
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
+static struct k_work_delayable home_hold_work;
 static void chat_list_next(void);
 static void chat_list_prev(void);
 
@@ -1654,13 +1654,18 @@ void ui_push_own_msg(const char *chat_name, bool is_group, const char *text,
 	 * it like any other, but it is not news to its reader — no buzz,
 	 * no queue count.  The conversation is open already, so the kind
 	 * only fills in if the chat were somehow missing. */
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
 	ui_feed_add(chat_name, is_group ? UI_CHAT_KIND_GROUP
 					: UI_CHAT_KIND_DIRECT, text, ts, true);
+#else
+	(void)chat_name; (void)is_group; (void)text; (void)ts;
+#endif
 }
 
 void ui_own_msg_mark(const char *chat_name, uint32_t ts, uint8_t mark,
 		     uint8_t heard)
 {
+#ifdef CONFIG_ZEPHCORE_UI_DISPLAY
 	struct ui_state *s = get_state();
 	struct ui_chat *c = ui_chat_find(&s->chats, chat_name);
 
@@ -1668,7 +1673,19 @@ void ui_own_msg_mark(const char *chat_name, uint32_t ts, uint8_t mark,
 		return;
 	}
 	ui_request_render_now();
+#else
+	(void)chat_name; (void)ts; (void)mark; (void)heard;
+#endif
 }
+
+#if !IS_ENABLED(CONFIG_ZEPHCORE_UI_DISPLAY)
+bool ui_send_try_match_ack(uint32_t ack, uint8_t out_pubkey[6])
+{
+	/* No feed to stamp: a headless button board waits for no ACK. */
+	(void)ack; (void)out_pubkey;
+	return false;
+}
+#endif
 
 void ui_notify_packet_sent(void)
 {
